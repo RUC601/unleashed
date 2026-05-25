@@ -534,8 +534,8 @@ namespace OW {
     }
 
     inline bool IsValidTargetIndex(int index) {
-        const auto snapshot = TargetingDetail::SnapshotEntities();
-        return TargetingDetail::IsValidIndex(index, snapshot.size());
+        c_entity target{};
+        return TargetingDetail::TryEntityAt(index, target, false);
     }
 
     inline bool TryGetTargetEntity(int index, c_entity& entity, bool requireVisible = true) {

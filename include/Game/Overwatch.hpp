@@ -53,12 +53,23 @@ inline std::mutex g_mutex;
 inline void entity_scan_thread() {
     Diagnostics::Info("Entity scan thread started.");
     while (OW::Config::doingentity == 1) {
-        if (OW::abletotread == 0) {
+        bool should_scan = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            should_scan = OW::abletotread == 0;
+        }
+
+        if (should_scan) {
             std::vector<std::pair<uint64_t, uint64_t>> scanned = OW::get_ow_entities();
             Diagnostics::RecordEntityScanCycle(scanned.size());
             Diagnostics::Trace("Entity scan cycle found %zu raw entities.", scanned.size());
-            OW::ow_entities_scan = std::move(scanned);
-            OW::abletotread = 1;
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (OW::abletotread == 0) {
+                    OW::ow_entities_scan = std::move(scanned);
+                    OW::abletotread = 1;
+                }
+            }
         }
         Sleep(10);
     }
@@ -75,21 +86,29 @@ inline void entity_thread() {
 
     while (OW::Config::doingentity == 1) {
         if (entitytime == 0) entitytime = GetTickCount();
-        if (GetTickCount() - entitytime >= 100 && OW::abletotread) {
-            g_mutex.lock();
-            OW::ow_entities = OW::ow_entities_scan;
-            OW::abletotread = 0;
-            entitytime = GetTickCount();
-            g_mutex.unlock();
+        if (GetTickCount() - entitytime >= 100) {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (OW::abletotread) {
+                OW::ow_entities = OW::ow_entities_scan;
+                OW::abletotread = 0;
+                entitytime = GetTickCount();
+            }
+        }
+
+        std::vector<std::pair<uint64_t, uint64_t>> raw_entities;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            raw_entities = OW::ow_entities;
         }
 
         // No entities available
-        if (!(OW::ow_entities.size() > 0)) {
-            g_mutex.lock();
-            OW::entities = {};
-            OW::hp_dy_entities = {};
-            Diagnostics::SetEntityCount(0);
-            g_mutex.unlock();
+        if (raw_entities.empty()) {
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                OW::entities = {};
+                OW::hp_dy_entities = {};
+                Diagnostics::SetEntityCount(0);
+            }
             Sleep(1000);
             continue;
         }
@@ -98,15 +117,15 @@ inline void entity_thread() {
         std::vector<OW::hpanddy> hpdy_entities{};
         OW::c_entity lastentity{};
 
-        for (size_t i = 0; i < OW::ow_entities.size(); i++) {
+        for (size_t i = 0; i < raw_entities.size(); i++) {
             OW::c_entity entity{};
-            if (!OW::ow_entities[i].first || !OW::ow_entities[i].second) {
+            if (!raw_entities[i].first || !raw_entities[i].second) {
                 Diagnostics::RecordInvalidEntity();
                 continue;
             }
-            if (i >= OW::ow_entities.size()) continue;
+            if (i >= raw_entities.size()) continue;
 
-            const auto& [ComponentParent, LinkParent] = OW::ow_entities[i];
+            const auto& [ComponentParent, LinkParent] = raw_entities[i];
             entity.address = ComponentParent;
             if (!entity.address || !LinkParent) {
                 Diagnostics::RecordInvalidEntity();
@@ -283,10 +302,13 @@ inline void entity_thread() {
                 if (dist <= 1.f && OW::GetHeroEngNames(entity.HeroID, entity.LinkBase) != "Unknown") {
                     entity.skillcd1 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x189c);
                     entity.skillcd2 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x1f89);
-                    OW::local_entity = entity;
-                    OW::Config::reloading = OW::IsSkillActivate1(OW::local_entity.SkillBase + 0x40, 0, 0x4BF);
-                    SDK->g_player_controller = entity.AngleBase;
-                    if (OW::local_entity.GetTeam() == OW::eTeam::TEAM_DEATHMATCH)
+                    {
+                        std::lock_guard<std::mutex> lock(g_mutex);
+                        OW::local_entity = entity;
+                        SDK->g_player_controller = entity.AngleBase;
+                    }
+                    OW::Config::reloading = OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x4BF);
+                    if (entity.GetTeam() == OW::eTeam::TEAM_DEATHMATCH)
                         entity.Team = false;
                 }
             }
@@ -300,11 +322,16 @@ inline void entity_thread() {
         }
 
         // Swap processed entities
-        OW::entities = tmp_entities;
-        OW::hp_dy_entities = hpdy_entities;
-        Diagnostics::SetEntityCount(tmp_entities.size());
+        const size_t valid_count = tmp_entities.size();
+        const size_t dynamic_count = hpdy_entities.size();
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            OW::entities = std::move(tmp_entities);
+            OW::hp_dy_entities = std::move(hpdy_entities);
+        }
+        Diagnostics::SetEntityCount(valid_count);
         Diagnostics::Trace("Entity process cycle: valid=%zu hp_dynamic=%zu raw=%zu.",
-            tmp_entities.size(), hpdy_entities.size(), OW::ow_entities.size());
+            valid_count, dynamic_count, raw_entities.size());
         Sleep(3);
     }
 }
@@ -449,13 +476,16 @@ namespace OverlayRenderDetail {
 } // namespace OverlayRenderDetail
 
 inline void PlayerInfo() {
-    if (OW::entities.size() == 0) return;
+    auto entity_snapshot = OW::TargetingDetail::SnapshotEntities();
+    auto local_snapshot = OW::TargetingDetail::SnapshotLocalEntity();
+
+    if (entity_snapshot.empty()) return;
     if (OW::WX <= 0.0f || OW::WY <= 0.0f) return;
 
-    for (size_t index = 0; index < OW::entities.size(); ++index) {
-        OW::c_entity entity = OW::entities[index];
-        if (!entity.Alive || OW::local_entity.PlayerHealth <= 0.f) continue;
-        if (entity.address == OW::local_entity.address) continue;
+    for (size_t index = 0; index < entity_snapshot.size(); ++index) {
+        OW::c_entity entity = entity_snapshot[index];
+        if (!entity.Alive || local_snapshot.PlayerHealth <= 0.f) continue;
+        if (entity.address == local_snapshot.address) continue;
 
         Vector3 Vec3 = entity.head_pos;
         float dist = Vector3(OW::viewMatrix_xor.get_location().x,
@@ -538,9 +568,10 @@ inline void PlayerInfo() {
 }
 
 inline void skillinfo() {
-    if (!OW::Config::skillinfo || OW::entities.size() == 0) return;
+    auto entity_snapshot = OW::TargetingDetail::SnapshotEntities();
+    if (!OW::Config::skillinfo || entity_snapshot.empty()) return;
     int i = 10;
-    for (OW::c_entity entity : OW::entities) {
+    for (OW::c_entity entity : entity_snapshot) {
         std::string heroname = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
         if (entity.Team && heroname != "Bot" && heroname != "Unknown" &&
             entity.HeroID != 0x16dd && entity.HeroID != 0x16ee && entity.HeroID != 0x16bb) {
@@ -554,7 +585,7 @@ inline void skillinfo() {
         }
     }
     i += 60;
-    for (OW::c_entity entity : OW::entities) {
+    for (OW::c_entity entity : entity_snapshot) {
         std::string heroname = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
         if (!entity.Team && heroname != "Bot" && heroname != "Unknown" &&
             entity.HeroID != 0x16dd && entity.HeroID != 0x16ee && entity.HeroID != 0x16bb) {
@@ -573,666 +604,677 @@ inline void skillinfo() {
 // Main aimbot thread
 // =========================================================================
 
-inline void aimbot_thread() {
-    __try {
+namespace AimbotDetail {
+
+    struct RuntimeState {
         int hitbotdelaytime = 0;
         int afterdelaytime = 0;
-        bool dodelay = 0;
-        Vector2 CrossHair = Vector2(
-            (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
-            (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
-        );
+        bool dodelay = false;
+    };
+
+    struct AimData {
+        Vector3 local_angle{};
+        Vector3 target_angle{};
+        Vector3 smoothed_angle{};
+        Vector3 local_pos{};
+    };
+
+    inline bool IsZeroVector(const Vector3& value) {
+        return value == Vector3(0, 0, 0);
+    }
+
+    inline Vector3 CameraPosition() {
+        const auto camera = OW::viewMatrix_xor.get_location();
+        return Vector3(camera.x, camera.y, camera.z);
+    }
+
+    inline OW::c_entity LocalEntity() {
+        return OW::TargetingDetail::SnapshotLocalEntity();
+    }
+
+    inline bool HasEntitySnapshot() {
+        return !OW::TargetingDetail::SnapshotEntities().empty();
+    }
+
+    inline void MaintainSensitivity(float& origin_sens) {
+        const uintptr_t sensitive_ptr = OW::GetSenstivePTR();
+        const float current_sens = SDK->RPM<float>(sensitive_ptr);
+        if (current_sens) origin_sens = current_sens;
+        else if (origin_sens) SDK->WPM<float>(sensitive_ptr, origin_sens);
+    }
+
+    inline void SetSensitivityLocked(bool locked, float origin_sens) {
+        if (!OW::Config::lockontarget) return;
+        SDK->WPM<float>(OW::GetSenstivePTR(), locked ? 0.f : origin_sens);
+    }
+
+    inline void PressWithSensitivity(uint32_t key, float origin_sens, DWORD sleep_ms = 1) {
+        SetSensitivityLocked(true, origin_sens);
+        OW::SetKey(key);
+        Sleep(sleep_ms);
+        SetSensitivityLocked(false, origin_sens);
+    }
+
+    inline bool CurrentTarget(c_entity& target, bool requireVisible = true) {
+        return OW::TryGetTargetEntity(OW::Config::Targetenemyi, target, requireVisible);
+    }
+
+    inline bool IsPrimaryTargetActionable(c_entity& target) {
+        if (!CurrentTarget(target, true)) return false;
+        if (target.skill2act && target.HeroID == OW::eHero::HERO_GENJI) return false;
+        if (target.skill1act && target.HeroID == OW::eHero::HERO_VENTURE) return false;
+        if ((target.imort || target.barrprot) && !OW::Config::switch_team) return false;
+        return true;
+    }
+
+    inline bool IsTriggerTargetActionable() {
+        c_entity target{};
+        if (!CurrentTarget(target, true)) return false;
+
+        c_entity local = LocalEntity();
+        if (target.skill2act &&
+            target.HeroID == OW::eHero::HERO_GENJI &&
+            target.GetTeam() != local.GetTeam()) {
+            return false;
+        }
+        return true;
+    }
+
+    inline AimData BuildAimData(const Vector3& world_target, bool accelerated, float smooth, float acceleration) {
+        AimData data{};
+        data.local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+        const auto calc_target = OW::CalcAngle(XMFLOAT3(world_target.X, world_target.Y, world_target.Z),
+                                               OW::viewMatrix_xor.get_location());
+        data.target_angle = Vector3(calc_target.x, calc_target.y, calc_target.z);
+        data.smoothed_angle = accelerated
+            ? OW::SmoothAccelerate(data.local_angle, data.target_angle, smooth, acceleration)
+            : OW::SmoothLinear(data.local_angle, data.target_angle, smooth);
+        data.local_pos = CameraPosition();
+        return data;
+    }
+
+    inline float AimNoise(float divisor) {
+        const float direction = (rand() % 10 > 5) ? 1.f : -1.f;
+        return direction * static_cast<float>(rand()) / RAND_MAX / divisor;
+    }
+
+    inline void ApplyAiAimNoise(Vector3& target, float divisor, bool clampSecondaryFov) {
+        if (!OW::Config::aiaim) return;
+        target.X += AimNoise(divisor);
+        target.Y += AimNoise(divisor);
+        target.Z += AimNoise(divisor);
+
+        if (OW::Config::minFov1 > 500.f) OW::Config::minFov1 = 500.f;
+        if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
+        if (clampSecondaryFov) {
+            if (OW::Config::minFov2 > 500.f) OW::Config::minFov2 = 500.f;
+            if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
+        }
+        if (OW::Config::fov360) OW::Config::fov360 = false;
+    }
+
+    inline bool TargetDelayReady(RuntimeState* state, bool stampHitDelay, bool resetWhenDisabled) {
+        if (!OW::Config::targetdelay) {
+            if (resetWhenDisabled && OW::Config::doingdelay) OW::Config::doingdelay = false;
+            return true;
+        }
+
+        if (OW::Config::lastenemy != OW::Config::Targetenemyi) OW::Config::doingdelay = true;
+        if (!OW::Config::doingdelay) return true;
+
+        OW::Config::lastenemy = OW::Config::Targetenemyi;
+        if (OW::Config::timebeforedelay == 0) {
+            OW::Config::timebeforedelay = GetTickCount();
+            return false;
+        }
+
+        if (GetTickCount() - OW::Config::timebeforedelay < static_cast<DWORD>(OW::Config::targetdelaytime))
+            return false;
+
+        OW::Config::timebeforedelay = 0;
+        OW::Config::doingdelay = false;
+        if (stampHitDelay && state) state->hitbotdelaytime = GetTickCount();
+        return true;
+    }
+
+    inline void ArmDelayedShot(RuntimeState& state) {
+        if (!OW::Config::hitboxdelayshoot) return;
+        if (OW::Config::shooted || !GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key))) {
+            state.dodelay = true;
+            state.hitbotdelaytime = 0;
+        }
+    }
+
+    inline void PrimeDelayedShot(RuntimeState& state) {
+        if (state.dodelay && !OW::Config::doingdelay) {
+            state.hitbotdelaytime = GetTickCount();
+            state.dodelay = false;
+        }
+    }
+
+    inline bool DelayedShotTimedOut(RuntimeState& state) {
+        if (!OW::Config::hitboxdelayshoot || state.hitbotdelaytime == 0) return false;
+        state.afterdelaytime = GetTickCount();
+        return state.afterdelaytime - state.hitbotdelaytime > OW::Config::hiboxdelaytime &&
+               !OW::Config::doingdelay;
+    }
+
+    inline void FirePrimaryNormal() {
+        const c_entity local = LocalEntity();
+        if (local.HeroID == OW::eHero::HERO_GENJI || local.HeroID == OW::eHero::HERO_KIRIKO) {
+            OW::SetKey(0x2);
+            if (OW::Config::dontshot) OW::Config::shotcount++;
+            return;
+        }
+
+        if ((local.HeroID == OW::eHero::HERO_ANA ||
+             local.HeroID == OW::eHero::HERO_WIDOWMAKER ||
+             local.HeroID == OW::eHero::HERO_ASHE) && GetAsyncKeyState(0x2)) {
+            OW::SetKeyscopeHold(0x1, 30);
+        } else {
+            OW::SetKey(0x1);
+        }
+    }
+
+    inline void FireHanzo() {
+        const c_entity local = LocalEntity();
+        if (local.skill2act) OW::SetKey(0x1);
+        else OW::SetKeyHold(0x1000, 100);
+    }
+
+    inline void RunAutoScaleFov() {
+        if (!OW::Config::autoscalefov) return;
+
+        auto fvec = OW::GetVector3forfov();
+        c_entity fov_target{};
+        if (IsZeroVector(fvec) || !OW::TryGetTargetEntity(OW::Config::Targetenemyifov, fov_target, true)) {
+            OW::Config::Fov = OW::Config::minFov1;
+            OW::Config::Fov2 = OW::Config::minFov2;
+            return;
+        }
+
+        Vector2 high{}, low{};
+        if (OW::viewMatrix.WorldToScreen(fov_target.head_pos, &high, Vector2(OW::WX, OW::WY)) &&
+            OW::viewMatrix.WorldToScreen(fov_target.chest_pos, &low, Vector2(OW::WX, OW::WY))) {
+            OW::Config::Fov = -(high.Y - low.Y) * 4.f;
+            if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
+            else if (OW::Config::Fov < OW::Config::minFov1) OW::Config::Fov = OW::Config::minFov1;
+
+            OW::Config::Fov2 = -(high.Y - low.Y) * 4.f;
+            if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
+            else if (OW::Config::Fov2 < OW::Config::minFov2) OW::Config::Fov2 = OW::Config::minFov2;
+        } else {
+            OW::Config::Fov = OW::Config::minFov1;
+            OW::Config::Fov2 = OW::Config::minFov2;
+        }
+    }
+
+    inline void RunCloseRangeActions(const Vector3& target_pos) {
+        const float dist = CameraPosition().DistTo(target_pos);
+        if (OW::Config::health <= OW::Config::meleehealth &&
+            dist <= OW::Config::meleedistance &&
+            OW::Config::AutoMelee) {
+            OW::SetKey(0x800);
+        }
+        if (OW::Config::health <= OW::Config::AutoRMBhealth &&
+            dist <= OW::Config::AutoRMBdistance &&
+            OW::Config::AutoRMB) {
+            OW::SetKey(0x2);
+        }
+    }
+
+    inline void RunTriggerbot(bool secondary, float origin_sens) {
+        const Vector3 vec = secondary ? OW::GetVector3aim2(OW::Config::Prediction2)
+                                      : OW::GetVector3(OW::Config::Prediction);
+        if (IsZeroVector(vec) || !IsTriggerTargetActionable()) return;
+
+        AimData aim = BuildAimData(vec, false, 1.0f, 0.0f);
+        const float hitbox = secondary ? OW::Config::hitbox2 : OW::Config::hitbox;
+        if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox))
+            PressWithSensitivity(0x1, origin_sens, 2);
+    }
+
+    inline bool ShouldYieldToSecondaryAim() {
+        return OW::Config::highPriority && GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2));
+    }
+
+    inline void RunTracking(float origin_sens) {
+        while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) && !OW::Config::reloading) {
+            const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
+            c_entity target{};
+            if (!IsZeroVector(vec) && IsPrimaryTargetActionable(target)) {
+                AimData aim = BuildAimData(vec, false, OW::Config::Tracking_smooth / 10.f, 0.0f);
+                ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
+
+                if (!IsZeroVector(aim.smoothed_angle)) {
+                    if (!TargetDelayReady(nullptr, false, false)) continue;
+                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170,
+                                      OW::Config::Rage ? aim.target_angle : aim.smoothed_angle);
+                    RunCloseRangeActions(vec);
+                }
+
+                if (LocalEntity().PlayerHealth < OW::Config::SkillHealth) break;
+            }
+
+            Sleep(1);
+            RunAutoScaleFov();
+            if (ShouldYieldToSecondaryAim()) break;
+        }
+    }
+
+    inline bool RunPrimaryRageShot(const AimData& aim, float origin_sens) {
+        if (!OW::Config::Rage) return false;
+
+        if (OW::Config::fakesilent) {
+            Vector3 original_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.target_angle);
+            PressWithSensitivity(0x1, origin_sens, 25);
+            OW::Config::shooted = true;
+            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, original_angle);
+        } else {
+            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.target_angle);
+            PressWithSensitivity(0x1, origin_sens, 1);
+            OW::Config::shooted = true;
+        }
+        return true;
+    }
+
+    inline bool RunHanzoRageShot(const AimData& aim, float origin_sens) {
+        if (!OW::Config::Rage) return false;
+
+        if (OW::Config::fakesilent) {
+            Vector3 original_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.target_angle);
+            SetSensitivityLocked(true, origin_sens);
+            FireHanzo();
+            Sleep(25);
+            SetSensitivityLocked(false, origin_sens);
+            OW::Config::shooted = true;
+            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, original_angle);
+        } else {
+            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.target_angle);
+            FireHanzo();
+            OW::Config::shooted = true;
+        }
+        return true;
+    }
+
+    inline void RunFlick(RuntimeState& state, float origin_sens) {
+        ArmDelayedShot(state);
+
+        while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) &&
+               !OW::Config::shooted &&
+               !OW::Config::reloading) {
+            if (LocalEntity().HeroID == OW::eHero::HERO_WIDOWMAKER && !GetAsyncKeyState(0x2)) {
+                Sleep(1);
+                continue;
+            }
+
+            const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
+            if (IsZeroVector(vec)) break;
+
+            c_entity target{};
+            if (IsPrimaryTargetActionable(target)) {
+                if (!TargetDelayReady(&state, true, true)) continue;
+                PrimeDelayedShot(state);
+
+                AimData aim = BuildAimData(vec, true, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
+                ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
+
+                if (!IsZeroVector(aim.smoothed_angle)) {
+                    if (DelayedShotTimedOut(state)) {
+                        const c_entity local = LocalEntity();
+                        OW::SetKey((local.HeroID == OW::eHero::HERO_GENJI ||
+                                    local.HeroID == OW::eHero::HERO_KIRIKO) ? 0x2 : 0x1);
+                        OW::Config::shooted = true;
+                        continue;
+                    }
+
+                    if (RunPrimaryRageShot(aim, origin_sens)) continue;
+
+                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.smoothed_angle);
+                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox)) {
+                        SetSensitivityLocked(true, origin_sens);
+                        FirePrimaryNormal();
+                        SetSensitivityLocked(false, origin_sens);
+                        OW::Config::shooted = true;
+                        if (OW::Config::dontshot) OW::Config::shotcount++;
+                        break;
+                    }
+
+                    if (OW::Config::dontshot &&
+                        OW::Config::shotcount >= OW::Config::shotmanydont &&
+                        OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::missbox)) {
+                        OW::Config::shotcount = 0;
+                        const c_entity local = LocalEntity();
+                        OW::SetKey((local.HeroID == OW::eHero::HERO_GENJI ||
+                                    local.HeroID == OW::eHero::HERO_KIRIKO) ? 0x2 : 0x1);
+                        OW::Config::shooted = true;
+                        continue;
+                    }
+                }
+            }
+
+            Sleep(1);
+            RunAutoScaleFov();
+            if (ShouldYieldToSecondaryAim()) break;
+        }
+    }
+
+    inline void RunHanzoFlick(RuntimeState& state, float origin_sens) {
+        ArmDelayedShot(state);
+
+        while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) && !OW::Config::shooted) {
+            const Vector3 vec = OW::GetVector3(true);
+            if (IsZeroVector(vec)) break;
+
+            c_entity target{};
+            if (IsPrimaryTargetActionable(target)) {
+                AimData aim = BuildAimData(vec, true, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
+                PrimeDelayedShot(state);
+                ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
+
+                if (!IsZeroVector(aim.smoothed_angle)) {
+                    if (DelayedShotTimedOut(state)) {
+                        FireHanzo();
+                        OW::Config::shooted = true;
+                        continue;
+                    }
+
+                    if (RunHanzoRageShot(aim, origin_sens)) continue;
+                    if (!TargetDelayReady(&state, true, true)) continue;
+
+                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.smoothed_angle);
+                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox)) {
+                        SetSensitivityLocked(true, origin_sens);
+                        FireHanzo();
+                        Sleep(1);
+                        if (OW::Config::dontshot) OW::Config::shotcount++;
+                        SetSensitivityLocked(false, origin_sens);
+                        OW::Config::shooted = true;
+                    } else if (OW::Config::dontshot &&
+                               OW::Config::shotcount >= OW::Config::shotmanydont &&
+                               OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::missbox)) {
+                        OW::Config::shotcount = 0;
+                        FireHanzo();
+                        OW::Config::shooted = true;
+                        continue;
+                    }
+                }
+            }
+
+            Sleep(1);
+            RunAutoScaleFov();
+        }
+    }
+
+    inline void RunGenjiBlade() {
+        c_entity local = LocalEntity();
+        if (!OW::Config::GenjiBlade || !GetAsyncKeyState(0x51) ||
+            local.HeroID != OW::eHero::HERO_GENJI ||
+            local.ultimate != 100.f) {
+            return;
+        }
+
+        OW::Config::Qstarttime = GetTickCount();
+        OW::Config::Qtime = OW::Config::Qstarttime;
+        OW::Config::lastenemy = -1;
+        Sleep(1000);
+
+        int detecttoggle = 0;
+        int first = 1;
+        float speed = 0.f;
+        while (OW::Config::GenjiBlade && (OW::Config::Qtime - OW::Config::Qstarttime) <= 7000) {
+            local = LocalEntity();
+            speed = !local.skillcd1 ? OW::Config::Tracking_smooth : OW::Config::bladespeed;
+            OW::Config::Qtime = GetTickCount();
+
+            const Vector3 vec = OW::GetVector3forgenji();
+            if (!IsZeroVector(vec)) {
+                const float dist = CameraPosition().DistTo(vec);
+                if (dist > 20.f) continue;
+
+                AimData aim = BuildAimData(vec, false, speed / 10.f, 0.0f);
+                if (!IsZeroVector(aim.smoothed_angle)) {
+                    const float dist2 = CameraPosition().DistTo(vec);
+                    if ((!local.skillcd1 && dist2 < 20.f) || dist2 < 7.f) {
+                        SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170,
+                                          OW::Config::Rage ? aim.target_angle : aim.smoothed_angle);
+                    }
+                    if (!local.skillcd1 && OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 0.8f)) {
+                        if (detecttoggle && !first) {
+                            detecttoggle = 0;
+                            Sleep(50);
+                            continue;
+                        }
+                        OW::SetKeyHold(0x8, 70);
+                        first = 0;
+                    }
+                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f) && dist2 < 5.f)
+                        OW::SetKey(0x1);
+                    if (local.skillcd1 != 0 && !detecttoggle) detecttoggle = 1;
+                }
+            }
+            Sleep(1);
+            OW::Config::lastenemy = OW::Config::Targetenemyi;
+        }
+    }
+
+    inline void RunAutoMelee() {
+        if (!OW::Config::AutoMelee) return;
+
+        const Vector3 vec = OW::GetVector3(false);
+        c_entity target{};
+        if (!IsZeroVector(vec) && CurrentTarget(target, true) && target.Team) {
+            const float dist = CameraPosition().DistTo(vec);
+            if (OW::Config::health <= OW::Config::meleehealth &&
+                dist <= OW::Config::meleedistance &&
+                !(target.skill1act && target.HeroID == OW::eHero::HERO_VENTURE)) {
+                OW::SetKey(0x800);
+                Sleep(1);
+            }
+        }
+    }
+
+    inline void RunAutoRmb() {
+        if (!OW::Config::AutoRMB) return;
+
+        const Vector3 vec = OW::GetVector3(false);
+        c_entity target{};
+        if (!IsZeroVector(vec) && CurrentTarget(target, true) && target.Team) {
+            const float dist = CameraPosition().DistTo(vec);
+            if (OW::Config::health <= OW::Config::AutoRMBhealth &&
+                dist <= OW::Config::AutoRMBdistance &&
+                !(target.skill1act && target.HeroID == OW::eHero::HERO_VENTURE)) {
+                OW::SetKey(0x2);
+                Sleep(1);
+            }
+        }
+    }
+
+    inline void RunAutoShiftGenji() {
+        if (!OW::Config::AutoShiftGenji) return;
+
+        const Vector3 vec = OW::GetVector3(false);
+        c_entity target{};
+        if (IsZeroVector(vec) || !CurrentTarget(target, true)) return;
+        if (target.imort || target.barrprot) return;
+        if (target.HeroID == 0x16dd || target.HeroID == 0x16ee) return;
+
+        const c_entity local = LocalEntity();
+        if (local.skillcd1) return;
+
+        const float dist = CameraPosition().DistTo(vec);
+        AimData aim = BuildAimData(vec, false, OW::Config::Tracking_smooth / 10.f, 0.0f);
+        if (OW::Config::health <= 50.f && dist <= 15.f) {
+            if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f))
+                OW::SetKeyHold(0x8, 40);
+        } else if (OW::Config::health <= 80.f && dist >= 15.f && dist <= 17.f) {
+            if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f)) {
+                OW::SetKey(0x8);
+                Sleep(500);
+                OW::SetKey(0x800);
+            }
+        }
+    }
+
+    inline void RunAutoSkill() {
+        if (!OW::Config::AutoSkill) return;
+
+        const c_entity local = LocalEntity();
+        if (local.PlayerHealth > OW::Config::SkillHealth && OW::Config::skilled)
+            OW::Config::skilled = false;
+        else if (local.PlayerHealth < OW::Config::SkillHealth && OW::Config::skilled &&
+                 local.PlayerHealth < OW::Config::lasthealth &&
+                 local.HeroID != OW::eHero::HERO_DOOMFIST)
+            OW::Config::skilled = false;
+
+        if (local.PlayerHealth >= OW::Config::SkillHealth || OW::Config::skilled) return;
+
+        const auto hID = local.HeroID;
+        if (hID == OW::eHero::HERO_TRACER || hID == OW::eHero::HERO_SOMBRA ||
+            hID == OW::eHero::HERO_ROADHOG || hID == OW::eHero::HERO_TORBJORN ||
+            hID == OW::eHero::HERO_SOLDIER76 || hID == OW::eHero::HERO_VENTURE) {
+            OW::SetKey(0x10);
+            OW::Config::skilled = true;
+            Sleep(1);
+            OW::Config::lasthealth = local.PlayerHealth;
+        } else if (hID == OW::eHero::HERO_REAPER || hID == OW::eHero::HERO_MEI ||
+                   hID == OW::eHero::HERO_JUNKERQUEEN || hID == OW::eHero::HERO_MOIRA ||
+                   hID == OW::eHero::HERO_ZARYA) {
+            OW::SetKey(0x8);
+            OW::Config::skilled = true;
+            Sleep(1);
+            OW::Config::lasthealth = local.PlayerHealth;
+        } else if (hID == OW::eHero::HERO_WINSTON || hID == OW::eHero::HERO_ZENYATTA) {
+            OW::SetKey(0x20);
+            OW::Config::skilled = true;
+            Sleep(1);
+            OW::Config::lasthealth = local.PlayerHealth;
+        }
+    }
+
+    inline void RunAutoShootCooldown() {
+        const c_entity local = LocalEntity();
+        if (!OW::Config::AutoShoot || !OW::Config::shooted ||
+            (local.HeroID == OW::eHero::HERO_HANJO && !local.skill2act)) {
+            return;
+        }
+
+        const int rectime = GetTickCount();
+        if (OW::Config::lasttime == 0) OW::Config::lasttime = rectime;
+        else if (rectime - OW::Config::lasttime >= OW::Config::Shoottime) {
+            OW::Config::lasttime = 0;
+            OW::Config::shooted = false;
+        }
+
+        if (OW::Config::reloading) {
+            OW::Config::lasttime = 0;
+            OW::Config::shooted = false;
+        }
+    }
+
+    inline void ResetShootStateOnRelease() {
+        if (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key))) return;
+
+        OW::Config::shooted = false;
+        OW::Config::lasttime = 0;
+        if (OW::Config::reloading) {
+            OW::Config::lasttime = 0;
+            OW::Config::shooted = false;
+        }
+        OW::Config::Targetenemyi = -1;
+    }
+
+    inline void RunReaperReloadCancel() {
+        const c_entity local = LocalEntity();
+        if (local.HeroID == OW::eHero::HERO_REAPER && OW::Config::reloading) {
+            Sleep(300);
+            OW::SetKey(0x800);
+        }
+    }
+
+    inline void RunSecondAim() {
+        if (!OW::Config::secondaim) return;
+
+        while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2)) && !OW::Config::shooted2) {
+            const Vector3 vec = OW::GetVector3aim2(OW::Config::Prediction2);
+            c_entity target{};
+            if (!IsZeroVector(vec) && CurrentTarget(target, true) &&
+                !(target.skill2act && target.HeroID == OW::eHero::HERO_GENJI)) {
+                AimData aim{};
+                if (OW::Config::Tracking2)
+                    aim = BuildAimData(vec, false, OW::Config::Tracking_smooth2 / 10.f, 0.0f);
+                else if (OW::Config::Flick2)
+                    aim = BuildAimData(vec, true, OW::Config::Flick_smooth2 / 10.f, OW::Config::accvalue2);
+                else
+                    aim = BuildAimData(vec, false, 1.0f, 0.0f);
+
+                if (OW::Config::Rage) aim.smoothed_angle = aim.target_angle;
+                ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
+
+                if (!IsZeroVector(aim.smoothed_angle)) {
+                    RunCloseRangeActions(vec);
+                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.smoothed_angle);
+                    if (OW::Config::Flick2 &&
+                        OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox2)) {
+                        const int tk = OW::Config::togglekey;
+                        if (tk == 0)       OW::SetKey(0x1);
+                        else if (tk == 1)  OW::SetKey(0x2);
+                        else if (tk == 2)  OW::SetKey(0x8);
+                        else if (tk == 3)  OW::SetKey(0x10);
+                        else if (tk == 4)  OW::SetKey(0x20);
+                        Sleep(1);
+                        OW::Config::shooted2 = true;
+                    }
+                }
+
+                if (LocalEntity().PlayerHealth < OW::Config::SkillHealth) break;
+            }
+            Sleep(1);
+        }
+
+        if (OW::Config::shooted2 && !GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2)))
+            OW::Config::shooted2 = false;
+    }
+
+    inline void RunAimbotTick(RuntimeState& state, float& origin_sens) {
+        if (OW::Config::AntiAFK) {
+            OW::SetKey(0x57);
+            Sleep(1000);
+        }
+
+        if (!HasEntitySnapshot()) return;
+
+        MaintainSensitivity(origin_sens);
+
+        if (OW::Config::triggerbot) RunTriggerbot(false, origin_sens);
+        if (OW::Config::triggerbot2) RunTriggerbot(true, origin_sens);
+
+        if (OW::Config::Tracking) RunTracking(origin_sens);
+        else if (OW::Config::Flick) RunFlick(state, origin_sens);
+        else if (OW::Config::hanzo_flick) RunHanzoFlick(state, origin_sens);
+
+        RunGenjiBlade();
+        RunAutoScaleFov();
+        RunAutoMelee();
+        RunAutoRmb();
+        RunAutoShiftGenji();
+        RunAutoSkill();
+        RunAutoShootCooldown();
+        ResetShootStateOnRelease();
+        RunReaperReloadCancel();
+        RunSecondAim();
+    }
+}
+
+inline void aimbot_thread() {
+    __try {
+        AimbotDetail::RuntimeState state{};
         static float origin_sens = 0.f;
 
         while (true) {
-            // Anti AFK
-            if (OW::Config::AntiAFK) {
-                OW::SetKey(0x57);
-                Sleep(1000);
-            }
-
-            if (OW::entities.size() > 0) {
-                // Sensitivity management
-                const uintptr_t sensitive_ptr = OW::GetSenstivePTR();
-                if (sensitive_ptr) {
-                    const float current_sens = SDK->RPM<float>(sensitive_ptr);
-                    if (current_sens)
-                        origin_sens = current_sens;
-                    else if (origin_sens)
-                        OW::SetSenstiveValue(origin_sens);
-                }
-
-                // ---- Triggerbot ----
-                if (OW::Config::triggerbot) {
-                    auto vec = OW::GetVector3(OW::Config::Prediction);
-                    if (vec != Vector3(0, 0, 0) &&
-                        !(OW::entities[OW::Config::Targetenemyi].skill2act &&
-                          OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_GENJI &&
-                          OW::entities[OW::Config::Targetenemyi].GetTeam() != OW::local_entity.GetTeam())) {
-                        auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                        auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                        auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                        auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-                        if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox)) {
-                            if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
-                            OW::SetKey(0x1);
-                            Sleep(2);
-                            if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
-                        }
-                    }
-                }
-
-                // ---- Triggerbot2 ----
-                if (OW::Config::triggerbot2) {
-                    auto vec = OW::GetVector3aim2(OW::Config::Prediction2);
-                    if (vec != Vector3(0, 0, 0) &&
-                        !(OW::entities[OW::Config::Targetenemyi].skill2act &&
-                          OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_GENJI &&
-                          OW::entities[OW::Config::Targetenemyi].GetTeam() != OW::local_entity.GetTeam())) {
-                        auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                        auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                        auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                        auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-                        if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox2)) {
-                            if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
-                            OW::SetKey(0x1);
-                            Sleep(2);
-                            if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
-                        }
-                    }
-                }
-
-                // ---- Tracking ----
-                if (OW::Config::Tracking) {
-                    while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) && !OW::Config::reloading) {
-                        auto vec = OW::GetVector3(OW::Config::Prediction);
-                        if (vec != Vector3(0, 0, 0) &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill2act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_GENJI) &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill1act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_VENTURE) &&
-                            ((!OW::entities[OW::Config::Targetenemyi].imort && !OW::entities[OW::Config::Targetenemyi].barrprot) || OW::Config::switch_team)) {
-                            auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                            auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                            auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                            auto Target = OW::SmoothLinear(local_angle, vec_calc_target, OW::Config::Tracking_smooth / 10.f);
-                            auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-
-                            if (OW::Config::aiaim) {
-                                Target.X += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 500.f : -(float)(rand()) / RAND_MAX / 500.f;
-                                Target.Y += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 500.f : -(float)(rand()) / RAND_MAX / 500.f;
-                                Target.Z += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 500.f : -(float)(rand()) / RAND_MAX / 500.f;
-                                if (OW::Config::minFov1 > 500.f) OW::Config::minFov1 = 500.f;
-                                if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
-                                if (OW::Config::minFov2 > 500.f) OW::Config::minFov1 = 500.f;
-                                if (OW::Config::Fov2 > 500.f) OW::Config::Fov = 500.f;
-                                if (OW::Config::fov360) OW::Config::fov360 = false;
-                            }
-
-                            if (Target != Vector3(0, 0, 0)) {
-                                if (OW::Config::targetdelay) {
-                                    if (OW::Config::lastenemy != OW::Config::Targetenemyi) OW::Config::doingdelay = 1;
-                                    if (OW::Config::doingdelay == 1) {
-                                        OW::Config::lastenemy = OW::Config::Targetenemyi;
-                                        if (OW::Config::timebeforedelay == 0) {
-                                            OW::Config::timebeforedelay = GetTickCount();
-                                            continue;
-                                        }
-                                        if (GetTickCount() - OW::Config::timebeforedelay < (DWORD)OW::Config::targetdelaytime) continue;
-                                        OW::Config::timebeforedelay = 0;
-                                        OW::Config::doingdelay = 0;
-                                    }
-                                }
-                                if (OW::Config::Rage)
-                                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                else
-                                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, Target);
-
-                                float dist = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z).DistTo(vec);
-                                if (OW::Config::health <= OW::Config::meleehealth && dist <= OW::Config::meleedistance && OW::Config::AutoMelee)
-                                    OW::SetKey(0x800);
-                                if (OW::Config::health <= OW::Config::AutoRMBhealth && dist <= OW::Config::AutoRMBdistance && OW::Config::AutoRMB)
-                                    OW::SetKey(0x2);
-                            }
-                            if (OW::local_entity.PlayerHealth < OW::Config::SkillHealth) break;
-                        }
-                        Sleep(1);
-
-                        // Auto FOV scaling
-                        if (OW::Config::autoscalefov) {
-                            auto fvec = OW::GetVector3forfov();
-                            if (fvec != Vector3(0, 0, 0)) {
-                                Vector2 high, low;
-                                if (OW::viewMatrix.WorldToScreen(OW::entities[OW::Config::Targetenemyifov].head_pos, &high, Vector2(OW::WX, OW::WY)) &&
-                                    OW::viewMatrix.WorldToScreen(OW::entities[OW::Config::Targetenemyifov].chest_pos, &low, Vector2(OW::WX, OW::WY))) {
-                                    OW::Config::Fov = -(high.Y - low.Y) * 4.f;
-                                    if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
-                                    else if (OW::Config::Fov < OW::Config::minFov1) OW::Config::Fov = OW::Config::minFov1;
-                                    OW::Config::Fov2 = -(high.Y - low.Y) * 4.f;
-                                    if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
-                                    else if (OW::Config::Fov2 < OW::Config::minFov2) OW::Config::Fov2 = OW::Config::minFov2;
-                                } else {
-                                    OW::Config::Fov  = OW::Config::minFov1;
-                                    OW::Config::Fov2 = OW::Config::minFov2;
-                                }
-                            } else {
-                                OW::Config::Fov  = OW::Config::minFov1;
-                                OW::Config::Fov2 = OW::Config::minFov2;
-                            }
-                        }
-                        if (OW::Config::highPriority && GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2))) break;
-                    }
-                }
-
-                // ---- Flick ----
-                else if (OW::Config::Flick) {
-                    if (OW::Config::hitboxdelayshoot) {
-                        if (OW::Config::shooted || !GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key))) {
-                            dodelay = 1;
-                            hitbotdelaytime = 0;
-                        }
-                    }
-                    while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) && !OW::Config::shooted && !OW::Config::reloading) {
-                        if (OW::local_entity.HeroID == OW::eHero::HERO_WIDOWMAKER && !GetAsyncKeyState(0x2)) continue;
-
-                        auto vec = OW::GetVector3(OW::Config::Prediction);
-                        if (vec == Vector3(0, 0, 0)) break;
-                        if (vec != Vector3(0, 0, 0) &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill2act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_GENJI) &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill1act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_VENTURE) &&
-                            ((!OW::entities[OW::Config::Targetenemyi].imort && !OW::entities[OW::Config::Targetenemyi].barrprot) || OW::Config::switch_team)) {
-                            // Target delay
-                            if (OW::Config::targetdelay) {
-                                if (OW::Config::lastenemy != OW::Config::Targetenemyi) OW::Config::doingdelay = 1;
-                                if (OW::Config::doingdelay == 1) {
-                                    OW::Config::lastenemy = OW::Config::Targetenemyi;
-                                    if (OW::Config::timebeforedelay == 0) {
-                                        OW::Config::timebeforedelay = GetTickCount();
-                                        continue;
-                                    }
-                                    if (GetTickCount() - OW::Config::timebeforedelay < (DWORD)OW::Config::targetdelaytime) continue;
-                                    OW::Config::timebeforedelay = 0;
-                                    OW::Config::doingdelay = 0;
-                                    hitbotdelaytime = GetTickCount();
-                                }
-                            } else if (OW::Config::doingdelay) OW::Config::doingdelay = 0;
-
-                            if (dodelay && !OW::Config::doingdelay) {
-                                hitbotdelaytime = GetTickCount();
-                                dodelay = 0;
-                            }
-
-                            auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                            auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                            auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                            auto Target = OW::SmoothAccelerate(local_angle, vec_calc_target, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
-                            auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-
-                            if (OW::Config::aiaim) {
-                                Target.X += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                                Target.Y += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                                Target.Z += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                                if (OW::Config::minFov1 > 500.f) OW::Config::minFov1 = 500.f;
-                                if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
-                                if (OW::Config::fov360) OW::Config::fov360 = false;
-                            }
-
-                            if (Target != Vector3(0, 0, 0)) {
-                                // Timeout shoot
-                                if (OW::Config::hitboxdelayshoot && hitbotdelaytime != 0) {
-                                    afterdelaytime = GetTickCount();
-                                    if (afterdelaytime - hitbotdelaytime > OW::Config::hiboxdelaytime && !OW::Config::doingdelay) {
-                                        if (OW::local_entity.HeroID == OW::eHero::HERO_GENJI || OW::local_entity.HeroID == OW::eHero::HERO_KIRIKO)
-                                            OW::SetKey(0x2);
-                                        else
-                                            OW::SetKey(0x1);
-                                        OW::Config::shooted = true;
-                                        continue;
-                                    }
-                                }
-
-                                // Rage
-                                if (OW::Config::Rage) {
-                                    if (OW::Config::fakesilent) {
-                                        Vector3 orangle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                                        SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
-                                        OW::SetKey(0x1);
-                                        Sleep(25);
-                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
-                                        OW::Config::shooted = true;
-                                        SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, orangle);
-                                        continue;
-                                    } else {
-                                        SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
-                                        OW::SetKey(0x1);
-                                        Sleep(1);
-                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
-                                        OW::Config::shooted = true;
-                                        continue;
-                                    }
-                                }
-
-                                // Normal flick
-                                SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, Target);
-                                if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox)) {
-                                    if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
-                                    if (OW::local_entity.HeroID == OW::eHero::HERO_GENJI || OW::local_entity.HeroID == OW::eHero::HERO_KIRIKO) {
-                                        OW::SetKey(0x2);
-                                        if (OW::Config::dontshot) OW::Config::shotcount++;
-                                    } else {
-                                        if ((OW::local_entity.HeroID == OW::eHero::HERO_ANA || OW::local_entity.HeroID == OW::eHero::HERO_WIDOWMAKER || OW::local_entity.HeroID == OW::eHero::HERO_ASHE) && GetAsyncKeyState(0x2))
-                                            OW::SetKeyscopeHold(0x1, 30);
-                                        else
-                                            OW::SetKey(0x1);
-                                    }
-                                    if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
-                                    OW::Config::shooted = true;
-                                    if (OW::Config::dontshot) OW::Config::shotcount++;
-                                    break;
-                                } else if (OW::Config::dontshot && OW::Config::shotcount >= OW::Config::shotmanydont) {
-                                    if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::missbox)) {
-                                        OW::Config::shotcount = 0;
-                                        if (OW::local_entity.HeroID == OW::eHero::HERO_GENJI || OW::local_entity.HeroID == OW::eHero::HERO_KIRIKO)
-                                            OW::SetKey(0x2);
-                                        else
-                                            OW::SetKey(0x1);
-                                        OW::Config::shooted = true;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        Sleep(1);
-
-                        if (OW::Config::autoscalefov) {
-                            auto fvec = OW::GetVector3forfov();
-                            if (fvec != Vector3(0, 0, 0)) {
-                                Vector2 high, low;
-                                if (OW::viewMatrix.WorldToScreen(OW::entities[OW::Config::Targetenemyifov].head_pos, &high, Vector2(OW::WX, OW::WY)) &&
-                                    OW::viewMatrix.WorldToScreen(OW::entities[OW::Config::Targetenemyifov].chest_pos, &low, Vector2(OW::WX, OW::WY))) {
-                                    OW::Config::Fov = -(high.Y - low.Y) * 4.f;
-                                    if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
-                                    else if (OW::Config::Fov < OW::Config::minFov1) OW::Config::Fov = OW::Config::minFov1;
-                                    OW::Config::Fov2 = -(high.Y - low.Y) * 4.f;
-                                    if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
-                                    else if (OW::Config::Fov2 < OW::Config::minFov2) OW::Config::Fov2 = OW::Config::minFov2;
-                                } else {
-                                    OW::Config::Fov  = OW::Config::minFov1;
-                                    OW::Config::Fov2 = OW::Config::minFov2;
-                                }
-                            } else {
-                                OW::Config::Fov  = OW::Config::minFov1;
-                                OW::Config::Fov2 = OW::Config::minFov2;
-                            }
-                        }
-                        if (OW::Config::highPriority && GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2))) break;
-                    }
-                }
-
-                // ---- Hanzo flick ----
-                else if (OW::Config::hanzo_flick) {
-                    if (OW::Config::hitboxdelayshoot) {
-                        if (OW::Config::shooted || !GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key))) {
-                            dodelay = 1;
-                            hitbotdelaytime = 0;
-                        }
-                    }
-                    while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) && !OW::Config::shooted) {
-                        auto vec = OW::GetVector3(true);
-                        if (vec == Vector3(0, 0, 0)) break;
-                        if (vec != Vector3(0, 0, 0) &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill2act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_GENJI) &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill1act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_VENTURE) &&
-                            ((!OW::entities[OW::Config::Targetenemyi].imort && !OW::entities[OW::Config::Targetenemyi].barrprot) || OW::Config::switch_team)) {
-                            auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                            auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                            auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                            auto Target = OW::SmoothAccelerate(local_angle, vec_calc_target, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
-                            auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-
-                            if (dodelay && !OW::Config::doingdelay) {
-                                hitbotdelaytime = GetTickCount();
-                                dodelay = 0;
-                            }
-
-                            if (OW::Config::aiaim) {
-                                Target.X += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                                Target.Y += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                                Target.Z += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                            }
-
-                            if (Target != Vector3(0, 0, 0)) {
-                                if (OW::Config::hitboxdelayshoot && hitbotdelaytime != 0) {
-                                    afterdelaytime = GetTickCount();
-                                    if (afterdelaytime - hitbotdelaytime > OW::Config::hiboxdelaytime && !OW::Config::doingdelay) {
-                                        if (OW::local_entity.skill2act) OW::SetKey(0x1);
-                                        else OW::SetKeyHold(0x1000, 100);
-                                        OW::Config::shooted = true;
-                                        continue;
-                                    }
-                                }
-
-                                if (OW::Config::Rage) {
-                                    if (OW::Config::fakesilent) {
-                                        Vector3 orangle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                                        SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
-                                        if (OW::local_entity.skill2act) OW::SetKey(0x1);
-                                        else OW::SetKeyHold(0x1000, 100);
-                                        Sleep(25);
-                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
-                                        OW::Config::shooted = true;
-                                        SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, orangle);
-                                        continue;
-                                    } else {
-                                        SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                        if (OW::local_entity.skill2act) OW::SetKey(0x1);
-                                        else OW::SetKeyHold(0x1000, 100);
-                                        OW::Config::shooted = true;
-                                        continue;
-                                    }
-                                }
-
-                                if (OW::Config::targetdelay) {
-                                    if (OW::Config::lastenemy != OW::Config::Targetenemyi) OW::Config::doingdelay = 1;
-                                    if (OW::Config::doingdelay == 1) {
-                                        OW::Config::lastenemy = OW::Config::Targetenemyi;
-                                        if (OW::Config::timebeforedelay == 0) {
-                                            OW::Config::timebeforedelay = GetTickCount();
-                                            continue;
-                                        }
-                                        if (GetTickCount() - OW::Config::timebeforedelay < (DWORD)OW::Config::targetdelaytime) continue;
-                                        OW::Config::timebeforedelay = 0;
-                                        OW::Config::doingdelay = 0;
-                                        hitbotdelaytime = GetTickCount();
-                                    }
-                                } else if (OW::Config::doingdelay) OW::Config::doingdelay = 0;
-
-                                SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, Target);
-                                if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox)) {
-                                    if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
-                                    if (OW::local_entity.skill2act) OW::SetKey(0x1);
-                                    else OW::SetKeyHold(0x1000, 100);
-                                    Sleep(1);
-                                    if (OW::Config::dontshot) OW::Config::shotcount++;
-                                    if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
-                                    OW::Config::shooted = true;
-                                } else if (OW::Config::dontshot && OW::Config::shotcount >= OW::Config::shotmanydont) {
-                                    if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::missbox)) {
-                                        OW::Config::shotcount = 0;
-                                        if (OW::local_entity.skill2act) OW::SetKey(0x1);
-                                        else OW::SetKeyHold(0x1000, 100);
-                                        OW::Config::shooted = true;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        Sleep(1);
-
-                        if (OW::Config::autoscalefov) {
-                            auto fvec = OW::GetVector3forfov();
-                            if (fvec != Vector3(0, 0, 0)) {
-                                Vector2 high, low;
-                                if (OW::viewMatrix.WorldToScreen(OW::entities[OW::Config::Targetenemyifov].head_pos, &high, Vector2(OW::WX, OW::WY)) &&
-                                    OW::viewMatrix.WorldToScreen(OW::entities[OW::Config::Targetenemyifov].chest_pos, &low, Vector2(OW::WX, OW::WY))) {
-                                    OW::Config::Fov = -(high.Y - low.Y) * 4.f;
-                                    if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
-                                    else if (OW::Config::Fov < OW::Config::minFov1) OW::Config::Fov = OW::Config::minFov1;
-                                    OW::Config::Fov2 = -(high.Y - low.Y) * 4.f;
-                                    if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
-                                    else if (OW::Config::Fov2 < OW::Config::minFov2) OW::Config::Fov2 = OW::Config::minFov2;
-                                } else {
-                                    OW::Config::Fov  = OW::Config::minFov1;
-                                    OW::Config::Fov2 = OW::Config::minFov2;
-                                }
-                            } else {
-                                OW::Config::Fov  = OW::Config::minFov1;
-                                OW::Config::Fov2 = OW::Config::minFov2;
-                            }
-                        }
-                    }
-                }
-
-                // ---- Genji Blade ----
-                if (OW::Config::GenjiBlade && GetAsyncKeyState(0x51) &&
-                    OW::local_entity.HeroID == OW::eHero::HERO_GENJI &&
-                    OW::local_entity.ultimate == 100.f) {
-                    OW::Config::Qstarttime = GetTickCount();
-                    OW::Config::Qtime = OW::Config::Qstarttime;
-                    OW::Config::lastenemy = -1;
-                    Sleep(1000);
-                    int detecttoggle = 0;
-                    int first = 1;
-                    float speed = 0.f;
-                    while (OW::Config::GenjiBlade && (OW::Config::Qtime - OW::Config::Qstarttime) <= 7000) {
-                        if (!OW::local_entity.skillcd1) speed = OW::Config::Tracking_smooth;
-                        else speed = OW::Config::bladespeed;
-                        OW::Config::Qtime = GetTickCount();
-                        auto vec = OW::GetVector3forgenji();
-                        if (vec != Vector3(0, 0, 0)) {
-                            float dist = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z).DistTo(vec);
-                            if (dist > 20.f) continue;
-                            auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                            auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                            auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                            auto Target = OW::SmoothLinear(local_angle, vec_calc_target, speed / 10.f);
-                            auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-                            if (Target != Vector3(0, 0, 0)) {
-                                float dist2 = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z).DistTo(vec);
-                                if ((!OW::local_entity.skillcd1 && dist2 < 20.f) || dist2 < 7.f) {
-                                    if (OW::Config::Rage) SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                    else SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, Target);
-                                }
-                                if (!OW::local_entity.skillcd1 && OW::in_range(local_angle, vec_calc_target, local_loc, vec, 0.8f)) {
-                                    if (detecttoggle && !first) {
-                                        detecttoggle = 0;
-                                        Sleep(50);
-                                        continue;
-                                    }
-                                    OW::SetKeyHold(0x8, 70);
-                                    first = 0;
-                                }
-                                if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, 1.f) && dist2 < 5.f)
-                                    OW::SetKey(0x1);
-                                if (OW::local_entity.skillcd1 != 0 && !detecttoggle) detecttoggle = 1;
-                            }
-                        }
-                        Sleep(1);
-                        OW::Config::lastenemy = OW::Config::Targetenemyi;
-                    }
-                }
-
-                // ---- Auto FOV (outside aiming modes) ----
-                if (OW::Config::autoscalefov) {
-                    auto fvec = OW::GetVector3forfov();
-                    if (fvec != Vector3(0, 0, 0)) {
-                        Vector2 high, low;
-                        if (OW::viewMatrix.WorldToScreen(OW::entities[OW::Config::Targetenemyifov].head_pos, &high, Vector2(OW::WX, OW::WY)) &&
-                            OW::viewMatrix.WorldToScreen(OW::entities[OW::Config::Targetenemyifov].chest_pos, &low, Vector2(OW::WX, OW::WY))) {
-                            OW::Config::Fov = -(high.Y - low.Y) * 4.f;
-                            if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
-                            else if (OW::Config::Fov < OW::Config::minFov1) OW::Config::Fov = OW::Config::minFov1;
-                            OW::Config::Fov2 = -(high.Y - low.Y) * 4.f;
-                            if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
-                            else if (OW::Config::Fov2 < OW::Config::minFov2) OW::Config::Fov2 = OW::Config::minFov2;
-                        } else {
-                            OW::Config::Fov  = OW::Config::minFov1;
-                            OW::Config::Fov2 = OW::Config::minFov2;
-                        }
-                    } else {
-                        OW::Config::Fov  = OW::Config::minFov1;
-                        OW::Config::Fov2 = OW::Config::minFov2;
-                    }
-                }
-
-                // ---- Auto Melee ----
-                if (OW::Config::AutoMelee) {
-                    auto vec = OW::GetVector3(false);
-                    if (vec != Vector3(0, 0, 0) && OW::entities[OW::Config::Targetenemyi].Team) {
-                        float dist = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z).DistTo(vec);
-                        if (OW::Config::health <= OW::Config::meleehealth && dist <= OW::Config::meleedistance &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill1act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_VENTURE)) {
-                            OW::SetKey(0x800);
-                            Sleep(1);
-                        }
-                    }
-                }
-
-                // ---- Auto RMB ----
-                if (OW::Config::AutoRMB) {
-                    auto vec = OW::GetVector3(false);
-                    if (vec != Vector3(0, 0, 0) && OW::entities[OW::Config::Targetenemyi].Team) {
-                        float dist = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z).DistTo(vec);
-                        if (OW::Config::health <= OW::Config::AutoRMBhealth && dist <= OW::Config::AutoRMBdistance &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill1act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_VENTURE)) {
-                            OW::SetKey(0x2);
-                            Sleep(1);
-                        }
-                    }
-                }
-
-                // ---- Genji auto dash ----
-                if (OW::Config::AutoShiftGenji) {
-                    auto vec = OW::GetVector3(false);
-                    if (vec != Vector3(0, 0, 0)) {
-                        float dist = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z).DistTo(vec);
-                        if (!OW::entities[OW::Config::Targetenemyi].imort && !OW::entities[OW::Config::Targetenemyi].barrprot) {
-                            if (!OW::local_entity.skillcd1 && OW::Config::health <= 50.f && dist <= 15.f &&
-                                OW::entities[OW::Config::Targetenemyi].HeroID != 0x16dd && OW::entities[OW::Config::Targetenemyi].HeroID != 0x16ee) {
-                                auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                                auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                                auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                                auto Target = OW::SmoothLinear(local_angle, vec_calc_target, OW::Config::Tracking_smooth / 10.f);
-                                auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-                                if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, 1.f))
-                                    OW::SetKeyHold(0x8, 40);
-                            } else if (!OW::local_entity.skillcd1 && OW::Config::health <= 80.f && dist >= 15.f && dist <= 17.f &&
-                                       OW::entities[OW::Config::Targetenemyi].HeroID != 0x16dd && OW::entities[OW::Config::Targetenemyi].HeroID != 0x16ee) {
-                                auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                                auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                                auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                                auto Target = OW::SmoothLinear(local_angle, vec_calc_target, OW::Config::Tracking_smooth / 10.f);
-                                auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-                                if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, 1.f)) {
-                                    OW::SetKey(0x8);
-                                    Sleep(500);
-                                    OW::SetKey(0x800);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ---- Auto heal skill ----
-                if (OW::Config::AutoSkill) {
-                    if (OW::local_entity.PlayerHealth > OW::Config::SkillHealth && OW::Config::skilled)
-                        OW::Config::skilled = false;
-                    else if (OW::local_entity.PlayerHealth < OW::Config::SkillHealth && OW::Config::skilled &&
-                             OW::local_entity.PlayerHealth < OW::Config::lasthealth &&
-                             OW::local_entity.HeroID != OW::eHero::HERO_DOOMFIST)
-                        OW::Config::skilled = false;
-
-                    if (OW::local_entity.PlayerHealth < OW::Config::SkillHealth && !OW::Config::skilled) {
-                        auto hID = OW::local_entity.HeroID;
-                        if (hID == OW::eHero::HERO_TRACER || hID == OW::eHero::HERO_SOMBRA ||
-                            hID == OW::eHero::HERO_ROADHOG || hID == OW::eHero::HERO_TORBJORN ||
-                            hID == OW::eHero::HERO_SOLDIER76 || hID == OW::eHero::HERO_VENTURE) {
-                            OW::SetKey(0x10); OW::Config::skilled = true;
-                            Sleep(1); OW::Config::lasthealth = OW::local_entity.PlayerHealth;
-                        } else if (hID == OW::eHero::HERO_REAPER || hID == OW::eHero::HERO_MEI ||
-                                   hID == OW::eHero::HERO_JUNKERQUEEN || hID == OW::eHero::HERO_MOIRA ||
-                                   hID == OW::eHero::HERO_ZARYA) {
-                            OW::SetKey(0x8); OW::Config::skilled = true;
-                            Sleep(1); OW::Config::lasthealth = OW::local_entity.PlayerHealth;
-                        } else if (hID == OW::eHero::HERO_WINSTON || hID == OW::eHero::HERO_ZENYATTA) {
-                            OW::SetKey(0x20); OW::Config::skilled = true;
-                            Sleep(1); OW::Config::lasthealth = OW::local_entity.PlayerHealth;
-                        }
-                    }
-                }
-
-                // ---- Auto shoot cooldown ----
-                if (OW::Config::AutoShoot && OW::Config::shooted &&
-                    !(OW::local_entity.HeroID == OW::eHero::HERO_HANJO && !OW::local_entity.skill2act)) {
-                    int rectime = GetTickCount();
-                    if (OW::Config::lasttime == 0) OW::Config::lasttime = rectime;
-                    else {
-                        if (rectime - OW::Config::lasttime >= OW::Config::Shoottime) {
-                            OW::Config::lasttime = 0;
-                            OW::Config::shooted = false;
-                        }
-                    }
-                    if (OW::Config::reloading) {
-                        OW::Config::lasttime = 0;
-                        OW::Config::shooted = false;
-                    }
-                }
-
-                // ---- Reset shoot state when key released ----
-                if (!GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key))) {
-                    OW::Config::shooted = false;
-                    OW::Config::lasttime = 0;
-                    if (OW::Config::reloading) {
-                        OW::Config::lasttime = 0;
-                        OW::Config::shooted = false;
-                    }
-                    OW::Config::Targetenemyi = -1;
-                }
-
-                // Reaper reload melee cancel
-                if (OW::local_entity.HeroID == OW::eHero::HERO_REAPER && OW::Config::reloading) {
-                    Sleep(300);
-                    OW::SetKey(0x800);
-                }
-
-                // ---- Secondary aim ----
-                if (OW::Config::secondaim) {
-                    while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2)) && !OW::Config::shooted2) {
-                        auto vec = OW::GetVector3aim2(OW::Config::Prediction2);
-                        if (vec != Vector3(0, 0, 0) &&
-                            !(OW::entities[OW::Config::Targetenemyi].skill2act && OW::entities[OW::Config::Targetenemyi].HeroID == OW::eHero::HERO_GENJI)) {
-                            auto local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-                            auto calc_target = OW::CalcAngle(XMFLOAT3(vec.X, vec.Y, vec.Z), OW::viewMatrix_xor.get_location());
-                            auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
-                            Vector3 Target;
-                            if (OW::Config::Tracking2) Target = OW::SmoothLinear(local_angle, vec_calc_target, OW::Config::Tracking_smooth2 / 10.f);
-                            else if (OW::Config::Flick2) Target = OW::SmoothAccelerate(local_angle, vec_calc_target, OW::Config::Flick_smooth2 / 10.f, OW::Config::accvalue2);
-                            if (OW::Config::Rage) Target = vec_calc_target;
-                            auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
-
-                            if (OW::Config::aiaim) {
-                                Target.X += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                                Target.Y += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                                Target.Z += (rand() % 10 > 5) ? (float)(rand()) / RAND_MAX / 300.f : -(float)(rand()) / RAND_MAX / 300.f;
-                            }
-
-                            if (Target != Vector3(0, 0, 0)) {
-                                float dist = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z).DistTo(vec);
-                                if (OW::Config::health <= OW::Config::meleehealth && dist <= OW::Config::meleedistance && OW::Config::AutoMelee)
-                                    OW::SetKey(0x800);
-                                if (OW::Config::health <= OW::Config::AutoRMBhealth && dist <= OW::Config::AutoRMBdistance && OW::Config::AutoRMB)
-                                    OW::SetKey(0x2);
-                                SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, Target);
-                                if (OW::Config::Flick2 && OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox2)) {
-                                    int tk = OW::Config::togglekey;
-                                    if (tk == 0)       OW::SetKey(0x1);
-                                    else if (tk == 1)  OW::SetKey(0x2);
-                                    else if (tk == 2)  OW::SetKey(0x8);
-                                    else if (tk == 3)  OW::SetKey(0x10);
-                                    else if (tk == 4)  OW::SetKey(0x20);
-                                    Sleep(1);
-                                    OW::Config::shooted2 = true;
-                                }
-                            }
-                            if (OW::local_entity.PlayerHealth < OW::Config::SkillHealth) break;
-                        }
-                        Sleep(1);
-                    }
-                    if (OW::Config::shooted2 && !GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2)))
-                        OW::Config::shooted2 = false;
-                }
-            }
+            AimbotDetail::RunAimbotTick(state, origin_sens);
             Sleep(2);
         }
     } __except (1) {}
@@ -1560,15 +1602,17 @@ inline void configsavenloadthread() {
 
 inline void looprpmthread() {
     while (1) {
-        if (OW::entities.size() > 0) {
-            if (OW::local_entity.AngleBase &&
+        auto entity_snapshot = OW::TargetingDetail::SnapshotEntities();
+        auto local_snapshot = OW::TargetingDetail::SnapshotLocalEntity();
+        if (!entity_snapshot.empty()) {
+            if (local_snapshot.AngleBase &&
                 (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) ||
                  GetAsyncKeyState(OW::Config::aim_key2) ||
                  GetAsyncKeyState(0x01) || GetAsyncKeyState(0x02))) {
                 if (OW::Config::horizonreco)
-                    SDK->WPM<float>(OW::local_entity.AngleBase + 0x1768, 0.f);
+                    SDK->WPM<float>(local_snapshot.AngleBase + 0x1768, 0.f);
                 if (OW::Config::norecoil)
-                    SDK->WPM<float>(OW::local_entity.AngleBase + 0x1764, OW::Config::recoilnum);
+                    SDK->WPM<float>(local_snapshot.AngleBase + 0x1764, OW::Config::recoilnum);
             }
             if (OW::Config::enablechangefov)
                 SDK->WPM<float>(SDK->dwGameBase + OW::offset::changefov, OW::Config::CHANGEFOV);
