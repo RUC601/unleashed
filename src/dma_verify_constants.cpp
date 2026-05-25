@@ -15,17 +15,22 @@
 #include "leechcore.h"
 #include "vmmdll.h"
 
+#include "Game/Offsets.hpp"
+
 static VMM_HANDLE g_vmm = nullptr;
 static DWORD g_pid = 0;
 static uint64_t g_base = 0;
 static uint64_t g_image_size = 0;
 static PVMMDLL_MAP_VAD g_vad_map = nullptr;
 
-static constexpr uint64_t kRvaKeySource = 0x3A86E30ull;
-static constexpr uint64_t kKeyMaterialOffset = 0x10Cull;
-static constexpr uint64_t kRvaKeyByte = 0x3772769ull;
-static constexpr uint64_t kRvaPairArray = 0x39298C8ull;
-static constexpr uint64_t kRvaPointerG = 0x38D0220ull;
+static constexpr uint64_t kRvaKeySource = OW::offset::ComponentXorQword_RVA;
+static constexpr uint64_t kKeyMaterialOffset = OW::offset::ComponentXorQword_Off;
+static constexpr uint64_t kRvaKeyByte = OW::offset::ComponentXorByte_RVA;
+static constexpr uint64_t kRvaPairArray = OW::offset::Address_entity_base;
+static constexpr uint64_t kRvaPointerG = OW::offset::Address_viewmatrix_base;
+static constexpr uint64_t kRvaVisibilityGlobalKeyPtr = OW::offset::VisibilityGlobalKeyPtr_RVA;
+static constexpr uint64_t kVisibilityQwordOffset = OW::offset::VisibilityQwordOffset;
+static constexpr uint64_t kVisibilityQwordMixOffset = OW::offset::Visibility_QwordMixOff;
 
 static constexpr ULONG64 kReadFlags =
     VMMDLL_FLAG_NOCACHE |
@@ -185,12 +190,12 @@ uint64_t Ror64(uint64_t value, unsigned bits)
 
 uint64_t TransformComponentValue(uint64_t value, uint64_t key_material, uint8_t key_byte)
 {
-    value += 0x4C8675CDE55BA1B2ull;
+    value += OW::offset::Component_Add1;
     value ^= key_material;
-    value += 0x7BE57670994040F6ull;
+    value += OW::offset::Component_Add2;
     value ^= static_cast<uint64_t>(key_byte);
-    value ^= 0x3864150DB528414Cull;
-    value ^= 0xA4764E53CD34159Bull;
+    value ^= OW::offset::Component_Xor1;
+    value ^= OW::offset::Component_Xor2;
     value = Rol64(value, 0x2A);
     value = Ror64(value, 0x2D);
     return value;
@@ -293,6 +298,27 @@ int main(int argc, char** argv)
     const bool key_byte_read_ok = ReadExact(key_byte_address, key_byte);
     const bool key_byte_ok = key_byte_read_ok && key_byte != 0;
     PrintRead8("key byte", key_byte_address, key_byte_ok, key_byte);
+
+    uint64_t visibility_mix = 0;
+    const uint64_t visibility_mix_address = p1 + kVisibilityQwordMixOffset;
+    const bool visibility_mix_ok = p1_ok && ReadExact(visibility_mix_address, visibility_mix);
+    PrintRead64("visibility mix", visibility_mix_address, visibility_mix_ok, visibility_mix);
+
+    const uint64_t visibility_key_slot = g_base + kRvaVisibilityGlobalKeyPtr;
+    uint64_t visibility_key_ptr = 0;
+    const bool visibility_key_ptr_read_ok = ReadExact(visibility_key_slot, visibility_key_ptr);
+    const bool visibility_key_ptr_ok = PrintPointer(
+        "visibility key ptr",
+        visibility_key_slot,
+        visibility_key_ptr_read_ok,
+        visibility_key_ptr,
+        static_cast<size_t>(kVisibilityQwordOffset + sizeof(uint64_t)));
+
+    uint64_t visibility_key1 = 0;
+    const uint64_t visibility_key1_address = visibility_key_ptr + kVisibilityQwordOffset;
+    const bool visibility_key1_ok =
+        visibility_key_ptr_ok && ReadExact(visibility_key1_address, visibility_key1);
+    PrintRead64("visibility key1", visibility_key1_address, visibility_key1_ok, visibility_key1);
 
     const uint64_t pair_array_slot = g_base + kRvaPairArray;
     uint64_t pair_array = 0;

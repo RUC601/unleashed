@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <type_traits>
 #include <emmintrin.h>
 
 // Fallback for modern Windows SDK where HIDWORD/LODWORD are removed
@@ -239,6 +240,32 @@ namespace OW {
         *bucket = componentid / 0x3F;
     }
 
+    static constexpr uint64_t kEntityHeaderSnapshotOffset = 0x30;
+    static constexpr size_t kEntityHeaderSnapshotSize = 0x120;
+
+    struct EntityHeaderSnapshot {
+        uintptr_t parent = 0;
+        MemorySDK::ReadRange range{};
+        bool valid = false;
+
+        bool Read(uintptr_t value) {
+            parent = value;
+            valid = parent != 0 &&
+                range.Read(parent + kEntityHeaderSnapshotOffset,
+                           kEntityHeaderSnapshotSize);
+            return valid;
+        }
+
+        template <typename T>
+        bool ReadParentOffset(uint64_t offset, T& value) const {
+            if (!valid) {
+                value = {};
+                return false;
+            }
+            return range.ReadAddress(parent + offset, value);
+        }
+    };
+
     /*
         May 2026 real component decode sequence.
 
@@ -259,7 +286,8 @@ namespace OW {
           ^ 0xA4764E53CD34159B
           ROL64(value, 0x2A), then ROR64(..., 0x2D)
     */
-    inline uintptr_t DecryptComponent(uintptr_t parent, uint8_t idx) {
+    inline uintptr_t DecryptComponent(uintptr_t parent, uint8_t idx,
+                                      const EntityHeaderSnapshot* parent_snapshot) {
         if (!parent)
             return 0;
 
@@ -269,8 +297,17 @@ namespace OW {
         uint32_t bucket = 0;
         sub_E8D1A0(&bit_mask, &lower_mask, &shift, &bucket, idx);
 
-        const uint64_t component_bits =
-            SDK->RPM<uint64_t>(parent + 8ull * bucket + 0x110);
+        auto readParent = [&](uint64_t offset, auto& value) {
+            if (parent_snapshot &&
+                parent_snapshot->parent == parent &&
+                parent_snapshot->ReadParentOffset(offset, value)) {
+                return;
+            }
+            value = SDK->RPM<std::remove_reference_t<decltype(value)>>(parent + offset);
+        };
+
+        uint64_t component_bits = 0;
+        readParent(8ull * bucket + 0x110, component_bits);
         const uint64_t present = (component_bits & bit_mask) >> shift;
         if (!present)
             return 0;
@@ -281,11 +318,15 @@ namespace OW {
                 ((below >> 2) & 0x3333333333333333ull);
         below = (below + (below >> 4)) & 0x0F0F0F0F0F0F0F0Full;
 
+        uint8_t component_index_base = 0;
+        readParent(bucket + 0x130, component_index_base);
+
         const uint64_t component_index =
-            SDK->RPM<uint8_t>(parent + bucket + 0x130) +
+            component_index_base +
             ((below * 0x0101010101010101ull) >> 0x38);
 
-        const uint64_t component_table = SDK->RPM<uint64_t>(parent + 0x80);
+        uint64_t component_table = 0;
+        readParent(0x80, component_table);
         if (!component_table) {
             Diagnostics::RecordDecryptFailure();
             return 0;
@@ -298,26 +339,29 @@ namespace OW {
             return 0;
         }
 
-        component += 0x4C8675CDE55BA1B2ull;
+        component += offset::Component_Add1;
 
-        const uint64_t component_key_source =
-            SDK->RPM<uint64_t>(SDK->dwGameBase + 0x3A86E30);
-        if (!component_key_source) {
+        uint64_t component_key_source = 0;
+        uint64_t component_key_material_1 = 0;
+        uint8_t component_key_byte = 0;
+        if (!SDK->GetCachedComponentKeyMaterial(
+                SDK->dwGameBase + offset::ComponentXorQword_RVA,
+                offset::ComponentXorQword_Off,
+                SDK->dwGameBase + offset::ComponentXorByte_RVA,
+                component_key_source,
+                component_key_material_1,
+                component_key_byte)) {
             Diagnostics::RecordDecryptFailure();
             return 0;
         }
 
-        const uint64_t component_key_material_1 =
-            SDK->RPM<uint64_t>(component_key_source + 0x10C);
         component ^= component_key_material_1;
 
-        component += 0x7BE57670994040F6ull;
+        component += offset::Component_Add2;
 
-        const uint8_t component_key_byte =
-            SDK->RPM<uint8_t>(SDK->dwGameBase + 0x3772769);
         component ^= static_cast<uint64_t>(component_key_byte);
-        component ^= 0x3864150DB528414Cull;
-        component ^= 0xA4764E53CD34159Bull;
+        component ^= offset::Component_Xor1;
+        component ^= offset::Component_Xor2;
 
         component = (component << 0x2A) | (component >> 0x16);
         component = ROR64(component, 0x2D);
@@ -331,6 +375,13 @@ namespace OW {
         return decoded;
     }
 
+    inline uintptr_t DecryptComponent(uintptr_t parent, uint8_t idx) {
+        EntityHeaderSnapshot snapshot{};
+        const EntityHeaderSnapshot* active_snapshot =
+            snapshot.Read(parent) ? &snapshot : nullptr;
+        return DecryptComponent(parent, idx, active_snapshot);
+    }
+
     // =========================================================================
     // Visibility decryption — May 2026 (UC p330, snowancestor 2026-05-25)
     //
@@ -339,25 +390,45 @@ namespace OW {
     // and ComponentXorByte sources as DecryptComponent.
     // =========================================================================
 
+    /**
+     * Decode the visibility flag from a visibility component.
+     *
+     * This replaces the old VisFN/Vis_Key table walk. The current UC p330
+     * IsVisible35 chain reads VisBase+0x98, rotates/XORs it, mixes in the
+     * current ComponentXorByte, applies the add/sub constants, rotates right by
+     * 12, then XORs the one-bit rotate result with RPM(ComponentXorQword+0x6A).
+     * The decoded value is expected to be 1 for visible and 0 for occluded.
+     */
     inline uint64_t DecryptVis(uint64_t visBase) {
         // Step 1: read encrypted qword from VisBase+0x98, ROR3, XOR constant
-        uint64_t enc = SDK->RPM<uint64_t>(visBase + 0x98);
-        enc = ROR64(enc, 3) ^ 0x53DB07B6B873760Cull;
+        uint64_t enc = SDK->RPM<uint64_t>(visBase + offset::VisibilityValueOffset);
+        enc = ROR64(enc, offset::Visibility_Ror1) ^ offset::Visibility_Xor1;
 
-        // Step 2: load ComponentXorByte (u8 at base+RVA)
-        uint8_t var_byte = SDK->RPM<uint8_t>(SDK->dwGameBase + offset::ComponentXorByte_RVA);
-
-        // Step 3: load ComponentXorQword ptr (the pointer, not the +0x10C value)
-        uint64_t var_qword = SDK->RPM<uint64_t>(SDK->dwGameBase + offset::ComponentXorQword_RVA);
+        // Steps 2-3: cached ComponentXorByte and ComponentXorQword pointer.
+        uint64_t var_qword = 0;
+        uint64_t unused_material = 0;
+        uint8_t var_byte = 0;
+        if (!SDK->GetCachedComponentKeyMaterial(
+                SDK->dwGameBase + offset::ComponentXorQword_RVA,
+                offset::ComponentXorQword_Off,
+                SDK->dwGameBase + offset::ComponentXorByte_RVA,
+                var_qword,
+                unused_material,
+                var_byte)) {
+            Diagnostics::RecordDecryptFailure();
+            return 0;
+        }
 
         // Step 4: main transform
-        uint64_t dec = (var_byte ^ (enc - 0x7A7DB4DE6CD03BBCull)) + 0x5CE60F50EA1D337Full;
+        uint64_t dec =
+            (var_byte ^ (enc - offset::Visibility_Sub1)) + offset::Visibility_Add1;
 
-        // Step 5: mix with qword data at var_qword+0x6A
-        dec = SDK->RPM<uint64_t>(var_qword + 0x6A) ^ ((2 * dec) | (dec >> 0x3F));
+        // Step 5: rotate after the add, before the qword mix.
+        dec = ROR64(dec + offset::Visibility_FinalAdd, offset::Visibility_FinalRor);
 
-        // Step 6: final rotate
-        dec = ROR64(dec + 0x78D75198F1D34D38ull, 0xC);
+        // Step 6: mix with qword data at var_qword+0x6A.
+        dec = SDK->RPM<uint64_t>(var_qword + offset::Visibility_QwordMixOff) ^
+              ((2 * dec) | (dec >> 0x3F));
         return dec;
     }
 
@@ -455,11 +526,28 @@ namespace OW {
     // =========================================================================
 
     inline std::vector<std::pair<uint64_t, uint64_t>> get_ow_entities() {
+        SDK->BeginFrame();
+
         std::vector<std::pair<uint64_t, uint64_t>> result;
 
         struct Entity {
             uint64_t entity;
             uint64_t pad;
+        };
+
+        struct EntityScanRecord {
+            uint64_t entity = 0;
+            uint32_t unique_id = 0;
+            uint64_t ptr = 0;
+            uint64_t entity_id = 0;
+            EntityHeaderSnapshot header{};
+        };
+
+        auto isDynamicEntityId = [](uint64_t entity_id) {
+            return entity_id == 0x400000000000060 ||
+                   entity_id == 0x40000000000480A ||
+                   entity_id == 0x40000000000005F ||
+                   entity_id == 0x400000000002533;
         };
 
         uint64_t entity_list = SDK->RPM<uint64_t>(SDK->dwGameBase + offset::Address_entity_base);
@@ -478,12 +566,40 @@ namespace OW {
         }
 
         size_t entity_list_size = sizeof(raw_list) / sizeof(Entity);
+        std::vector<EntityScanRecord> records{};
+        records.reserve(entity_list_size);
 
         for (size_t i = 0; i < entity_list_size; ++i) {
-            uint64_t cur_entity = raw_list[i].entity;
+            const uint64_t possible_common = raw_list[i].entity;
+            if (!possible_common)
+                continue;
+
+            EntityScanRecord record{};
+            record.entity = possible_common;
+            record.header.Read(possible_common);
+
+            if (!record.header.ReadParentOffset(0x138, record.unique_id))
+                record.unique_id = SDK->RPM<uint32_t>(possible_common + 0x138);
+
+            uint64_t ptr_value = 0;
+            if (!record.header.ReadParentOffset(0x30, ptr_value))
+                ptr_value = SDK->RPM<uint64_t>(possible_common + 0x30);
+
+            record.ptr = ptr_value & 0xFFFFFFFFFFFFFFC0;
+            if (record.ptr && record.ptr < 0xFFFFFFFFFFFFFFEF)
+                record.entity_id = SDK->RPM<uint64_t>(record.ptr + 0x10);
+
+            records.push_back(std::move(record));
+        }
+
+        for (const EntityScanRecord& current : records) {
+            uint64_t cur_entity = current.entity;
             if (!cur_entity) continue;
 
-            uint64_t common_linker = DecryptComponent(cur_entity, TYPE_LINK);
+            uint64_t common_linker = DecryptComponent(
+                cur_entity,
+                TYPE_LINK,
+                current.header.valid ? &current.header : nullptr);
             if (!common_linker) {
                 Diagnostics::RecordInvalidEntity();
                 continue;
@@ -491,24 +607,15 @@ namespace OW {
 
             uint32_t unique_id = SDK->RPM<uint32_t>(common_linker + 0xD4);
 
-            for (size_t x = 0; x < entity_list_size; ++x) {
-                uint64_t possible_common = raw_list[x].entity;
+            for (const EntityScanRecord& candidate : records) {
+                uint64_t possible_common = candidate.entity;
                 if (!possible_common) continue;
 
-                if (SDK->RPM<uint32_t>(possible_common + 0x138) == unique_id) {
+                if (candidate.unique_id == unique_id) {
                     result.emplace_back(possible_common, cur_entity);
                     break;
-                } else {
-                    uint64_t Ptr = SDK->RPM<uint64_t>(possible_common + 0x30) & 0xFFFFFFFFFFFFFFC0;
-                    if (Ptr < 0xFFFFFFFFFFFFFFEF) {
-                        uint64_t EntityID = SDK->RPM<uint64_t>(Ptr + 0x10);
-                        if (EntityID == 0x400000000000060 ||
-                            EntityID == 0x40000000000480A ||
-                            EntityID == 0x40000000000005F ||
-                            EntityID == 0x400000000002533) {
-                            result.emplace_back(possible_common, cur_entity);
-                        }
-                    }
+                } else if (isDynamicEntityId(candidate.entity_id)) {
+                    result.emplace_back(possible_common, cur_entity);
                 }
             }
         }

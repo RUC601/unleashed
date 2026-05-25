@@ -5,6 +5,7 @@
 #include <mutex>
 #include <ctime>
 #include <utility>
+#include <cstring>
 #include <windows.h>
 #include <process.h>
 #include <DirectXMath.h>
@@ -85,6 +86,8 @@ inline void entity_thread() {
     Vector3 lastpos{};
 
     while (OW::Config::doingentity == 1) {
+        SDK->BeginFrame();
+
         if (entitytime == 0) entitytime = GetTickCount();
         if (GetTickCount() - entitytime >= 100) {
             std::lock_guard<std::mutex> lock(g_mutex);
@@ -132,15 +135,31 @@ inline void entity_thread() {
                 continue;
             }
 
+            OW::EntityHeaderSnapshot componentHeader{};
+            componentHeader.Read(ComponentParent);
+            const OW::EntityHeaderSnapshot* componentSnapshot =
+                componentHeader.valid ? &componentHeader : nullptr;
+
+            OW::EntityHeaderSnapshot linkHeader{};
+            const OW::EntityHeaderSnapshot* linkSnapshot = componentSnapshot;
+            if (LinkParent != ComponentParent) {
+                linkHeader.Read(LinkParent);
+                linkSnapshot = linkHeader.valid ? &linkHeader : nullptr;
+            }
+
             // Check for special entity IDs (HP packs, Bob, etc.)
-            uint64_t Ptr = SDK->RPM<uint64_t>(ComponentParent + 0x30) & 0xFFFFFFFFFFFFFFC0;
-            if (Ptr < 0xFFFFFFFFFFFFFFEF) {
+            uint64_t ptrValue = 0;
+            if (!componentHeader.ReadParentOffset(0x30, ptrValue))
+                ptrValue = SDK->RPM<uint64_t>(ComponentParent + 0x30);
+            uint64_t Ptr = ptrValue & 0xFFFFFFFFFFFFFFC0;
+            if (Ptr && Ptr < 0xFFFFFFFFFFFFFFEF) {
                 uint64_t EntityID = SDK->RPM<uint64_t>(Ptr + 0x10);
                 if (EntityID == 0x400000000000060 || EntityID == 0x40000000000480A ||
                     EntityID == 0x40000000000005F || EntityID == 0x400000000002533) {
                     OW::hpanddy hpdyentity{};
                     hpdyentity.entityid = EntityID;
-                    hpdyentity.MeshBase = OW::DecryptComponent(ComponentParent, OW::TYPE_VELOCITY);
+                    hpdyentity.MeshBase = OW::DecryptComponent(
+                        ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
                     hpdyentity.POS = SDK->RPM<XMFLOAT3>(hpdyentity.MeshBase + 0x380 + 0x50);
                     hpdy_entities.push_back(hpdyentity);
                     continue;
@@ -148,17 +167,17 @@ inline void entity_thread() {
             }
 
             // Decrypt all component bases
-            entity.HealthBase    = OW::DecryptComponent(ComponentParent, OW::TYPE_HEALTH);
-            entity.LinkBase      = OW::DecryptComponent(LinkParent, OW::TYPE_LINK);
-            entity.TeamBase      = OW::DecryptComponent(ComponentParent, OW::TYPE_TEAM);
-            entity.VelocityBase  = OW::DecryptComponent(ComponentParent, OW::TYPE_VELOCITY);
-            entity.HeroBase      = OW::DecryptComponent(LinkParent, OW::TYPE_P_HEROID);
-            entity.BoneBase      = OW::DecryptComponent(ComponentParent, OW::TYPE_BONE);
-            entity.RotationBase  = OW::DecryptComponent(ComponentParent, OW::TYPE_ROTATION);
-            entity.SkillBase     = OW::DecryptComponent(ComponentParent, OW::TYPE_SKILL);
-            entity.VisBase       = OW::DecryptComponent(LinkParent, OW::TYPE_P_VISIBILITY);
-            entity.AngleBase     = OW::DecryptComponent(LinkParent, OW::TYPE_PLAYERCONTROLLER);
-            entity.EnemyAngleBase = OW::DecryptComponent(ComponentParent, OW::TYPE_ANGLE);
+            entity.HealthBase    = OW::DecryptComponent(ComponentParent, OW::TYPE_HEALTH, componentSnapshot);
+            entity.LinkBase      = OW::DecryptComponent(LinkParent, OW::TYPE_LINK, linkSnapshot);
+            entity.TeamBase      = OW::DecryptComponent(ComponentParent, OW::TYPE_TEAM, componentSnapshot);
+            entity.VelocityBase  = OW::DecryptComponent(ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
+            entity.HeroBase      = OW::DecryptComponent(LinkParent, OW::TYPE_P_HEROID, linkSnapshot);
+            entity.BoneBase      = OW::DecryptComponent(ComponentParent, OW::TYPE_BONE, componentSnapshot);
+            entity.RotationBase  = OW::DecryptComponent(ComponentParent, OW::TYPE_ROTATION, componentSnapshot);
+            entity.SkillBase     = OW::DecryptComponent(ComponentParent, OW::TYPE_SKILL, componentSnapshot);
+            entity.VisBase       = OW::DecryptComponent(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
+            entity.AngleBase     = OW::DecryptComponent(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
+            entity.EnemyAngleBase = OW::DecryptComponent(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
 
             // Skip duplicates
             if (entity == lastentity) continue;
@@ -259,7 +278,7 @@ inline void entity_thread() {
 
             // ---- BattleTag (optional) ----
             if (OW::Config::draw_info && OW::Config::drawbattletag) {
-                entity.statcombase = OW::DecryptComponent(LinkParent, OW::TYPE_STAT);
+                entity.statcombase = OW::DecryptComponent(LinkParent, OW::TYPE_STAT, linkSnapshot);
                 if (entity.statcombase && entity != OW::local_entity) {
                     uintptr_t off = SDK->RPM<uintptr_t>(entity.statcombase + 0xE0);
                     char buffer[64] = "";
@@ -375,8 +394,16 @@ inline void viewmatrix_thread() {
             // Read matrices: proj at +0xB0, view at +0x140
             viewMatrixPtr = p2 + OW::offset::VM_ProjMatrix;
             viewMatrix_xor_ptr = p2 + OW::offset::VM_ViewMatrix;
-            OW::viewMatrix    = SDK->RPM<OW::Matrix>(viewMatrixPtr);
-            OW::viewMatrix_xor = SDK->RPM<OW::Matrix>(viewMatrix_xor_ptr);
+            static constexpr size_t viewOffset = static_cast<size_t>(
+                OW::offset::VM_ViewMatrix - OW::offset::VM_ProjMatrix);
+            uint8_t matrixBuffer[viewOffset + sizeof(OW::Matrix)] = {};
+            if (SDK->read_range(viewMatrixPtr, matrixBuffer, sizeof(matrixBuffer))) {
+                memcpy(&OW::viewMatrix, matrixBuffer, sizeof(OW::Matrix));
+                memcpy(&OW::viewMatrix_xor, matrixBuffer + viewOffset, sizeof(OW::Matrix));
+            } else {
+                OW::viewMatrix = SDK->RPM<OW::Matrix>(viewMatrixPtr);
+                OW::viewMatrix_xor = SDK->RPM<OW::Matrix>(viewMatrix_xor_ptr);
+            }
 
             Sleep(5);
         }

@@ -10,7 +10,7 @@
 //   - DecryptComponent table: 512 → 2048 entries (mask 0x1FF → 0x7FF)
 //   - Table format completely changed: old = qword array, new = 24-byte structs
 //   - GetGlobalKey algorithm changed (now uses heap-based key gen)
-//   - GlobalKey stored at RVA 0x40405F8 (different from old)
+//   - Optional GetGlobalKey diagnostic store observed at RVA 0x40405F8
 //   - Entity base shifted, entity struct layout changed
 //   - ViewMatrix XOR key and location both changed
 // =============================================================================
@@ -23,8 +23,8 @@ namespace OW {
         // =========================================================================
 
         // Key system
-        static constexpr auto KeyGlobalStore_RVA = 0x40405F8; // mov [rip+disp],rax in GetGlobalKey
-        static constexpr auto KeyGlobal_XOR    = 0xF5;        // key_raw ^ 0xF5 = actual_key
+        static constexpr auto KeyGlobalStore_RVA = 0x40405F8; // diagnostic mov [rip+disp],rax in GetGlobalKey
+        static constexpr auto KeyGlobal_XOR    = 0xF5;        // diagnostic only; not used by current decrypt paths
         static constexpr auto GetGlobalKey_RVA = 0x581D20;    // new GetGlobalKey function
 
         // DecryptComponent: real function at RVA 0x563700 (sub_7FF6A80B3200)
@@ -36,6 +36,23 @@ namespace OW {
         static constexpr auto ComponentXorQword_RVA = 0x3A86E30; // RPM(RPM(base+this) + 0x10C)
         static constexpr auto ComponentXorQword_Off = 0x10C;     // offset from dereferenced ptr
         static constexpr auto ComponentXorByte_RVA  = 0x3772769; // RPM<uint8>(base+this), value=0x6B
+        static constexpr auto Component_Add1        = 0x4C8675CDE55BA1B2;
+        static constexpr auto Component_Add2        = 0x7BE57670994040F6;
+        static constexpr auto Component_Xor1        = 0x3864150DB528414C;
+        static constexpr auto Component_Xor2        = 0xA4764E53CD34159B;
+        static constexpr auto Component_Ror         = 3; // net rotate: ROL64(0x2A), then ROR64(0x2D)
+
+        // Visibility (UC p330 IsVisible35, 2026-05-25)
+        static constexpr auto VisibilityGlobalKeyPtr_RVA = 0x3B76970; // optional legacy/direct key1 path
+        static constexpr auto VisibilityQwordOffset      = 0x1B1;     // key1 = RPM(RPM(base+ptr) + this)
+        static constexpr auto VisibilityValueOffset      = 0x98;      // encrypted qword at VisBase+this
+        static constexpr auto Visibility_Ror1            = 3;
+        static constexpr auto Visibility_Xor1            = 0x53DB07B6B873760C;
+        static constexpr auto Visibility_Sub1            = 0x7A7DB4DE6CD03BBC;
+        static constexpr auto Visibility_Add1            = 0x5CE60F50EA1D337F;
+        static constexpr auto Visibility_FinalAdd        = 0x78D75198F1D34D38;
+        static constexpr auto Visibility_FinalRor        = 0xC;
+        static constexpr auto Visibility_QwordMixOff     = 0x6A;      // RPM(ComponentXorQword + this)
 
         // New decryption table base (24-byte entry format, not simple qword array!)
         static constexpr auto DecryptTable_New = 0x3800000;
@@ -86,7 +103,7 @@ namespace OW {
 
         static constexpr auto VisFN        = 0x79E722;  // BROKEN — .text shifted, needs new RVA
         static constexpr auto Vis_Key      = 0x1AAC46FF0D473EBA; // BROKEN
-        static constexpr auto DecryptTable_2 = 0x389A700;      // used by DecryptVis
+        static constexpr auto DecryptTable_2 = 0x389A700;      // legacy table-walk path; not current DecryptVis
 
     }
 }
