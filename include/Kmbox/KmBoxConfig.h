@@ -1,5 +1,8 @@
 #pragma once
 
+#include <chrono>
+#include <string>
+
 // Command definitions for KMbox NET communication
 #define cmd_connect         0xaf3c2828
 #define cmd_mouse_move      0xaede7345
@@ -18,6 +21,63 @@
 #define cmd_setconfig       0x1d3d3323
 #define cmd_setvidpid       0xffed3232
 #define cmd_showpic         0x12334883
+
+// Runtime hardening defaults for KMbox command transport
+namespace KmBoxRuntimeConfig
+{
+    inline constexpr int CommandMaxRetries = 3;
+    inline constexpr int CommandRetryBackoffMs = 20;
+    inline constexpr int CommandTimeoutMs = 100;
+    inline constexpr int CommandQueueMaxSize = 256;
+    inline constexpr int CommandFlushIntervalMs = 4;
+    inline constexpr int HeartbeatIntervalMs = 1000;
+    inline constexpr int ReconnectBackoffMs = 750;
+}
+
+enum class KmBoxConnectionState {
+    Disconnected = 0,
+    Connecting,
+    Connected,
+    Error
+};
+
+enum class KmBoxCommandType {
+    Unknown = 0,
+    Connect,
+    Heartbeat,
+    MouseMove,
+    MouseAutoMove,
+    MouseButton,
+    Monitor,
+    Reboot,
+    SetConfig,
+    Serial
+};
+
+inline const char* ToString(KmBoxConnectionState state) {
+    switch (state) {
+    case KmBoxConnectionState::Disconnected: return "disconnected";
+    case KmBoxConnectionState::Connecting:   return "connecting";
+    case KmBoxConnectionState::Connected:    return "connected";
+    case KmBoxConnectionState::Error:        return "error";
+    default:                                 return "unknown";
+    }
+}
+
+inline const char* ToString(KmBoxCommandType type) {
+    switch (type) {
+    case KmBoxCommandType::Connect:       return "connect";
+    case KmBoxCommandType::Heartbeat:     return "heartbeat";
+    case KmBoxCommandType::MouseMove:     return "mouse_move";
+    case KmBoxCommandType::MouseAutoMove: return "mouse_auto_move";
+    case KmBoxCommandType::MouseButton:   return "mouse_button";
+    case KmBoxCommandType::Monitor:       return "monitor";
+    case KmBoxCommandType::Reboot:        return "reboot";
+    case KmBoxCommandType::SetConfig:     return "set_config";
+    case KmBoxCommandType::Serial:        return "serial";
+    default:                              return "unknown";
+    }
+}
 
 // Packet header
 typedef struct
@@ -67,6 +127,19 @@ typedef struct
         soft_keyboard_t cmd_keyboard; // Keyboard command data
     };
 } client_data;
+
+struct KmBoxQueuedNetCommand {
+    client_data data{};
+    int length = 0;
+    KmBoxCommandType type = KmBoxCommandType::Unknown;
+    std::chrono::steady_clock::time_point enqueuedAt{};
+};
+
+struct KmBoxQueuedSerialCommand {
+    std::string command;
+    KmBoxCommandType type = KmBoxCommandType::Serial;
+    std::chrono::steady_clock::time_point enqueuedAt{};
+};
 
 // Error codes / return values
 enum

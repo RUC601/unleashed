@@ -1200,8 +1200,6 @@ void ScanDecryptionTables()
 
     // Also try to identify the vis/outline table (128 entries, each with 3 levels)
     Log("\n[INFO] Scanning for vis/outline table (128-entry, 3-level) structures...\n");
-    constexpr int VIS_TABLE_ROWS = 128;
-    uint64_t vis_buf[VIS_TABLE_ROWS * 8]; // 8 qwords per row... actually just 3 per row
     // Actually the vis table is 128 entries, each row is 3 qwords = 24 bytes
     // The old code does: base + 8 * (((uint8_t)a1 - 0x46) & 0x7F) + (((a1 + key) >> 7) & 7)
     // So it's: base + (index * 8) + sub_index
@@ -1231,10 +1229,10 @@ void ScanDecryptionTables()
     uint64_t vis_probe_start = g_base + 0x3890000;
     uint64_t vis_probe_end   = g_base + 0x38C0000;
     constexpr int VIS_BUF_SIZE = 4096; // search in 4096 byte blocks
-    uint64_t vis_block[VIS_BUF_SIZE];
     int vis_candidates = 0;
 
     for (uint64_t probe = vis_probe_start; probe + VIS_BUF_SIZE * 8 <= vis_probe_end; probe += 0x1000) {
+        uint64_t vis_block[VIS_BUF_SIZE];
         if (!ReadBuf(probe, vis_block, sizeof(vis_block)))
             continue;
 
@@ -1371,12 +1369,380 @@ void ScanViewMatrix()
 }
 
 // ---------------------------------------------------------------------------
-// Scan #5: HeapManager
+// Scan #4b: ViewMatrix VM11 chain verification
+// ---------------------------------------------------------------------------
+
+void ScanViewMatrixVM11Chain()
+{
+    Log("\n=== SCAN 4b: ViewMatrix VM11 Chain Verification ===\n\n");
+    LogResultHeader("STEP", "VALUE", "DETAIL");
+
+    const uint64_t enc_addr = g_base + OW::offset::Address_viewmatrix_base;
+    uint64_t enc = 0;
+    const bool enc_ok = ReadExact(enc_addr, enc) && enc != 0;
+    LogResultRow(
+        "VM11 encrypted root",
+        enc_ok,
+        FormatString("0x%llX", (unsigned long long)enc).c_str(),
+        FormatString("RVA 0x%llX", (unsigned long long)OW::offset::Address_viewmatrix_base).c_str());
+
+    const uint64_t after_sub1 = enc - OW::offset::offset_viewmatrix_xor_key;
+    LogResultRow(
+        "VM11 - key1",
+        enc_ok,
+        FormatString("0x%llX", (unsigned long long)after_sub1).c_str(),
+        FormatString("key1=0x%llX", (unsigned long long)OW::offset::offset_viewmatrix_xor_key).c_str());
+
+    const uint64_t after_xor2 = after_sub1 ^ OW::offset::offset_viewmatrix_xor_key2;
+    LogResultRow(
+        "VM11 ^ key2",
+        enc_ok,
+        FormatString("0x%llX", (unsigned long long)after_xor2).c_str(),
+        FormatString("key2=0x%llX", (unsigned long long)OW::offset::offset_viewmatrix_xor_key2).c_str());
+
+    const uint64_t dec = after_xor2 - OW::offset::offset_viewmatrix_xor_key3;
+    const bool dec_ok = enc_ok && LooksLikeReadablePointer(dec, OW::offset::VM_P1 + sizeof(uint64_t));
+    LogResultRow(
+        "VM11 decoded root",
+        dec_ok,
+        FormatString("0x%llX", (unsigned long long)dec).c_str(),
+        FormatString("key3=0x%llX", (unsigned long long)OW::offset::offset_viewmatrix_xor_key3).c_str());
+
+    uint64_t p1 = 0;
+    const bool p1_ok =
+        dec_ok &&
+        ReadExact(dec + OW::offset::VM_P1, p1) &&
+        LooksLikeReadablePointer(p1, OW::offset::VM_P2 + sizeof(uint64_t));
+    LogResultRow(
+        "VM11 p1",
+        p1_ok,
+        FormatString("0x%llX", (unsigned long long)p1).c_str(),
+        FormatString("[decoded+0x%llX]", (unsigned long long)OW::offset::VM_P1).c_str());
+
+    uint64_t p2 = 0;
+    const bool p2_ok =
+        p1_ok &&
+        ReadExact(p1 + OW::offset::VM_P2, p2) &&
+        LooksLikeReadablePointer(p2, OW::offset::VM_ViewMatrix + sizeof(float) * 16);
+    LogResultRow(
+        "VM11 p2",
+        p2_ok,
+        FormatString("0x%llX", (unsigned long long)p2).c_str(),
+        FormatString("[p1+0x%llX]", (unsigned long long)OW::offset::VM_P2).c_str());
+
+    const uint64_t proj_addr = p2 + OW::offset::VM_ProjMatrix;
+    const uint64_t view_addr = p2 + OW::offset::VM_ViewMatrix;
+
+    std::array<float, 16> proj_matrix{};
+    const bool proj_ok =
+        p2_ok &&
+        ReadExact(proj_addr, proj_matrix) &&
+        IsSaneMatrix(proj_matrix);
+    LogResultRow(
+        "VM11 proj matrix",
+        proj_ok,
+        FormatString("0x%llX", (unsigned long long)proj_addr).c_str(),
+        FormatString("first4=[%.3f %.3f %.3f %.3f]",
+            proj_matrix[0], proj_matrix[1], proj_matrix[2], proj_matrix[3]).c_str());
+
+    std::array<float, 16> view_matrix{};
+    const bool view_ok =
+        p2_ok &&
+        ReadExact(view_addr, view_matrix) &&
+        IsSaneMatrix(view_matrix);
+    LogResultRow(
+        "VM11 view matrix",
+        view_ok,
+        FormatString("0x%llX", (unsigned long long)view_addr).c_str(),
+        FormatString("first4=[%.3f %.3f %.3f %.3f]",
+            view_matrix[0], view_matrix[1], view_matrix[2], view_matrix[3]).c_str());
+
+    RecordCheckFmt(
+        "ViewMatrix VM11 Chain",
+        enc_ok && dec_ok && p1_ok && p2_ok && proj_ok && view_ok,
+        "enc=0x%llX dec=0x%llX p1=0x%llX p2=0x%llX",
+        (unsigned long long)enc,
+        (unsigned long long)dec,
+        (unsigned long long)p1,
+        (unsigned long long)p2);
+}
+
+// ---------------------------------------------------------------------------
+// Scan #5: GameAdmin root pointer
+// ---------------------------------------------------------------------------
+
+void ScanGameAdminRoot()
+{
+    Log("\n=== SCAN 5: GameAdmin Root Pointer ===\n\n");
+    LogResultHeader("STEP", "VALUE", "DETAIL");
+
+    const uint64_t root_slot = g_base + OW::offset::Address_game_admin_root;
+    uint64_t root = 0;
+    const bool root_ok =
+        ReadExact(root_slot, root) &&
+        LooksLikeReadablePointer(root, OW::offset::GameAdmin_RootPtr + sizeof(uint64_t));
+    LogResultRow(
+        "root global",
+        root_ok,
+        FormatString("0x%llX", (unsigned long long)root).c_str(),
+        FormatString("RVA 0x%llX expected", (unsigned long long)OW::offset::Address_game_admin_root).c_str());
+
+    uint64_t enc = 0;
+    const bool enc_ok =
+        root_ok &&
+        ReadExact(root + OW::offset::GameAdmin_RootPtr, enc) &&
+        enc != 0;
+    LogResultRow(
+        "root encrypted qword",
+        enc_ok,
+        FormatString("0x%llX", (unsigned long long)enc).c_str(),
+        FormatString("[root+0x%llX]", (unsigned long long)OW::offset::GameAdmin_RootPtr).c_str());
+
+    const uint64_t slot_table = ROR64(
+        ((enc + OW::offset::GameAdmin_Add1) ^ OW::offset::GameAdmin_Xor1) +
+            OW::offset::GameAdmin_Add2,
+        OW::offset::GameAdmin_Ror);
+    const bool slot_table_ok =
+        enc_ok &&
+        LooksLikeReadablePointer(
+            slot_table,
+            (OW::offset::HeapSlotIndex_InputSystem + 1) * sizeof(uint64_t));
+    LogResultRow(
+        "resolved slot table",
+        slot_table_ok,
+        FormatString("0x%llX", (unsigned long long)slot_table).c_str(),
+        "ROR(((enc+add1)^xor1)+add2, 48)");
+
+    uint64_t input_system = 0;
+    const uint64_t input_slot =
+        slot_table + OW::offset::HeapSlotIndex_InputSystem * sizeof(uint64_t);
+    const bool input_ok =
+        slot_table_ok &&
+        ReadExact(input_slot, input_system) &&
+        LooksLikeReadablePointer(input_system);
+    LogResultRow(
+        "slot 6 input system",
+        input_ok,
+        FormatString("0x%llX", (unsigned long long)input_system).c_str(),
+        FormatString("[slot_table+0x%llX]", (unsigned long long)(OW::offset::HeapSlotIndex_InputSystem * sizeof(uint64_t))).c_str());
+
+    float mouse_x = 0.0f;
+    float mouse_y = 0.0f;
+    const bool mouse_x_ok =
+        ReadExact(g_base + OW::offset::InputMouseScaleX_RVA, mouse_x) &&
+        mouse_x > 0.0f && mouse_x < 100.0f;
+    const bool mouse_y_ok =
+        ReadExact(g_base + OW::offset::InputMouseScaleY_RVA, mouse_y) &&
+        mouse_y > 0.0f && mouse_y < 100.0f;
+    LogResultRow(
+        "input scale globals",
+        mouse_x_ok && mouse_y_ok,
+        FormatString("x=%.4f y=%.4f", mouse_x, mouse_y).c_str(),
+        FormatString("RVA x=0x%llX y=0x%llX",
+            (unsigned long long)OW::offset::InputMouseScaleX_RVA,
+            (unsigned long long)OW::offset::InputMouseScaleY_RVA).c_str());
+
+    RecordCheckFmt(
+        "GameAdmin Root Pointer",
+        root_ok && enc_ok && slot_table_ok && input_ok,
+        "root=0x%llX slot_table=0x%llX input=0x%llX",
+        (unsigned long long)root,
+        (unsigned long long)slot_table,
+        (unsigned long long)input_system);
+}
+
+// ---------------------------------------------------------------------------
+// Scan #6: DecryptComponent known-entity sanity test
+// ---------------------------------------------------------------------------
+
+void ScanDecryptComponentKnownEntity()
+{
+    Log("\n=== SCAN 6: DecryptComponent Known Entity Test ===\n\n");
+    LogResultHeader("STEP", "VALUE", "DETAIL");
+
+    struct EntitySlot {
+        uint64_t entity;
+        uint64_t pad;
+    };
+    struct Candidate {
+        int slot = -1;
+        uint64_t entity = 0;
+        const char* layout = "";
+    };
+
+    const uint64_t entity_list_slot = g_base + OW::offset::Address_entity_base;
+    uint64_t entity_list = 0;
+    const bool entity_list_ok =
+        ReadExact(entity_list_slot, entity_list) &&
+        LooksLikeReadablePointer(entity_list, sizeof(EntitySlot) * 8);
+    LogResultRow(
+        "entity list",
+        entity_list_ok,
+        FormatString("0x%llX", (unsigned long long)entity_list).c_str(),
+        FormatString("RVA 0x%llX", (unsigned long long)OW::offset::Address_entity_base).c_str());
+
+    std::vector<Candidate> candidates;
+    if (entity_list_ok) {
+        std::vector<EntitySlot> slots(4096);
+        if (ReadExactBuf(entity_list, slots.data(), slots.size() * sizeof(EntitySlot))) {
+            for (size_t i = 0; i < slots.size() && candidates.size() < 512; ++i) {
+                if (IsCanonicalUserPointer(slots[i].entity)) {
+                    candidates.push_back({ static_cast<int>(i), slots[i].entity, "pair16" });
+                }
+            }
+        } else {
+            for (int i = 0; i < 4096 && candidates.size() < 512; ++i) {
+                uint64_t entity = 0;
+                if (ReadExact(entity_list + static_cast<uint64_t>(i) * sizeof(EntitySlot), entity) &&
+                    IsCanonicalUserPointer(entity)) {
+                    candidates.push_back({ i, entity, "pair16-single" });
+                }
+            }
+        }
+
+        for (int i = 0; i < 1024 && candidates.size() < 512; ++i) {
+            const uint64_t addr = entity_list + static_cast<uint64_t>(i) * OW::offset::entity_entry_stride;
+            uint64_t entity = 0;
+            if (ReadExact(addr, entity) && IsCanonicalUserPointer(entity)) {
+                auto duplicate = std::find_if(
+                    candidates.begin(),
+                    candidates.end(),
+                    [entity](const Candidate& c) { return c.entity == entity; });
+                if (duplicate == candidates.end()) {
+                    candidates.push_back({ i, entity, "stride30" });
+                }
+            }
+        }
+    }
+
+    LogResultRow(
+        "candidate entities",
+        !candidates.empty(),
+        FormatString("%zu", candidates.size()).c_str(),
+        "pair16 first, stride30 fallback");
+
+    Candidate selected{};
+    ComponentDecryptTrace link_trace{};
+    ComponentDecryptTrace hero_trace{};
+    ComponentDecryptTrace health_trace{};
+    uint64_t link_parent = 0;
+    uint64_t hero_base = 0;
+    uint64_t health_base = 0;
+    uint64_t hero_id = 0;
+    float hp = 0.0f;
+    float hp_max = 0.0f;
+    bool hero_ok = false;
+    bool health_ok = false;
+    bool link_ok = false;
+
+    for (const Candidate& candidate : candidates) {
+        ComponentDecryptTrace current_link{};
+        const uint64_t current_link_parent =
+            ScannerDecryptComponent(candidate.entity, kComponentTypeLink, &current_link);
+        const bool current_link_ok = LooksLikeReadablePointer(current_link_parent, 0x140);
+        if (!current_link_ok) {
+            if (!link_trace.parent) {
+                link_trace = current_link;
+            }
+            continue;
+        }
+
+        ComponentDecryptTrace current_hero{};
+        const uint64_t current_hero_base =
+            ScannerDecryptComponent(current_link_parent, kComponentTypeHeroId, &current_hero);
+        uint64_t current_hero_id = 0;
+        const bool current_hero_ok =
+            LooksLikeReadablePointer(current_hero_base, 0xD8) &&
+            ReadExact(current_hero_base + 0xD0, current_hero_id) &&
+            IsPlausibleHeroId(current_hero_id);
+
+        ComponentDecryptTrace current_health{};
+        const uint64_t current_health_base =
+            ScannerDecryptComponent(candidate.entity, kComponentTypeHealth, &current_health);
+        float current_hp = 0.0f;
+        float current_hp_max = 0.0f;
+        const bool current_health_ok =
+            LooksLikeReadablePointer(current_health_base, 0xE8) &&
+            ReadExact(current_health_base + 0xE0, current_hp) &&
+            ReadExact(current_health_base + 0xDC, current_hp_max) &&
+            IsSaneFloat(current_hp, 100000.0f) &&
+            IsSaneFloat(current_hp_max, 100000.0f) &&
+            current_hp >= 0.0f &&
+            current_hp_max > 0.0f &&
+            current_hp <= current_hp_max + 10000.0f;
+
+        if (current_hero_ok || current_health_ok) {
+            selected = candidate;
+            link_trace = current_link;
+            hero_trace = current_hero;
+            health_trace = current_health;
+            link_parent = current_link_parent;
+            hero_base = current_hero_base;
+            health_base = current_health_base;
+            hero_id = current_hero_id;
+            hp = current_hp;
+            hp_max = current_hp_max;
+            hero_ok = current_hero_ok;
+            health_ok = current_health_ok;
+            link_ok = current_link_ok;
+            break;
+        }
+    }
+
+    const bool selected_ok = selected.entity != 0;
+    LogResultRow(
+        "selected entity",
+        selected_ok,
+        FormatString("0x%llX", (unsigned long long)selected.entity).c_str(),
+        selected_ok
+            ? FormatString("slot=%d layout=%s", selected.slot, selected.layout).c_str()
+            : "no entity produced a sane component");
+
+    LogResultRow(
+        ComponentName(kComponentTypeLink),
+        link_ok,
+        FormatString("0x%llX", (unsigned long long)link_parent).c_str(),
+        link_ok
+            ? FormatString("index=%llu key_byte=0x%02X",
+                (unsigned long long)link_trace.component_index,
+                static_cast<unsigned>(link_trace.key_byte)).c_str()
+            : link_trace.failure.c_str());
+
+    LogResultRow(
+        ComponentName(kComponentTypeHeroId),
+        hero_ok,
+        FormatString("0x%llX", (unsigned long long)hero_base).c_str(),
+        hero_ok
+            ? FormatString("hero_id=0x%llX", (unsigned long long)hero_id).c_str()
+            : hero_trace.failure.c_str());
+
+    LogResultRow(
+        ComponentName(kComponentTypeHealth),
+        health_ok,
+        FormatString("0x%llX", (unsigned long long)health_base).c_str(),
+        health_ok
+            ? FormatString("hp=%.1f max=%.1f", hp, hp_max).c_str()
+            : health_trace.failure.c_str());
+
+    RecordCheckFmt(
+        "DecryptComponent Known Entity",
+        selected_ok && link_ok && (hero_ok || health_ok),
+        selected_ok
+            ? "entity=0x%llX link=0x%llX hero_ok=%s health_ok=%s"
+            : "no known entity validated",
+        (unsigned long long)selected.entity,
+        (unsigned long long)link_parent,
+        PassFail(hero_ok),
+        PassFail(health_ok));
+}
+
+// ---------------------------------------------------------------------------
+// Scan #7: HeapManager
 // ---------------------------------------------------------------------------
 
 void ScanHeapManager()
 {
-    Log("\n=== SCAN 5: HeapManager ===\n\n");
+    Log("\n=== SCAN 7: HeapManager ===\n\n");
 
     uint64_t old_heap_rva = 0x38B55F0;
     uint64_t old_heap_var_rva = 0x3899DD5;
@@ -1445,12 +1811,12 @@ void ScanHeapManager()
 }
 
 // ---------------------------------------------------------------------------
-// Scan #6: IDA hint cross-reference
+// Scan #8: IDA hint cross-reference
 // ---------------------------------------------------------------------------
 
 void ScanIDAHints()
 {
-    Log("\n=== SCAN 6: IDA Hint Cross-Reference ===\n\n");
+    Log("\n=== SCAN 8: IDA Hint Cross-Reference ===\n\n");
 
     // The user mentioned:
     //   - GetGlobalKey code at RVA 0x581D20
@@ -1535,12 +1901,12 @@ void ScanIDAHints()
 }
 
 // ---------------------------------------------------------------------------
-// Scan #7: .data section exploration
+// Scan #9: .data section exploration
 // ---------------------------------------------------------------------------
 
 void ScanDataSection()
 {
-    Log("\n=== SCAN 7: .data Section Exploration ===\n\n");
+    Log("\n=== SCAN 9: .data Section Exploration ===\n\n");
 
     // The .data section of Overwatch.exe is typically around RVA 0x3000000-0x4000000
     // Let's dump a summary of what's at key regions
@@ -1554,6 +1920,11 @@ void ScanDataSection()
     };
 
     OffsetTest tests[] = {
+        { "entity_base (current)",          OW::offset::Address_entity_base },
+        { "viewmatrix VM11 (current)",      OW::offset::Address_viewmatrix_base },
+        { "GameAdmin root (current)",       OW::offset::Address_game_admin_root },
+        { "ComponentXorQword (current)",    OW::offset::ComponentXorQword_RVA },
+        { "ComponentXorByte (current)",     OW::offset::ComponentXorByte_RVA },
         { "entity_base (old)",              0x37E2AC0 },
         { "viewmatrix_xor (old)",           0x37F7618 },
         { "viewmatrix_test (old)",          0x3EB6278 },
@@ -1577,6 +1948,42 @@ void ScanDataSection()
             (unsigned long long)val);
     }
     Log("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+
+void PrintSummary()
+{
+    Log("\n============================================================\n");
+    Log("  Summary\n");
+    Log("============================================================\n\n");
+
+    int passed = 0;
+    int failed = 0;
+    Log("  %-4s %-10s %-34s %s\n", "#", "STATUS", "CHECK", "DETAIL");
+    Log("  %-4s %-10s %-34s %s\n",
+        "----",
+        "----------",
+        "----------------------------------",
+        "------------------------------");
+    for (size_t i = 0; i < g_check_results.size(); ++i) {
+        const CheckResult& result = g_check_results[i];
+        if (result.passed) {
+            ++passed;
+        } else {
+            ++failed;
+        }
+        Log("  %-4zu %-10s %-34s %s\n",
+            i + 1,
+            PassFail(result.passed),
+            result.name.c_str(),
+            result.detail.c_str());
+    }
+
+    Log("\n  Passed: %d\n", passed);
+    Log("  Failed: %d\n", failed);
 }
 
 // ---------------------------------------------------------------------------
@@ -1637,14 +2044,25 @@ int main(int argc, char** argv)
     // ---- Scan 4: ViewMatrix ----
     ScanViewMatrix();
 
-    // ---- Scan 5: HeapManager ----
+    // ---- Scan 4b: VM11 chain verification ----
+    ScanViewMatrixVM11Chain();
+
+    // ---- Scan 5: GameAdmin root pointer ----
+    ScanGameAdminRoot();
+
+    // ---- Scan 6: DecryptComponent known entity sanity ----
+    ScanDecryptComponentKnownEntity();
+
+    // ---- Scan 7: HeapManager ----
     ScanHeapManager();
 
-    // ---- Scan 6: IDA Hints ----
+    // ---- Scan 8: IDA Hints ----
     ScanIDAHints();
 
-    // ---- Scan 7: Data Section Summary ----
+    // ---- Scan 9: Data Section Summary ----
     ScanDataSection();
+
+    PrintSummary();
 
     // ---- Done ----
     Log("\n============================================================\n");
