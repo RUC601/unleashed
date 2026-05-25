@@ -82,7 +82,8 @@ namespace Render {
         float lineH = h / 3.0f;
 
         // Black outline (3px) for visibility against any background
-        ImU32 black = ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        const float alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
+        ImU32 black = ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.0f, 0.0f, alpha));
         d->AddLine(ImVec2(x, y), ImVec2(x, y + lineH), black, 3.0f);
         d->AddLine(ImVec2(x, y), ImVec2(x + lineW, y), black, 3.0f);
         d->AddLine(ImVec2(x + w - lineW, y), ImVec2(x + w, y), black, 3.0f);
@@ -126,7 +127,8 @@ namespace Render {
         ImDrawList* d = DL();
         if (!d || !text) return;
 
-        ImU32 black = ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        const float alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
+        ImU32 black = ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.0f, 0.0f, alpha));
         d->AddText(nullptr, fontSize, ImVec2(pos.x, pos.y - 1.0f), black, text);
         d->AddText(nullptr, fontSize, ImVec2(pos.x, pos.y + 1.0f), black, text);
         d->AddText(nullptr, fontSize, ImVec2(pos.x - 1.0f, pos.y), black, text);
@@ -145,24 +147,29 @@ namespace Render {
 
     // ---- DrawHealthBar ----
 
-    void DrawHealthBar(const Vector2& screenPos, float height, float health, float maxHealth) {
+    void DrawHealthBar(const Vector2& screenPos, float height, float health, float maxHealth, float opacity) {
         if (maxHealth <= 0.0f) return;
 
         float barWidth  = 3.0f;
         float barHeight = (health / maxHealth) * height;
         if (barHeight < 0.0f) barHeight = 0.0f;
+        if (barHeight > height) barHeight = height;
+
+        int alpha = static_cast<int>(opacity * 255.0f + 0.5f);
+        if (alpha < 0) alpha = 0;
+        if (alpha > 255) alpha = 255;
 
         // Background outline (black)
-        DrawRect(screenPos, barWidth, height, Color(0, 0, 0), 1.0f);
+        DrawRect(screenPos, barWidth, height, Color(0, 0, 0, alpha), 1.0f);
 
         // Choose colour based on health percentage
         float ratio = health / maxHealth;
         Color fillColor;
-        if      (ratio >= 0.8f) fillColor = Color(10, 255, 10);   // green
-        else if (ratio >= 0.6f) fillColor = Color(255, 255, 10);  // yellow
-        else if (ratio >= 0.4f) fillColor = Color(255, 150, 10);  // orange
-        else if (ratio >  0.0f) fillColor = Color(255, 50, 10);   // red
-        else                     fillColor = Color(0, 0, 0);       // black
+        if      (ratio >= 0.8f) fillColor = Color(10, 255, 10, alpha);   // green
+        else if (ratio >= 0.6f) fillColor = Color(255, 255, 10, alpha);  // yellow
+        else if (ratio >= 0.4f) fillColor = Color(255, 150, 10, alpha);  // orange
+        else if (ratio >  0.0f) fillColor = Color(255, 50, 10, alpha);   // red
+        else                    fillColor = Color(0, 0, 0, alpha);       // black
 
         DrawFilledRect(screenPos, barWidth, barHeight, fillColor.ToImColor());
     }

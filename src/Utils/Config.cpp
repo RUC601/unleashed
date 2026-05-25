@@ -522,6 +522,7 @@ namespace OW { namespace Config {
             healthbar2 = false;           // default: false
             healthbartextsize = 16.0f;    // default: 16
             dist = true;                  // default: true
+            visualMaxDist = 100.0f;       // default: 100m
             name = true;                  // default: true
             ult = true;                   // default: true
             draw_skel = true;             // default: true
@@ -709,6 +710,7 @@ namespace OW { namespace Config {
             healthbar2 = ReadBool(ini, section, "healthbar2", healthbar2);
             healthbartextsize = ReadFixedFloat(ini, section, "healthbartextsize", healthbartextsize);
             dist = ReadBool(ini, section, "dist", dist);
+            visualMaxDist = ReadFixedFloat(ini, section, "visualMaxDist", visualMaxDist);
             name = ReadBool(ini, section, "name", name);
             ult = ReadBool(ini, section, "ult", ult);
             draw_skel = ReadBool(ini, section, "draw_skel", draw_skel);
@@ -816,6 +818,7 @@ namespace OW { namespace Config {
             ClampFloatSetting("SkillHealth", SkillHealth, 0.0f, 1000.0f, 50.0f);
             ClampFloatSetting("CHANGEFOV", CHANGEFOV, 1.0f, 179.0f, 103.0f);
             ClampFloatSetting("healthbartextsize", healthbartextsize, 4.0f, 72.0f, 16.0f);
+            ClampFloatSetting("visualMaxDist", visualMaxDist, 0.0f, 1000.0f, 100.0f);
             ClampFloatSetting("lasthealth", lasthealth, 0.0f, 1000.0f, 0.0f);
             ClampFloatSetting("health", health, 0.0f, 1000.0f, 0.0f);
 
@@ -902,9 +905,9 @@ namespace OW { namespace Config {
             LogConfig(level, "Dump: fov-change enablechangefov=%s CHANGEFOV=%.3f trackback=%s secondaim=%s highPriority=%s",
                 ToText(enablechangefov).c_str(), CHANGEFOV, ToText(trackback).c_str(),
                 ToText(secondaim).c_str(), ToText(highPriority).c_str());
-            LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s name=%s ult=%s draw_skel=%s skillinfo=%s outline=%s externaloutline=%s teamoutline=%s healthoutline=%s rainbowoutline=%s",
+            LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s outline=%s externaloutline=%s teamoutline=%s healthoutline=%s rainbowoutline=%s",
                 ToText(draw_info).c_str(), ToText(drawbattletag).c_str(), ToText(drawhealth).c_str(), ToText(healthbar).c_str(),
-                ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), ToText(name).c_str(), ToText(ult).c_str(),
+                ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), visualMaxDist, ToText(name).c_str(), ToText(ult).c_str(),
                 ToText(draw_skel).c_str(), ToText(skillinfo).c_str(), ToText(outline).c_str(), ToText(externaloutline).c_str(),
                 ToText(teamoutline).c_str(), ToText(healthoutline).c_str(), ToText(rainbowoutline).c_str());
             LogConfig(level, "Dump: overlays draw_edge=%s drawbox3d=%s radar=%s radarline=%s drawline=%s draw_fov=%s draw_hp_pack=%s crosscircle=%s eyeray=%s testvalue=%s",
@@ -1038,6 +1041,7 @@ namespace OW { namespace Config {
         WriteBoolValue(path, "Global", "healthbar2", healthbar2);
         WriteFixedFloatValue(path, "Global", "healthbartextsize", healthbartextsize);
         WriteBoolValue(path, "Global", "dist", dist);
+        WriteFixedFloatValue(path, "Global", "visualMaxDist", visualMaxDist);
         WriteBoolValue(path, "Global", "name", name);
         WriteBoolValue(path, "Global", "ult", ult);
         WriteBoolValue(path, "Global", "draw_skel", draw_skel);

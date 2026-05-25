@@ -58,7 +58,6 @@ namespace {
     inline bool   g_visualHideInvisibleText  = true; // MISSING from OW::Config
     inline bool   g_visualShowTeamRadar     = true;  // MISSING from OW::Config
     inline bool   g_visualHideInvisibleHealth = true;// MISSING from OW::Config
-    inline float  g_visualMaxDist           = 100.0f;// MISSING from OW::Config
     inline float  g_visualMaxTextDist       = 100.0f;// MISSING from OW::Config
 
 } // anonymous namespace
@@ -1192,9 +1191,9 @@ void UI::VisualsPage() {
             "Radar", "Hero", "Distance"
         };
         bool* values[] = {
-            &g_visualBox, &g_visualHealthbar, &g_visualDamage,
-            &g_visualSkeleton, &g_visualGlow, &g_visualLines,
-            &g_visualRadar, &g_visualHero, &g_visualDistance
+            &OW::Config::draw_info, &OW::Config::drawhealth, &g_visualDamage,
+            &OW::Config::draw_skel, &g_visualGlow, &OW::Config::drawline,
+            &OW::Config::radar, &g_visualHero, &OW::Config::dist
         };
         const float ratios[] = { 1.0f, 1.0f, 1.0f };
         DrawCheckboxGrid3(labels, values, 3, 26.0f, ratios);
@@ -1234,7 +1233,7 @@ void UI::VisualsPage() {
 
         SettingRow("Max Distance");
         ImGui::PushItemWidth(-1);
-        UISlider("##visMaxDist", &g_visualMaxDist, 0.0f, 100.0f, "Unlimited");
+        UISlider("##visMaxDist", &OW::Config::visualMaxDist, 0.0f, 100.0f, "100 m");
         ImGui::PopItemWidth();
 
         SettingRow("Max Text Distance");

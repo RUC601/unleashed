@@ -14,9 +14,12 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <array>
 #include <cstdio>
 #include <cstdint>
+#include <cstdarg>
 #include <cstring>
+#include <cmath>
 #include <vector>
 #include <string>
 #include <fstream>
@@ -27,6 +30,7 @@
 #include "leechcore.h"
 #include "vmmdll.h"
 #include "Memory/MemoryRanges.h"
+#include "Game/Offsets.hpp"
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -36,6 +40,14 @@ static DWORD       g_pid    = 0;
 static uint64_t    g_base   = 0;   // base address of Overwatch.exe
 static uint64_t    g_size   = 0;   // image size of Overwatch.exe
 static FILE*       g_log    = nullptr;
+
+struct CheckResult {
+    std::string name;
+    bool passed = false;
+    std::string detail;
+};
+
+static std::vector<CheckResult> g_check_results;
 
 // ---------------------------------------------------------------------------
 // Logging helpers -- tee to stdout and log file
@@ -54,15 +66,77 @@ static void Log(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    vprintf(fmt, args);
+    va_list file_args;
     if (g_log) {
-        va_start(args, fmt);
-        vfprintf(g_log, fmt, args);
-        va_end(args);
+        va_copy(file_args, args);
     }
+    vprintf(fmt, args);
     va_end(args);
+    if (g_log) {
+        vfprintf(g_log, fmt, file_args);
+        va_end(file_args);
+    }
     fflush(stdout);
     if (g_log) fflush(g_log);
+}
+
+static std::string FormatString(const char* fmt, ...)
+{
+    char buffer[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    buffer[sizeof(buffer) - 1] = '\0';
+    return std::string(buffer);
+}
+
+static const char* PassFail(bool passed)
+{
+    return passed ? "PASS" : "FAIL";
+}
+
+static void LogSection(const char* title)
+{
+    Log("\n============================================================\n");
+    Log("  %s\n", title);
+    Log("============================================================\n\n");
+}
+
+static void LogResultHeader(const char* col1, const char* col2, const char* col3)
+{
+    Log("  %-28s %-10s %-22s %s\n", col1, "STATUS", col2, col3);
+    Log("  %-28s %-10s %-22s %s\n",
+        "----------------------------",
+        "----------",
+        "----------------------",
+        "------------------------------");
+}
+
+static void LogResultRow(const char* name, bool passed, const char* value, const char* detail)
+{
+    Log("  %-28s %-10s %-22s %s\n",
+        name,
+        PassFail(passed),
+        value ? value : "",
+        detail ? detail : "");
+}
+
+static void RecordCheck(const std::string& name, bool passed, const std::string& detail)
+{
+    g_check_results.push_back({ name, passed, detail });
+    LogResultRow(name.c_str(), passed, "", detail.c_str());
+}
+
+static void RecordCheckFmt(const std::string& name, bool passed, const char* fmt, ...)
+{
+    char buffer[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    buffer[sizeof(buffer) - 1] = '\0';
+    RecordCheck(name, passed, buffer);
 }
 
 static void LogClose()
@@ -151,6 +225,65 @@ bool ReadBuf(uint64_t addr, void* buf, size_t size)
     return VMMDLL_MemReadEx(g_vmm, g_pid, addr, (PBYTE)buf, (DWORD)size, &read,
                VMMDLL_FLAG_NOCACHE | VMMDLL_FLAG_NOPAGING | VMMDLL_FLAG_NOPAGING_IO)
            != 0;
+}
+
+template<typename T>
+bool ReadExact(uint64_t addr, T& value)
+{
+    value = {};
+    DWORD read = 0;
+    const BOOL ok = VMMDLL_MemReadEx(
+        g_vmm,
+        g_pid,
+        addr,
+        reinterpret_cast<PBYTE>(&value),
+        static_cast<DWORD>(sizeof(T)),
+        &read,
+        VMMDLL_FLAG_NOCACHE | VMMDLL_FLAG_NOPAGING | VMMDLL_FLAG_NOPAGING_IO);
+    return ok && read == sizeof(T);
+}
+
+bool ReadExactBuf(uint64_t addr, void* buf, size_t size)
+{
+    if (!buf || size == 0 || size > 0x100000) {
+        return false;
+    }
+
+    DWORD read = 0;
+    const BOOL ok = VMMDLL_MemReadEx(
+        g_vmm,
+        g_pid,
+        addr,
+        reinterpret_cast<PBYTE>(buf),
+        static_cast<DWORD>(size),
+        &read,
+        VMMDLL_FLAG_NOCACHE | VMMDLL_FLAG_NOPAGING | VMMDLL_FLAG_NOPAGING_IO);
+    return ok && read == size;
+}
+
+static bool IsCanonicalUserPointer(uint64_t value)
+{
+    return value >= 0x10000ull && value <= 0x00007FFFFFFFFFFFull;
+}
+
+static bool CanReadPointer(uint64_t value, size_t size = sizeof(uint64_t))
+{
+    if (!IsCanonicalUserPointer(value) || size == 0 || size > 0x1000) {
+        return false;
+    }
+
+    uint8_t buffer[0x1000] = {};
+    return ReadExactBuf(value, buffer, size);
+}
+
+static bool LooksLikeImagePointer(uint64_t value)
+{
+    return g_base != 0 && g_size != 0 && value >= g_base && value < g_base + g_size;
+}
+
+static bool LooksLikeReadablePointer(uint64_t value, size_t size = sizeof(uint64_t))
+{
+    return IsCanonicalUserPointer(value) && CanReadPointer(value, size);
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +432,191 @@ static inline uint64_t ROR64(uint64_t x, int bits)
     bits &= 63;
     if (bits == 0) return x;
     return (x >> bits) | (x << (64 - bits));
+}
+
+static inline uint64_t ROL64(uint64_t x, int bits)
+{
+    bits &= 63;
+    if (bits == 0) return x;
+    return (x << bits) | (x >> (64 - bits));
+}
+
+static bool IsSaneFloat(float value, float max_abs = 1000000.0f)
+{
+    return std::isfinite(value) && std::fabs(value) <= max_abs;
+}
+
+static bool IsSaneMatrix(const std::array<float, 16>& matrix)
+{
+    int finite_count = 0;
+    int non_zero_count = 0;
+    for (float value : matrix) {
+        if (!IsSaneFloat(value, 100000000.0f)) {
+            return false;
+        }
+        ++finite_count;
+        if (std::fabs(value) > 0.00001f) {
+            ++non_zero_count;
+        }
+    }
+    return finite_count == 16 && non_zero_count >= 4;
+}
+
+static constexpr uint8_t kComponentTypeVelocity = 0x04;
+static constexpr uint8_t kComponentTypeTeam = 0x21;
+static constexpr uint8_t kComponentTypeLink = 0x34;
+static constexpr uint8_t kComponentTypeHealth = 0x3B;
+static constexpr uint8_t kComponentTypePlayerController = 0x44;
+static constexpr uint8_t kComponentTypeHeroId = 0x54;
+
+struct ComponentDecryptTrace {
+    uint64_t parent = 0;
+    uint8_t idx = 0;
+    uint64_t bit_mask = 0;
+    uint64_t component_bits = 0;
+    uint64_t present = 0;
+    uint64_t component_index = 0;
+    uint64_t component_table = 0;
+    uint64_t encrypted_component = 0;
+    uint64_t key_source = 0;
+    uint64_t key_material = 0;
+    uint8_t key_byte = 0;
+    uint64_t decoded = 0;
+    std::string failure;
+};
+
+static const char* ComponentName(uint8_t idx)
+{
+    switch (idx) {
+    case kComponentTypeVelocity: return "TYPE_VELOCITY";
+    case kComponentTypeTeam: return "TYPE_TEAM";
+    case kComponentTypeLink: return "TYPE_LINK";
+    case kComponentTypeHealth: return "TYPE_HEALTH";
+    case kComponentTypePlayerController: return "TYPE_PLAYERCONTROLLER";
+    case kComponentTypeHeroId: return "TYPE_P_HEROID";
+    default: return "TYPE_UNKNOWN";
+    }
+}
+
+static void BuildComponentBitInfo(
+    uint8_t component_id,
+    uint64_t& bit_mask,
+    uint64_t& lower_mask,
+    uint32_t& shift,
+    uint32_t& bucket)
+{
+    shift = component_id & 0x3F;
+    bit_mask = 1ull << shift;
+    lower_mask = bit_mask - 1;
+    bucket = component_id >> 6;
+}
+
+static uint64_t ScannerDecryptComponent(uint64_t parent, uint8_t idx, ComponentDecryptTrace* trace = nullptr)
+{
+    ComponentDecryptTrace local_trace{};
+    ComponentDecryptTrace& t = trace ? *trace : local_trace;
+    t = {};
+    t.parent = parent;
+    t.idx = idx;
+
+    if (!parent) {
+        t.failure = "parent is null";
+        return 0;
+    }
+
+    uint64_t lower_mask = 0;
+    uint32_t shift = 0;
+    uint32_t bucket = 0;
+    BuildComponentBitInfo(idx, t.bit_mask, lower_mask, shift, bucket);
+
+    if (!ReadExact(parent + 8ull * bucket + 0x110, t.component_bits)) {
+        t.failure = "component bitmap read failed";
+        return 0;
+    }
+
+    t.present = (t.component_bits & t.bit_mask) >> shift;
+    if (!t.present) {
+        t.failure = "component bit is not present";
+        return 0;
+    }
+
+    uint64_t below = t.component_bits & lower_mask;
+    below -= (below >> 1) & 0x5555555555555555ull;
+    below = (below & 0x3333333333333333ull) +
+            ((below >> 2) & 0x3333333333333333ull);
+    below = (below + (below >> 4)) & 0x0F0F0F0F0F0F0F0Full;
+
+    uint8_t component_index_base = 0;
+    if (!ReadExact(parent + bucket + 0x130, component_index_base)) {
+        t.failure = "component index-base read failed";
+        return 0;
+    }
+
+    t.component_index =
+        component_index_base +
+        ((below * 0x0101010101010101ull) >> 0x38);
+
+    if (!ReadExact(parent + 0x80, t.component_table) || !t.component_table) {
+        t.failure = "component table pointer missing";
+        return 0;
+    }
+
+    if (!ReadExact(t.component_table + 8ull * t.component_index, t.encrypted_component) ||
+        !t.encrypted_component) {
+        t.failure = "encrypted component qword missing";
+        return 0;
+    }
+
+    if (!ReadExact(g_base + OW::offset::ComponentXorQword_RVA, t.key_source) ||
+        !t.key_source) {
+        t.failure = "component key source pointer missing";
+        return 0;
+    }
+
+    if (!ReadExact(t.key_source + OW::offset::ComponentXorQword_Off, t.key_material)) {
+        t.failure = "component key material read failed";
+        return 0;
+    }
+
+    if (!ReadExact(g_base + OW::offset::ComponentXorByte_RVA, t.key_byte)) {
+        t.failure = "component key byte read failed";
+        return 0;
+    }
+
+    uint64_t component = t.encrypted_component;
+    component += OW::offset::Component_Add1;
+    component ^= t.key_material;
+    component += OW::offset::Component_Add2;
+    component ^= static_cast<uint64_t>(t.key_byte);
+    component ^= OW::offset::Component_Xor1;
+    component ^= OW::offset::Component_Xor2;
+    component = ROL64(component, 0x2A);
+    component = ROR64(component, 0x2D);
+
+    const uint64_t present_mask =
+        static_cast<uint64_t>(static_cast<int64_t>(
+            -static_cast<int32_t>(t.present)));
+    t.decoded = present_mask & component;
+    if (!t.decoded) {
+        t.failure = "decoded component is null";
+    }
+    return t.decoded;
+}
+
+static bool IsPlausibleHeroId(uint64_t hero_id)
+{
+    if ((hero_id & 0xFFF0000000000000ull) == 0x02E0000000000000ull) {
+        return true;
+    }
+
+    switch (hero_id) {
+    case 0x16DD:
+    case 0x16EE:
+    case 0x16BB:
+        return true;
+    default:
+        return false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -666,6 +984,17 @@ void ScanGetGlobalKey()
     } else {
         Log("\n=== FINAL: GetGlobalKey FAILED ===\n");
     }
+
+    Log("\n[RESULT]\n");
+    LogResultHeader("CHECK", "VALUE", "DETAIL");
+    RecordCheckFmt(
+        "GetGlobalKey",
+        kv1 && kv2,
+        kv1 && kv2
+            ? "key1=0x%llX key2=0x%llX"
+            : "key1/key2 not both resolved",
+        (unsigned long long)key1,
+        (unsigned long long)key2);
 }
 
 // ---------------------------------------------------------------------------
@@ -675,6 +1004,43 @@ void ScanGetGlobalKey()
 void ScanEntityBase()
 {
     Log("\n=== SCAN 2: Entity Base ===\n\n");
+
+    struct Entity { uint64_t entity; uint64_t pad; };
+
+    const uint64_t current_entity_rva = OW::offset::Address_entity_base;
+    const uint64_t current_entity_list = Read<uint64_t>(g_base + current_entity_rva);
+    const bool current_ok = LooksLikeReadablePointer(current_entity_list, sizeof(Entity) * 8);
+
+    Log("[CURRENT]\n");
+    LogResultHeader("CHECK", "VALUE", "DETAIL");
+    LogResultRow(
+        "Entity base RVA",
+        current_ok,
+        FormatString("0x%llX", (unsigned long long)current_entity_rva).c_str(),
+        FormatString("ptr=0x%llX stride(ref)=0x%llX",
+            (unsigned long long)current_entity_list,
+            (unsigned long long)OW::offset::entity_entry_stride).c_str());
+    RecordCheckFmt(
+        "Entity Base Current",
+        current_ok,
+        "RVA 0x%llX -> 0x%llX",
+        (unsigned long long)current_entity_rva,
+        (unsigned long long)current_entity_list);
+
+    if (current_ok) {
+        Entity entries[8] = {};
+        if (ReadExactBuf(current_entity_list, entries, sizeof(entries))) {
+            Log("[CURRENT] First 8 entity list pairs:\n");
+            Log("  %-5s %-18s %-18s\n", "IDX", "ENTITY", "PAD");
+            Log("  %-5s %-18s %-18s\n", "-----", "------------------", "------------------");
+            for (int i = 0; i < 8; i++) {
+                Log("  %-5d 0x%016llX 0x%016llX\n", i,
+                    (unsigned long long)entries[i].entity,
+                    (unsigned long long)entries[i].pad);
+            }
+            Log("\n");
+        }
+    }
 
     // Try the old offset
     uint64_t old_entity_offset = 0x37E2AC0;
@@ -693,7 +1059,6 @@ void ScanEntityBase()
 
     if (looks_valid) {
         // Read first few entries to verify
-        struct Entity { uint64_t entity; uint64_t pad; };
         Entity first_entries[8] = {};
         if (ReadBuf(entity_list, first_entries, sizeof(first_entries))) {
             Log("[INFO] First 8 entity list entries:\n");
@@ -802,6 +1167,7 @@ void ScanDecryptionTables()
     constexpr int TABLE_SIZE = 2048;
     constexpr int THRESHOLD  = 512; // require at least 512 non-zero entries
     uint64_t table_buf[TABLE_SIZE];
+    int table_candidates = 0;
 
     for (uint64_t probe = data_start; probe + TABLE_SIZE * 8 <= data_end; probe += 0x1000) {
         if (!ReadBuf(probe, table_buf, sizeof(table_buf)))
@@ -812,6 +1178,7 @@ void ScanDecryptionTables()
             if (table_buf[i] != 0) non_zero++;
         }
         if (non_zero >= THRESHOLD) {
+            ++table_candidates;
             Log("  [TABLE] RVA 0x%llX: %d/2048 entries non-zero\n",
                 (unsigned long long)(probe - g_base), non_zero);
 
@@ -865,6 +1232,7 @@ void ScanDecryptionTables()
     uint64_t vis_probe_end   = g_base + 0x38C0000;
     constexpr int VIS_BUF_SIZE = 4096; // search in 4096 byte blocks
     uint64_t vis_block[VIS_BUF_SIZE];
+    int vis_candidates = 0;
 
     for (uint64_t probe = vis_probe_start; probe + VIS_BUF_SIZE * 8 <= vis_probe_end; probe += 0x1000) {
         if (!ReadBuf(probe, vis_block, sizeof(vis_block)))
@@ -881,10 +1249,20 @@ void ScanDecryptionTables()
         }
         // A decent vis table would have at least 32 non-zero entries out of 512 (4096/8)
         if (non_zero >= 32) {
+            ++vis_candidates;
             Log("  [VIS_CANDIDATE] RVA 0x%llX: ~%d/512 entries non-zero\n",
                 (unsigned long long)(probe - g_base), non_zero);
         }
     }
+
+    Log("\n[RESULT]\n");
+    LogResultHeader("CHECK", "VALUE", "DETAIL");
+    RecordCheckFmt(
+        "Decrypt Table Candidates",
+        table_candidates > 0,
+        "component=%d vis=%d",
+        table_candidates,
+        vis_candidates);
 }
 
 // ---------------------------------------------------------------------------
@@ -981,6 +1359,15 @@ void ScanViewMatrix()
             Log("  No XOR-encrypted pointers found in broad scan either.\n");
         }
     }
+
+    Log("\n[RESULT]\n");
+    LogResultHeader("CHECK", "VALUE", "DETAIL");
+    RecordCheckFmt(
+        "ViewMatrix Legacy XOR",
+        ptr_looks_valid || vm_count > 0,
+        "old_ptr=%s xor_candidates=%d",
+        ptr_looks_valid ? "valid" : "invalid",
+        vm_count);
 }
 
 // ---------------------------------------------------------------------------
@@ -1095,6 +1482,7 @@ void ScanIDAHints()
     Log("\n[INFO] Checking DecryptComponent lookup at 0x%llX ...\n", (unsigned long long)dc_addr);
 
     uint8_t dc_code[32] = {};
+    bool ida_hint_ok = false;
     if (ReadBuf(dc_addr, dc_code, sizeof(dc_code))) {
         Log("[INFO] Code at table lookup:\n  ");
         for (int i = 0; i < 32; i++) {
@@ -1124,6 +1512,7 @@ void ScanIDAHints()
         if (!found_and) Log("[WARN] Did not find 'and ecx, 0x7FF' in the sample\n");
         if (found_shr && found_and) {
             Log("[OK]   Confirmed: the IDA hint matches the running binary.\n");
+            ida_hint_ok = true;
 
             // Now we know the table is 2048 entries. Let's try to find the table
             // by looking for what RVA is used in the offset calculation.
@@ -1135,6 +1524,14 @@ void ScanIDAHints()
     } else {
         Log("[WARN] Could not read code at DecryptComponent (might be in a different section)\n");
     }
+
+    Log("\n[RESULT]\n");
+    LogResultHeader("CHECK", "VALUE", "DETAIL");
+    RecordCheck(
+        "IDA DecryptComponent Hint",
+        ida_hint_ok,
+        ida_hint_ok ? "shr rcx,0x34 and and ecx,0x7FF matched"
+                    : "expected instruction sample not confirmed");
 }
 
 // ---------------------------------------------------------------------------

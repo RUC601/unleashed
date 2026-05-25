@@ -6,6 +6,9 @@
 #include <ctime>
 #include <utility>
 #include <cstring>
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <windows.h>
 #include <process.h>
 #include <DirectXMath.h>
@@ -214,44 +217,12 @@ inline void entity_thread() {
                 auto velo_compo = SDK->RPM<OW::velocity_compo_t>(entity.VelocityBase);
                 entity.pos      = Vector3(velo_compo.location.x, velo_compo.location.y - 1.f, velo_compo.location.z);
                 entity.velocity = Vector3(velo_compo.velocity.x, velo_compo.velocity.y, velo_compo.velocity.z);
-
-                int head_index  = entity.GetSkel()[0];
-                int neck_index  = entity.GetSkel()[1];
-                int chest_index = entity.GetSkel()[2];
-                entity.head_pos  = entity.GetBonePos(head_index);
-                entity.neck_pos  = entity.GetBonePos(neck_index);
-                entity.chest_pos = entity.GetBonePos(chest_index);
             }
 
             // ---- Hero ID ----
             if (entity.HeroBase) {
                 auto hero_compo = SDK->RPM<OW::hero_compo_t>(entity.HeroBase);
                 entity.HeroID = hero_compo.heroid;
-
-                if (entity.HeroID == OW::eHero::HERO_WRECKINGBALL) {
-                    entity.head_pos = entity.GetBonePos(entity.GetSkel()[0]);
-                    entity.head_pos.Y += 0.02f;
-                    entity.neck_pos = entity.GetBonePos(entity.GetSkel()[1]);
-                    entity.chest_pos = entity.GetBonePos(entity.GetSkel()[2]);
-                }
-
-                if (entity.HeroID == OW::eHero::HERO_DVA &&
-                    OW::GetHeroEngNames(entity.HeroID, entity.LinkBase) != "Hana") {
-                    entity.imort = false;
-                    entity.head_pos.Y -= 0.1f;
-                    entity.chest_pos = entity.neck_pos;
-                    entity.chest_pos.Y -= 0.3f;
-                }
-
-                bool isStandardBot = (entity.HeroID == OW::eHero::HERO_TRAININGBOT1 ||
-                                      entity.HeroID == OW::eHero::HERO_TRAININGBOT2 ||
-                                      entity.HeroID == OW::eHero::HERO_TRAININGBOT3 ||
-                                      entity.HeroID == OW::eHero::HERO_TRAININGBOT4 ||
-                                      entity.HeroID == OW::eHero::HERO_TRAININGBOT5 ||
-                                      entity.HeroID == OW::eHero::HERO_TRAININGBOT6 ||
-                                      entity.HeroID == OW::eHero::HERO_TRAININGBOT7);
-                if (isStandardBot)
-                    entity.chest_pos = entity.GetBonePos(83);
             } else {
                 // Fallback: identify by MaxHealth
                 if (entity.MaxHealth == 225) {
@@ -275,6 +246,35 @@ inline void entity_thread() {
                     continue;
                 }
             }
+
+            if (entity.VelocityBase && entity.HeroID != 0x16dd && entity.HeroID != 0x16ee) {
+                entity.CacheSkeletonBones();
+                if (entity.skeleton_bone_valid[0]) entity.head_pos = entity.skeleton_bones[0];
+                if (entity.skeleton_bone_valid[1]) entity.neck_pos = entity.skeleton_bones[1];
+                if (entity.skeleton_bone_valid[2]) entity.chest_pos = entity.skeleton_bones[2];
+            }
+
+            if (entity.HeroID == OW::eHero::HERO_WRECKINGBALL) {
+                entity.head_pos.Y += 0.02f;
+            }
+
+            if (entity.HeroID == OW::eHero::HERO_DVA &&
+                OW::GetHeroEngNames(entity.HeroID, entity.LinkBase) != "Hana") {
+                entity.imort = false;
+                entity.head_pos.Y -= 0.1f;
+                entity.chest_pos = entity.neck_pos;
+                entity.chest_pos.Y -= 0.3f;
+            }
+
+            bool isStandardBot = (entity.HeroID == OW::eHero::HERO_TRAININGBOT1 ||
+                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT2 ||
+                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT3 ||
+                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT4 ||
+                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT5 ||
+                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT6 ||
+                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT7);
+            if (isStandardBot)
+                entity.chest_pos = entity.GetBonePos(83);
 
             // ---- BattleTag (optional) ----
             if (OW::Config::draw_info && OW::Config::drawbattletag) {
@@ -420,6 +420,35 @@ namespace OverlayRenderDetail {
         return ImGui::ColorConvertFloat4ToU32(color);
     }
 
+    inline float Clamp01(float value) {
+        return std::clamp(value, 0.0f, 1.0f);
+    }
+
+    inline float Lerp(float from, float to, float t) {
+        return from + (to - from) * Clamp01(t);
+    }
+
+    inline int ToByte(float value) {
+        return static_cast<int>(Clamp01(value) * 255.0f + 0.5f);
+    }
+
+    inline Render::Color ToRenderColor(const ImVec4& color) {
+        return Render::Color(ToByte(color.x), ToByte(color.y), ToByte(color.z), ToByte(color.w));
+    }
+
+    inline float VisibilityAlpha(const OW::c_entity& entity, float opacity) {
+        return Clamp01(opacity * (entity.Vis ? 1.0f : 0.42f));
+    }
+
+    inline ImVec4 ApplyVisualState(ImVec4 color, const OW::c_entity& entity, float opacity) {
+        const float brightness = entity.Vis ? 1.18f : 0.55f;
+        color.x = Clamp01(color.x * brightness);
+        color.y = Clamp01(color.y * brightness);
+        color.z = Clamp01(color.z * brightness);
+        color.w = Clamp01(color.w * VisibilityAlpha(entity, opacity));
+        return color;
+    }
+
     inline bool IsValidScreenPoint(const Vector2& point) {
         return point.X > 0.0f && point.Y > 0.0f &&
                point.X < OW::WX && point.Y < OW::WY &&
@@ -430,27 +459,54 @@ namespace OverlayRenderDetail {
         return entity.HeroID == 0x16dd || entity.HeroID == 0x16ee || entity.HeroID == 0x16bb;
     }
 
-    inline ImU32 EntityColor(const OW::c_entity& entity, size_t index) {
+    inline ImVec4 EntityBaseColor(const OW::c_entity& entity, size_t index) {
         if (entity.Team && OW::Config::Targetenemyi >= 0 &&
             index == static_cast<size_t>(OW::Config::Targetenemyi)) {
-            return ToImU32(OW::Config::targetargb);
+            return OW::Config::targetargb;
         }
-        return entity.Team ? ToImU32(OW::Config::enargb)
-                           : ToImU32(OW::Config::allyargb);
+        if (entity.Team && !entity.Vis)
+            return OW::Config::invisnenargb;
+        return entity.Team ? OW::Config::enargb : OW::Config::allyargb;
     }
 
-    inline Render::Color EntityRenderColor(const OW::c_entity& entity, size_t index) {
-        ImVec4 src = entity.Team ? OW::Config::enargb : OW::Config::allyargb;
-        if (entity.Team && OW::Config::Targetenemyi >= 0 &&
-            index == static_cast<size_t>(OW::Config::Targetenemyi)) {
-            src = OW::Config::targetargb;
+    inline ImVec4 HealthGradientColor(const OW::c_entity& entity) {
+        float ratio = 0.0f;
+        if (entity.PlayerHealthMax > 0.0f)
+            ratio = Clamp01(entity.PlayerHealth / entity.PlayerHealthMax);
+
+        if (ratio >= 0.5f) {
+            const float t = (ratio - 0.5f) * 2.0f;
+            return ImVec4(Lerp(1.0f, 0.0f, t), 1.0f, 0.0f, 1.0f);
         }
-        return Render::Color(
-            static_cast<int>(src.x * 255.0f),
-            static_cast<int>(src.y * 255.0f),
-            static_cast<int>(src.z * 255.0f),
-            static_cast<int>(src.w * 255.0f)
-        );
+
+        const float t = ratio * 2.0f;
+        return ImVec4(1.0f, Lerp(0.0f, 1.0f, t), 0.0f, 1.0f);
+    }
+
+    inline bool ShouldRenderAtDistance(float distance) {
+        if (!OW::Config::dist || OW::Config::visualMaxDist <= 0.0f)
+            return true;
+        return distance <= OW::Config::visualMaxDist;
+    }
+
+    inline float DistanceOpacity(float distance) {
+        if (!OW::Config::dist || OW::Config::visualMaxDist <= 0.0f)
+            return 1.0f;
+        return Clamp01(1.0f - Clamp01(distance / OW::Config::visualMaxDist));
+    }
+
+    inline ImU32 EntityColor(const OW::c_entity& entity, size_t index, float opacity = 1.0f) {
+        return ToImU32(ApplyVisualState(EntityBaseColor(entity, index), entity, opacity));
+    }
+
+    inline ImU32 EntityBoxColor(const OW::c_entity& entity, size_t index, float opacity) {
+        if (OW::Config::drawhealth)
+            return ToImU32(ApplyVisualState(HealthGradientColor(entity), entity, opacity));
+        return EntityColor(entity, index, opacity);
+    }
+
+    inline Render::Color EntityRenderColor(const OW::c_entity& entity, size_t index, float opacity = 1.0f) {
+        return ToRenderColor(ApplyVisualState(EntityBaseColor(entity, index), entity, opacity));
     }
 
     inline void DrawCenteredText(const ImVec2& center, ImU32 color, const std::string& text, float fontSize) {
@@ -459,45 +515,47 @@ namespace OverlayRenderDetail {
         Render::DrawStrokeText(ImVec2(center.x - size.x * 0.5f, center.y), color, text.c_str(), fontSize);
     }
 
-    inline void DrawBoneSegment(const Vector2& from, const Vector2& to, const Render::Color& color) {
+    inline void DrawBoneSegment(const Vector2& from, const Vector2& to, const Render::Color& color, float thickness) {
         if (IsValidScreenPoint(from) && IsValidScreenPoint(to))
-            Render::DrawLine(from, to, color, 1.0f);
+            Render::DrawLine(from, to, color, thickness);
     }
 
-    inline void DrawSkeleton(OW::c_entity entity, const Render::Color& color) {
-        std::array<int, 18> indices = entity.GetSkel();
+    inline void DrawSkeleton(const OW::c_entity& entity, const Render::Color& color, float thickness) {
         Vector2 points[18]{};
         bool projected[18]{};
         const Vector2 windowSize(OW::WX, OW::WY);
 
         for (int i = 0; i < 18; ++i) {
-            Vector3 bonePos = entity.GetBonePos(indices[i]);
-            projected[i] = OW::viewMatrix.WorldToScreen(bonePos, &points[i], windowSize);
+            if (!entity.skeleton_bone_valid[i])
+                continue;
+            projected[i] = OW::viewMatrix.WorldToScreen(entity.skeleton_bones[i], &points[i], windowSize);
         }
 
         auto draw = [&](int from, int to) {
             if (from < 0 || from >= 18 || to < 0 || to >= 18) return;
             if (projected[from] && projected[to])
-                DrawBoneSegment(points[from], points[to], color);
+                DrawBoneSegment(points[from], points[to], color, thickness);
         };
 
-        draw(0, 1);   // head to neck
-        draw(1, 2);   // neck to chest
-        draw(2, 3);   // chest to pelvis
+        static constexpr std::pair<int, int> kBoneConnections[] = {
+            {0, 1}, {1, 2}, {2, 3},
+            {1, 4}, {4, 6}, {6, 12},
+            {1, 5}, {5, 7}, {7, 13},
+            {3, 8}, {8, 10},
+            {3, 9}, {9, 11},
+        };
 
-        draw(1, 4);   // left arm
-        draw(4, 6);
-        draw(6, 12);
+        for (const auto& link : kBoneConnections)
+            draw(link.first, link.second);
+    }
 
-        draw(1, 5);   // right arm
-        draw(5, 7);
-        draw(7, 13);
-
-        draw(3, 8);   // left leg
-        draw(8, 10);
-
-        draw(3, 9);   // right leg
-        draw(9, 11);
+    inline void DrawVisibleEyeIndicator(const Vector2& center, const Render::Color& color) {
+        Render::DrawLine(Vector2(center.X - 6.0f, center.Y), Vector2(center.X - 3.0f, center.Y - 2.0f), color, 1.0f);
+        Render::DrawLine(Vector2(center.X - 6.0f, center.Y), Vector2(center.X - 3.0f, center.Y + 2.0f), color, 1.0f);
+        Render::DrawLine(Vector2(center.X + 6.0f, center.Y), Vector2(center.X + 3.0f, center.Y - 2.0f), color, 1.0f);
+        Render::DrawLine(Vector2(center.X + 6.0f, center.Y), Vector2(center.X + 3.0f, center.Y + 2.0f), color, 1.0f);
+        Render::DrawCircle(center, 3.2f, color, 16, 1.0f);
+        Render::DrawFilledCircle(center, 1.2f, color, 12);
     }
 
 } // namespace OverlayRenderDetail
@@ -518,6 +576,13 @@ inline void PlayerInfo() {
         float dist = Vector3(OW::viewMatrix_xor.get_location().x,
                              OW::viewMatrix_xor.get_location().y,
                              OW::viewMatrix_xor.get_location().z).DistTo(Vec3);
+        if (!OverlayRenderDetail::ShouldRenderAtDistance(dist))
+            continue;
+
+        const float distanceOpacity = OverlayRenderDetail::DistanceOpacity(dist);
+        if (distanceOpacity <= 0.0f)
+            continue;
+
         Vector2 Vec2_A{}, Vec2_B{};
         if (!OW::viewMatrix.WorldToScreen(Vector3(Vec3.X, Vec3.Y - 1.5f, Vec3.Z), &Vec2_A, Vector2(OW::WX, OW::WY)))
             continue;
@@ -534,16 +599,20 @@ inline void PlayerInfo() {
         float centerX = (Vec2_A.X + Vec2_B.X) * 0.5f;
         float left = centerX - width * 0.5f;
 
-        ImU32 color = OverlayRenderDetail::EntityColor(entity, index);
-        Render::Color lineColor = OverlayRenderDetail::EntityRenderColor(entity, index);
+        ImU32 color = OverlayRenderDetail::EntityColor(entity, index, distanceOpacity);
+        ImU32 boxColor = OverlayRenderDetail::EntityBoxColor(entity, index, distanceOpacity);
+        Render::Color lineColor = OverlayRenderDetail::EntityRenderColor(entity, index, distanceOpacity);
+        const float visualOpacity = OverlayRenderDetail::VisibilityAlpha(entity, distanceOpacity);
+        const float outlineThickness = entity.Vis ? 1.8f : 1.2f;
+        const float skeletonThickness = entity.Vis ? 1.5f : 1.0f;
 
         if (OW::Config::draw_info || OW::Config::draw_edge || OW::Config::drawbox3d) {
-            Render::DrawCorneredBox(left, top, width, bottom - top, color, 1.5f);
+            Render::DrawCorneredBox(left, top, width, bottom - top, boxColor, outlineThickness);
         }
 
         if (OW::Config::drawhealth && OW::Config::healthbar) {
             Render::DrawHealthBar(Vector2(left - 7.0f, top), bottom - top,
-                                  entity.PlayerHealth, entity.PlayerHealthMax);
+                                  entity.PlayerHealth, entity.PlayerHealthMax, visualOpacity);
         }
 
         if (OW::Config::drawhealth && OW::Config::healthbar2) {
@@ -559,7 +628,12 @@ inline void PlayerInfo() {
         }
 
         if (OW::Config::draw_skel && !OverlayRenderDetail::IsSpecialEntity(entity)) {
-            OverlayRenderDetail::DrawSkeleton(entity, lineColor);
+            OverlayRenderDetail::DrawSkeleton(entity, lineColor, skeletonThickness);
+        }
+
+        if (entity.Vis) {
+            OverlayRenderDetail::DrawVisibleEyeIndicator(
+                Vector2(left + width + 8.0f, top + 7.0f), lineColor);
         }
 
         if (OW::Config::eyeray) {

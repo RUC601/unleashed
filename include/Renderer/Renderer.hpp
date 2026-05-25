@@ -71,7 +71,7 @@ namespace Render {
 
     void DrawString(const Vector2& pos, const Color& color, const char* text);
 
-    void DrawHealthBar(const Vector2& screenPos, float height, float health, float maxHealth);
+    void DrawHealthBar(const Vector2& screenPos, float height, float health, float maxHealth, float opacity = 1.0f);
 
     void DrawSeerLikeHealth(float x, float y, int ult, int maxUlt, int hp, int maxHp);
 

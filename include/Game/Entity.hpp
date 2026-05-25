@@ -71,6 +71,8 @@ namespace OW {
         Vector3 pos{};
         Vector3 neck_pos{};
         Vector3 chest_pos{};
+        std::array<Vector3, 18> skeleton_bones{};
+        std::array<bool, 18> skeleton_bone_valid{};
 
         // =====================================================================
         // Constructors / operators
@@ -246,6 +248,19 @@ namespace OW {
                             BONE_L_SHANK, BONE_R_SHANK,
                             BONE_L_HAND, BONE_R_HAND,
                             99, 89, 100, 90};
+            }
+        }
+
+        void CacheSkeletonBones() {
+            skeleton_bone_valid.fill(false);
+            if (this->pos == Vector3(0, 0, 0) || this->PlayerHealth <= 0.f)
+                return;
+
+            const std::array<int, 18> indices = GetSkel();
+            for (size_t i = 0; i < indices.size(); ++i) {
+                Vector3 bone = GetBonePos(indices[i]);
+                skeleton_bones[i] = bone;
+                skeleton_bone_valid[i] = (bone != Vector3(0, 0, 0));
             }
         }
 

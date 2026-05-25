@@ -146,6 +146,7 @@ namespace OW { namespace Config {
     inline bool healthbar2      = false;
     inline float healthbartextsize = 16.f;
     inline bool dist            = true;
+    inline float visualMaxDist  = 100.f;
     inline bool name            = true;
     inline bool ult             = true;
     inline bool draw_skel       = true;
