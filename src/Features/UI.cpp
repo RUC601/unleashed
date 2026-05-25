@@ -95,6 +95,7 @@ static char     g_gbTitle[64] = "";
 static ImVec2   g_gbStartPos(0, 0);
 static float    g_gbWidth     = 0.0f;
 static float    g_gbMinHeight = 0.0f;
+static ImDrawListSplitter g_gbDrawSplitter;
 
 static constexpr float kShellWidth = 628.0f;
 static constexpr float kShellBorder = 2.0f;
@@ -103,6 +104,28 @@ static constexpr float kDefaultLabelWidth = 120.0f;
 static constexpr float kAimbotHeroLabelWidth = 98.0f;
 static constexpr float kAimbotLeftLabelWidth = 112.0f;
 static constexpr float kAimbotRightLabelWidth = 138.0f;
+static constexpr float kControlHeight = 22.0f;
+static constexpr float kControlRounding = 4.0f;
+static constexpr float kGroupRounding = 5.0f;
+static constexpr float kGroupContentIndent = 14.0f;
+
+static const ImU32 kColShell0       = IM_COL32(0x07, 0x09, 0x0e, 0xFF);
+static const ImU32 kColShell1       = IM_COL32(0x0d, 0x12, 0x1a, 0xFF);
+static const ImU32 kColShell2       = IM_COL32(0x12, 0x0d, 0x13, 0xFF);
+static const ImU32 kColPanel        = IM_COL32(0x0f, 0x13, 0x1a, 0xF2);
+static const ImU32 kColPanelSoft    = IM_COL32(0x13, 0x18, 0x21, 0xD8);
+static const ImU32 kColControl      = IM_COL32(0x18, 0x1e, 0x27, 0xFF);
+static const ImU32 kColControlHover = IM_COL32(0x20, 0x28, 0x34, 0xFF);
+static const ImU32 kColControlHot   = IM_COL32(0x28, 0x32, 0x40, 0xFF);
+static const ImU32 kColStroke       = IM_COL32(0x2b, 0x35, 0x45, 0xBB);
+static const ImU32 kColStrokeDark   = IM_COL32(0x06, 0x08, 0x0c, 0xE8);
+static const ImU32 kColText         = IM_COL32(0xf3, 0xf6, 0xfb, 0xFF);
+static const ImU32 kColTextMuted    = IM_COL32(0xa4, 0xad, 0xba, 0xFF);
+static const ImU32 kColTextDim      = IM_COL32(0x78, 0x83, 0x91, 0xFF);
+static const ImU32 kColAccent       = IM_COL32(0xff, 0x2e, 0x62, 0xFF);
+static const ImU32 kColAccentDark   = IM_COL32(0xb9, 0x12, 0x3b, 0xFF);
+static const ImU32 kColAccentSoft   = IM_COL32(0xff, 0x4b, 0x75, 0x52);
+static const ImU32 kColAccentGlow   = IM_COL32(0xff, 0x2e, 0x62, 0x28);
 
 static ImFont* s_regularFont = nullptr;
 static ImFont* s_boldFont = nullptr;
@@ -135,6 +158,28 @@ static void EnsurePreNewFrameInitHook() {
 
 static float MaxFloat(float a, float b) {
     return (a > b) ? a : b;
+}
+
+static ImU32 MixColor(ImU32 from, ImU32 to, float t) {
+    t = ImClamp(t, 0.0f, 1.0f);
+    ImVec4 a = ImGui::ColorConvertU32ToFloat4(from);
+    ImVec4 b = ImGui::ColorConvertU32ToFloat4(to);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(
+        a.x + (b.x - a.x) * t,
+        a.y + (b.y - a.y) * t,
+        a.z + (b.z - a.z) * t,
+        a.w + (b.w - a.w) * t
+    ));
+}
+
+static float VisualTransition(ImGuiID id, bool enabled, float speed = 16.0f) {
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    float current = storage->GetFloat(id, enabled ? 1.0f : 0.0f);
+    float target = enabled ? 1.0f : 0.0f;
+    float step = ImClamp(ImGui::GetIO().DeltaTime * speed, 0.0f, 1.0f);
+    current += (target - current) * step;
+    storage->SetFloat(id, current);
+    return current;
 }
 
 static int FindMenuToggleKeyIndex(int vk) {
@@ -396,21 +441,21 @@ static bool UIGroupBox(const char* title, float minHeightPx = 0.0f) {
     if (s_boldFont)
         ImGui::PopFont();
 
-    // Draw title text now
     ImVec2 pos = ImGui::GetCursorScreenPos();
     auto* dl = ImGui::GetWindowDrawList();
-    DrawText(dl, s_boldFont, ImVec2(pos.x + 14.0f, pos.y),
-             IM_COL32(0xf4, 0xf4, 0xf4, 0xFF), title);
+    g_gbDrawSplitter.Split(dl, 2);
+    g_gbDrawSplitter.SetCurrentChannel(dl, 1);
 
-    // Reserve vertical room for the title
-    ImGui::Dummy(ImVec2(0.0f, textSize.y + 6.0f));
+    DrawText(dl, s_boldFont, ImVec2(pos.x + 16.0f, pos.y + 1.0f),
+             kColText, title);
+
+    ImGui::Dummy(ImVec2(0.0f, textSize.y + 10.0f));
 
     // Save state for lazy border drawing
     g_gbStartPos = ImGui::GetCursorScreenPos();
     g_gbWidth    = ImGui::GetContentRegionAvail().x;
 
-    // Indent content
-    ImGui::Indent(12.0f);
+    ImGui::Indent(kGroupContentIndent);
     ImGui::BeginGroup();
     return true;
 }
@@ -423,7 +468,7 @@ static void CloseGroupBox() {
     if (!g_gbOpen) return;
 
     ImVec2 textSize = s_boldFont ? ImGui::CalcTextSize(g_gbTitle) : ImGui::CalcTextSize(g_gbTitle);
-    float  titleH   = textSize.y + 6.0f;
+    float  titleH   = textSize.y + 10.0f;
     float  borderTopY = g_gbStartPos.y - titleH;
 
     if (g_gbMinHeight > 0.0f) {
@@ -434,44 +479,56 @@ static void CloseGroupBox() {
     }
 
     ImGui::EndGroup();   // tracks the content bounds
-    ImGui::Unindent(12.0f);
+    ImGui::Unindent(kGroupContentIndent);
 
     ImVec2 contentEnd = ImGui::GetItemRectMax();
     auto*  dl = ImGui::GetWindowDrawList();
-    ImU32  borderCol = IM_COL32(0x0d, 0x0e, 0x11, 0xFF);
-    ImU32  bgCol    = ImGui::GetColorU32(ImGuiCol_WindowBg);
 
     ImVec2 borderMin = g_gbStartPos;
     borderMin.y       = borderTopY;
-    ImVec2 borderMax  = ImVec2(g_gbStartPos.x + g_gbWidth, contentEnd.y + 6.0f);
+    ImVec2 borderMax  = ImVec2(g_gbStartPos.x + g_gbWidth, contentEnd.y + 9.0f);
     if (g_gbMinHeight > 0.0f)
         borderMax.y = MaxFloat(borderMax.y, borderMin.y + g_gbMinHeight);
 
-    // Full rect outline
-    dl->AddRect(borderMin, borderMax, borderCol);
+    g_gbDrawSplitter.SetCurrentChannel(dl, 0);
+    dl->AddRectFilled(ImVec2(borderMin.x + 1.0f, borderMin.y + 2.0f),
+                      ImVec2(borderMax.x + 1.0f, borderMax.y + 2.0f),
+                      IM_COL32(0x00, 0x00, 0x00, 0x38), kGroupRounding);
+    dl->AddRectFilled(borderMin, borderMax, kColPanelSoft, kGroupRounding);
+    dl->AddRectFilledMultiColor(borderMin, ImVec2(borderMax.x, borderMin.y + 26.0f),
+                                IM_COL32(0x18, 0x1e, 0x29, 0x78),
+                                IM_COL32(0x18, 0x1e, 0x29, 0x42),
+                                IM_COL32(0x10, 0x14, 0x1c, 0x00),
+                                IM_COL32(0x10, 0x14, 0x1c, 0x00));
+    dl->AddRect(borderMin, borderMax, kColStroke, kGroupRounding, 0, 1.0f);
+    dl->AddRect(ImVec2(borderMin.x + 1.0f, borderMin.y + 1.0f),
+                ImVec2(borderMax.x - 1.0f, borderMax.y - 1.0f),
+                kColStrokeDark, kGroupRounding, 0, 1.0f);
+    dl->AddLine(ImVec2(borderMin.x + 10.0f, borderMin.y + 1.0f),
+                ImVec2(borderMax.x - 10.0f, borderMin.y + 1.0f),
+                IM_COL32(0xff, 0x4b, 0x75, 0x34), 1.0f);
 
-    // Cut-out behind the legend text so the top border is interrupted
     dl->AddRectFilled(
-        ImVec2(borderMin.x + 13.0f, borderMin.y),
-        ImVec2(borderMin.x + 13.0f + textSize.x + 10.0f, borderMin.y + textSize.y + 2.0f),
-        bgCol
+        ImVec2(borderMin.x + 13.0f, borderMin.y - 1.0f),
+        ImVec2(borderMin.x + 18.0f + textSize.x + 12.0f, borderMin.y + textSize.y + 4.0f),
+        kColPanel
     );
 
-    // Re-draw legend text on top
-    DrawText(dl, s_boldFont, ImVec2(borderMin.x + 16.0f, borderMin.y + 1.0f),
-             IM_COL32(0xf4, 0xf4, 0xf4, 0xFF), g_gbTitle);
+    g_gbDrawSplitter.SetCurrentChannel(dl, 1);
+    DrawText(dl, s_boldFont, ImVec2(borderMin.x + 17.0f, borderMin.y + 2.0f),
+             kColText, g_gbTitle);
 
     ImVec2 cursor = ImGui::GetCursorScreenPos();
-    if (cursor.y < borderMax.y)
-        ImGui::Dummy(ImVec2(0.0f, borderMax.y - cursor.y));
+    if (cursor.y < borderMax.y + 7.0f)
+        ImGui::Dummy(ImVec2(0.0f, borderMax.y + 7.0f - cursor.y));
 
+    g_gbDrawSplitter.Merge(dl);
     g_gbOpen = false;
     g_gbMinHeight = 0.0f;
 }
 
 // =====================================================================
-// UICheckbox  --  10x10 coloured square, red (#e51245) when checked,
-//                 dark (#1f2428) when unchecked.
+// UICheckbox  --  compact custom checkbox with premium dark-state styling.
 // =====================================================================
 static bool UICheckbox(const char* label, bool* value) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -479,8 +536,9 @@ static bool UICheckbox(const char* label, bool* value) {
 
     ImGuiContext& g    = *GImGui;
     const ImGuiID id   = window->GetID(label);
-    const float sz     = 10.0f;
-    const float spacing = g.Style.ItemInnerSpacing.x;
+    const float sz     = 12.0f;
+    const float height = kControlHeight;
+    const float spacing = g.Style.ItemInnerSpacing.x + 2.0f;
 
     const char* labelEnd = ImGui::FindRenderedTextEnd(label);
     const bool hasVisibleLabel = labelEnd > label;
@@ -489,7 +547,7 @@ static bool UICheckbox(const char* label, bool* value) {
         : ImVec2(0.0f, 0.0f);
     ImVec2 pos = window->DC.CursorPos;
 
-    ImRect bb(pos, ImVec2(pos.x + sz + (hasVisibleLabel ? spacing + labelSize.x : 0.0f), pos.y + sz));
+    ImRect bb(pos, ImVec2(pos.x + sz + (hasVisibleLabel ? spacing + labelSize.x : 0.0f), pos.y + height));
 
     ImGui::ItemSize(bb, g.Style.FramePadding.y);
     if (!ImGui::ItemAdd(bb, id)) return false;
@@ -499,27 +557,47 @@ static bool UICheckbox(const char* label, bool* value) {
     if (pressed)
         *value = !*value;
 
-    // Draw the 10x10 solid square
-    ImU32 squareCol = *value
-        ? IM_COL32(0xe5, 0x12, 0x45, 0xFF)   // checked = red
-        : IM_COL32(0x1f, 0x24, 0x28, 0xFF);  // unchecked = dark
-    window->DrawList->AddRectFilled(
-        ImVec2(bb.Min.x, bb.Min.y),
-        ImVec2(bb.Min.x + sz, bb.Min.y + sz),
-        squareCol
-    );
+    float hoverT = VisualTransition(id ^ 0x23a7, hovered || held, 18.0f);
+    float checkedT = VisualTransition(id ^ 0x51d3, *value, 18.0f);
+    ImVec2 boxMin(bb.Min.x, bb.Min.y + (height - sz) * 0.5f);
+    ImVec2 boxMax(boxMin.x + sz, boxMin.y + sz);
+    ImU32 baseCol = MixColor(kColControl, kColControlHover, hoverT);
+    ImU32 squareCol = MixColor(baseCol, kColAccent, checkedT);
+    float rounding = 2.5f;
+
+    if (hovered || held) {
+        window->DrawList->AddRectFilled(ImVec2(boxMin.x - 2.0f, boxMin.y - 2.0f),
+                                        ImVec2(boxMax.x + 2.0f, boxMax.y + 2.0f),
+                                        MixColor(IM_COL32(0x00, 0x00, 0x00, 0x00), kColAccentGlow, hoverT),
+                                        rounding + 2.0f);
+    }
+    window->DrawList->AddRectFilled(boxMin, boxMax, squareCol, rounding);
+    window->DrawList->AddRect(boxMin, boxMax,
+                              MixColor(kColStroke, IM_COL32(0xff, 0x8a, 0xa6, 0xC0), checkedT),
+                              rounding, 0, 1.0f);
+
+    if (checkedT > 0.18f) {
+        ImU32 tickCol = MixColor(IM_COL32(0xff, 0xff, 0xff, 0x00),
+                                 IM_COL32(0xff, 0xff, 0xff, 0xF4), checkedT);
+        window->DrawList->AddLine(ImVec2(boxMin.x + 3.0f, boxMin.y + 6.0f),
+                                  ImVec2(boxMin.x + 5.2f, boxMin.y + 8.1f),
+                                  tickCol, 1.4f);
+        window->DrawList->AddLine(ImVec2(boxMin.x + 5.2f, boxMin.y + 8.1f),
+                                  ImVec2(boxMin.x + 9.1f, boxMin.y + 3.8f),
+                                  tickCol, 1.4f);
+    }
 
     if (hasVisibleLabel) {
-        ImVec2 labelPos(bb.Min.x + sz + spacing, bb.Min.y);
-        window->DrawList->AddText(labelPos, ImGui::GetColorU32(ImGuiCol_Text), label, labelEnd);
+        ImVec2 labelPos(bb.Min.x + sz + spacing, bb.Min.y + (height - labelSize.y) * 0.5f);
+        ImU32 labelCol = MixColor(kColTextMuted, kColText, MaxFloat(hoverT, checkedT * 0.5f));
+        window->DrawList->AddText(labelPos, labelCol, label, labelEnd);
     }
 
     return pressed;
 }
 
 // =====================================================================
-// UISlider  --  Dark track (#202429) with red fill (#e41143), value text
-//               on the right.  Range 0-100, format string for display.
+// UISlider  --  Custom dark track with accent fill and value text.
 // =====================================================================
 static bool UISlider(const char* label, float* value, float v_min, float v_max,
                      const char* formatText) {
@@ -527,7 +605,7 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
     if (window->SkipItems) return false;
 
     const ImGuiID id   = window->GetID(label);
-    const float height = 20.0f;
+    const float height = kControlHeight;
 
     ImVec2 pos  = window->DC.CursorPos;
     float width = ImGui::GetContentRegionAvail().x;
@@ -587,27 +665,39 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
     v_norm = (range > 0.0f) ? (*value - v_min) / range : 0.0f;
     v_norm = ImClamp(v_norm, 0.0f, 1.0f);
 
-    // Draw track
-    ImU32 trackCol = hovered
-        ? IM_COL32(0x25, 0x2a, 0x30, 0xFF)
-        : IM_COL32(0x20, 0x24, 0x29, 0xFF);
-    window->DrawList->AddRectFilled(bb.Min, bb.Max, trackCol);
+    float hoverT = VisualTransition(id ^ 0x6f47, hovered || held || ImGui::IsItemFocused(), 18.0f);
+    ImU32 trackCol = MixColor(kColControl, kColControlHover, hoverT);
+    window->DrawList->AddRectFilled(bb.Min, bb.Max, IM_COL32(0x00, 0x00, 0x00, 0x28), kControlRounding);
+    window->DrawList->AddRectFilled(ImVec2(bb.Min.x, bb.Min.y + 1.0f),
+                                    bb.Max, trackCol, kControlRounding);
+    window->DrawList->AddRect(bb.Min, bb.Max,
+                              MixColor(kColStrokeDark, kColStroke, hoverT),
+                              kControlRounding, 0, 1.0f);
+    window->DrawList->AddLine(ImVec2(bb.Min.x + 5.0f, bb.Min.y + 1.0f),
+                              ImVec2(bb.Max.x - 5.0f, bb.Min.y + 1.0f),
+                              IM_COL32(0xff, 0xff, 0xff, 0x12), 1.0f);
 
-    // Red fill
     float fillW = v_norm * (bb.Max.x - bb.Min.x);
     if (fillW > 0.0f) {
-        window->DrawList->AddRectFilled(
-            bb.Min, ImVec2(bb.Min.x + fillW, bb.Max.y),
-            IM_COL32(0xe4, 0x11, 0x43, 0xFF));
+        ImVec2 fillMax(bb.Min.x + fillW, bb.Max.y);
+        window->DrawList->AddRectFilledMultiColor(
+            bb.Min, fillMax,
+            kColAccent, IM_COL32(0xff, 0x56, 0x7e, 0xFF),
+            kColAccentDark, kColAccent);
+        window->DrawList->AddRectFilled(bb.Min, fillMax,
+                                        IM_COL32(0xff, 0xff, 0xff, 0x08),
+                                        kControlRounding);
     }
 
     // Value text
     char tmp[64];
     const char* displayText = FormatSliderValue(tmp, sizeof(tmp), *value, formatText);
     ImVec2 textSize = ImGui::CalcTextSize(displayText);
+    ImVec2 textPos(bb.Max.x - textSize.x - 8.0f, bb.Min.y + (height - textSize.y) * 0.5f);
     window->DrawList->AddText(
-        ImVec2(bb.Max.x - textSize.x - 6.0f, bb.Min.y + (height - textSize.y) * 0.5f),
-        IM_COL32(0xf2, 0xf2, 0xf2, 0xFF), displayText);
+        ImVec2(textPos.x + 1.0f, textPos.y + 1.0f),
+        IM_COL32(0x00, 0x00, 0x00, 0x80), displayText);
+    window->DrawList->AddText(textPos, kColText, displayText);
 
     return valueChanged;
 }
@@ -624,23 +714,29 @@ static bool UISelect(const char* label, int* current, const char* items[], int i
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     ImVec2 pos = ImGui::GetCursorScreenPos();
     float width = ImGui::GetContentRegionAvail().x;
-    const float height = 20.0f;
+    const float height = kControlHeight;
     ImRect bb(pos, ImVec2(pos.x + width, pos.y + height));
 
-    window->DrawList->AddRectFilled(bb.Min, bb.Max, IM_COL32(0x20, 0x24, 0x29, 0xFF));
-    window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(0x08, 0x09, 0x0b, 0xFF));
+    bool preHovered = ImGui::IsMouseHoveringRect(bb.Min, bb.Max);
+    float hoverT = VisualTransition(window->GetID(label) ^ 0x3911, preHovered, 18.0f);
+    ImU32 frameCol = MixColor(kColControl, kColControlHover, hoverT);
+    window->DrawList->AddRectFilled(bb.Min, bb.Max, IM_COL32(0x00, 0x00, 0x00, 0x2E), kControlRounding);
+    window->DrawList->AddRectFilled(ImVec2(bb.Min.x, bb.Min.y + 1.0f), bb.Max,
+                                    frameCol, kControlRounding);
 
-    ImGui::PushStyleColor(ImGuiCol_Header,        IM_COL32(0xe4, 0x11, 0x43, 0xFF));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(0xe4, 0x11, 0x43, 0xFF));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive,  IM_COL32(0xe4, 0x11, 0x43, 0xFF));
-    ImGui::PushStyleColor(ImGuiCol_PopupBg,       IM_COL32(0x20, 0x24, 0x29, 0xFF));
-    ImGui::PushStyleColor(ImGuiCol_Border,        IM_COL32(0x08, 0x09, 0x0b, 0xFF));
-    ImGui::PushStyleColor(ImGuiCol_FrameBg,       IM_COL32(0x20, 0x24, 0x29, 0xFF));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(0x20, 0x24, 0x29, 0xFF));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(0x20, 0x24, 0x29, 0xFF));
+    ImGui::PushStyleColor(ImGuiCol_Header,        kColAccentDark);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, kColAccent);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive,  kColAccent);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg,       kColPanel);
+    ImGui::PushStyleColor(ImGuiCol_Border,        kColStroke);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg,       frameCol);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, MixColor(kColControlHover, kColControlHot, hoverT));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, kColControlHot);
     ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                        ImVec2(6.0f, MaxFloat(0.0f, (height - ImGui::GetTextLineHeight()) * 0.5f)));
+                        ImVec2(8.0f, MaxFloat(0.0f, (height - ImGui::GetTextLineHeight()) * 0.5f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kControlRounding);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, kControlRounding);
 
     bool changed = false;
     ImGui::SetNextItemWidth(width);
@@ -658,40 +754,39 @@ static bool UISelect(const char* label, int* current, const char* items[], int i
         ImGui::EndCombo();
     }
 
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(4);
     ImGui::PopStyleColor(8);
 
-    window->DrawList->AddRect(bb.Min, bb.Max, IM_COL32(0x08, 0x09, 0x0b, 0xFF));
-    ImVec2 caretCenter(bb.Max.x - 8.0f, bb.Min.y + height * 0.5f);
-    ImU32 caretCol = IM_COL32(0xd9, 0xd9, 0xd9, 0xFF);
-    window->DrawList->AddTriangleFilled(
-        ImVec2(caretCenter.x - 3.0f, caretCenter.y - 3.0f),
-        ImVec2(caretCenter.x + 3.0f, caretCenter.y - 3.0f),
-        ImVec2(caretCenter.x, caretCenter.y - 7.0f),
-        caretCol);
-    window->DrawList->AddTriangleFilled(
-        ImVec2(caretCenter.x - 3.0f, caretCenter.y + 3.0f),
-        ImVec2(caretCenter.x + 3.0f, caretCenter.y + 3.0f),
-        ImVec2(caretCenter.x, caretCenter.y + 7.0f),
-        caretCol);
+    window->DrawList->AddRect(bb.Min, bb.Max,
+                              MixColor(kColStrokeDark, kColStroke, hoverT),
+                              kControlRounding, 0, 1.0f);
+    ImVec2 caretCenter(bb.Max.x - 11.0f, bb.Min.y + height * 0.5f);
+    ImU32 caretCol = MixColor(kColTextDim, kColText, hoverT);
+    window->DrawList->AddLine(ImVec2(caretCenter.x - 4.0f, caretCenter.y - 2.0f),
+                              ImVec2(caretCenter.x, caretCenter.y + 2.5f),
+                              caretCol, 1.35f);
+    window->DrawList->AddLine(ImVec2(caretCenter.x, caretCenter.y + 2.5f),
+                              ImVec2(caretCenter.x + 4.0f, caretCenter.y - 2.0f),
+                              caretCol, 1.35f);
     return changed;
 }
 
 // =====================================================================
-// UISegmented  --  Row of buttons, active one gets red #e41143 background.
+// UISegmented  --  Row of buttons, active one gets accent background.
 //                  Returns the new active index (or old if unchanged).
 // =====================================================================
 static int UISegmented(const char* items[], int itemCount, int active) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
 
     float width  = ImGui::GetContentRegionAvail().x;
-    float height = (itemCount <= 5) ? 19.0f : 14.0f;
+    float height = (itemCount <= 5) ? 21.0f : 17.0f;
 
     ImVec2 pos = window->DC.CursorPos;
 
-    // Background bar
     window->DrawList->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height),
-                                     IM_COL32(0x20, 0x24, 0x29, 0xFF));
+                                    kColControl, kControlRounding);
+    window->DrawList->AddRect(pos, ImVec2(pos.x + width, pos.y + height),
+                              kColStrokeDark, kControlRounding, 0, 1.0f);
 
     float segW = width / itemCount;
     int   result = active;
@@ -700,32 +795,42 @@ static int UISegmented(const char* items[], int itemCount, int active) {
         ImVec2 segMin(pos.x + i * segW, pos.y);
         ImVec2 segMax(pos.x + (i + 1) * segW, pos.y + height);
 
-        // Active background
-        if (i == active)
-            window->DrawList->AddRectFilled(segMin, segMax,
-                                            IM_COL32(0xe4, 0x11, 0x43, 0xFF));
-
-        // Invisible click zone
         ImGui::SetCursorScreenPos(segMin);
         ImGui::PushID(i);
         ImGui::InvisibleButton("##seg", ImVec2(segW, height));
+        bool hovered = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked())
             result = i;
         ImGui::PopID();
 
-        // Label centred
+        float hoverT = VisualTransition(window->GetID(items[i]) ^ 0x7791, hovered, 16.0f);
+        if (hovered && i != active) {
+            window->DrawList->AddRectFilled(ImVec2(segMin.x + 1.0f, segMin.y + 1.0f),
+                                            ImVec2(segMax.x - 1.0f, segMax.y - 1.0f),
+                                            MixColor(IM_COL32(0x00, 0x00, 0x00, 0x00),
+                                                     kColControlHover, hoverT),
+                                            kControlRounding);
+        }
+        if (i == active) {
+            window->DrawList->AddRectFilled(ImVec2(segMin.x + 1.0f, segMin.y + 1.0f),
+                                            ImVec2(segMax.x - 1.0f, segMax.y - 1.0f),
+                                            kColAccent, kControlRounding);
+            window->DrawList->AddLine(ImVec2(segMin.x + 5.0f, segMin.y + 1.0f),
+                                      ImVec2(segMax.x - 5.0f, segMin.y + 1.0f),
+                                      IM_COL32(0xff, 0xff, 0xff, 0x28), 1.0f);
+        }
+
         const char* txt = items[i];
         ImVec2 tsz = ImGui::CalcTextSize(txt);
         ImVec2 txtPos(segMin.x + (segW - tsz.x) * 0.5f,
                       segMin.y + (height - tsz.y) * 0.5f);
         ImU32 txtCol = (i == active)
             ? IM_COL32(0xff, 0xff, 0xff, 0xFF)
-            : IM_COL32(0xe5, 0xe5, 0xe5, 0xFF);
+            : MixColor(kColTextMuted, kColText, hoverT);
         window->DrawList->AddText(txtPos, txtCol, txt);
     }
 
-    // Advance cursor
-    ImGui::Dummy(ImVec2(0.0f, height));
+    ImGui::Dummy(ImVec2(0.0f, height + 8.0f));
 
     return result;
 }
@@ -734,11 +839,13 @@ static int UISegmented(const char* items[], int itemCount, int active) {
 // UITwoColumns  --  Two equal-width columns.
 // =====================================================================
 static void UITwoColumns(std::function<void()> left, std::function<void()> right) {
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 6.0f));
     ImGui::Columns(2, nullptr, false);
     left();
     ImGui::NextColumn();
     right();
     ImGui::Columns(1);
+    ImGui::PopStyleVar();
 }
 
 // =====================================================================
@@ -746,9 +853,14 @@ static void UITwoColumns(std::function<void()> left, std::function<void()> right
 // =====================================================================
 static void SettingRow(const char* label, float labelWidthPx) {
     float startX = ImGui::GetCursorPosX();
-    ImGui::TextUnformatted(label);
-    ImGui::SameLine(0.0f, 0.0f);
+    float startY = ImGui::GetCursorPosY();
+    ImVec2 screenPos = ImGui::GetCursorScreenPos();
+    ImVec2 labelSize = ImGui::CalcTextSize(label);
+    ImGui::GetWindowDrawList()->AddText(
+        ImVec2(screenPos.x, screenPos.y + (kControlHeight - labelSize.y) * 0.5f),
+        kColTextMuted, label);
     ImGui::SetCursorPosX(startX + labelWidthPx);
+    ImGui::SetCursorPosY(startY);
 }
 
 // =====================================================================
@@ -758,8 +870,8 @@ static void DrawDivider() {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     float width = ImGui::GetContentRegionAvail().x;
     ImGui::GetWindowDrawList()->AddLine(
-        pos, ImVec2(pos.x + width, pos.y), IM_COL32(0x11, 0x13, 0x17, 0xFF));
-    ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        pos, ImVec2(pos.x + width, pos.y), IM_COL32(0x2b, 0x35, 0x45, 0x72));
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
 }
 
 static void DrawCheckboxGrid3(const char* labels[], bool* values[], int rowCount,
@@ -779,8 +891,8 @@ static void DrawCheckboxGrid3(const char* labels[], bool* values[], int rowCount
         start.x + colW[0] + gapX,
         start.x + colW[0] + gapX + colW[1] + gapX
     };
-    const float rowH = 20.0f;
-    const float rowGap = 8.0f;
+    const float rowH = kControlHeight;
+    const float rowGap = 10.0f;
 
     for (int row = 0; row < rowCount; ++row) {
         for (int col = 0; col < 3; ++col) {
@@ -788,7 +900,7 @@ static void DrawCheckboxGrid3(const char* labels[], bool* values[], int rowCount
             if (!labels[idx] || !values[idx])
                 continue;
 
-            ImGui::SetCursorScreenPos(ImVec2(colX[col], start.y + row * (rowH + rowGap) + 5.0f));
+            ImGui::SetCursorScreenPos(ImVec2(colX[col], start.y + row * (rowH + rowGap)));
             UICheckbox(labels[idx], values[idx]);
         }
     }
@@ -830,12 +942,12 @@ static void DrawTopTabIcon(ImDrawList* drawList, int tabIndex, const ImVec2& min
 
 static float CurrentShellHeight() {
     if (UI::state.activeTab == UI::TAB_AIMING)
-        return 520.0f;
+        return 548.0f;
     if (UI::state.activeTab == UI::TAB_VISUALS)
-        return 450.0f;
+        return 476.0f;
     if (UI::state.activeTab == UI::TAB_MISC)
-        return 170.0f;
-    return 120.0f;
+        return 190.0f;
+    return 140.0f;
 }
 
 void UI::InitializeResources(ID3D11Device* device) {
@@ -853,15 +965,20 @@ void UI::ShutdownResources() {
 }
 
 // =====================================================================
-// UI::InitStyle  --  Matches the CSS colour scheme exactly.
+// UI::InitStyle  --  Refined dark overlay styling.
 // =====================================================================
 void UI::InitStyle() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigErrorRecoveryEnableTooltip = false;
 
     if (!s_regularFont && !io.Fonts->Locked) {
-        s_regularFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 12.0f);
-        s_boldFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 12.0f);
+        ImFontConfig fontConfig;
+        fontConfig.OversampleH = 3;
+        fontConfig.OversampleV = 2;
+        fontConfig.PixelSnapH = false;
+        fontConfig.RasterizerMultiply = 1.05f;
+        s_regularFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 12.5f, &fontConfig);
+        s_boldFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 12.5f, &fontConfig);
         if (s_regularFont)
             io.FontDefault = s_regularFont;
     } else if (s_regularFont) {
@@ -869,42 +986,48 @@ void UI::InitStyle() {
     }
 
     ImGuiStyle& style   = ImGui::GetStyle();
+    style.AntiAliasedLines = true;
+    style.AntiAliasedFill  = true;
     style.WindowRounding    = 0.0f;
-    style.FrameRounding     = 0.0f;
-    style.ScrollbarRounding = 0.0f;
-    style.GrabRounding      = 0.0f;
-    style.TabRounding       = 0.0f;
+    style.FrameRounding     = kControlRounding;
+    style.ScrollbarRounding = 6.0f;
+    style.GrabRounding      = kControlRounding;
+    style.TabRounding       = 4.0f;
     style.WindowBorderSize  = 0.0f;
     style.FrameBorderSize   = 0.0f;
-    style.PopupRounding     = 0.0f;
-    style.PopupBorderSize   = 0.0f;
+    style.PopupRounding     = kControlRounding;
+    style.PopupBorderSize   = 1.0f;
     style.WindowPadding     = ImVec2(0, 0);
-    style.FramePadding      = ImVec2(6, 3);
-    style.ItemSpacing       = ImVec2(8, 4);
-    style.ItemInnerSpacing  = ImVec2(4, 2);
+    style.FramePadding      = ImVec2(8, 4);
+    style.ItemSpacing       = ImVec2(8, 6);
+    style.ItemInnerSpacing  = ImVec2(6, 4);
+    style.ScrollbarSize     = 7.0f;
 
     ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg]          = ImVec4(0.110f, 0.114f, 0.133f, 1.0f); // #1c1d22
-    colors[ImGuiCol_FrameBg]           = ImVec4(0.125f, 0.142f, 0.161f, 1.0f); // #202429
-    colors[ImGuiCol_FrameBgHovered]    = ImVec4(0.145f, 0.160f, 0.180f, 1.0f);
-    colors[ImGuiCol_FrameBgActive]     = ImVec4(0.125f, 0.142f, 0.161f, 1.0f);
-    colors[ImGuiCol_Button]            = ImVec4(0.125f, 0.142f, 0.161f, 1.0f);
-    colors[ImGuiCol_ButtonHovered]     = ImVec4(0.894f, 0.067f, 0.263f, 1.0f); // #e41143
-    colors[ImGuiCol_ButtonActive]      = ImVec4(0.894f, 0.067f, 0.263f, 1.0f);
-    colors[ImGuiCol_Header]            = ImVec4(0.125f, 0.142f, 0.161f, 1.0f);
-    colors[ImGuiCol_HeaderHovered]     = ImVec4(0.894f, 0.067f, 0.263f, 1.0f);
-    colors[ImGuiCol_HeaderActive]      = ImVec4(0.894f, 0.067f, 0.263f, 1.0f);
-    colors[ImGuiCol_CheckMark]         = ImVec4(0.894f, 0.067f, 0.263f, 1.0f);
-    colors[ImGuiCol_SliderGrab]        = ImVec4(0.894f, 0.067f, 0.263f, 1.0f);
-    colors[ImGuiCol_SliderGrabActive]  = ImVec4(0.941f, 0.078f, 0.282f, 1.0f);
-    colors[ImGuiCol_Text]              = ImVec4(0.945f, 0.945f, 0.945f, 1.0f); // #f1f1f1
-    colors[ImGuiCol_Border]            = ImVec4(0.027f, 0.031f, 0.039f, 1.0f); // #07080a
-    colors[ImGuiCol_TitleBg]           = ImVec4(0.106f, 0.110f, 0.129f, 1.0f); // #1b1c21
-    colors[ImGuiCol_TitleBgActive]     = ImVec4(0.106f, 0.110f, 0.129f, 1.0f);
-    colors[ImGuiCol_Separator]         = ImVec4(0.067f, 0.075f, 0.090f, 1.0f); // #111317
-    colors[ImGuiCol_ScrollbarBg]       = ImVec4(0.067f, 0.075f, 0.090f, 1.0f);
-    colors[ImGuiCol_ScrollbarGrab]     = ImVec4(0.125f, 0.142f, 0.161f, 1.0f);
-    colors[ImGuiCol_PopupBg]           = ImVec4(0.125f, 0.142f, 0.161f, 1.0f);
+    colors[ImGuiCol_WindowBg]          = ImGui::ColorConvertU32ToFloat4(kColPanel);
+    colors[ImGuiCol_FrameBg]           = ImGui::ColorConvertU32ToFloat4(kColControl);
+    colors[ImGuiCol_FrameBgHovered]    = ImGui::ColorConvertU32ToFloat4(kColControlHover);
+    colors[ImGuiCol_FrameBgActive]     = ImGui::ColorConvertU32ToFloat4(kColControlHot);
+    colors[ImGuiCol_Button]            = ImGui::ColorConvertU32ToFloat4(kColControl);
+    colors[ImGuiCol_ButtonHovered]     = ImGui::ColorConvertU32ToFloat4(kColControlHover);
+    colors[ImGuiCol_ButtonActive]      = ImGui::ColorConvertU32ToFloat4(kColControlHot);
+    colors[ImGuiCol_Header]            = ImGui::ColorConvertU32ToFloat4(kColControl);
+    colors[ImGuiCol_HeaderHovered]     = ImGui::ColorConvertU32ToFloat4(kColAccent);
+    colors[ImGuiCol_HeaderActive]      = ImGui::ColorConvertU32ToFloat4(kColAccentDark);
+    colors[ImGuiCol_CheckMark]         = ImGui::ColorConvertU32ToFloat4(kColAccent);
+    colors[ImGuiCol_SliderGrab]        = ImGui::ColorConvertU32ToFloat4(kColAccent);
+    colors[ImGuiCol_SliderGrabActive]  = ImGui::ColorConvertU32ToFloat4(IM_COL32(0xff, 0x56, 0x7e, 0xFF));
+    colors[ImGuiCol_Text]              = ImGui::ColorConvertU32ToFloat4(kColText);
+    colors[ImGuiCol_TextDisabled]      = ImGui::ColorConvertU32ToFloat4(kColTextDim);
+    colors[ImGuiCol_Border]            = ImGui::ColorConvertU32ToFloat4(kColStroke);
+    colors[ImGuiCol_TitleBg]           = ImGui::ColorConvertU32ToFloat4(kColPanel);
+    colors[ImGuiCol_TitleBgActive]     = ImGui::ColorConvertU32ToFloat4(kColPanel);
+    colors[ImGuiCol_Separator]         = ImGui::ColorConvertU32ToFloat4(kColStroke);
+    colors[ImGuiCol_ScrollbarBg]       = ImGui::ColorConvertU32ToFloat4(IM_COL32(0x0b, 0x0f, 0x16, 0xE0));
+    colors[ImGuiCol_ScrollbarGrab]     = ImGui::ColorConvertU32ToFloat4(IM_COL32(0x2b, 0x35, 0x45, 0xD8));
+    colors[ImGuiCol_ScrollbarGrabHovered] = ImGui::ColorConvertU32ToFloat4(IM_COL32(0x3a, 0x46, 0x59, 0xFF));
+    colors[ImGuiCol_PopupBg]           = ImGui::ColorConvertU32ToFloat4(kColPanel);
+    colors[ImGuiCol_TextSelectedBg]    = ImGui::ColorConvertU32ToFloat4(kColAccentSoft);
     state.initialized = s_regularFont != nullptr || !io.Fonts->Locked;
 }
 
@@ -1178,53 +1301,68 @@ void UI::Render() {
     float shellHeight = MaxFloat(CurrentShellHeight(), viewport->Size.y);
 
     ImVec2 shellMax(shellMin.x + shellWidth, shellMin.y + shellHeight);
-    dl->AddRectFilled(shellMin, shellMax, IM_COL32(0x08, 0x0a, 0x0f, 0xFF));
+    dl->AddRectFilled(shellMin, shellMax, kColShell0);
     dl->AddRectFilledMultiColor(shellMin, shellMax,
-                                IM_COL32(0x12, 0x16, 0x20, 0xFF),
-                                IM_COL32(0x08, 0x0a, 0x0f, 0xFF),
-                                IM_COL32(0x08, 0x0a, 0x0f, 0xFF),
-                                IM_COL32(0x13, 0x0d, 0x13, 0xFF));
+                                kColShell1,
+                                kColShell0,
+                                kColShell0,
+                                kColShell2);
+    dl->AddRectFilledMultiColor(shellMin, ImVec2(shellMax.x, shellMin.y + 180.0f),
+                                IM_COL32(0x1a, 0x24, 0x32, 0x8A),
+                                IM_COL32(0x10, 0x16, 0x20, 0x36),
+                                IM_COL32(0x07, 0x09, 0x0e, 0x00),
+                                IM_COL32(0x07, 0x09, 0x0e, 0x00));
     for (float x = shellMin.x + 24.0f; x < shellMax.x; x += 32.0f)
-        dl->AddLine(ImVec2(x, shellMin.y), ImVec2(x, shellMax.y), IM_COL32(0xff, 0xff, 0xff, 0x08));
+        dl->AddLine(ImVec2(x, shellMin.y), ImVec2(x, shellMax.y), IM_COL32(0xff, 0xff, 0xff, 0x05));
     for (float y = shellMin.y + 24.0f; y < shellMax.y; y += 32.0f)
-        dl->AddLine(ImVec2(shellMin.x, y), ImVec2(shellMax.x, y), IM_COL32(0xff, 0xff, 0xff, 0x07));
+        dl->AddLine(ImVec2(shellMin.x, y), ImVec2(shellMax.x, y), IM_COL32(0xff, 0xff, 0xff, 0x04));
 
     ImVec2 winPos(shellMin.x + kShellBorder, shellMin.y + kShellBorder);
     ImVec2 contentMax(shellMax.x - kShellBorder, shellMax.y - kShellBorder);
     float  winW = shellWidth - kShellBorder * 2.0f;
 
     // ==================================================================
-    // TOP BAR  (84 px height, #1b1c21 background)
+    // TOP BAR
     // ==================================================================
     {
         ImRect headerRect(winPos, ImVec2(winPos.x + winW, winPos.y + kHeaderHeight));
-        dl->AddRectFilled(headerRect.Min, headerRect.Max, IM_COL32(0x0f, 0x12, 0x19, 0xf4));
+        dl->AddRectFilled(headerRect.Min, headerRect.Max, kColPanel);
+        dl->AddRectFilledMultiColor(headerRect.Min, headerRect.Max,
+                                    IM_COL32(0x16, 0x1c, 0x27, 0xFF),
+                                    IM_COL32(0x0d, 0x12, 0x1a, 0xFF),
+                                    IM_COL32(0x0b, 0x0f, 0x16, 0xFF),
+                                    IM_COL32(0x14, 0x10, 0x18, 0xFF));
         dl->AddRectFilled(ImVec2(headerRect.Min.x, headerRect.Max.y - 1.0f),
-                          headerRect.Max, IM_COL32(0xe4, 0x11, 0x43, 0xFF));
-        dl->AddLine(ImVec2(headerRect.Min.x + 8.0f, headerRect.Min.y + 4.0f),
-                    ImVec2(headerRect.Max.x - 8.0f, headerRect.Min.y + 4.0f),
-                    IM_COL32(0x3e, 0x7f, 0xff, 0x34), 1.0f);
+                          headerRect.Max, kColAccent);
+        dl->AddLine(ImVec2(headerRect.Min.x + 10.0f, headerRect.Min.y + 4.0f),
+                    ImVec2(headerRect.Max.x - 10.0f, headerRect.Min.y + 4.0f),
+                    IM_COL32(0x7f, 0xa8, 0xff, 0x26), 1.0f);
 
-        ImVec2 brandPos(winPos.x + 12.0f, winPos.y + 9.0f);
+        ImVec2 brandPos(winPos.x + 14.0f, winPos.y + 10.0f);
         if (s_logoTexture) {
             dl->AddImage(reinterpret_cast<ImTextureID>(s_logoTexture),
                          brandPos,
-                         ImVec2(brandPos.x + 28.0f, brandPos.y + 28.0f));
+                         ImVec2(brandPos.x + 30.0f, brandPos.y + 30.0f));
         }
 
-        DrawText(dl, s_boldFont, ImVec2(brandPos.x + 38.0f, brandPos.y + 2.0f),
-                 IM_COL32(0xf6, 0xf8, 0xff, 0xFF), "UNLEASHED");
-        dl->AddText(ImVec2(brandPos.x + 38.0f, brandPos.y + 17.0f),
-                    IM_COL32(0x8c, 0x94, 0xa3, 0xFF), "DX11 ANALYSIS");
+        DrawText(dl, s_boldFont, ImVec2(brandPos.x + 40.0f, brandPos.y + 2.0f),
+                 kColText, "UNLEASHED");
+        dl->AddText(ImVec2(brandPos.x + 40.0f, brandPos.y + 18.0f),
+                    kColTextDim, "DX11 ANALYSIS");
 
         ImVec2 closeMin(headerRect.Max.x - 34.0f, headerRect.Min.y + 10.0f);
         ImGui::SetCursorScreenPos(closeMin);
         ImGui::InvisibleButton("##closeMenu", ImVec2(22.0f, 22.0f));
         if (ImGui::IsItemClicked())
             OW::Config::Menu = false;
+        if (ImGui::IsItemHovered()) {
+            dl->AddRectFilled(ImVec2(closeMin.x - 2.0f, closeMin.y - 2.0f),
+                              ImVec2(closeMin.x + 24.0f, closeMin.y + 24.0f),
+                              IM_COL32(0xff, 0x2e, 0x62, 0x1E), 5.0f);
+        }
         ImU32 closeCol = ImGui::IsItemHovered()
-            ? IM_COL32(0xe4, 0x11, 0x43, 0xFF)
-            : IM_COL32(0xa8, 0xaf, 0xbd, 0xFF);
+            ? kColAccent
+            : kColTextMuted;
         dl->AddLine(ImVec2(closeMin.x + 6.0f, closeMin.y + 6.0f),
                     ImVec2(closeMin.x + 16.0f, closeMin.y + 16.0f),
                     closeCol, 1.6f);
@@ -1242,28 +1380,40 @@ void UI::Render() {
             ImVec2 tabPos = ImGui::GetCursorScreenPos();
             float tabW = 109.0f;
 
-            // Active tab gets a background
-            if (isActive)
-                dl->AddRectFilled(tabPos, ImVec2(tabPos.x + tabW, tabPos.y + 43.0f),
-                                  IM_COL32(0x1f, 0x22, 0x27, 0xFF));
-
-            // Invisible button for click
             ImGui::PushID(i);
             ImGui::InvisibleButton("##topTab", ImVec2(tabW, 43.0f));
+            bool hovered = ImGui::IsItemHovered();
             if (ImGui::IsItemClicked())
                 state.activeTab = (Tab)i;
             ImGui::PopID();
 
+            float tabT = VisualTransition(ImGui::GetID(topTabNames[i]) ^ 0x2261,
+                                           isActive || hovered, 14.0f);
+            if (isActive) {
+                dl->AddRectFilled(ImVec2(tabPos.x + 1.0f, tabPos.y + 4.0f),
+                                  ImVec2(tabPos.x + tabW - 3.0f, tabPos.y + 42.0f),
+                                  IM_COL32(0x17, 0x1d, 0x27, 0xFF), 5.0f);
+                dl->AddRectFilled(ImVec2(tabPos.x + 9.0f, tabPos.y + 40.0f),
+                                  ImVec2(tabPos.x + tabW - 12.0f, tabPos.y + 42.0f),
+                                  kColAccent, 2.0f);
+            } else if (hovered) {
+                dl->AddRectFilled(ImVec2(tabPos.x + 1.0f, tabPos.y + 6.0f),
+                                  ImVec2(tabPos.x + tabW - 3.0f, tabPos.y + 40.0f),
+                                  MixColor(IM_COL32(0x00, 0x00, 0x00, 0x00),
+                                           IM_COL32(0x20, 0x28, 0x34, 0x9C), tabT),
+                                  5.0f);
+            }
+
             ImU32 txtCol = isActive
-                ? IM_COL32(0xf0, 0x14, 0x48, 0xFF)
-                : IM_COL32(0xf2, 0xf2, 0xf2, 0xFF);
+                ? kColAccent
+                : MixColor(kColTextMuted, kColText, tabT);
 
             ImVec2 txtSize = ImGui::CalcTextSize(topTabNames[i]);
             DrawText(dl, isActive ? s_boldFont : nullptr,
-                     ImVec2(tabPos.x + 26.0f, tabPos.y + (43.0f - txtSize.y) * 0.5f),
+                     ImVec2(tabPos.x + 29.0f, tabPos.y + (43.0f - txtSize.y) * 0.5f),
                      txtCol, topTabNames[i]);
 
-            DrawTopTabIcon(dl, i, ImVec2(tabPos.x + 5.0f, tabPos.y + 12.5f), txtCol);
+            DrawTopTabIcon(dl, i, ImVec2(tabPos.x + 8.0f, tabPos.y + 12.5f), txtCol);
 
             ImGui::SetCursorScreenPos(ImVec2(tabPos.x + tabW, tabPos.y));
         }
@@ -1302,7 +1452,6 @@ void UI::Render() {
             break;
     }
 
-    // Sub-tab bar background (#202326)
     float subBarHeight = 0.0f;
     if (subTabCount > 0) {
         subBarHeight = (state.activeTab == TAB_AIMING) ? 16.0f : 42.0f;
@@ -1310,7 +1459,12 @@ void UI::Render() {
 
     ImRect subBarRect(ImVec2(winPos.x, contentBandY),
                       ImVec2(winPos.x + winW, contentBandY + subBarHeight));
-    dl->AddRectFilled(subBarRect.Min, subBarRect.Max, IM_COL32(0x20, 0x23, 0x26, 0xFF));
+    if (subBarHeight > 0.0f) {
+        dl->AddRectFilled(subBarRect.Min, subBarRect.Max, IM_COL32(0x11, 0x16, 0x1e, 0xF2));
+        dl->AddLine(ImVec2(subBarRect.Min.x, subBarRect.Max.y - 1.0f),
+                    ImVec2(subBarRect.Max.x, subBarRect.Max.y - 1.0f),
+                    IM_COL32(0x2b, 0x35, 0x45, 0x86), 1.0f);
+    }
 
     // Draw sub-tab buttons
     if (subTabCount > 0 && activeSub) {
@@ -1321,26 +1475,35 @@ void UI::Render() {
 
             ImGui::PushID(i + 10);
             ImGui::InvisibleButton("##subTab", ImVec2(60.0f, subBarHeight));
+            bool hovered = ImGui::IsItemHovered();
             if (ImGui::IsItemClicked())
                 *activeSub = i;
             ImGui::PopID();
 
+            float subT = VisualTransition(ImGui::GetID(subTabNames[i]) ^ 0x2c91,
+                                           isActive || hovered, 16.0f);
+            ImVec2 subTextSize = ImGui::CalcTextSize(subTabNames[i]);
+            ImVec2 subTextPos(pos.x, pos.y + (subBarHeight - subTextSize.y) * 0.5f);
             ImU32 col = isActive
-                ? IM_COL32(0xff, 0xff, 0xff, 0xFF)
-                : IM_COL32(0xe8, 0xe8, 0xe8, 0xFF);
-            dl->AddText(ImVec2(pos.x, pos.y + (subBarHeight - ImGui::CalcTextSize(subTabNames[i]).y) * 0.5f),
-                        col, subTabNames[i]);
+                ? kColText
+                : MixColor(kColTextDim, kColTextMuted, subT);
+            dl->AddText(subTextPos, col, subTabNames[i]);
+            if (isActive) {
+                dl->AddRectFilled(ImVec2(subTextPos.x, subBarRect.Max.y - 3.0f),
+                                  ImVec2(subTextPos.x + subTextSize.x, subBarRect.Max.y - 1.0f),
+                                  kColAccent, 1.0f);
+            }
 
             ImGui::SetCursorScreenPos(ImVec2(pos.x + 60.0f + 20.0f, pos.y));
         }
     }
 
     // ==================================================================
-    // PAGE BODY  (padding matches React page-class variants)
+    // PAGE BODY
     // ==================================================================
-    float bodyTopPad = 8.0f;  // default
-    if (state.activeTab == TAB_AIMING)       bodyTopPad = 6.0f;  // page-aimbot
-    else if (state.activeTab == TAB_VISUALS) bodyTopPad = 0.0f;  // page-visuals
+    float bodyTopPad = 10.0f;
+    if (state.activeTab == TAB_AIMING)       bodyTopPad = 8.0f;
+    else if (state.activeTab == TAB_VISUALS) bodyTopPad = 10.0f;
 
     float bodyY = contentBandY + subBarHeight + bodyTopPad;
     float bodyH = MaxFloat(0.0f, contentMax.y - bodyY);
@@ -1350,9 +1513,9 @@ void UI::Render() {
     ImGui::BeginChild("PageBody", ImVec2(winW, bodyH), false,
                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDecoration);
 
-    // Apply the page-body padding (8px 9px 10px)
+    // Apply page-body padding.
     ImGui::Dummy(ImVec2(0.0f, 0.0f));
-    ImGui::Indent(9.0f);
+    ImGui::Indent(11.0f);
 
     // Render the active page
     if (state.activeTab == TAB_AIMING) {
@@ -1368,13 +1531,16 @@ void UI::Render() {
     // Close any remaining open group box
     CloseGroupBox();
 
-    ImGui::Unindent(9.0f);
+    ImGui::Unindent(11.0f);
     ImGui::EndChild();
 
-    dl->AddRect(shellMin, shellMax, IM_COL32(0x07, 0x08, 0x0a, 0xFF), 0.0f, 0, 2.0f);
+    dl->AddRect(shellMin, shellMax, IM_COL32(0x02, 0x03, 0x06, 0xFF), 0.0f, 0, 2.0f);
     dl->AddRect(ImVec2(shellMin.x + 2.0f, shellMin.y + 2.0f),
                 ImVec2(shellMax.x - 2.0f, shellMax.y - 2.0f),
-                IM_COL32(0x30, 0x32, 0x3a, 0xFF));
+                IM_COL32(0x39, 0x45, 0x58, 0xB6));
+    dl->AddRect(ImVec2(shellMin.x + 3.0f, shellMin.y + 3.0f),
+                ImVec2(shellMax.x - 3.0f, shellMax.y - 3.0f),
+                IM_COL32(0xff, 0xff, 0xff, 0x08));
 
     ImGui::SetCursorScreenPos(shellMin);
     ImGui::Dummy(ImVec2(shellWidth, shellHeight));
