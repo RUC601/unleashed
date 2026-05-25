@@ -292,43 +292,33 @@ namespace OW {
     }
 
     // =========================================================================
-    // Visibility decryption
+    // Visibility decryption — May 2026 (UC p330, snowancestor 2026-05-25)
+    //
+    // Replaces the old table-walk approach that used DEAD VisFN/Vis_Key.
+    // New chain reads from VisBase+0x98 and uses the same ComponentXorQword
+    // and ComponentXorByte sources as DecryptComponent.
     // =========================================================================
 
-    inline uint64_t __fastcall DecryptVis(uint64_t a1) {
-        uint64_t v2 = SDK->dwGameBase + offset::VisFN;
-        uint64_t v3 = v2 + 0x8;
+    inline uint64_t DecryptVis(uint64_t visBase) {
+        // Step 1: read encrypted qword from VisBase+0x98, ROR3, XOR constant
+        uint64_t enc = SDK->RPM<uint64_t>(visBase + 0x98);
+        enc = ROR64(enc, 3) ^ 0x53DB07B6B873760Cull;
 
-        uint64_t v5 = SDK->RPM<uint64_t>(
-            SDK->dwGameBase + offset::DecryptTable_2 +
-            8ull * (((uint8_t)a1 - 0x46) & 0x7F) +
-            (((uint64_t)(a1 + offset::Vis_Key) >> 7) & 7)
-        ) ^ v2 ^ (a1 + offset::Vis_Key);
+        // Step 2: load ComponentXorByte (u8 at base+RVA)
+        uint8_t var_byte = SDK->RPM<uint8_t>(SDK->dwGameBase + offset::ComponentXorByte_RVA);
 
-        uint64_t v6 = (v3 - v2 + 7) >> 3;
-        if (v2 > v3) v6 = 0;
+        // Step 3: load ComponentXorQword ptr (the pointer, not the +0x10C value)
+        uint64_t var_qword = SDK->RPM<uint64_t>(SDK->dwGameBase + offset::ComponentXorQword_RVA);
 
-        uint64_t v4 = 0;
-        if (v6 >= 4) {
-            uint64_t v7 = v6 & 0xFFFFFFFFFFFFFFFCui64;
-            __m128i v8 = _mm_setzero_si128();
-            __m128i v9 = _mm_setzero_si128();
-            do {
-                v4 += 4;
-                v8 = _mm_xor_si128(v8, _mm_loadu_si128((const __m128i*)v2));
-                __m128i v10 = _mm_loadu_si128((const __m128i*)(v2 + 0x10));
-                v2 += 0x20;
-                v9 = _mm_xor_si128(v9, v10);
-            } while (v4 < v7);
-            __m128i v11 = _mm_xor_si128(v8, v9);
-            auto addr = _mm_xor_si128(v11, _mm_srli_si128(v11, 8));
-            v5 = *(__int64*)&addr;
-        }
+        // Step 4: main transform
+        uint64_t dec = (var_byte ^ (enc - 0x7A7DB4DE6CD03BBCull)) + 0x5CE60F50EA1D337Full;
 
-        for (; v2 < v3; v2 += 8)
-            v5 ^= SDK->RPM<uint64_t>(v2);
+        // Step 5: mix with qword data at var_qword+0x6A
+        dec = SDK->RPM<uint64_t>(var_qword + 0x6A) ^ ((2 * dec) | (dec >> 0x3F));
 
-        return v5 ^ ~v3 ^ 0x1AAC46FF0D473EBA;
+        // Step 6: final rotate
+        dec = ROR64(dec + 0x78D75198F1D34D38ull, 0xC);
+        return dec;
     }
 
     // =========================================================================

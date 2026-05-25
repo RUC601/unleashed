@@ -234,10 +234,9 @@ inline void entity_thread() {
                 entity.Team = (team == OW::eTeam::TEAM_DEATHMATCH || team != OW::local_entity.GetTeam());
             }
 
-            // ---- Visibility ----
+            // ---- Visibility (May 2026 UC p330: new direct decrypt from VisBase) ----
             if (entity.VisBase) {
-                auto vis_compo = SDK->RPM<OW::vis_compo_t>(entity.VisBase);
-                entity.Vis = (OW::DecryptVis(vis_compo.key1) ^ vis_compo.key2) ? true : false;
+                entity.Vis = OW::DecryptVis(entity.VisBase) != 0;
             }
 
             // ---- Skills ----
