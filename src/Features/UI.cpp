@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <cmath>
+#include <cfloat>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -1156,48 +1157,80 @@ void UI::Render() {
     if (!OW::Config::Menu)
         return;
 
-    // Full viewport host window; the fixed 628px app shell is drawn manually.
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
 
-    ImGui::Begin("Unleashed", nullptr,
-                 ImGuiWindowFlags_NoDecoration |
-                 ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoResize |
-                 ImGuiWindowFlags_NoBackground |
-                 ImGuiWindowFlags_NoSavedSettings);
+    if (!ImGui::Begin("Unleashed##panel", nullptr,
+                      ImGuiWindowFlags_NoDecoration |
+                      ImGuiWindowFlags_NoMove |
+                      ImGuiWindowFlags_NoResize |
+                      ImGuiWindowFlags_NoBackground |
+                      ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
 
     auto* dl = ImGui::GetWindowDrawList();
 
-    float shellHeight = CurrentShellHeight();
-    float shellX = viewport->Pos.x;
+    ImVec2 shellMin = viewport->Pos;
+    float shellWidth = MaxFloat(kShellWidth, viewport->Size.x);
+    float shellHeight = MaxFloat(CurrentShellHeight(), viewport->Size.y);
 
-    ImVec2 shellMin(shellX, viewport->Pos.y + 1.0f);
-    ImVec2 shellMax(shellMin.x + kShellWidth, shellMin.y + shellHeight);
-    dl->AddRectFilled(shellMin, shellMax, IM_COL32(0x1c, 0x1d, 0x22, 0xFF));
+    ImVec2 shellMax(shellMin.x + shellWidth, shellMin.y + shellHeight);
+    dl->AddRectFilled(shellMin, shellMax, IM_COL32(0x08, 0x0a, 0x0f, 0xFF));
+    dl->AddRectFilledMultiColor(shellMin, shellMax,
+                                IM_COL32(0x12, 0x16, 0x20, 0xFF),
+                                IM_COL32(0x08, 0x0a, 0x0f, 0xFF),
+                                IM_COL32(0x08, 0x0a, 0x0f, 0xFF),
+                                IM_COL32(0x13, 0x0d, 0x13, 0xFF));
+    for (float x = shellMin.x + 24.0f; x < shellMax.x; x += 32.0f)
+        dl->AddLine(ImVec2(x, shellMin.y), ImVec2(x, shellMax.y), IM_COL32(0xff, 0xff, 0xff, 0x08));
+    for (float y = shellMin.y + 24.0f; y < shellMax.y; y += 32.0f)
+        dl->AddLine(ImVec2(shellMin.x, y), ImVec2(shellMax.x, y), IM_COL32(0xff, 0xff, 0xff, 0x07));
 
     ImVec2 winPos(shellMin.x + kShellBorder, shellMin.y + kShellBorder);
     ImVec2 contentMax(shellMax.x - kShellBorder, shellMax.y - kShellBorder);
-    float  winW = kShellWidth - kShellBorder * 2.0f;
+    float  winW = shellWidth - kShellBorder * 2.0f;
 
     // ==================================================================
     // TOP BAR  (84 px height, #1b1c21 background)
     // ==================================================================
     {
         ImRect headerRect(winPos, ImVec2(winPos.x + winW, winPos.y + kHeaderHeight));
-        dl->AddRectFilled(headerRect.Min, headerRect.Max, IM_COL32(0x1b, 0x1c, 0x21, 0xFF));
+        dl->AddRectFilled(headerRect.Min, headerRect.Max, IM_COL32(0x0f, 0x12, 0x19, 0xf4));
+        dl->AddRectFilled(ImVec2(headerRect.Min.x, headerRect.Max.y - 1.0f),
+                          headerRect.Max, IM_COL32(0xe4, 0x11, 0x43, 0xFF));
+        dl->AddLine(ImVec2(headerRect.Min.x + 8.0f, headerRect.Min.y + 4.0f),
+                    ImVec2(headerRect.Max.x - 8.0f, headerRect.Min.y + 4.0f),
+                    IM_COL32(0x3e, 0x7f, 0xff, 0x34), 1.0f);
 
-        // Brand: "Unleashed.cc"  (positioned top-left)
-        ImVec2 brandPos(winPos.x + 10.0f, winPos.y + 8.0f);
+        ImVec2 brandPos(winPos.x + 12.0f, winPos.y + 9.0f);
         if (s_logoTexture) {
             dl->AddImage(reinterpret_cast<ImTextureID>(s_logoTexture),
                          brandPos,
-                         ImVec2(brandPos.x + 24.0f, brandPos.y + 24.0f));
+                         ImVec2(brandPos.x + 28.0f, brandPos.y + 28.0f));
         }
 
-        DrawText(dl, s_boldFont, ImVec2(brandPos.x + 30.0f, brandPos.y + 3.0f),
-                 IM_COL32(0xf7, 0xf7, 0xf7, 0xFF), "Unleashed.cc");
+        DrawText(dl, s_boldFont, ImVec2(brandPos.x + 38.0f, brandPos.y + 2.0f),
+                 IM_COL32(0xf6, 0xf8, 0xff, 0xFF), "UNLEASHED");
+        dl->AddText(ImVec2(brandPos.x + 38.0f, brandPos.y + 17.0f),
+                    IM_COL32(0x8c, 0x94, 0xa3, 0xFF), "DX11 ANALYSIS");
+
+        ImVec2 closeMin(headerRect.Max.x - 34.0f, headerRect.Min.y + 10.0f);
+        ImGui::SetCursorScreenPos(closeMin);
+        ImGui::InvisibleButton("##closeMenu", ImVec2(22.0f, 22.0f));
+        if (ImGui::IsItemClicked())
+            OW::Config::Menu = false;
+        ImU32 closeCol = ImGui::IsItemHovered()
+            ? IM_COL32(0xe4, 0x11, 0x43, 0xFF)
+            : IM_COL32(0xa8, 0xaf, 0xbd, 0xFF);
+        dl->AddLine(ImVec2(closeMin.x + 6.0f, closeMin.y + 6.0f),
+                    ImVec2(closeMin.x + 16.0f, closeMin.y + 16.0f),
+                    closeCol, 1.6f);
+        dl->AddLine(ImVec2(closeMin.x + 16.0f, closeMin.y + 6.0f),
+                    ImVec2(closeMin.x + 6.0f, closeMin.y + 16.0f),
+                    closeCol, 1.6f);
 
         // Top tab bar at the bottom of the header
         ImGui::SetCursorScreenPos(ImVec2(winPos.x + 8.0f, winPos.y + kHeaderHeight - 43.0f));
@@ -1342,6 +1375,9 @@ void UI::Render() {
     dl->AddRect(ImVec2(shellMin.x + 2.0f, shellMin.y + 2.0f),
                 ImVec2(shellMax.x - 2.0f, shellMax.y - 2.0f),
                 IM_COL32(0x30, 0x32, 0x3a, 0xFF));
+
+    ImGui::SetCursorScreenPos(shellMin);
+    ImGui::Dummy(ImVec2(shellWidth, shellHeight));
 
     ImGui::End();
 }

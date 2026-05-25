@@ -28,12 +28,9 @@
 
 void RenderCallback()
 {
-    // --- ImGui overlay / cheat menu ---
-    // UI::Render draws the menu (press configured key, HOME by default, to toggle).  Internally it calls
-    // UI::InitStyle() on the first invocation, so no explicit style init is needed.
-    UI::Render();
-
     // --- ESP data calculation (W2S positions) ---
+    // The menu is rendered by the separate overlay menu window. This callback
+    // only draws the transparent full-screen canvas layer.
     // PlayerInfo and skillinfo scan OW::entities and compute world-to-screen
     // bounding boxes / skill info strings.  They are read-only and safe to call
     // alongside the entity processing threads.
@@ -152,7 +149,7 @@ int main()
     std::printf("\n");
 
     // ---------------------------------------------------------------
-    // Step 6 -- Initialise the DX11 display window
+    // Step 6 -- Initialise the DX11 overlay windows
     // ---------------------------------------------------------------
     std::printf("[MAIN] Initialising overlay...\n");
     if (!g_Overlay.Initialize(L"Unleashed DMA Overlay")) {
@@ -169,7 +166,7 @@ int main()
     // Step 7 -- Main loop (blocks until overlay / game closes)
     // ---------------------------------------------------------------
     std::printf("[MAIN] Entering message loop.  Press HOME to toggle menu.\n");
-    std::printf("[MAIN] Press close button on window to exit.\n\n");
+    std::printf("[MAIN] Close the canvas process/window to exit.\n\n");
 
     g_Overlay.Run(RenderCallback);
 

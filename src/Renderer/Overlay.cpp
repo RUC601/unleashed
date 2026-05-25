@@ -3,35 +3,61 @@
 #include "Utils/Config.hpp"
 #include "resource.h"
 
+#include <windowsx.h>
+
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
-// Forward declare the ImGui WndProc handler (exported by imgui_impl_win32)
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-// =====================================================================
-// File-scope WndProc for the overlay window
-// =====================================================================
 
 namespace {
 
-constexpr int kDefaultClientWidth = 650;
-constexpr int kDefaultClientHeight = 550;
+constexpr int kDefaultMenuClientWidth = 650;
+constexpr int kDefaultMenuClientHeight = 550;
+constexpr int kMenuResizeGrip = 8;
+constexpr int kMenuDragHeight = 38;
+constexpr wchar_t kCanvasClassName[] = L"UnleashedOverlayCanvasDX11";
+constexpr wchar_t kMenuClassName[] = L"UnleashedOverlayMenuDX11";
 
-RECT AdjustedWindowRectForClient(int clientWidth, int clientHeight) {
-    RECT rect = { 0, 0, clientWidth, clientHeight };
-    AdjustWindowRectEx(&rect, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_TOPMOST | WS_EX_TOOLWINDOW);
-    return rect;
-}
+ImGuiContext* g_menuContext = nullptr;
 
-void ApplyMinimumTrackSize(LPARAM lParam) {
+void ApplyMinimumMenuTrackSize(LPARAM lParam) {
     MINMAXINFO* minMax = reinterpret_cast<MINMAXINFO*>(lParam);
     if (!minMax)
         return;
 
-    RECT rect = AdjustedWindowRectForClient(kDefaultClientWidth, kDefaultClientHeight);
-    minMax->ptMinTrackSize.x = rect.right - rect.left;
-    minMax->ptMinTrackSize.y = rect.bottom - rect.top;
+    minMax->ptMinTrackSize.x = kDefaultMenuClientWidth;
+    minMax->ptMinTrackSize.y = kDefaultMenuClientHeight;
+}
+
+LRESULT HitTestBorderlessMenu(HWND hWnd, LPARAM lParam) {
+    POINT cursor = {
+        GET_X_LPARAM(lParam),
+        GET_Y_LPARAM(lParam)
+    };
+    ScreenToClient(hWnd, &cursor);
+
+    RECT rect = {};
+    GetClientRect(hWnd, &rect);
+
+    const bool left = cursor.x < kMenuResizeGrip;
+    const bool right = cursor.x >= (rect.right - kMenuResizeGrip);
+    const bool top = cursor.y < kMenuResizeGrip;
+    const bool bottom = cursor.y >= (rect.bottom - kMenuResizeGrip);
+
+    if (top && left) return HTTOPLEFT;
+    if (top && right) return HTTOPRIGHT;
+    if (bottom && left) return HTBOTTOMLEFT;
+    if (bottom && right) return HTBOTTOMRIGHT;
+    if (left) return HTLEFT;
+    if (right) return HTRIGHT;
+    if (top) return HTTOP;
+    if (bottom) return HTBOTTOM;
+
+    if (cursor.y < kMenuDragHeight && cursor.x < rect.right - 72)
+        return HTCAPTION;
+
+    return HTCLIENT;
 }
 
 bool IsMenuTogglePressed() {
@@ -39,120 +65,122 @@ bool IsMenuTogglePressed() {
     return key > 0 && (GetAsyncKeyState(key) & 0x0001) != 0;
 }
 
-} // namespace
+DXGI_SWAP_CHAIN_DESC MakeSwapChainDesc(HWND hWnd, UINT width, UINT height) {
+    DXGI_SWAP_CHAIN_DESC desc = {};
+    desc.BufferCount = 2;
+    desc.BufferDesc.Width = width;
+    desc.BufferDesc.Height = height;
+    desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.BufferDesc.RefreshRate.Numerator = 60;
+    desc.BufferDesc.RefreshRate.Denominator = 1;
+    desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    desc.OutputWindow = hWnd;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Windowed = TRUE;
+    desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    return desc;
+}
 
-static LRESULT WINAPI OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+bool RegisterClassIfNeeded(const WNDCLASSEXW& windowClass) {
+    if (RegisterClassExW(&windowClass) != 0)
         return true;
 
+    return GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+LRESULT WINAPI CanvasWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-        case WM_GETMINMAXINFO: {
-            ApplyMinimumTrackSize(lParam);
-            return 0;
-        }
-        case WM_SYSCOMMAND: {
+        case WM_NCHITTEST:
+            return HTTRANSPARENT;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_SYSCOMMAND:
             if ((wParam & 0xFFF0) == SC_KEYMENU)
-                return 0;   // Disable ALT menu
+                return 0;
             break;
-        }
-        case WM_DESTROY: {
+        case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
-        }
         default:
             break;
     }
+
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-// =====================================================================
-// Overlay implementation
-// =====================================================================
+LRESULT WINAPI MenuWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_NCHITTEST)
+        return HitTestBorderlessMenu(hWnd, lParam);
+    if (msg == WM_NCCALCSIZE && wParam)
+        return 0;
+
+    ImGuiContext* previousContext = ImGui::GetCurrentContext();
+    if (g_menuContext) {
+        ImGui::SetCurrentContext(g_menuContext);
+        if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) {
+            ImGui::SetCurrentContext(previousContext);
+            return true;
+        }
+        ImGui::SetCurrentContext(previousContext);
+    }
+
+    switch (msg) {
+        case WM_GETMINMAXINFO:
+            ApplyMinimumMenuTrackSize(lParam);
+            return 0;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_SYSCOMMAND:
+            if ((wParam & 0xFFF0) == SC_KEYMENU)
+                return 0;
+            break;
+        case WM_CLOSE:
+            OW::Config::Menu = false;
+            ShowWindow(hWnd, SW_HIDE);
+            return 0;
+        case WM_DESTROY:
+            return 0;
+        default:
+            break;
+    }
+
+    return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+} // namespace
 
 bool Overlay::Initialize(const wchar_t* overlayTitle) {
-    // 1. Register overlay window class
-    WNDCLASSEXW wc = {};
-    wc.cbSize        = sizeof(WNDCLASSEXW);
-    wc.style         = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc   = OverlayWndProc;
-    wc.hInstance     = GetModuleHandleW(nullptr);
-    wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = nullptr;
-    wc.lpszClassName = L"UnleashedOverlayDX11";
-    wc.hIcon         = LoadIcon(wc.hInstance, MAKEINTRESOURCE(IDI_UNLEASHED));
-    wc.hIconSm       = LoadIcon(wc.hInstance, MAKEINTRESOURCE(IDI_UNLEASHED));
-
-    RegisterClassExW(&wc);
-
-    // 2. Create a normal topmost tool window with a 650x550 client area.
-    const DWORD exStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
-    const DWORD style = WS_OVERLAPPEDWINDOW;
-    RECT windowRect = AdjustedWindowRectForClient(kDefaultClientWidth, kDefaultClientHeight);
-    const int windowW = windowRect.right - windowRect.left;
-    const int windowH = windowRect.bottom - windowRect.top;
-
-    RECT workArea = {};
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
-    const int workW = workArea.right - workArea.left;
-    const int workH = workArea.bottom - workArea.top;
-    const int windowX = workArea.left + (workW - windowW) / 2;
-    const int windowY = workArea.top + (workH - windowH) / 2;
-
-    // 3. Create the overlay display window.
-    m_hWnd = CreateWindowExW(
-        exStyle,
-        wc.lpszClassName,
-        overlayTitle,
-        style | WS_VISIBLE,
-        windowX, windowY, windowW, windowH,
-        nullptr,
-        nullptr,
-        wc.hInstance,
-        nullptr
-    );
-
-    if (!m_hWnd)
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    if (!RegisterWindowClasses(instance))
         return false;
 
-    // Show the window and force it to the top of the Z-order
-    ShowWindow(m_hWnd, SW_SHOW);
-    UpdateWindow(m_hWnd);
-    SetWindowPos(m_hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    if (!CreateWindows(overlayTitle, instance))
+        return false;
 
-    // 4. Initialise D3D11
     if (!CreateDX11())
         return false;
 
-    // 5. Initialise ImGui
     IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.IniFilename = nullptr;
-    io.LogFilename = nullptr;
-
-    // Style
-    ImGui::StyleColorsDark();
-
-    // Backends
-    if (!ImGui_ImplWin32_Init(m_hWnd))
+    if (!InitializeImGuiContext(&m_canvasContext, m_canvasHWnd))
         return false;
-    if (!ImGui_ImplDX11_Init(m_pDevice, m_pContext))
+    if (!InitializeImGuiContext(&m_menuContext, m_menuHWnd))
         return false;
 
-    // Initialise the renderer helper
+    g_menuContext = m_menuContext;
+
     Render::Initialize(m_pDevice, m_pContext);
     Render::InitIcons(m_pDevice);
     UI::InitializeResources(m_pDevice);
 
+    UpdateWindowVisibility();
     return true;
 }
 
 void Overlay::Run(std::function<void()> renderCallback) {
-    if (!m_hWnd || !m_pSwapChain)
+    if (!m_canvasHWnd || !m_canvasSwapChain || !m_canvasRenderTargetView)
         return;
 
-    // Message loop
     bool running = true;
     while (running) {
         MSG msg;
@@ -168,45 +196,18 @@ void Overlay::Run(std::function<void()> renderCallback) {
         if (!running)
             break;
 
-        // Exit if target or overlay window was destroyed
-        if (!IsWindow(m_hWnd))
+        if (!IsWindow(m_canvasHWnd))
             break;
 
         if (IsMenuTogglePressed())
             OW::Config::Menu = !OW::Config::Menu;
 
-        RECT clientRect = {};
-        if (GetClientRect(m_hWnd, &clientRect)) {
-            const UINT width = static_cast<UINT>(clientRect.right - clientRect.left);
-            const UINT height = static_cast<UINT>(clientRect.bottom - clientRect.top);
-            if (width > 0 && height > 0 &&
-                (width != m_clientWidth || height != m_clientHeight)) {
-                ResizeSwapChain(width, height);
-            }
-        }
+        UpdateWindowVisibility();
+        UpdateSwapChainSizes();
 
-        if (!m_pRenderTargetView)
-            continue;
-
-        // Start ImGui frame
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-
-        // User-defined rendering
-        if (renderCallback)
-            renderCallback();
-
-        // Render ImGui draw data
-        ImGui::Render();
-
-        // Clear to opaque black and present
-        const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-        m_pContext->OMSetRenderTargets(1, &m_pRenderTargetView, nullptr);
-        m_pContext->ClearRenderTargetView(m_pRenderTargetView, clearColor);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-
-        m_pSwapChain->Present(1, 0);   // V-Sync on
+        RenderCanvas(renderCallback);
+        if (OW::Config::Menu)
+            RenderMenu();
     }
 
     Shutdown();
@@ -216,48 +217,123 @@ void Overlay::Shutdown() {
     UI::ShutdownResources();
     Render::ShutdownIcons();
 
-    // ImGui shutdown
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
+    g_menuContext = nullptr;
+    ShutdownImGuiContext(m_menuContext);
+    ShutdownImGuiContext(m_canvasContext);
 
-    // D3D11 cleanup
     CleanupDX11();
 
-    // Window cleanup
-    if (m_hWnd) {
-        DestroyWindow(m_hWnd);
-        m_hWnd = nullptr;
+    if (m_menuHWnd) {
+        DestroyWindow(m_menuHWnd);
+        m_menuHWnd = nullptr;
+    }
+    if (m_canvasHWnd) {
+        DestroyWindow(m_canvasHWnd);
+        m_canvasHWnd = nullptr;
     }
 
-    // Unregister window class (optional -- process exit will handle it)
-    UnregisterClassW(L"UnleashedOverlayDX11", GetModuleHandleW(nullptr));
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    UnregisterClassW(kMenuClassName, instance);
+    UnregisterClassW(kCanvasClassName, instance);
 }
 
-// =====================================================================
-// Private helpers
-// =====================================================================
+bool Overlay::RegisterWindowClasses(HINSTANCE instance) {
+    WNDCLASSEXW canvasClass = {};
+    canvasClass.cbSize = sizeof(WNDCLASSEXW);
+    canvasClass.style = CS_HREDRAW | CS_VREDRAW;
+    canvasClass.lpfnWndProc = CanvasWndProc;
+    canvasClass.hInstance = instance;
+    canvasClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    canvasClass.hbrBackground = nullptr;
+    canvasClass.lpszClassName = kCanvasClassName;
+    canvasClass.hIcon = LoadIcon(instance, MAKEINTRESOURCE(IDI_UNLEASHED));
+    canvasClass.hIconSm = LoadIcon(instance, MAKEINTRESOURCE(IDI_UNLEASHED));
+
+    WNDCLASSEXW menuClass = canvasClass;
+    menuClass.lpfnWndProc = MenuWndProc;
+    menuClass.lpszClassName = kMenuClassName;
+
+    return RegisterClassIfNeeded(canvasClass) && RegisterClassIfNeeded(menuClass);
+}
+
+bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
+    m_canvasWidth = static_cast<UINT>(GetSystemMetrics(SM_CXSCREEN));
+    m_canvasHeight = static_cast<UINT>(GetSystemMetrics(SM_CYSCREEN));
+    if (m_canvasWidth == 0 || m_canvasHeight == 0) {
+        m_canvasWidth = 1920;
+        m_canvasHeight = 1080;
+    }
+
+    m_canvasHWnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        kCanvasClassName,
+        overlayTitle,
+        WS_POPUP | WS_VISIBLE,
+        0,
+        0,
+        static_cast<int>(m_canvasWidth),
+        static_cast<int>(m_canvasHeight),
+        nullptr,
+        nullptr,
+        instance,
+        nullptr
+    );
+    if (!m_canvasHWnd)
+        return false;
+
+    ShowWindow(m_canvasHWnd, SW_SHOW);
+    SetWindowPos(m_canvasHWnd, HWND_TOPMOST, 0, 0,
+                 static_cast<int>(m_canvasWidth), static_cast<int>(m_canvasHeight),
+                 SWP_SHOWWINDOW);
+
+    const DWORD menuStyle = WS_POPUP | WS_THICKFRAME;
+    const DWORD menuExStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+    const int menuW = kDefaultMenuClientWidth;
+    const int menuH = kDefaultMenuClientHeight;
+
+    RECT workArea = {};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
+    const int workW = workArea.right - workArea.left;
+    const int workH = workArea.bottom - workArea.top;
+    const int menuX = workArea.left + (workW - menuW) / 2;
+    const int menuY = workArea.top + (workH - menuH) / 2;
+
+    m_menuHWnd = CreateWindowExW(
+        menuExStyle,
+        kMenuClassName,
+        L"Unleashed Settings",
+        menuStyle,
+        menuX,
+        menuY,
+        menuW,
+        menuH,
+        nullptr,
+        nullptr,
+        instance,
+        nullptr
+    );
+    if (!m_menuHWnd)
+        return false;
+
+    RECT clientRect = {};
+    if (GetClientRect(m_menuHWnd, &clientRect)) {
+        m_menuWidth = static_cast<UINT>(clientRect.right - clientRect.left);
+        m_menuHeight = static_cast<UINT>(clientRect.bottom - clientRect.top);
+    } else {
+        m_menuWidth = kDefaultMenuClientWidth;
+        m_menuHeight = kDefaultMenuClientHeight;
+    }
+
+    SetWindowPos(m_menuHWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    return true;
+}
 
 bool Overlay::CreateDX11() {
-    DXGI_SWAP_CHAIN_DESC sd = {};
-    sd.BufferCount                        = 2;
-    sd.BufferDesc.Width                   = 0;   // auto from window
-    sd.BufferDesc.Height                  = 0;
-    sd.BufferDesc.Format                  = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferDesc.RefreshRate.Numerator   = 60;
-    sd.BufferDesc.RefreshRate.Denominator = 1;
-    sd.Flags                              = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-    sd.BufferUsage                        = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow                       = m_hWnd;
-    sd.SampleDesc.Count                   = 1;
-    sd.SampleDesc.Quality                 = 0;
-    sd.Windowed                           = TRUE;
-    sd.SwapEffect                         = DXGI_SWAP_EFFECT_DISCARD;
+    DXGI_SWAP_CHAIN_DESC canvasDesc = MakeSwapChainDesc(m_canvasHWnd, m_canvasWidth, m_canvasHeight);
 
     UINT createDeviceFlags = 0;
-    // createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
-
-    D3D_FEATURE_LEVEL featureLevel;
+    D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
     D3D_FEATURE_LEVEL featureLevelArray[] = {
         D3D_FEATURE_LEVEL_11_0,
         D3D_FEATURE_LEVEL_10_0,
@@ -271,34 +347,35 @@ bool Overlay::CreateDX11() {
         featureLevelArray,
         ARRAYSIZE(featureLevelArray),
         D3D11_SDK_VERSION,
-        &sd,
-        &m_pSwapChain,
+        &canvasDesc,
+        &m_canvasSwapChain,
         &m_pDevice,
         &featureLevel,
         &m_pContext
     );
-
     if (FAILED(hr))
         return false;
 
-    // Create the render-target view
-    ResizeBuffers();
-    RECT clientRect = {};
-    if (GetClientRect(m_hWnd, &clientRect)) {
-        m_clientWidth = static_cast<UINT>(clientRect.right - clientRect.left);
-        m_clientHeight = static_cast<UINT>(clientRect.bottom - clientRect.top);
-    }
-    return true;
+    if (!CreateRenderTarget(m_canvasSwapChain, &m_canvasRenderTargetView))
+        return false;
+
+    if (!CreateSwapChainForWindow(m_menuHWnd, m_menuWidth, m_menuHeight, &m_menuSwapChain))
+        return false;
+
+    return CreateRenderTarget(m_menuSwapChain, &m_menuRenderTargetView);
 }
 
 void Overlay::CleanupDX11() {
-    if (m_pRenderTargetView) {
-        m_pRenderTargetView->Release();
-        m_pRenderTargetView = nullptr;
+    ReleaseRenderTarget(&m_menuRenderTargetView);
+    ReleaseRenderTarget(&m_canvasRenderTargetView);
+
+    if (m_menuSwapChain) {
+        m_menuSwapChain->Release();
+        m_menuSwapChain = nullptr;
     }
-    if (m_pSwapChain) {
-        m_pSwapChain->Release();
-        m_pSwapChain = nullptr;
+    if (m_canvasSwapChain) {
+        m_canvasSwapChain->Release();
+        m_canvasSwapChain = nullptr;
     }
     if (m_pContext) {
         m_pContext->Release();
@@ -310,46 +387,193 @@ void Overlay::CleanupDX11() {
     }
 }
 
-void Overlay::ResizeBuffers() {
-    if (m_pRenderTargetView) {
-        m_pRenderTargetView->Release();
-        m_pRenderTargetView = nullptr;
+bool Overlay::CreateSwapChainForWindow(HWND hWnd, UINT width, UINT height, IDXGISwapChain** swapChain) {
+    if (!m_pDevice || !hWnd || !swapChain || width == 0 || height == 0)
+        return false;
+
+    IDXGIDevice* dxgiDevice = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    IDXGIFactory* factory = nullptr;
+
+    HRESULT hr = m_pDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
+    if (SUCCEEDED(hr))
+        hr = dxgiDevice->GetParent(IID_PPV_ARGS(&adapter));
+    if (SUCCEEDED(hr))
+        hr = adapter->GetParent(IID_PPV_ARGS(&factory));
+
+    if (FAILED(hr) || !factory) {
+        if (factory)
+            factory->Release();
+        if (adapter)
+            adapter->Release();
+        if (dxgiDevice)
+            dxgiDevice->Release();
+        return false;
     }
 
-    ID3D11Texture2D* pBackBuffer = nullptr;
-    if (m_pSwapChain) {
-        m_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-        if (pBackBuffer) {
-            m_pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &m_pRenderTargetView);
-            pBackBuffer->Release();
-        }
+    DXGI_SWAP_CHAIN_DESC desc = MakeSwapChainDesc(hWnd, width, height);
+    hr = factory->CreateSwapChain(m_pDevice, &desc, swapChain);
+
+    factory->Release();
+    adapter->Release();
+    dxgiDevice->Release();
+
+    return SUCCEEDED(hr) && *swapChain;
+}
+
+bool Overlay::CreateRenderTarget(IDXGISwapChain* swapChain, ID3D11RenderTargetView** renderTargetView) {
+    if (!m_pDevice || !swapChain || !renderTargetView)
+        return false;
+
+    ReleaseRenderTarget(renderTargetView);
+
+    ID3D11Texture2D* backBuffer = nullptr;
+    HRESULT hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
+    if (FAILED(hr) || !backBuffer)
+        return false;
+
+    hr = m_pDevice->CreateRenderTargetView(backBuffer, nullptr, renderTargetView);
+    backBuffer->Release();
+
+    return SUCCEEDED(hr) && *renderTargetView;
+}
+
+void Overlay::ReleaseRenderTarget(ID3D11RenderTargetView** renderTargetView) {
+    if (renderTargetView && *renderTargetView) {
+        (*renderTargetView)->Release();
+        *renderTargetView = nullptr;
     }
 }
 
-bool Overlay::ResizeSwapChain(UINT width, UINT height) {
-    if (!m_pSwapChain || width == 0 || height == 0)
+bool Overlay::ResizeSwapChain(IDXGISwapChain* swapChain, ID3D11RenderTargetView** renderTargetView,
+                              UINT width, UINT height) {
+    if (!swapChain || !renderTargetView || width == 0 || height == 0)
         return false;
 
     if (m_pContext)
         m_pContext->OMSetRenderTargets(0, nullptr, nullptr);
 
-    if (m_pRenderTargetView) {
-        m_pRenderTargetView->Release();
-        m_pRenderTargetView = nullptr;
-    }
+    ReleaseRenderTarget(renderTargetView);
 
-    const HRESULT hr = m_pSwapChain->ResizeBuffers(
-        0,
-        width,
-        height,
-        DXGI_FORMAT_UNKNOWN,
-        0
-    );
+    HRESULT hr = swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
     if (FAILED(hr))
         return false;
 
-    ResizeBuffers();
-    m_clientWidth = width;
-    m_clientHeight = height;
-    return m_pRenderTargetView != nullptr;
+    return CreateRenderTarget(swapChain, renderTargetView);
+}
+
+bool Overlay::InitializeImGuiContext(ImGuiContext** context, HWND hWnd) {
+    if (!context || !hWnd || !m_pDevice || !m_pContext)
+        return false;
+
+    *context = ImGui::CreateContext();
+    ImGui::SetCurrentContext(*context);
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.LogFilename = nullptr;
+
+    ImGui::StyleColorsDark();
+
+    if (!ImGui_ImplWin32_Init(hWnd))
+        return false;
+    if (!ImGui_ImplDX11_Init(m_pDevice, m_pContext))
+        return false;
+
+    return true;
+}
+
+void Overlay::ShutdownImGuiContext(ImGuiContext*& context) {
+    if (!context)
+        return;
+
+    ImGui::SetCurrentContext(context);
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext(context);
+    context = nullptr;
+    ImGui::SetCurrentContext(nullptr);
+}
+
+void Overlay::UpdateWindowVisibility() {
+    if (!m_menuHWnd)
+        return;
+
+    const bool shouldShowMenu = OW::Config::Menu;
+    const bool isVisible = IsWindowVisible(m_menuHWnd) != FALSE;
+
+    if (shouldShowMenu && !isVisible) {
+        ShowWindow(m_menuHWnd, SW_SHOW);
+        SetWindowPos(m_menuHWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    } else if (!shouldShowMenu && isVisible) {
+        ShowWindow(m_menuHWnd, SW_HIDE);
+    }
+}
+
+void Overlay::UpdateSwapChainSizes() {
+    RECT canvasRect = {};
+    if (GetClientRect(m_canvasHWnd, &canvasRect)) {
+        const UINT width = static_cast<UINT>(canvasRect.right - canvasRect.left);
+        const UINT height = static_cast<UINT>(canvasRect.bottom - canvasRect.top);
+        if (width > 0 && height > 0 && (width != m_canvasWidth || height != m_canvasHeight)) {
+            if (ResizeSwapChain(m_canvasSwapChain, &m_canvasRenderTargetView, width, height)) {
+                m_canvasWidth = width;
+                m_canvasHeight = height;
+            }
+        }
+    }
+
+    RECT menuRect = {};
+    if (GetClientRect(m_menuHWnd, &menuRect)) {
+        const UINT width = static_cast<UINT>(menuRect.right - menuRect.left);
+        const UINT height = static_cast<UINT>(menuRect.bottom - menuRect.top);
+        if (width > 0 && height > 0 && (width != m_menuWidth || height != m_menuHeight)) {
+            if (ResizeSwapChain(m_menuSwapChain, &m_menuRenderTargetView, width, height)) {
+                m_menuWidth = width;
+                m_menuHeight = height;
+            }
+        }
+    }
+}
+
+void Overlay::RenderCanvas(std::function<void()> renderCallback) {
+    if (!m_canvasContext || !m_canvasRenderTargetView || !m_canvasSwapChain)
+        return;
+
+    ImGui::SetCurrentContext(m_canvasContext);
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+
+    if (renderCallback)
+        renderCallback();
+
+    ImGui::Render();
+
+    const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    m_pContext->OMSetRenderTargets(1, &m_canvasRenderTargetView, nullptr);
+    m_pContext->ClearRenderTargetView(m_canvasRenderTargetView, clearColor);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    m_canvasSwapChain->Present(1, 0);
+}
+
+void Overlay::RenderMenu() {
+    if (!m_menuContext || !m_menuRenderTargetView || !m_menuSwapChain || !IsWindowVisible(m_menuHWnd))
+        return;
+
+    ImGui::SetCurrentContext(m_menuContext);
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+
+    UI::Render();
+
+    ImGui::Render();
+
+    const float clearColor[4] = { 0.05f, 0.05f, 0.06f, 1.0f };
+    m_pContext->OMSetRenderTargets(1, &m_menuRenderTargetView, nullptr);
+    m_pContext->ClearRenderTargetView(m_menuRenderTargetView, clearColor);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    m_menuSwapChain->Present(1, 0);
 }

@@ -11,8 +11,9 @@
 #include "Renderer.hpp"
 
 // -----------------------------------------------------------------------
-// Overlay -- DX11-based resizable window for DMA secondary display.
-// All rendering goes through ImGui draw lists.
+// Overlay -- two-layer DX11 overlay:
+// 1) a full-screen black click-through canvas for ESP draw lists
+// 2) a separate topmost borderless tool window for the interactive ImGui menu
 // -----------------------------------------------------------------------
 
 class Overlay {
@@ -21,21 +22,40 @@ public:
     void Run(std::function<void()> renderCallback);
     void Shutdown();
 
-    HWND GetOverlayWindow() const { return m_hWnd; }
+    HWND GetOverlayWindow() const { return m_canvasHWnd; }
+    HWND GetMenuWindow() const { return m_menuHWnd; }
 
 private:
-    HWND                    m_hWnd = nullptr;
+    HWND                    m_canvasHWnd = nullptr;
+    HWND                    m_menuHWnd = nullptr;
     ID3D11Device*           m_pDevice = nullptr;
     ID3D11DeviceContext*    m_pContext = nullptr;
-    IDXGISwapChain*         m_pSwapChain = nullptr;
-    ID3D11RenderTargetView* m_pRenderTargetView = nullptr;
-    UINT                    m_clientWidth = 0;
-    UINT                    m_clientHeight = 0;
+    IDXGISwapChain*         m_canvasSwapChain = nullptr;
+    IDXGISwapChain*         m_menuSwapChain = nullptr;
+    ID3D11RenderTargetView* m_canvasRenderTargetView = nullptr;
+    ID3D11RenderTargetView* m_menuRenderTargetView = nullptr;
+    ImGuiContext*           m_canvasContext = nullptr;
+    ImGuiContext*           m_menuContext = nullptr;
+    UINT                    m_canvasWidth = 0;
+    UINT                    m_canvasHeight = 0;
+    UINT                    m_menuWidth = 0;
+    UINT                    m_menuHeight = 0;
 
+    bool RegisterWindowClasses(HINSTANCE instance);
+    bool CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance);
     bool CreateDX11();
     void CleanupDX11();
-    void ResizeBuffers();
-    bool ResizeSwapChain(UINT width, UINT height);
+    bool CreateSwapChainForWindow(HWND hWnd, UINT width, UINT height, IDXGISwapChain** swapChain);
+    bool CreateRenderTarget(IDXGISwapChain* swapChain, ID3D11RenderTargetView** renderTargetView);
+    void ReleaseRenderTarget(ID3D11RenderTargetView** renderTargetView);
+    bool ResizeSwapChain(IDXGISwapChain* swapChain, ID3D11RenderTargetView** renderTargetView,
+                         UINT width, UINT height);
+    bool InitializeImGuiContext(ImGuiContext** context, HWND hWnd);
+    void ShutdownImGuiContext(ImGuiContext*& context);
+    void UpdateWindowVisibility();
+    void UpdateSwapChainSizes();
+    void RenderCanvas(std::function<void()> renderCallback);
+    void RenderMenu();
 };
 
 // Convenience global overlay instance
