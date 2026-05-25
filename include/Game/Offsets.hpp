@@ -44,10 +44,6 @@ namespace OW {
         static constexpr auto Address_entity_base = 0x39298C8; // confirmed: 0x224071A0000
         static constexpr auto entity_entry_stride = 0x30;       // 48 bytes per entity table entry
 
-        // Old decryption table bases (still present but data format changed)
-        static constexpr auto DecryptTable_1 = 0x38996E0;      // OBSOLETE format
-        static constexpr auto DecryptTable_2 = 0x389A700;      // OBSOLETE format
-
         // ViewMatrix — VM11 (May 2026, UC p323/p329)
         //   Chain: enc = RPM(base+Addr); dec = ((enc - k1) ^ k2) - k3
         //          p1 = RPM(dec + VM_P1); p2 = RPM(p1 + VM_P2)
@@ -62,27 +58,20 @@ namespace OW {
         static constexpr auto VM_ProjMatrix  = 0xB0;
 
         // =========================================================================
-        // OBSOLETE: RIGEL-2411 / pre-May 2026 offsets (kept for reference)
+        // BROKEN — offsets that need updated RVAs (Phase 3)
         // =========================================================================
 
-        static constexpr auto Address_entity_base_old      = 0x37EC5E0; // DEAD
-        static constexpr auto Address_viewmatrix_base_old  = 0x37F7618; // DEAD
-        static constexpr auto Address_viewmatrix_base_test = 0x3EB6278; // DEAD
-        static constexpr auto offset_viewmatrix_ptr_old    = 0x7E0;     // DEAD
-        static constexpr auto offset_viewmatrix_xor_key_old = 0x544A3BA5BE911EE7; // DEAD
-
-        static constexpr auto HeapManager          = 0x38B55F0; // DEAD — now NULL
-        static constexpr auto HeapManager_Var      = 0x3899DD5; // DEAD
-        static constexpr auto HeapManager_Key      = 0xE7E1F898E11B68B1; // DEAD
+        static constexpr auto HeapManager          = 0x38B55F0; // BROKEN — now NULL, needs new RVA
+        static constexpr auto HeapManager_Var      = 0x3899DD5; // BROKEN
+        static constexpr auto HeapManager_Key      = 0xE7E1F898E11B68B1; // BROKEN
         static constexpr auto HeapManager_Pointer  = 0x160;
 
-        static constexpr auto changefov    = 0x395EDB8; // DEAD
-        static constexpr auto Silent       = 0xF909A5;  // DEAD
+        static constexpr auto changefov    = 0x395EDB8; // BROKEN — needs new RVA
         static constexpr auto SensitivePtr = 0x2054;
 
-        static constexpr auto VisFN        = 0x79E722;  // DEAD — .text shifted
-        static constexpr auto Vis_Key      = 0x1AAC46FF0D473EBA; // DEAD
-        // OutlineFN/Outline_Key — REMOVED 2026-05-25: DMA external cannot render outlines
+        static constexpr auto VisFN        = 0x79E722;  // BROKEN — .text shifted, needs new RVA
+        static constexpr auto Vis_Key      = 0x1AAC46FF0D473EBA; // BROKEN
+        static constexpr auto DecryptTable_2 = 0x389A700;      // used by DecryptVis
 
     }
 }

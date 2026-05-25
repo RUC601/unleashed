@@ -487,66 +487,6 @@ namespace OW {
         }
     }
 
-    inline std::string GetHeroNames(uint64_t HeroID, uint64_t LinkBase) {
-        switch (HeroID) {
-            case eHero::HERO_REAPER:       return "Reaper";
-            case eHero::HERO_TRACER:       return "Tracer";
-            case eHero::HERO_MERCY:        return "Mercy";
-            case eHero::HERO_HANJO:        return "Hanzo";
-            case eHero::HERO_TORBJORN:     return "Torbjorn";
-            case eHero::HERO_REINHARDT:    return "Reinhardt";
-            case eHero::HERO_PHARAH:       return "Pharah";
-            case eHero::HERO_WINSTON:      return "Winston";
-            case eHero::HERO_WIDOWMAKER:   return "Widowmaker";
-            case eHero::HERO_BASTION:      return "Bastion";
-            case eHero::HERO_SYMMETRA:     return "Symmetra";
-            case eHero::HERO_ZENYATTA:     return "Zenyatta";
-            case eHero::HERO_GENJI:        return "Genji";
-            case eHero::HERO_ROADHOG:      return "Roadhog";
-            case eHero::HERO_MCCREE:       return "McCree";
-            case eHero::HERO_JUNKRAT:      return "Junkrat";
-            case eHero::HERO_ZARYA:        return "Zarya";
-            case eHero::HERO_SOLDIER76:    return "Soldier 76";
-            case eHero::HERO_LUCIO:        return "Lucio";
-            case eHero::HERO_DVA:
-                if (SDK->RPM<uint16_t>(LinkBase + 0xD4) != SDK->RPM<uint16_t>(LinkBase + 0xD8))
-                    return "D.Va";
-                else
-                    return "Hana";
-            case eHero::HERO_MEI:          return "Mei";
-            case eHero::HERO_ANA:          return "Ana";
-            case eHero::HERO_SOMBRA:       return "Sombra";
-            case eHero::HERO_ORISA:        return "Orisa";
-            case eHero::HERO_DOOMFIST:     return "Doomfist";
-            case eHero::HERO_MOIRA:        return "Moira";
-            case eHero::HERO_BRIGITTE:     return "Brigitte";
-            case eHero::HERO_WRECKINGBALL: return "Wrecking Ball";
-            case eHero::HERO_SOJOURN:      return "Sojourn";
-            case eHero::HERO_ASHE:         return "Ashe";
-            case eHero::HERO_BAPTISTE:     return "Baptiste";
-            case eHero::HERO_KIRIKO:       return "Kiriko";
-            case eHero::HERO_JUNKERQUEEN:  return "Junker Queen";
-            case eHero::HERO_SIGMA:        return "Sigma";
-            case eHero::HERO_ECHO:         return "Echo";
-            case eHero::HERO_RAMATTRA:     return "Ramattra";
-            case eHero::HERO_TRAININGBOT1: return "Standard Bot";
-            case eHero::HERO_TRAININGBOT2: return "Tank Bot";
-            case eHero::HERO_TRAININGBOT3: return "Sniper Bot";
-            case eHero::HERO_TRAININGBOT4: return "Friend Bot";
-            case eHero::HERO_TRAININGBOT5: return "Friend Tank Bot";
-            case eHero::HERO_TRAININGBOT6: return "Rocket Bot";
-            case eHero::HERO_TRAININGBOT7: return "Training Bot";
-            case eHero::HERO_LIFEWEAVER:   return "LifeWeaver";
-            case eHero::HERO_ILLARI:       return "Illari";
-            case eHero::HERO_MAUGA:        return "Mauga";
-            case eHero::HERO_VENTURE:      return "Venture";
-            case eHero::TOBTERT:           return "Tob";
-            case eHero::SYMTERT:           return "Sym";
-            case eHero::Bob:               return "Bob";
-            default:                       return "Unknown";
-        }
-    }
-
     // =========================================================================
     // Skill system helpers
     // =========================================================================
