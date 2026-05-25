@@ -9,6 +9,7 @@
 #include <DirectXMath.h>
 
 #include "Game/Target.hpp"
+#include "Renderer/Renderer.hpp"
 
 using namespace OW;
 
@@ -334,10 +335,102 @@ inline void viewmatrix_thread() {
 // ESP rendering helpers (require ImGui and Render:: namespace)
 // =========================================================================
 
+namespace OverlayRenderDetail {
+
+    inline ImU32 ToImU32(const ImVec4& color) {
+        return ImGui::ColorConvertFloat4ToU32(color);
+    }
+
+    inline bool IsValidScreenPoint(const Vector2& point) {
+        return point.X > 0.0f && point.Y > 0.0f &&
+               point.X < OW::WX && point.Y < OW::WY &&
+               std::isfinite(point.X) && std::isfinite(point.Y);
+    }
+
+    inline bool IsSpecialEntity(const OW::c_entity& entity) {
+        return entity.HeroID == 0x16dd || entity.HeroID == 0x16ee || entity.HeroID == 0x16bb;
+    }
+
+    inline ImU32 EntityColor(const OW::c_entity& entity, size_t index) {
+        if (entity.Team && OW::Config::Targetenemyi >= 0 &&
+            index == static_cast<size_t>(OW::Config::Targetenemyi)) {
+            return ToImU32(OW::Config::targetargb);
+        }
+        return entity.Team ? ToImU32(OW::Config::enargb)
+                           : ToImU32(OW::Config::allyargb);
+    }
+
+    inline Render::Color EntityRenderColor(const OW::c_entity& entity, size_t index) {
+        ImVec4 src = entity.Team ? OW::Config::enargb : OW::Config::allyargb;
+        if (entity.Team && OW::Config::Targetenemyi >= 0 &&
+            index == static_cast<size_t>(OW::Config::Targetenemyi)) {
+            src = OW::Config::targetargb;
+        }
+        return Render::Color(
+            static_cast<int>(src.x * 255.0f),
+            static_cast<int>(src.y * 255.0f),
+            static_cast<int>(src.z * 255.0f),
+            static_cast<int>(src.w * 255.0f)
+        );
+    }
+
+    inline void DrawCenteredText(const ImVec2& center, ImU32 color, const std::string& text, float fontSize) {
+        if (text.empty()) return;
+        ImVec2 size = ImGui::CalcTextSize(text.c_str());
+        Render::DrawStrokeText(ImVec2(center.x - size.x * 0.5f, center.y), color, text.c_str(), fontSize);
+    }
+
+    inline void DrawBoneSegment(const Vector2& from, const Vector2& to, const Render::Color& color) {
+        if (IsValidScreenPoint(from) && IsValidScreenPoint(to))
+            Render::DrawLine(from, to, color, 1.0f);
+    }
+
+    inline void DrawSkeleton(OW::c_entity entity, const Render::Color& color) {
+        std::array<int, 18> indices = entity.GetSkel();
+        Vector2 points[18]{};
+        bool projected[18]{};
+        const Vector2 windowSize(OW::WX, OW::WY);
+
+        for (int i = 0; i < 18; ++i) {
+            Vector3 bonePos = entity.GetBonePos(indices[i]);
+            projected[i] = OW::viewMatrix.WorldToScreen(bonePos, &points[i], windowSize);
+        }
+
+        auto draw = [&](int from, int to) {
+            if (from < 0 || from >= 18 || to < 0 || to >= 18) return;
+            if (projected[from] && projected[to])
+                DrawBoneSegment(points[from], points[to], color);
+        };
+
+        draw(0, 1);   // head to neck
+        draw(1, 2);   // neck to chest
+        draw(2, 3);   // chest to pelvis
+
+        draw(1, 4);   // left arm
+        draw(4, 6);
+        draw(6, 12);
+
+        draw(1, 5);   // right arm
+        draw(5, 7);
+        draw(7, 13);
+
+        draw(3, 8);   // left leg
+        draw(8, 10);
+
+        draw(3, 9);   // right leg
+        draw(9, 11);
+    }
+
+} // namespace OverlayRenderDetail
+
 inline void PlayerInfo() {
     if (OW::entities.size() == 0) return;
-    for (OW::c_entity entity : OW::entities) {
-        if (!entity.Alive || !entity.Team || OW::local_entity.PlayerHealth <= 0.f) continue;
+    if (OW::WX <= 0.0f || OW::WY <= 0.0f) return;
+
+    for (size_t index = 0; index < OW::entities.size(); ++index) {
+        OW::c_entity entity = OW::entities[index];
+        if (!entity.Alive || OW::local_entity.PlayerHealth <= 0.f) continue;
+        if (entity.address == OW::local_entity.address) continue;
 
         Vector3 Vec3 = entity.head_pos;
         float dist = Vector3(OW::viewMatrix_xor.get_location().x,
@@ -351,22 +444,87 @@ inline void PlayerInfo() {
 
         float height = fabsf(Vec2_A.Y - Vec2_B.Y);
         float width  = height * 0.85f;
-        // Health / text info is rendered via esp() below
+        if (height <= 2.0f || width <= 2.0f || !std::isfinite(height) || !std::isfinite(width))
+            continue;
+
+        float top    = (Vec2_A.Y < Vec2_B.Y) ? Vec2_A.Y : Vec2_B.Y;
+        float bottom = (Vec2_A.Y > Vec2_B.Y) ? Vec2_A.Y : Vec2_B.Y;
+        float centerX = (Vec2_A.X + Vec2_B.X) * 0.5f;
+        float left = centerX - width * 0.5f;
+
+        ImU32 color = OverlayRenderDetail::EntityColor(entity, index);
+        Render::Color lineColor = OverlayRenderDetail::EntityRenderColor(entity, index);
+
+        if (OW::Config::draw_info || OW::Config::draw_edge || OW::Config::drawbox3d) {
+            Render::DrawCorneredBox(left, top, width, bottom - top, color, 1.5f);
+        }
+
+        if (OW::Config::drawhealth && OW::Config::healthbar) {
+            Render::DrawHealthBar(Vector2(left - 7.0f, top), bottom - top,
+                                  entity.PlayerHealth, entity.PlayerHealthMax);
+        }
+
+        if (OW::Config::drawhealth && OW::Config::healthbar2) {
+            int shield = static_cast<int>(entity.MinArmorHealth + entity.MinBarrierHealth);
+            int maxShield = static_cast<int>(entity.MaxArmorHealth + entity.MaxBarrierHealth);
+            Render::DrawSeerLikeHealth(centerX, bottom + 26.0f, shield, maxShield,
+                                        static_cast<int>(entity.MinHealth),
+                                        static_cast<int>(entity.MaxHealth));
+        }
+
+        if (OW::Config::drawline) {
+            Render::DrawLine(Vector2(OW::WX * 0.5f, OW::WY), Vector2(centerX, bottom), lineColor, 1.0f);
+        }
+
+        if (OW::Config::draw_skel && !OverlayRenderDetail::IsSpecialEntity(entity)) {
+            OverlayRenderDetail::DrawSkeleton(entity, lineColor);
+        }
+
+        if (OW::Config::eyeray) {
+            Vector2 eyeStart{}, eyeEnd{};
+            Vector3 rayEnd(Vec3.X + sinf(entity.Rot.X) * 5.0f, Vec3.Y, Vec3.Z + cosf(entity.Rot.X) * 5.0f);
+            if (OW::viewMatrix.WorldToScreen(Vec3, &eyeStart, Vector2(OW::WX, OW::WY)) &&
+                OW::viewMatrix.WorldToScreen(rayEnd, &eyeEnd, Vector2(OW::WX, OW::WY))) {
+                Render::DrawLine(eyeStart, eyeEnd, lineColor, 1.0f);
+            }
+        }
+
+        if (OW::Config::dist) {
+            std::string distanceText = std::to_string(static_cast<int>(dist)) + "m";
+            OverlayRenderDetail::DrawCenteredText(ImVec2(centerX, bottom + 4.0f), color, distanceText, 14.0f);
+        }
+
+        if (OW::Config::draw_info && (OW::Config::name || OW::Config::ult)) {
+            std::string label;
+            std::string heroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
+            if (OW::Config::name && heroName != "Unknown") {
+                label = heroName;
+            }
+            if (OW::Config::ult && !OverlayRenderDetail::IsSpecialEntity(entity)) {
+                if (!label.empty()) label += " ";
+                label += "Ult " + std::to_string(static_cast<int>(entity.ultimate)) + "%";
+            }
+            if (!label.empty()) {
+                Render::DrawInfo(ImVec2(centerX, top - 10.0f), color, 14.0f, label.c_str(),
+                                 dist, entity.PlayerHealth, entity.PlayerHealthMax);
+            }
+        }
     }
 }
 
 inline void skillinfo() {
-    if (OW::entities.size() == 0) return;
+    if (!OW::Config::skillinfo || OW::entities.size() == 0) return;
     int i = 10;
     for (OW::c_entity entity : OW::entities) {
         std::string heroname = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
         if (entity.Team && heroname != "Bot" && heroname != "Unknown" &&
             entity.HeroID != 0x16dd && entity.HeroID != 0x16ee && entity.HeroID != 0x16bb) {
             std::string info = "Enemy: " + heroname + " Ult: " + std::to_string((int)entity.ultimate);
-            // Render::DrawSKILL is called by the overlay layer
+            Render::DrawSKILL(ImVec2(10.0f, static_cast<float>(i)), info);
             i += 20;
         } else if (entity.Team && (entity.HeroID == 0x16dd || entity.HeroID == 0x16ee || entity.HeroID == 0x16bb)) {
             std::string info = "Enemy Entity: " + heroname + " HP: " + std::to_string((int)entity.PlayerHealth) + "/" + std::to_string((int)entity.MaxHealth);
+            Render::DrawSKILL(ImVec2(10.0f, static_cast<float>(i)), info);
             i += 20;
         }
     }
@@ -376,9 +534,11 @@ inline void skillinfo() {
         if (!entity.Team && heroname != "Bot" && heroname != "Unknown" &&
             entity.HeroID != 0x16dd && entity.HeroID != 0x16ee && entity.HeroID != 0x16bb) {
             std::string info = "Ally: " + heroname + " Ult: " + std::to_string((int)entity.ultimate);
+            Render::DrawSKILL(ImVec2(10.0f, static_cast<float>(i)), info);
             i += 20;
         } else if (!entity.Team && (entity.HeroID == 0x16dd || entity.HeroID == 0x16ee || entity.HeroID == 0x16bb)) {
             std::string info = "Ally entity: " + heroname + " HP: " + std::to_string((int)entity.PlayerHealth) + "/" + std::to_string((int)entity.MaxHealth);
+            Render::DrawSKILL(ImVec2(10.0f, static_cast<float>(i)), info);
             i += 20;
         }
     }
