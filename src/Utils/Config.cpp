@@ -175,7 +175,7 @@ namespace OW { namespace Config {
                 ++end;
             }
 
-            if (parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max())
+            if (parsed < (std::numeric_limits<int>::min)() || parsed > (std::numeric_limits<int>::max)())
                 return false;
 
             out = static_cast<int>(parsed);
@@ -827,16 +827,16 @@ namespace OW { namespace Config {
             ClampSetting("shotcount", shotcount, 0, 1000, 0);
             ClampSetting("shotmanydont", shotmanydont, 0, 1000, 3);
             ClampSetting("Shoottime", Shoottime, 0, 10000, 500);
-            ClampSetting("lasttime", lasttime, 0, std::numeric_limits<int>::max(), 0);
-            ClampSetting("slasttime", slasttime, 0, std::numeric_limits<int>::max(), 0);
-            ClampSetting("Qstarttime", Qstarttime, 0, std::numeric_limits<int>::max(), 0);
-            ClampSetting("Qtime", Qtime, 0, std::numeric_limits<int>::max(), 0);
+            ClampSetting("lasttime", lasttime, 0, (std::numeric_limits<int>::max)(), 0);
+            ClampSetting("slasttime", slasttime, 0, (std::numeric_limits<int>::max)(), 0);
+            ClampSetting("Qstarttime", Qstarttime, 0, (std::numeric_limits<int>::max)(), 0);
+            ClampSetting("Qtime", Qtime, 0, (std::numeric_limits<int>::max)(), 0);
             ClampSetting("lastenemy", lastenemy, -1, 100000, -1);
-            ClampSetting("timebeforedelay", timebeforedelay, 0, std::numeric_limits<int>::max(), 0);
+            ClampSetting("timebeforedelay", timebeforedelay, 0, (std::numeric_limits<int>::max)(), 0);
             ClampSetting("Targetenemyi", Targetenemyi, -1, 100000, -1);
             ClampSetting("Targetenemyifov", Targetenemyifov, -1, 100000, -1);
             ClampSetting("doingentity", doingentity, 0, 1, 1);
-            ClampSetting("lastheroid", lastheroid, -2, std::numeric_limits<int>::max(), -2);
+            ClampSetting("lastheroid", lastheroid, -2, (std::numeric_limits<int>::max)(), -2);
             ClampSetting("locx", locx, 0, 100000, 0);
             ClampSetting("locy", locy, 0, 100000, 0);
             ClampSetting("therad", therad, 0, 10000, 0);

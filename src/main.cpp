@@ -276,6 +276,7 @@ int main()
     }
     std::printf("[MAIN] DMA subsystem ready.\n\n");
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
+    OW::Config::LoadConfig(".\\config.ini");
     Diagnostics::SetDmaReady(true);
     Diagnostics::Info("DMA subsystem ready. device=%s",
         mem.GetDmaDeviceString().empty() ? "<unknown>" : mem.GetDmaDeviceString().c_str());

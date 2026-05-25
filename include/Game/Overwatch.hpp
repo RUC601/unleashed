@@ -1311,7 +1311,31 @@ inline void aimbot_thread() {
 // Config save/load thread
 // =========================================================================
 
+namespace OW { namespace Config {
+    void SaveConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);
+    void LoadConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);
+}}
+
 inline void configsavenloadthread() {
+    uint64_t lastHeroId = 0;
+    while (1) {
+        const uint64_t currentHeroId = OW::local_entity.HeroID;
+        if (!OW::Config::Menu && currentHeroId != 0 && lastHeroId != currentHeroId) {
+            if (lastHeroId != 0) {
+                OW::Config::SaveConfigForHero(".\\config.ini", lastHeroId, OW::local_entity.LinkBase);
+            }
+
+            OW::Config::LoadConfigForHero(".\\config.ini", currentHeroId, OW::local_entity.LinkBase);
+            lastHeroId = currentHeroId;
+            OW::Config::nowhero = "Now using: " + OW::GetHeroEngNames(currentHeroId, OW::local_entity.LinkBase);
+        } else if (OW::Config::manualsave && lastHeroId != 0) {
+            OW::Config::SaveConfigForHero(".\\config.ini", lastHeroId, OW::local_entity.LinkBase);
+            OW::Config::manualsave = false;
+        }
+        Sleep(2);
+    }
+
+#if 0
     TCHAR bufsave[100];
     if (OW::Config::lastheroid == -2) {
         OW::Config::lastheroid = 0;
@@ -1621,6 +1645,7 @@ inline void configsavenloadthread() {
         }
         Sleep(2);
     }
+#endif
 }
 
 // =========================================================================

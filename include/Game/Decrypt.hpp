@@ -37,6 +37,16 @@ namespace OW {
         return (x >> bits) | (x << (64 - bits));
     }
 
+    /**
+     * Resolve the older global key pair used by legacy probes.
+     *
+     * Current May 2026 component and visibility decrypt paths read their key
+     * material directly from ComponentXorQword/ComponentXorByte, so startup no
+     * longer depends on this function. It is retained as an optional diagnostic
+     * helper: first try the old RIGEL pattern, then decode the IDA-derived
+     * GetGlobalKey function at offset::GetGlobalKey_RVA by extracting the LEA,
+     * MOV-immediate constants, and RIP-relative global store from live code.
+     */
     inline bool GetGlobalKey() {
         Diagnostics::SetKeyStatus(Diagnostics::KeyStatus::Resolving);
         Diagnostics::Info("GetGlobalKey resolution started.");
@@ -206,12 +216,14 @@ namespace OW {
     // Parent decryption helper
     // =========================================================================
 
-    // May 2026: NEW GetParent constants (verified from IDA dump RVA 0x56B4C0)
-    // Formula: result = ROR([parent+0x30], 32) ^ 0x4B920A7072A077C5
-    //                  - 0x107816B001CA79C8
-    //                  = ROR(result, 35) + 0xFD2150D0AEF24514
-    // Old (RIGEL-2411): result -= 0x401C60913E3B91CE; ROR32
-
+    /**
+     * Decode an encrypted parent/entity pointer.
+     *
+     * The caller passes the qword already read from the parent field (commonly
+     * parent+0x30 in the entity relation chain). The May 2026 chain rotates the
+     * value right by 32, XORs/subtracts the two current constants, rotates right
+     * by 35, then adds the final bias. The result is the resolved parent pointer.
+     */
     inline uint64_t GetParent(uint64_t encrypted) {
         __try {
             auto result = encrypted;
@@ -237,7 +249,7 @@ namespace OW {
         *shift = componentid & 0x3F;
         *bit_mask = 1ull << *shift;
         *lower_mask = *bit_mask - 1;
-        *bucket = componentid / 0x3F;
+        *bucket = componentid >> 6;
     }
 
     static constexpr uint64_t kEntityHeaderSnapshotOffset = 0x30;
@@ -266,26 +278,21 @@ namespace OW {
         }
     };
 
-    /*
-        May 2026 real component decode sequence.
-
-        Evidence:
-          - Inlined at RVA 0x563700 inside sub_7FF6A80B3200.
-          - Duplicate sequence at RVA 0x1F93DAD.
-          - The old 0x666016 site is not component decrypt; it is an IEEE-754
-            exponent extraction path.
-
-        Key material used by the real sequence:
-          - qword ptr [base + 0x3A86E30] + 0x10C
-          - byte  ptr [base + 0x3772769]
-
-        Constants and final transform:
-          + 0x4C8675CDE55BA1B2
-          + 0x7BE57670994040F6
-          ^ 0x3864150DB528414C
-          ^ 0xA4764E53CD34159B
-          ROL64(value, 0x2A), then ROR64(..., 0x2D)
-    */
+    /**
+     * Resolve a component pointer from a component parent and component id.
+     *
+     * Flow:
+     *  1. Split the component id into a 64-bit bitmap bucket and bit position.
+     *  2. Read the presence bitmap at parent+0x110+(bucket*8). If the bit is
+     *     clear, the component is absent and the function returns 0.
+     *  3. Popcount bits below the requested bit and add the per-bucket base byte
+     *     at parent+0x130+bucket to get the component-table index.
+     *  4. Read parent+0x80 as the component table, then read the encrypted qword.
+     *  5. Apply the UC p329 component transform:
+     *     +Add1, XOR RPM(RPM(base+ComponentXorQword_RVA)+0x10C), +Add2,
+     *     XOR ComponentXorByte, XOR Xor1, XOR Xor2, net ROR64(3).
+     *  6. Mask the decoded pointer with the presence bit and return it.
+     */
     inline uintptr_t DecryptComponent(uintptr_t parent, uint8_t idx,
                                       const EntityHeaderSnapshot* parent_snapshot) {
         if (!parent)
