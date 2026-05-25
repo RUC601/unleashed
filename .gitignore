@@ -1,0 +1,38 @@
+# Visual Studio / local IDE state
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+
+# CMake build trees and generated files
+build/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+
+# MSVC build artifacts
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.iobj
+*.ipdb
+*.pch
+*.tlog
+*.lastbuildstate
+*.res
+
+# Runtime / debug leftovers
+*.log
+*.tmp
+*.temp
+*.cache
+
+# Machine-local config variants
+config/*.local.cfg
+config/*private*.cfg
