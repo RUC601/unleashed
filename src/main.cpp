@@ -130,17 +130,12 @@ int main()
     std::printf("[MAIN] SDK ready.  Game base: 0x%llX\n\n", OW::SDK->dwGameBase);
 
     // ---------------------------------------------------------------
-    // Step 4 -- Resolve global encryption keys
+    // Step 4 -- Resolve global encryption keys (SKIP: vestigial)
+    // May 2026 DecryptComponent reads key material directly from game
+    // memory and does not use GlobalKey1/2.  GetGlobalKey() is kept
+    // as a no-op for diagnostic probes but no longer blocks startup.
     // ---------------------------------------------------------------
-    std::printf("[MAIN] Resolving global encryption keys (may take a moment)...\n");
-    if (!OW::GetGlobalKey()) {
-        std::fprintf(stderr, "[FATAL] Failed to resolve global keys.\n");
-        mem.CloseDma();
-        std::printf("[INFO] Press Enter to exit.\n");
-        std::getchar();
-        return 1;
-    }
-    std::printf("[MAIN] Global keys resolved.\n\n");
+    std::printf("[MAIN] Skipping global key resolution (not used by current decrypt).\n\n");
 
     // ---------------------------------------------------------------
     // Step 5 -- Start all background threads
