@@ -41,6 +41,7 @@ set(GAME_HEADERS
     include/Renderer/Overlay.hpp
     include/Renderer/Renderer.hpp
     include/Utils/Config.hpp
+    include/Utils/Diagnostics.hpp
     include/Utils/Types.hpp
     include/Features/UI.hpp
 )
@@ -52,6 +53,7 @@ set(UNLEASHED_SOURCES
     src/Renderer/IconManager.cpp
     src/Renderer/Overlay.cpp
     src/Renderer/Renderer.cpp
+    src/Utils/Diagnostics.cpp
     src/Utils/Types.cpp
     src/Utils/Config.cpp
     src/Features/UI.cpp

@@ -1,4 +1,5 @@
 #include "Memory/Memory.h"
+#include "Utils/Diagnostics.hpp"
 
 #include <thread>
 #include <mutex>
@@ -1368,32 +1369,50 @@ static constexpr DWORD VMM_READ_FLAGS =
 
 bool Memory::Read(uintptr_t address, void* buffer, size_t size) const
 {
-	_is_invalid(vHandle);
+	const auto start = std::chrono::steady_clock::now();
+	if (!vHandle)
+	{
+		Diagnostics::RecordDmaRead(false, std::chrono::steady_clock::duration::zero());
+		return false;
+	}
 
 	DWORD read_size = 0;
-	if (!VMMDLL_MemReadEx(this->vHandle, current_process.PID, address,
+	const bool readOk = VMMDLL_MemReadEx(this->vHandle, current_process.PID, address,
 		static_cast<PBYTE>(buffer), static_cast<DWORD>(size),
-		&read_size, VMM_READ_FLAGS))
+		&read_size, VMM_READ_FLAGS) != FALSE;
+	const bool success = readOk && read_size == size;
+	Diagnostics::RecordDmaRead(success, std::chrono::steady_clock::now() - start);
+
+	if (!readOk)
 	{
 		LOG("[!] Failed to read Memory at 0x%p\n", (void*)address);
 		return false;
 	}
-	return (read_size == size);
+	return success;
 }
 
 bool Memory::Read(uintptr_t address, void* buffer, size_t size, int pid) const
 {
-	_is_invalid(vHandle);
+	const auto start = std::chrono::steady_clock::now();
+	if (!vHandle)
+	{
+		Diagnostics::RecordDmaRead(false, std::chrono::steady_clock::duration::zero());
+		return false;
+	}
 
 	DWORD read_size = 0;
-	if (!VMMDLL_MemReadEx(this->vHandle, pid, address,
+	const bool readOk = VMMDLL_MemReadEx(this->vHandle, pid, address,
 		static_cast<PBYTE>(buffer), static_cast<DWORD>(size),
-		&read_size, VMM_READ_FLAGS))
+		&read_size, VMM_READ_FLAGS) != FALSE;
+	const bool success = readOk && read_size == size;
+	Diagnostics::RecordDmaRead(success, std::chrono::steady_clock::now() - start);
+
+	if (!readOk)
 	{
 		LOG("[!] Failed to read Memory at 0x%p (PID %d)\n", (void*)address, pid);
 		return false;
 	}
-	return (read_size == size);
+	return success;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1465,13 +1484,18 @@ void Memory::AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle,
 bool Memory::ExecuteReadScatter(VMMDLL_SCATTER_HANDLE handle, int pid)
 {
 	if (!handle)
+	{
+		Diagnostics::RecordDmaRead(false, std::chrono::steady_clock::duration::zero());
 		return false;
+	}
 
 	if (pid == 0)
 		pid = current_process.PID;
 
+	const auto start = std::chrono::steady_clock::now();
 	if (!VMMDLL_Scatter_ExecuteRead(handle))
 	{
+		Diagnostics::RecordDmaRead(false, std::chrono::steady_clock::now() - start);
 		LOG("[WARN] Scatter read failed.\n");
 		VMMDLL_Scatter_Clear(handle, pid, VMMDLL_FLAG_NOCACHE);
 		return false;
@@ -1479,10 +1503,12 @@ bool Memory::ExecuteReadScatter(VMMDLL_SCATTER_HANDLE handle, int pid)
 
 	if (!VMMDLL_Scatter_Clear(handle, pid, VMMDLL_FLAG_NOCACHE))
 	{
+		Diagnostics::RecordDmaRead(false, std::chrono::steady_clock::now() - start);
 		LOG("[WARN] Scatter clear failed after execute.\n");
 		return false;
 	}
 
+	Diagnostics::RecordDmaRead(true, std::chrono::steady_clock::now() - start);
 	return true;
 }
 

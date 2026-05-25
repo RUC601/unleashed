@@ -8,6 +8,7 @@
 
 #include <Windows.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <thread>
@@ -23,12 +24,15 @@
 #include "Renderer/Overlay.hpp"   // g_Overlay
 #include "Renderer/Renderer.hpp"  // Render:: drawing primitives
 #include "Features/UI.hpp"        // UI::Render
+#include "Utils/Diagnostics.hpp"   // lightweight runtime diagnostics
 
 // =============================================================================
 // Render callback  --  called every frame by the overlay
 // =============================================================================
 
 namespace {
+
+    std::atomic<bool> g_DiagnosticsThreadRunning{ false };
 
     static float CanvasWidth()
     {
@@ -174,10 +178,31 @@ namespace {
         }
     }
 
+    static void StartDiagnosticStatusThread()
+    {
+        g_DiagnosticsThreadRunning.store(true, std::memory_order_release);
+        std::thread([]() {
+            Diagnostics::Info("Diagnostic status thread started with 5s interval.");
+            while (g_DiagnosticsThreadRunning.load(std::memory_order_acquire)) {
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                if (!g_DiagnosticsThreadRunning.load(std::memory_order_acquire))
+                    break;
+                Diagnostics::DumpStatus();
+            }
+        }).detach();
+    }
+
+    static void StopDiagnosticStatusThread()
+    {
+        g_DiagnosticsThreadRunning.store(false, std::memory_order_release);
+    }
+
 } // namespace
 
 void RenderCallback()
 {
+    Diagnostics::RecordFrame();
+
     // The menu is rendered by the separate overlay menu window. This callback
     // only draws the transparent full-screen canvas layer.
     DrawRadar();
@@ -199,6 +224,7 @@ void RenderCallback()
 static void StartBackgroundThreads()
 {
     std::printf("[MAIN] Starting background threads...\n");
+    Diagnostics::Info("Starting background threads.");
 
     std::thread(viewmatrix_thread).detach();
     std::printf("  [+] viewmatrix_thread\n");
@@ -249,11 +275,17 @@ int main()
         return 1;
     }
     std::printf("[MAIN] DMA subsystem ready.\n\n");
+    Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
+    Diagnostics::SetDmaReady(true);
+    Diagnostics::Info("DMA subsystem ready. device=%s",
+        mem.GetDmaDeviceString().empty() ? "<unknown>" : mem.GetDmaDeviceString().c_str());
+    StartDiagnosticStatusThread();
 
     // ---------------------------------------------------------------
     // Step 2 -- Wait for Overwatch.exe to appear
     // ---------------------------------------------------------------
     std::printf("[MAIN] Waiting for Overwatch.exe...\n");
+    Diagnostics::Info("Waiting for Overwatch.exe.");
     int attempt = 0;
     while (!mem.AttachToProcess("Overwatch.exe")) {
         if (++attempt % 15 == 0)
@@ -261,19 +293,29 @@ int main()
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
     std::printf("[MAIN] Overwatch.exe found.\n\n");
+    Diagnostics::SetProcessAttached(true);
+    Diagnostics::Info("Process attached: Overwatch.exe.");
 
     // ---------------------------------------------------------------
     // Step 3 -- Initialise the OW memory SDK
     // ---------------------------------------------------------------
     std::printf("[MAIN] Initialising OW SDK...\n");
+    Diagnostics::Info("Initialising OW SDK.");
     if (!OW::SDK->Initialize()) {
         std::fprintf(stderr, "[FATAL] SDK initialisation failed.\n");
+        Diagnostics::Error("SDK initialisation failed.");
+        StopDiagnosticStatusThread();
         mem.CloseDma();
+        Diagnostics::SetDmaReady(false);
+        Diagnostics::SetProcessAttached(false);
+        Diagnostics::Shutdown();
         std::printf("[INFO] Press Enter to exit.\n");
         std::getchar();
         return 1;
     }
     std::printf("[MAIN] SDK ready.  Game base: 0x%llX\n\n", OW::SDK->dwGameBase);
+    Diagnostics::Info("SDK ready. Game base=0x%llX",
+        static_cast<unsigned long long>(OW::SDK->dwGameBase));
 
     // ---------------------------------------------------------------
     // Step 4 -- Resolve global encryption keys (SKIP: vestigial)
@@ -282,6 +324,8 @@ int main()
     // as a no-op for diagnostic probes but no longer blocks startup.
     // ---------------------------------------------------------------
     std::printf("[MAIN] Skipping global key resolution (not used by current decrypt).\n\n");
+    Diagnostics::SetKeyStatus(Diagnostics::KeyStatus::Skipped);
+    Diagnostics::Info("Global key resolution skipped; current decrypt path reads key material directly.");
 
     // ---------------------------------------------------------------
     // Step 5 -- Start all background threads
@@ -293,21 +337,29 @@ int main()
     // Step 6 -- Initialise the DX11 overlay windows
     // ---------------------------------------------------------------
     std::printf("[MAIN] Initialising overlay...\n");
+    Diagnostics::Info("Initialising overlay.");
     if (!g_Overlay.Initialize(L"Unleashed DMA Overlay")) {
         std::fprintf(stderr, "[FATAL] Overlay initialisation failed.\n");
+        Diagnostics::Error("Overlay initialisation failed.");
         OW::Config::doingentity = 0;
+        StopDiagnosticStatusThread();
         mem.CloseDma();
+        Diagnostics::SetDmaReady(false);
+        Diagnostics::SetProcessAttached(false);
+        Diagnostics::Shutdown();
         std::printf("[INFO] Press Enter to exit.\n");
         std::getchar();
         return 1;
     }
     std::printf("[MAIN] Overlay ready.\n\n");
+    Diagnostics::Info("Overlay ready.");
 
     // ---------------------------------------------------------------
     // Step 7 -- Main loop (blocks until overlay / game closes)
     // ---------------------------------------------------------------
     std::printf("[MAIN] Entering message loop.  Press HOME to toggle menu.\n");
     std::printf("[MAIN] Close the canvas process/window to exit.\n\n");
+    Diagnostics::Info("Entering overlay message loop.");
 
     g_Overlay.Run(RenderCallback);
 
@@ -315,10 +367,17 @@ int main()
     // Cleanup  --  Run() calls Shutdown() internally, so we just tidy up
     // ---------------------------------------------------------------
     std::printf("\n[MAIN] Display closed.  Shutting down...\n");
+    Diagnostics::Info("Display closed. Shutting down.");
+    StopDiagnosticStatusThread();
+    Diagnostics::DumpStatus();
 
     OW::Config::doingentity = 0;
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     mem.CloseDma();
+    Diagnostics::SetDmaReady(false);
+    Diagnostics::SetProcessAttached(false);
+    Diagnostics::Info("DMA subsystem closed.");
+    Diagnostics::Shutdown();
 
     std::printf("[MAIN] Goodbye.\n");
     return 0;

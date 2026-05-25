@@ -57,16 +57,31 @@ namespace OW {
         static constexpr auto VM_ViewMatrix  = 0x140;
         static constexpr auto VM_ProjMatrix  = 0xB0;
 
+        // GameAdmin / input globals (2026-05-25 current candidates)
+        static constexpr auto Address_game_admin_root = 0x3A8CCB0; // GameAdmin root pointer RVA
+        static constexpr auto GameAdmin_RootPtr       = 0x160;
+        static constexpr auto GameAdmin_Add1          = 0x78B568A5D3C8EF76;
+        static constexpr auto GameAdmin_Xor1          = 0x8B846BECDFD77B79;
+        static constexpr auto GameAdmin_Add2          = 0x73978469CB862683;
+        static constexpr auto GameAdmin_Ror           = 48;
+
+        static constexpr auto HeapSlotIndex_InputSystem = 6; // slot-6 input system helper
+        static constexpr auto InputMouseScaleX_RVA      = 0x3778BCC; // input.MouseScaleX
+        static constexpr auto InputMouseScaleY_RVA      = 0x3778BE4; // input.MouseScaleY
+
+        static constexpr auto changefov = 0x402B658; // current candidate; replaces dead 0x395EDB8
+
         // =========================================================================
-        // BROKEN — offsets that need updated RVAs (Phase 3)
+        // Legacy / unresolved offsets
         // =========================================================================
 
-        static constexpr auto HeapManager          = 0x38B55F0; // BROKEN — now NULL, needs new RVA
-        static constexpr auto HeapManager_Var      = 0x3899DD5; // BROKEN
-        static constexpr auto HeapManager_Key      = 0xE7E1F898E11B68B1; // BROKEN
+        // Deprecated Rigel HeapManager chain. The old base RVA is NULL on current builds;
+        // kept only as a last-resort compatibility probe.
+        static constexpr auto HeapManager          = 0x38B55F0;
+        static constexpr auto HeapManager_Var      = 0x3899DD5;
+        static constexpr auto HeapManager_Key      = 0xE7E1F898E11B68B1;
         static constexpr auto HeapManager_Pointer  = 0x160;
 
-        static constexpr auto changefov    = 0x395EDB8; // BROKEN — needs new RVA
         static constexpr auto SensitivePtr = 0x2054;
 
         static constexpr auto VisFN        = 0x79E722;  // BROKEN — .text shifted, needs new RVA

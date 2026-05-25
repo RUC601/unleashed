@@ -6,11 +6,16 @@
 #include <vector>
 #include <string>
 #include <ctime>
+#include <limits>
+#include <mutex>
+#include <unordered_map>
 #include <windows.h>
 
 #include "Game/Decrypt.hpp"
 #include "Game/Entity.hpp"
 #include "Utils/Config.hpp"
+
+extern std::mutex g_mutex;
 
 namespace OW {
 
@@ -301,6 +306,242 @@ namespace OW {
         InVecArg->Z = (float)(viewMatrix_xor.get_location().z + (J + R * fBestRoot));
     }
 
+    namespace TargetingDetail {
+
+        constexpr float kNoTargetScore = 100000.f;
+
+        struct SelectionResult {
+            int index = -1;
+            Vector3 target{};
+            c_entity entity{};
+            float score = kNoTargetScore;
+        };
+
+        struct VelocitySample {
+            Vector3 velocity{};
+            DWORD tick = 0;
+            bool initialized = false;
+        };
+
+        inline std::mutex velocity_history_mutex;
+        inline std::unordered_map<uint64_t, VelocitySample> velocity_history;
+
+        inline bool IsZeroVector(const Vector3& value) {
+            return value == Vector3(0, 0, 0);
+        }
+
+        inline Vector2 CrosshairCenter() {
+            return Vector2(
+                (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
+                (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
+            );
+        }
+
+        inline Vector3 CameraPosition() {
+            const auto camera = viewMatrix_xor.get_location();
+            return Vector3(camera.x, camera.y, camera.z);
+        }
+
+        inline bool IsTrainingBot(uint64_t heroId) {
+            return heroId == eHero::HERO_TRAININGBOT1 ||
+                   heroId == eHero::HERO_TRAININGBOT2 ||
+                   heroId == eHero::HERO_TRAININGBOT3 ||
+                   heroId == eHero::HERO_TRAININGBOT4 ||
+                   heroId == eHero::HERO_TRAININGBOT5 ||
+                   heroId == eHero::HERO_TRAININGBOT6 ||
+                   heroId == eHero::HERO_TRAININGBOT7;
+        }
+
+        inline bool IsSpecialAimEntity(uint64_t heroId) {
+            return heroId == 0x16dd || heroId == 0x16ee;
+        }
+
+        inline std::vector<c_entity> SnapshotEntities() {
+            std::lock_guard<std::mutex> lock(::g_mutex);
+            return entities;
+        }
+
+        inline std::vector<hpanddy> SnapshotDynamicEntities() {
+            std::lock_guard<std::mutex> lock(::g_mutex);
+            return hp_dy_entities;
+        }
+
+        inline c_entity SnapshotLocalEntity() {
+            std::lock_guard<std::mutex> lock(::g_mutex);
+            return local_entity;
+        }
+
+        inline bool IsValidIndex(int index, size_t size) {
+            return index >= 0 && static_cast<size_t>(index) < size;
+        }
+
+        inline bool IsRuntimeTargetValid(const c_entity& entity, bool requireVisible = true) {
+            if (!entity.address || !entity.Alive) return false;
+            if (requireVisible && !entity.Vis) return false;
+            return true;
+        }
+
+        inline bool TryEntityAt(int index, c_entity& entity, bool requireVisible = true) {
+            const auto snapshot = SnapshotEntities();
+            if (!IsValidIndex(index, snapshot.size())) return false;
+            entity = snapshot[static_cast<size_t>(index)];
+            return IsRuntimeTargetValid(entity, requireVisible);
+        }
+
+        inline bool CandidateTeamMatches(const c_entity& entity, bool switchTeam, const c_entity& local) {
+            if (!switchTeam) return entity.Team;
+            return !entity.Team && entity.address != local.address;
+        }
+
+        inline bool IsSelectableCandidate(const c_entity& entity, bool switchTeam, const c_entity& local) {
+            return IsRuntimeTargetValid(entity, true) && CandidateTeamMatches(entity, switchTeam, local);
+        }
+
+        inline Vector3 ConfiguredBonePosition(c_entity& entity, int boneSetting) {
+            if (boneSetting == 1) return entity.head_pos;
+            if (boneSetting == 2) return entity.neck_pos;
+            return entity.chest_pos;
+        }
+
+        inline Vector3 ClampMagnitude(const Vector3& value, float maxLength) {
+            const float length = value.get_length();
+            if (length <= maxLength) return value;
+            return value * (maxLength / length);
+        }
+
+        inline Vector3 AccelerationAwareVelocity(const c_entity& entity, float distance, float projectileSpeed) {
+            const uint64_t key = entity.address ? entity.address : entity.LinkBase;
+            if (!key) return entity.velocity;
+
+            const DWORD now = GetTickCount();
+            const float safeSpeed = (std::max)(projectileSpeed, 1.0f);
+            const float leadTime = std::clamp(distance / safeSpeed, 0.0f, 1.0f);
+            Vector3 adjusted = entity.velocity;
+
+            std::lock_guard<std::mutex> lock(velocity_history_mutex);
+            if (velocity_history.size() > 256) velocity_history.clear();
+
+            VelocitySample& sample = velocity_history[key];
+            if (sample.initialized && now > sample.tick) {
+                const float dt = static_cast<float>(now - sample.tick) / 1000.0f;
+                if (dt > 0.001f && dt < 0.5f) {
+                    Vector3 acceleration = (entity.velocity - sample.velocity) / dt;
+                    acceleration = ClampMagnitude(acceleration, 250.0f);
+                    adjusted += acceleration * std::clamp(leadTime * 0.5f, 0.0f, 0.25f);
+                }
+            }
+
+            sample.velocity = entity.velocity;
+            sample.tick = now;
+            sample.initialized = true;
+            return adjusted;
+        }
+
+        inline Vector3 ApplyPrediction(c_entity& entity, Vector3 position, bool predit, bool secondary) {
+            if (!predit || IsZeroVector(position)) return position;
+
+            const float distance = CameraPosition().DistTo(position);
+            const float projectileSpeed = secondary ? Config::predit_level2 : Config::predit_level;
+            const Vector3 velocity = AccelerationAwareVelocity(entity, distance, projectileSpeed);
+
+            if (secondary) AimCorrection22(&position, velocity, distance, projectileSpeed);
+            else AimCorrection(&position, velocity, distance, projectileSpeed);
+
+            return position;
+        }
+
+        inline float CandidateScore(const Vector3& position, const Vector2& crosshair, bool useFov360) {
+            if (useFov360) return CameraPosition().DistTo(position);
+            return crosshair.Distance(viewMatrix.WorldToScreen(position));
+        }
+
+        inline SelectionResult SelectTargetFromSnapshot(const std::vector<c_entity>& snapshot,
+                                                        const c_entity& local,
+                                                        bool predit,
+                                                        bool secondary,
+                                                        bool switchTeam,
+                                                        int boneSetting,
+                                                        float fov,
+                                                        bool useFov360) {
+            SelectionResult result{};
+            const Vector2 crosshair = CrosshairCenter();
+
+            for (size_t i = 0; i < snapshot.size(); ++i) {
+                c_entity entity = snapshot[i];
+                if (!IsSelectableCandidate(entity, switchTeam, local)) continue;
+
+                Vector3 rootPosition = ConfiguredBonePosition(entity, boneSetting);
+                if (IsZeroVector(rootPosition)) continue;
+
+                Vector3 aimPosition = ApplyPrediction(entity, rootPosition, predit, secondary);
+                const float score = CandidateScore(aimPosition, crosshair, useFov360);
+                if (score >= result.score) continue;
+                if (!useFov360 && score > fov) continue;
+
+                result.index = static_cast<int>(i);
+                result.target = aimPosition;
+                result.entity = entity;
+                result.score = score;
+            }
+
+            return result;
+        }
+
+        inline Vector3 SelectAutoBone(c_entity entity, const Vector2& crosshair, bool predit, bool secondary, size_t maxSkeletonBones) {
+            float bestDistance = (std::numeric_limits<float>::max)();
+            Vector3 bestRoot{};
+
+            if (IsTrainingBot(entity.HeroID)) {
+                const int botBones[] = { 17, 16, 3, 13, 54 };
+                for (int bone : botBones) {
+                    Vector3 bonePosition = entity.GetBonePos(bone);
+                    if (IsZeroVector(bonePosition) || bonePosition == entity.pos) continue;
+                    const float distance = crosshair.Distance(viewMatrix.WorldToScreen(bonePosition));
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        bestRoot = bonePosition;
+                    }
+                }
+            } else {
+                const auto skeleton = entity.GetSkel();
+                const size_t limit = (std::min)(maxSkeletonBones, skeleton.size());
+                for (size_t i = 0; i < limit; ++i) {
+                    Vector3 bonePosition = entity.GetBonePos(skeleton[i]);
+                    if (IsZeroVector(bonePosition) || bonePosition == entity.pos) continue;
+                    const float distance = crosshair.Distance(viewMatrix.WorldToScreen(bonePosition));
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        bestRoot = bonePosition;
+                    }
+                }
+            }
+
+            return ApplyPrediction(entity, bestRoot, predit, secondary);
+        }
+
+        inline void ApplyTargetOutline(const c_entity& entity, bool secondary) {
+            if (!entity.OutlineBase) return;
+            Config::targetenemy = convertToHex(secondary ? Config::targetargb2 : Config::targetargb);
+            SDK->WPM<uint32_t>(entity.OutlineBase + 0x144, Config::targetenemy);
+            SDK->WPM<uint32_t>(entity.OutlineBase + 0x130, Config::targetenemy);
+        }
+
+        inline void UpdateHanzoAutoSpeed(const c_entity& local) {
+            if (!Config::hanzoautospeed || local.HeroID != eHero::HERO_HANJO) return;
+            Config::predit_level = readult(local.SkillBase + 0x40, 0xB, 0x2A5) * 85.f + 25.f;
+            if (local.skill2act) Config::predit_level = 110.f;
+        }
+    }
+
+    inline bool IsValidTargetIndex(int index) {
+        const auto snapshot = TargetingDetail::SnapshotEntities();
+        return TargetingDetail::IsValidIndex(index, snapshot.size());
+    }
+
+    inline bool TryGetTargetEntity(int index, c_entity& entity, bool requireVisible = true) {
+        return TargetingDetail::TryEntityAt(index, entity, requireVisible);
+    }
+
     // =========================================================================
     // Angle helpers
     // =========================================================================
@@ -349,6 +590,9 @@ namespace OW {
             (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
             (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
         );
+        auto entities = TargetingDetail::SnapshotEntities();
+        auto hp_dy_entities = TargetingDetail::SnapshotDynamicEntities();
+        auto local_entity = TargetingDetail::SnapshotLocalEntity();
 
         float origin = 100000.f;
         if (entities.size() > 0) {
@@ -369,6 +613,7 @@ namespace OW {
                         Vel = entities[i].velocity;
                         if (predit) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                         }
                         Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
@@ -395,6 +640,7 @@ namespace OW {
                         Vel = entities[i].velocity;
                         if (predit) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                         }
                         Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
@@ -445,6 +691,7 @@ namespace OW {
                         if (predit) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                             target = PreditPos;
                         }
@@ -464,6 +711,7 @@ namespace OW {
                         if (predit) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                             target = PreditPos;
                         }
@@ -508,18 +756,21 @@ namespace OW {
             (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
             (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
         );
+        auto entities = TargetingDetail::SnapshotEntities();
+        auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
         if (entities.size() > 0) {
             Vector3 PreditPos, RootPos, Vel;
             for (size_t i = 0; i < entities.size(); i++) {
                 if (!Config::switch_team) {
-                    if (entities[i].Alive && entities[i].Team) {
+                    if (entities[i].Alive && entities[i].Team && entities[i].Vis) {
                         if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                         else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
                         else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
                         Vel = entities[i].velocity;
                         if (predit) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                         }
                         Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
@@ -538,6 +789,7 @@ namespace OW {
                         Vel = entities[i].velocity;
                         if (predit) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                         }
                         Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
@@ -586,6 +838,7 @@ namespace OW {
                         if (predit) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                             target = PreditPos;
                         }
@@ -605,6 +858,7 @@ namespace OW {
                         if (predit) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                             target = PreditPos;
                         }
@@ -627,6 +881,8 @@ namespace OW {
             (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
             (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
         );
+        auto entities = TargetingDetail::SnapshotEntities();
+        auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
         if (entities.size() > 0) {
             for (size_t i = 0; i < entities.size(); i++) {
@@ -690,6 +946,8 @@ namespace OW {
             (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
             (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
         );
+        auto entities = TargetingDetail::SnapshotEntities();
+        auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
         float dist = 100000.f;
         Vector3 PreditPos, RootPos, Vel;
@@ -703,6 +961,7 @@ namespace OW {
                         Vel = entities[i].velocity;
                         if (predit) {
                             dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level2);
                             AimCorrection22(&PreditPos, Vel, dist, Config::predit_level2);
                         }
                         Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
@@ -730,6 +989,7 @@ namespace OW {
                         Vel = entities[i].velocity;
                         if (predit) {
                             float dist2 = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist2, Config::predit_level2);
                             AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
                         }
                         Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
@@ -780,7 +1040,8 @@ namespace OW {
                         if (predit) {
                             Vel = entities[TarGetIndex].velocity;
                             float dist2 = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            AimCorrection(&PreditPos, Vel, dist2, Config::predit_level);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, Config::predit_level2);
+                            AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
                             target = PreditPos;
                         }
                     } else {
@@ -799,7 +1060,8 @@ namespace OW {
                         if (predit) {
                             Vel = entities[TarGetIndex].velocity;
                             float dist2 = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            AimCorrection(&PreditPos, Vel, dist2, Config::predit_level);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, Config::predit_level2);
+                            AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
                             target = PreditPos;
                         }
                     }
@@ -826,6 +1088,8 @@ namespace OW {
             (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
             (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
         );
+        auto entities = TargetingDetail::SnapshotEntities();
+        auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
         if (entities.size() > 0) {
             Vector3 Vel, PreditPos, RootPos;

@@ -4,12 +4,14 @@
 #include <string>
 #include <mutex>
 #include <ctime>
+#include <utility>
 #include <windows.h>
 #include <process.h>
 #include <DirectXMath.h>
 
 #include "Game/Target.hpp"
 #include "Renderer/Renderer.hpp"
+#include "Utils/Diagnostics.hpp"
 
 using namespace OW;
 
@@ -49,13 +51,18 @@ inline std::mutex g_mutex;
 // =========================================================================
 
 inline void entity_scan_thread() {
+    Diagnostics::Info("Entity scan thread started.");
     while (OW::Config::doingentity == 1) {
         if (OW::abletotread == 0) {
-            OW::ow_entities_scan = OW::get_ow_entities();
+            std::vector<std::pair<uint64_t, uint64_t>> scanned = OW::get_ow_entities();
+            Diagnostics::RecordEntityScanCycle(scanned.size());
+            Diagnostics::Trace("Entity scan cycle found %zu raw entities.", scanned.size());
+            OW::ow_entities_scan = std::move(scanned);
             OW::abletotread = 1;
         }
         Sleep(10);
     }
+    Diagnostics::Info("Entity scan thread stopping.");
 }
 
 // =========================================================================
@@ -81,6 +88,7 @@ inline void entity_thread() {
             g_mutex.lock();
             OW::entities = {};
             OW::hp_dy_entities = {};
+            Diagnostics::SetEntityCount(0);
             g_mutex.unlock();
             Sleep(1000);
             continue;
@@ -92,12 +100,18 @@ inline void entity_thread() {
 
         for (size_t i = 0; i < OW::ow_entities.size(); i++) {
             OW::c_entity entity{};
-            if (!OW::ow_entities[i].first || !OW::ow_entities[i].second) continue;
+            if (!OW::ow_entities[i].first || !OW::ow_entities[i].second) {
+                Diagnostics::RecordInvalidEntity();
+                continue;
+            }
             if (i >= OW::ow_entities.size()) continue;
 
             const auto& [ComponentParent, LinkParent] = OW::ow_entities[i];
             entity.address = ComponentParent;
-            if (!entity.address || !LinkParent) continue;
+            if (!entity.address || !LinkParent) {
+                Diagnostics::RecordInvalidEntity();
+                continue;
+            }
 
             // Check for special entity IDs (HP packs, Bob, etc.)
             uint64_t Ptr = SDK->RPM<uint64_t>(ComponentParent + 0x30) & 0xFFFFFFFFFFFFFFC0;
@@ -146,7 +160,10 @@ inline void entity_thread() {
                 entity.Alive   = (entity.PlayerHealth > 0.f);
                 entity.imort   = health_compo.isImmortal;
                 entity.barrprot = health_compo.isBarrierProjected;
-            } else continue;
+            } else {
+                Diagnostics::RecordInvalidEntity();
+                continue;
+            }
 
             // ---- Rotation ----
             if (entity.RotationBase) {
@@ -215,7 +232,10 @@ inline void entity_thread() {
                     entity.pos = entity.neck_pos;
                 } else if (entity.MaxHealth == 1000) {
                     entity.HeroID = 0x16bb; // Bob
-                } else continue;
+                } else {
+                    Diagnostics::RecordInvalidEntity();
+                    continue;
+                }
             }
 
             // ---- BattleTag (optional) ----
@@ -275,11 +295,16 @@ inline void entity_thread() {
             std::string name = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
             if (ComponentParent && LinkParent && name != "Unknown")
                 tmp_entities.push_back(entity);
+            else
+                Diagnostics::RecordInvalidEntity();
         }
 
         // Swap processed entities
         OW::entities = tmp_entities;
         OW::hp_dy_entities = hpdy_entities;
+        Diagnostics::SetEntityCount(tmp_entities.size());
+        Diagnostics::Trace("Entity process cycle: valid=%zu hp_dynamic=%zu raw=%zu.",
+            tmp_entities.size(), hpdy_entities.size(), OW::ow_entities.size());
         Sleep(3);
     }
 }
@@ -568,10 +593,14 @@ inline void aimbot_thread() {
 
             if (OW::entities.size() > 0) {
                 // Sensitivity management
-                if (SDK->RPM<float>(OW::GetSenstivePTR()))
-                    origin_sens = SDK->RPM<float>(OW::GetSenstivePTR());
-                else if (origin_sens)
-                    SDK->WPM<float>(OW::GetSenstivePTR(), origin_sens);
+                const uintptr_t sensitive_ptr = OW::GetSenstivePTR();
+                if (sensitive_ptr) {
+                    const float current_sens = SDK->RPM<float>(sensitive_ptr);
+                    if (current_sens)
+                        origin_sens = current_sens;
+                    else if (origin_sens)
+                        OW::SetSenstiveValue(origin_sens);
+                }
 
                 // ---- Triggerbot ----
                 if (OW::Config::triggerbot) {
@@ -585,10 +614,10 @@ inline void aimbot_thread() {
                         auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
                         auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
                         if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox)) {
-                            if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), 0.f);
+                            if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
                             OW::SetKey(0x1);
                             Sleep(2);
-                            if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), origin_sens);
+                            if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
                         }
                     }
                 }
@@ -605,10 +634,10 @@ inline void aimbot_thread() {
                         auto vec_calc_target = Vector3(calc_target.x, calc_target.y, calc_target.z);
                         auto local_loc = Vector3(OW::viewMatrix_xor.get_location().x, OW::viewMatrix_xor.get_location().y, OW::viewMatrix_xor.get_location().z);
                         if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox2)) {
-                            if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), 0.f);
+                            if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
                             OW::SetKey(0x1);
                             Sleep(2);
-                            if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), origin_sens);
+                            if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
                         }
                     }
                 }
@@ -765,19 +794,19 @@ inline void aimbot_thread() {
                                     if (OW::Config::fakesilent) {
                                         Vector3 orangle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
                                         SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                        if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), 0.f);
+                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
                                         OW::SetKey(0x1);
                                         Sleep(25);
-                                        if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), origin_sens);
+                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
                                         OW::Config::shooted = true;
                                         SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, orangle);
                                         continue;
                                     } else {
                                         SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                        if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), 0.f);
+                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
                                         OW::SetKey(0x1);
                                         Sleep(1);
-                                        if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), origin_sens);
+                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
                                         OW::Config::shooted = true;
                                         continue;
                                     }
@@ -786,7 +815,7 @@ inline void aimbot_thread() {
                                 // Normal flick
                                 SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, Target);
                                 if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox)) {
-                                    if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), 0.f);
+                                    if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
                                     if (OW::local_entity.HeroID == OW::eHero::HERO_GENJI || OW::local_entity.HeroID == OW::eHero::HERO_KIRIKO) {
                                         OW::SetKey(0x2);
                                         if (OW::Config::dontshot) OW::Config::shotcount++;
@@ -796,7 +825,7 @@ inline void aimbot_thread() {
                                         else
                                             OW::SetKey(0x1);
                                     }
-                                    if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), origin_sens);
+                                    if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
                                     OW::Config::shooted = true;
                                     if (OW::Config::dontshot) OW::Config::shotcount++;
                                     break;
@@ -887,11 +916,11 @@ inline void aimbot_thread() {
                                     if (OW::Config::fakesilent) {
                                         Vector3 orangle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
                                         SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, vec_calc_target);
-                                        if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), 0.f);
+                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
                                         if (OW::local_entity.skill2act) OW::SetKey(0x1);
                                         else OW::SetKeyHold(0x1000, 100);
                                         Sleep(25);
-                                        if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), origin_sens);
+                                        if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
                                         OW::Config::shooted = true;
                                         SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, orangle);
                                         continue;
@@ -921,12 +950,12 @@ inline void aimbot_thread() {
 
                                 SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, Target);
                                 if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::hitbox)) {
-                                    if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), 0.f);
+                                    if (OW::Config::lockontarget) OW::SetSenstiveValue(0.f);
                                     if (OW::local_entity.skill2act) OW::SetKey(0x1);
                                     else OW::SetKeyHold(0x1000, 100);
                                     Sleep(1);
                                     if (OW::Config::dontshot) OW::Config::shotcount++;
-                                    if (OW::Config::lockontarget) SDK->WPM<float>(OW::GetSenstivePTR(), origin_sens);
+                                    if (OW::Config::lockontarget) OW::SetSenstiveValue(origin_sens);
                                     OW::Config::shooted = true;
                                 } else if (OW::Config::dontshot && OW::Config::shotcount >= OW::Config::shotmanydont) {
                                     if (OW::in_range(local_angle, vec_calc_target, local_loc, vec, OW::Config::missbox)) {

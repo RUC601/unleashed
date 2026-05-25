@@ -22,6 +22,7 @@
 #include "Game/Structs.hpp"
 #include "Game/Offsets.hpp"
 #include "Game/SDK.hpp"
+#include "Utils/Diagnostics.hpp"
 
 namespace OW {
 
@@ -36,6 +37,21 @@ namespace OW {
     }
 
     inline bool GetGlobalKey() {
+        Diagnostics::SetKeyStatus(Diagnostics::KeyStatus::Resolving);
+        Diagnostics::Info("GetGlobalKey resolution started.");
+
+        auto markResolved = [](const char* method) {
+            Diagnostics::SetKeyStatus(
+                Diagnostics::KeyStatus::Resolved,
+                SDK->GlobalKey1,
+                SDK->GlobalKey2);
+            Diagnostics::Info("GetGlobalKey succeeded via %s: key1=0x%llX key2=0x%llX",
+                method,
+                static_cast<unsigned long long>(SDK->GlobalKey1),
+                static_cast<unsigned long long>(SDK->GlobalKey2));
+            return true;
+        };
+
         // ---- Method 1: Pattern scan (RIGEL-2411 key_sig, may not exist in May2026) ----
         static const uint8_t key_sig[] =
             "\x00\x00\x00\x00\x21\x00\x00\x00\x00\x00\x00\x00\x24\x00\x00\x00"
@@ -59,7 +75,7 @@ namespace OW {
                     SDK->GlobalKey2 = SDK->RPM<uint64_t>(Key + 0xB8);
                     printf("[Decrypt] GlobalKey1: 0x%llX\n", SDK->GlobalKey1);
                     printf("[Decrypt] GlobalKey2: 0x%llX\n", SDK->GlobalKey2);
-                    return true;
+                    return markResolved("pattern scan");
                 }
                 pattern_attempts++;
             }
@@ -127,7 +143,7 @@ namespace OW {
                             SDK->GlobalKey2 = k2;
                             printf("[Decrypt] GlobalKey1: 0x%llX (from decoded struct)\n", k1);
                             printf("[Decrypt] GlobalKey2: 0x%llX (from decoded struct)\n", k2);
-                            return true;
+                            return markResolved("decoded struct");
                         }
 
                         // If not at +0x38/+0xB8, scan the decoded structure for key-like values
@@ -142,7 +158,7 @@ namespace OW {
                         if (found >= 2) {
                             printf("[Decrypt] GlobalKey1: 0x%llX (scanned struct)\n", SDK->GlobalKey1);
                             printf("[Decrypt] GlobalKey2: 0x%llX (scanned struct)\n", SDK->GlobalKey2);
-                            return true;
+                            return markResolved("struct scan");
                         }
                         SDK->GlobalKey1 = SDK->GlobalKey2 = 0; // reset
                     }
@@ -168,7 +184,7 @@ namespace OW {
                                         SDK->GlobalKey2 = v;
                                         printf("[Decrypt] GlobalKey1: 0x%llX (global store)\n", SDK->GlobalKey1);
                                         printf("[Decrypt] GlobalKey2: 0x%llX (near global)\n", SDK->GlobalKey2);
-                                        return true;
+                                        return markResolved("global store");
                                     }
                                 }
                             }
@@ -178,6 +194,8 @@ namespace OW {
                 SDK->GlobalKey1 = SDK->GlobalKey2 = 0;
             }
 
+            Diagnostics::SetKeyStatus(Diagnostics::KeyStatus::Failed);
+            Diagnostics::Warn("GetGlobalKey resolution attempt failed; retrying in 2s.");
             printf("[Decrypt] Key resolution failed, retrying in 2s...\n");
             std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         }
@@ -242,6 +260,9 @@ namespace OW {
           ROL64(value, 0x2A), then ROR64(..., 0x2D)
     */
     inline uintptr_t DecryptComponent(uintptr_t parent, uint8_t idx) {
+        if (!parent)
+            return 0;
+
         uint64_t bit_mask = 0;
         uint64_t lower_mask = 0;
         uint32_t shift = 0;
@@ -251,6 +272,8 @@ namespace OW {
         const uint64_t component_bits =
             SDK->RPM<uint64_t>(parent + 8ull * bucket + 0x110);
         const uint64_t present = (component_bits & bit_mask) >> shift;
+        if (!present)
+            return 0;
 
         uint64_t below = component_bits & lower_mask;
         below -= (below >> 1) & 0x5555555555555555ull;
@@ -263,13 +286,27 @@ namespace OW {
             ((below * 0x0101010101010101ull) >> 0x38);
 
         const uint64_t component_table = SDK->RPM<uint64_t>(parent + 0x80);
+        if (!component_table) {
+            Diagnostics::RecordDecryptFailure();
+            return 0;
+        }
+
         uint64_t component =
             SDK->RPM<uint64_t>(component_table + 8ull * component_index);
+        if (!component) {
+            Diagnostics::RecordDecryptFailure();
+            return 0;
+        }
 
         component += 0x4C8675CDE55BA1B2ull;
 
         const uint64_t component_key_source =
             SDK->RPM<uint64_t>(SDK->dwGameBase + 0x3A86E30);
+        if (!component_key_source) {
+            Diagnostics::RecordDecryptFailure();
+            return 0;
+        }
+
         const uint64_t component_key_material_1 =
             SDK->RPM<uint64_t>(component_key_source + 0x10C);
         component ^= component_key_material_1;
@@ -288,7 +325,10 @@ namespace OW {
         const uint64_t present_mask =
             static_cast<uint64_t>(static_cast<int64_t>(
                 -static_cast<int32_t>(present)));
-        return static_cast<uintptr_t>(present_mask & component);
+        const uintptr_t decoded = static_cast<uintptr_t>(present_mask & component);
+        if (!decoded)
+            Diagnostics::RecordDecryptFailure();
+        return decoded;
     }
 
     // =========================================================================
@@ -322,27 +362,80 @@ namespace OW {
     }
 
     // =========================================================================
-    // Heap manager helpers
+    // GameAdmin / input helpers
     // =========================================================================
 
     inline uintptr_t GetHeapManager(uint8_t index) {
-        uintptr_t v0 = SDK->RPM<uintptr_t>(SDK->dwGameBase + offset::HeapManager);
-        if (v0 != 0) {
-            auto v1 = SDK->RPM<uintptr_t>(v0 + offset::HeapManager_Pointer) ^
-                     (SDK->RPM<uintptr_t>(SDK->dwGameBase + offset::HeapManager_Var) + offset::HeapManager_Key);
-            if (v1 != 0) {
-                return SDK->RPM<uintptr_t>(v1 + 0x8 * index);
-            }
-        }
-        return 0;
+        if (!SDK->dwGameBase)
+            return 0;
+
+        const uintptr_t root =
+            SDK->RPM<uintptr_t>(SDK->dwGameBase + offset::Address_game_admin_root);
+        if (!root)
+            return 0;
+
+        const uint64_t enc = SDK->RPM<uint64_t>(root + offset::GameAdmin_RootPtr);
+        if (!enc)
+            return 0;
+
+        const uint64_t slot_table = ROR64(
+            ((enc + offset::GameAdmin_Add1) ^ offset::GameAdmin_Xor1) +
+                offset::GameAdmin_Add2,
+            offset::GameAdmin_Ror);
+        if (!slot_table)
+            return 0;
+
+        return SDK->RPM<uintptr_t>(slot_table + 8ull * index);
+    }
+
+    inline bool IsPlausibleSensitivity(float value) {
+        return value > 0.0f && value < 100.0f;
     }
 
     inline uintptr_t GetSenstivePTR() {
-        uintptr_t heap = GetHeapManager(6);
-        if (heap) {
-            return heap + offset::SensitivePtr;
+        if (!SDK->dwGameBase)
+            return 0;
+
+        static uintptr_t cached = 0;
+        if (cached)
+            return cached;
+
+        const uintptr_t mouse_scale_x =
+            SDK->dwGameBase + offset::InputMouseScaleX_RVA;
+        if (IsPlausibleSensitivity(SDK->RPM<float>(mouse_scale_x))) {
+            cached = mouse_scale_x;
+            return cached;
         }
+
+        // Last-resort slot-relative probe for older dumps. Current IDA evidence
+        // prefers the input.MouseScaleX/Y globals above.
+        const uintptr_t input_system =
+            GetHeapManager(offset::HeapSlotIndex_InputSystem);
+        if (input_system) {
+            const uintptr_t legacy_ptr = input_system + offset::SensitivePtr;
+            if (IsPlausibleSensitivity(SDK->RPM<float>(legacy_ptr))) {
+                cached = legacy_ptr;
+                return cached;
+            }
+        }
+
         return 0;
+    }
+
+    inline bool SetSenstiveValue(float value) {
+        const uintptr_t ptr = GetSenstivePTR();
+        if (!ptr)
+            return false;
+
+        bool ok = SDK->WPM<float>(ptr, value);
+        const uintptr_t mouse_scale_x =
+            SDK->dwGameBase + offset::InputMouseScaleX_RVA;
+        if (ptr == mouse_scale_x) {
+            ok = SDK->WPM<float>(
+                SDK->dwGameBase + offset::InputMouseScaleY_RVA,
+                value) && ok;
+        }
+        return ok;
     }
 
     // =========================================================================
@@ -370,13 +463,19 @@ namespace OW {
         };
 
         uint64_t entity_list = SDK->RPM<uint64_t>(SDK->dwGameBase + offset::Address_entity_base);
-        if (!entity_list) return result;
+        if (!entity_list) {
+            Diagnostics::Trace("Entity scan skipped: entity list pointer is null.");
+            return result;
+        }
 
         // DMA-based: read entity list (64 KB max)
         Entity raw_list[4096] = {};
 
-        if (!mem.Read(entity_list, raw_list, sizeof(raw_list)))
+        if (!mem.Read(entity_list, raw_list, sizeof(raw_list))) {
+            Diagnostics::Trace("Entity scan failed to read entity list at 0x%llX.",
+                static_cast<unsigned long long>(entity_list));
             return result;
+        }
 
         size_t entity_list_size = sizeof(raw_list) / sizeof(Entity);
 
@@ -385,7 +484,10 @@ namespace OW {
             if (!cur_entity) continue;
 
             uint64_t common_linker = DecryptComponent(cur_entity, TYPE_LINK);
-            if (!common_linker) continue;
+            if (!common_linker) {
+                Diagnostics::RecordInvalidEntity();
+                continue;
+            }
 
             uint32_t unique_id = SDK->RPM<uint32_t>(common_linker + 0xD4);
 
