@@ -36,3 +36,4 @@ install_manifest.txt
 # Machine-local config variants
 config/*.local.cfg
 config/*private*.cfg
+DMA_SCAN_RESULTS.txt
