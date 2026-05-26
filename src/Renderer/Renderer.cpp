@@ -293,12 +293,16 @@ namespace Render {
 
         ImVec2 textSize = ImGui::CalcTextSize(text);
         float halfW = textSize.x * 0.5f;
+        const float alpha = static_cast<float>((tagColor >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
+        const ImU32 panelColor = ImGui::GetColorU32(ImVec4(0.2f, 0.2f, 0.6f, 0.3f * alpha));
+        const ImU32 textColor = ImGui::GetColorU32(ImVec4(1.0f, 0.6f, 0.6f, alpha));
+        const ImU32 healthColor = ImGui::GetColorU32(ImVec4(0.0f, 1.0f, 0.0f, alpha));
 
         if (dist < 200.0f) {
             // Background panel
             d->AddRectFilled(ImVec2(pos.x - halfW, pos.y + fontSize * 0.5f),
                              ImVec2(pos.x + halfW + 35.0f, pos.y - fontSize * 0.5f),
-                             ImGui::GetColorU32(ImVec4(0.2f, 0.2f, 0.6f, 0.3f)));
+                             panelColor);
 
             // Tag colour bar on the left edge
             d->AddRectFilled(ImVec2(pos.x - halfW, pos.y + fontSize * 0.5f),
@@ -309,13 +313,13 @@ namespace Render {
             float healthWidth = (maxHp > 0.0f) ? (hp / maxHp) * halfW * 2.0f : 0.0f;
             d->AddRectFilled(ImVec2(pos.x - halfW + 7.0f, pos.y + fontSize * 0.5f - 6.0f),
                              ImVec2(pos.x - halfW + 7.0f + healthWidth, pos.y + fontSize * 0.5f - 2.0f),
-                             ImGui::GetColorU32(ImVec4(0.0f, 1.0f, 0.0f, 1.0f)));
+                             healthColor);
 
             DrawStrokeText(ImVec2(pos.x - halfW + 10.0f, pos.y - fontSize * 0.5f),
-                           ImGui::GetColorU32(ImVec4(1.0f, 0.6f, 0.6f, 1.0f)), text, fontSize);
+                           textColor, text, fontSize);
         } else {
             DrawStrokeText(ImVec2(pos.x - halfW + 10.0f, pos.y - fontSize * 0.5f),
-                           ImGui::GetColorU32(ImVec4(1.0f, 0.6f, 0.6f, 1.0f)), text, fontSize);
+                           textColor, text, fontSize);
         }
     }
 

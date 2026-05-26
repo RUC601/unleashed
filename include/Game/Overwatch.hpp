@@ -9,11 +9,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <windows.h>
 #include <process.h>
 #include <DirectXMath.h>
 
 #include "Game/Target.hpp"
+#include "Renderer/IconManager.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Utils/Diagnostics.hpp"
 
@@ -446,7 +448,7 @@ namespace OverlayRenderDetail {
     }
 
     inline float VisibilityAlpha(const OW::c_entity& entity, float opacity) {
-        return Clamp01(opacity * (entity.Vis ? 1.0f : 0.42f));
+        return Clamp01(opacity * (entity.Vis ? 1.0f : 0.30f));
     }
 
     inline ImVec4 ApplyVisualState(ImVec4 color, const OW::c_entity& entity, float opacity) {
@@ -522,6 +524,158 @@ namespace OverlayRenderDetail {
         if (text.empty()) return;
         ImVec2 size = ImGui::CalcTextSize(text.c_str());
         Render::DrawStrokeText(ImVec2(center.x - size.x * 0.5f, center.y), color, text.c_str(), fontSize);
+    }
+
+    inline ImColor ImColorWithAlpha(int r, int g, int b, float opacity) {
+        return ImColor(r, g, b, ToByte(opacity));
+    }
+
+    inline ImU32 ImU32WithAlpha(int r, int g, int b, float opacity) {
+        return IM_COL32(r, g, b, ToByte(opacity));
+    }
+
+    inline float PositiveFinite(float value) {
+        return (std::isfinite(value) && value > 0.0f) ? value : 0.0f;
+    }
+
+    inline void DrawStackedResourceBar(const OW::c_entity& entity, float x, float top, float height, float opacity) {
+        const float baseHealth = PositiveFinite(entity.MinHealth);
+        const float maxHealth = PositiveFinite(entity.MaxHealth);
+        const float armor = PositiveFinite(entity.MinArmorHealth);
+        const float maxArmor = PositiveFinite(entity.MaxArmorHealth);
+        const float barrier = PositiveFinite(entity.MinBarrierHealth);
+        const float maxBarrier = PositiveFinite(entity.MaxBarrierHealth);
+        const float totalMax = maxHealth + maxArmor + maxBarrier;
+
+        if (totalMax <= 0.0f || height <= 2.0f || opacity <= 0.0f)
+            return;
+
+        constexpr float barWidth = 4.0f;
+        Render::DrawFilledRect(Vector2(x, top), barWidth, height, ImColorWithAlpha(0, 0, 0, opacity * 0.55f));
+
+        float y = top + height;
+        auto drawSegment = [&](float current, float maximum, const ImColor& color) {
+            if (current <= 0.0f || maximum <= 0.0f || y <= top)
+                return;
+
+            const float clampedValue = (current < maximum) ? current : maximum;
+            float segmentHeight = height * Clamp01(clampedValue / totalMax);
+            if (segmentHeight <= 0.0f)
+                return;
+            const float remainingHeight = y - top;
+            segmentHeight = (segmentHeight < remainingHeight) ? segmentHeight : remainingHeight;
+
+            y -= segmentHeight;
+            Render::DrawFilledRect(Vector2(x, y), barWidth, segmentHeight, color);
+            if (y > top + 1.0f)
+                Render::DrawFilledRect(Vector2(x, y), barWidth, 1.0f, ImColorWithAlpha(0, 0, 0, opacity * 0.7f));
+        };
+
+        drawSegment(baseHealth, maxHealth, ImColorWithAlpha(245, 245, 245, opacity));
+        drawSegment(armor, maxArmor, ImColorWithAlpha(255, 150, 35, opacity));
+        drawSegment(barrier, maxBarrier, ImColorWithAlpha(70, 170, 255, opacity));
+
+        if (height >= 34.0f) {
+            const int rawTicks = static_cast<int>(totalMax / 25.0f);
+            const int maxTicks = (rawTicks < 48) ? rawTicks : 48;
+            for (int tick = 1; tick < maxTicks; ++tick) {
+                const float tickY = top + height - height * ((tick * 25.0f) / totalMax);
+                if (tickY > top + 1.0f && tickY < top + height - 1.0f)
+                    Render::DrawFilledRect(Vector2(x, tickY), barWidth, 1.0f, ImColorWithAlpha(0, 0, 0, opacity * 0.45f));
+            }
+        }
+    }
+
+    inline std::string CompactHeroIconKey(const std::string& heroName) {
+        if (heroName == "D.Va") return "Dva";
+        if (heroName == "Soldier 76") return "Soldier76";
+
+        std::string key;
+        key.reserve(heroName.size());
+        for (char ch : heroName) {
+            if (ch != ' ' && ch != '.' && ch != '\'')
+                key.push_back(ch);
+        }
+        return key;
+    }
+
+    inline ID3D11ShaderResourceView* FindHeroIcon(const std::string& heroName) {
+        IconManager* icons = Render::GetIconManager();
+        if (!icons || heroName.empty() || heroName == "Unknown" || heroName == "Bot")
+            return nullptr;
+
+        if (ID3D11ShaderResourceView* texture = icons->GetIcon(heroName))
+            return texture;
+
+        const std::string compactKey = CompactHeroIconKey(heroName);
+        if (compactKey != heroName)
+            return icons->GetIcon(compactKey);
+
+        return nullptr;
+    }
+
+    inline void DrawUltimateReadyIndicator(const Vector2& center, float opacity) {
+        if (opacity <= 0.0f)
+            return;
+
+        Render::DrawFilledCircle(center, 13.0f, Render::Color(255, 190, 25, ToByte(opacity * 0.22f)), 40);
+        Render::DrawFilledCircle(center, 8.0f, Render::Color(255, 225, 70, ToByte(opacity * 0.48f)), 32);
+        Render::DrawFilledCircle(center, 3.4f, Render::Color(255, 255, 235, ToByte(opacity)), 20);
+
+        const Render::Color starColor(255, 245, 120, ToByte(opacity));
+        Render::DrawLine(Vector2(center.X - 10.0f, center.Y), Vector2(center.X + 10.0f, center.Y), starColor, 1.3f);
+        Render::DrawLine(Vector2(center.X, center.Y - 10.0f), Vector2(center.X, center.Y + 10.0f), starColor, 1.3f);
+        Render::DrawLine(Vector2(center.X - 6.0f, center.Y - 6.0f), Vector2(center.X + 6.0f, center.Y + 6.0f), starColor, 1.0f);
+        Render::DrawLine(Vector2(center.X - 6.0f, center.Y + 6.0f), Vector2(center.X + 6.0f, center.Y - 6.0f), starColor, 1.0f);
+    }
+
+    inline void DrawUltimateStatus(const OW::c_entity& entity, const Vector2& indicatorCenter,
+                                   float left, float bottom, float opacity) {
+        if (!std::isfinite(entity.ultimate) || entity.ultimate < 90.0f)
+            return;
+
+        const float ultimate = (entity.ultimate < 100.0f) ? entity.ultimate : 100.0f;
+        if (ultimate >= 100.0f)
+            DrawUltimateReadyIndicator(indicatorCenter, opacity);
+
+        const std::string text = "ULT: " + std::to_string(static_cast<int>(ultimate + 0.5f)) + "%";
+        Render::DrawStrokeText(ImVec2(left - 36.0f, bottom + 5.0f),
+                               ImU32WithAlpha(255, 225, 60, opacity), text.c_str(), 12.0f);
+    }
+
+    inline bool IsSkillOnCooldown(bool active, float cooldown) {
+        return !active && std::isfinite(cooldown) && cooldown > 0.05f;
+    }
+
+    inline std::string FormatCooldownLabel(const char* label, float cooldown) {
+        char buffer[24] = {};
+        std::snprintf(buffer, sizeof(buffer), "%s: %.1fs", label, cooldown);
+        return buffer;
+    }
+
+    inline std::string CooldownSummary(const OW::c_entity& entity) {
+        std::string text;
+        if (IsSkillOnCooldown(entity.skill1act, entity.skillcd1))
+            text = FormatCooldownLabel("S1", entity.skillcd1);
+        if (IsSkillOnCooldown(entity.skill2act, entity.skillcd2)) {
+            if (!text.empty()) text += " ";
+            text += FormatCooldownLabel("S2", entity.skillcd2);
+        }
+        return text;
+    }
+
+    inline void DrawSkillCooldowns(const OW::c_entity& entity, float x, float y, float opacity) {
+        int line = 0;
+        const ImU32 cooldownColor = ImU32WithAlpha(255, 230, 120, opacity);
+        if (IsSkillOnCooldown(entity.skill1act, entity.skillcd1)) {
+            const std::string text = FormatCooldownLabel("S1", entity.skillcd1);
+            Render::DrawStrokeText(ImVec2(x, y + line * 13.0f), cooldownColor, text.c_str(), 12.0f);
+            ++line;
+        }
+        if (IsSkillOnCooldown(entity.skill2act, entity.skillcd2)) {
+            const std::string text = FormatCooldownLabel("S2", entity.skillcd2);
+            Render::DrawStrokeText(ImVec2(x, y + line * 13.0f), cooldownColor, text.c_str(), 12.0f);
+        }
     }
 
     inline void DrawBoneSegment(const Vector2& from, const Vector2& to, const Render::Color& color, float thickness) {
@@ -614,6 +768,26 @@ inline void PlayerInfo() {
         const float visualOpacity = OverlayRenderDetail::VisibilityAlpha(entity, distanceOpacity);
         const float outlineThickness = entity.Vis ? 1.8f : 1.2f;
         const float skeletonThickness = entity.Vis ? 1.5f : 1.0f;
+        const bool specialEntity = OverlayRenderDetail::IsSpecialEntity(entity);
+
+        std::string heroName;
+        if (OW::Config::draw_info || OW::Config::skillinfo)
+            heroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
+
+        ID3D11ShaderResourceView* heroIcon = nullptr;
+        if (OW::Config::draw_info && !specialEntity && heroName != "Unknown")
+            heroIcon = OverlayRenderDetail::FindHeroIcon(heroName);
+
+        constexpr float iconSize = 24.0f;
+        float labelY = top - 10.0f;
+        Vector2 ultimateIndicatorCenter(centerX, top - 18.0f);
+        if (heroIcon) {
+            const float iconY = top - iconSize - 10.0f;
+            ultimateIndicatorCenter = Vector2(centerX, iconY + iconSize * 0.5f);
+            labelY = iconY - 13.0f;
+        } else if (OW::Config::draw_info && OW::Config::ult && entity.ultimate >= 100.0f) {
+            labelY = top - 38.0f;
+        }
 
         if (OW::Config::draw_info || OW::Config::draw_edge || OW::Config::drawbox3d) {
             Render::DrawCorneredBox(left, top, width, bottom - top, boxColor, outlineThickness);
@@ -622,6 +796,7 @@ inline void PlayerInfo() {
         if (OW::Config::drawhealth && OW::Config::healthbar) {
             Render::DrawHealthBar(Vector2(left - 7.0f, top), bottom - top,
                                   entity.PlayerHealth, entity.PlayerHealthMax, visualOpacity);
+            OverlayRenderDetail::DrawStackedResourceBar(entity, left - 13.0f, top, bottom - top, visualOpacity);
         }
 
         if (OW::Config::drawhealth && OW::Config::healthbar2) {
@@ -636,7 +811,7 @@ inline void PlayerInfo() {
             Render::DrawLine(Vector2(OW::WX * 0.5f, OW::WY), Vector2(centerX, bottom), lineColor, 1.0f);
         }
 
-        if (OW::Config::draw_skel && !OverlayRenderDetail::IsSpecialEntity(entity)) {
+        if (OW::Config::draw_skel && !specialEntity) {
             OverlayRenderDetail::DrawSkeleton(entity, lineColor, skeletonThickness);
         }
 
@@ -659,18 +834,32 @@ inline void PlayerInfo() {
             OverlayRenderDetail::DrawCenteredText(ImVec2(centerX, bottom + 4.0f), color, distanceText, 14.0f);
         }
 
+        if (OW::Config::draw_info && OW::Config::ult && !specialEntity) {
+            OverlayRenderDetail::DrawUltimateStatus(entity, ultimateIndicatorCenter, left, bottom, visualOpacity);
+        }
+
+        if (heroIcon) {
+            Render::DrawIcon(heroIcon,
+                             ImVec2(centerX - iconSize * 0.5f, ultimateIndicatorCenter.Y - iconSize * 0.5f),
+                             ImVec2(iconSize, iconSize),
+                             OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, visualOpacity));
+        }
+
+        if (OW::Config::skillinfo) {
+            OverlayRenderDetail::DrawSkillCooldowns(entity, left + width + 8.0f, top + 20.0f, visualOpacity);
+        }
+
         if (OW::Config::draw_info && (OW::Config::name || OW::Config::ult)) {
             std::string label;
-            std::string heroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
             if (OW::Config::name && heroName != "Unknown") {
                 label = heroName;
             }
-            if (OW::Config::ult && !OverlayRenderDetail::IsSpecialEntity(entity)) {
+            if (OW::Config::ult && !specialEntity) {
                 if (!label.empty()) label += " ";
                 label += "Ult " + std::to_string(static_cast<int>(entity.ultimate)) + "%";
             }
             if (!label.empty()) {
-                Render::DrawInfo(ImVec2(centerX, top - 10.0f), color, 14.0f, label.c_str(),
+                Render::DrawInfo(ImVec2(centerX, labelY), color, 14.0f, label.c_str(),
                                  dist, entity.PlayerHealth, entity.PlayerHealthMax);
             }
         }
@@ -686,6 +875,8 @@ inline void skillinfo() {
         if (entity.Team && heroname != "Bot" && heroname != "Unknown" &&
             entity.HeroID != 0x16dd && entity.HeroID != 0x16ee && entity.HeroID != 0x16bb) {
             std::string info = "Enemy: " + heroname + " Ult: " + std::to_string((int)entity.ultimate);
+            const std::string cooldowns = OverlayRenderDetail::CooldownSummary(entity);
+            if (!cooldowns.empty()) info += " " + cooldowns;
             Render::DrawSKILL(ImVec2(10.0f, static_cast<float>(i)), info);
             i += 20;
         } else if (entity.Team && (entity.HeroID == 0x16dd || entity.HeroID == 0x16ee || entity.HeroID == 0x16bb)) {
@@ -700,6 +891,8 @@ inline void skillinfo() {
         if (!entity.Team && heroname != "Bot" && heroname != "Unknown" &&
             entity.HeroID != 0x16dd && entity.HeroID != 0x16ee && entity.HeroID != 0x16bb) {
             std::string info = "Ally: " + heroname + " Ult: " + std::to_string((int)entity.ultimate);
+            const std::string cooldowns = OverlayRenderDetail::CooldownSummary(entity);
+            if (!cooldowns.empty()) info += " " + cooldowns;
             Render::DrawSKILL(ImVec2(10.0f, static_cast<float>(i)), info);
             i += 20;
         } else if (!entity.Team && (entity.HeroID == 0x16dd || entity.HeroID == 0x16ee || entity.HeroID == 0x16bb)) {
