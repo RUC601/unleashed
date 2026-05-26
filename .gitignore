@@ -9,6 +9,7 @@
 
 # CMake build trees and generated files
 build/
+build-vs2026/
 out/
 CMakeFiles/
 CMakeCache.txt
