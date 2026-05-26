@@ -46,6 +46,26 @@ namespace OW {
     // ---- Scan coordination ----
     inline int abletotread = 0;
     inline int howbigentitysize = 0;
+
+    inline float ResolveScreenWidth()
+    {
+        return Config::manualScreenWidth > 0
+            ? static_cast<float>(Config::manualScreenWidth)
+            : static_cast<float>(GetSystemMetrics(SM_CXSCREEN));
+    }
+
+    inline float ResolveScreenHeight()
+    {
+        return Config::manualScreenHeight > 0
+            ? static_cast<float>(Config::manualScreenHeight)
+            : static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+    }
+
+    inline void RefreshScreenSizeFromConfig()
+    {
+        WX = ResolveScreenWidth();
+        WY = ResolveScreenHeight();
+    }
 } // namespace OW
 
 inline std::mutex g_mutex;
@@ -378,18 +398,7 @@ inline void viewmatrix_thread() {
             uint64_t p2 = SDK->RPM<uint64_t>(p1 + OW::offset::VM_P2);
             if (!p2) { Sleep(5); continue; }
 
-            // Get window rectangle from Overwatch main window
-            static RECT TempRect = { 0 };
-            static POINT TempPoint;
-            HWND tWnd = FindWindowA("TankWindowClass", NULL);
-            if (tWnd) {
-                GetClientRect(tWnd, &TempRect);
-                ClientToScreen(tWnd, &TempPoint);
-                TempRect.left = TempPoint.x;
-                TempRect.top  = TempPoint.y;
-                OW::WX = (float)TempRect.right;
-                OW::WY = (float)TempRect.bottom;
-            }
+            OW::RefreshScreenSizeFromConfig();
 
             // Read matrices: proj at +0xB0, view at +0x140
             viewMatrixPtr = p2 + OW::offset::VM_ProjMatrix;
@@ -739,14 +748,14 @@ namespace AimbotDetail {
 
     inline void MaintainSensitivity(float& origin_sens) {
         const uintptr_t sensitive_ptr = OW::GetSenstivePTR();
+        if (!sensitive_ptr) return;
         const float current_sens = SDK->RPM<float>(sensitive_ptr);
         if (current_sens) origin_sens = current_sens;
-        else if (origin_sens) SDK->WPM<float>(sensitive_ptr, origin_sens);
     }
 
     inline void SetSensitivityLocked(bool locked, float origin_sens) {
-        if (!OW::Config::lockontarget) return;
-        SDK->WPM<float>(OW::GetSenstivePTR(), locked ? 0.f : origin_sens);
+        (void)locked;
+        (void)origin_sens;
     }
 
     inline void MoveAimDelta(const Vector3& current_angle, const Vector3& target_angle, int move_time_ms = 5) {
@@ -1747,21 +1756,6 @@ inline void configsavenloadthread() {
 
 inline void looprpmthread() {
     while (1) {
-        auto entity_snapshot = OW::TargetingDetail::SnapshotEntities();
-        auto local_snapshot = OW::TargetingDetail::SnapshotLocalEntity();
-        if (!entity_snapshot.empty()) {
-            if (local_snapshot.AngleBase &&
-                (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) ||
-                 GetAsyncKeyState(OW::Config::aim_key2) ||
-                 GetAsyncKeyState(0x01) || GetAsyncKeyState(0x02))) {
-                if (OW::Config::horizonreco)
-                    SDK->WPM<float>(local_snapshot.AngleBase + 0x1768, 0.f);
-                if (OW::Config::norecoil)
-                    SDK->WPM<float>(local_snapshot.AngleBase + 0x1764, OW::Config::recoilnum);
-            }
-            if (OW::Config::enablechangefov)
-                SDK->WPM<float>(SDK->dwGameBase + OW::offset::changefov, OW::Config::CHANGEFOV);
-        }
         Sleep(10);
     }
 }

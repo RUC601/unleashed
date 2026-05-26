@@ -217,6 +217,10 @@ namespace OW { namespace Config {
     inline float kmboxAimSensitivity = 1.0f;
     inline bool kmboxDebugLog = false;
 
+    // ---- Primary-machine display ----
+    inline int manualScreenWidth = 1920;
+    inline int manualScreenHeight = 1080;
+
     // ---- Crosshair tracking circle ----
     inline int locx = 0, locy = 0, therad = 0, pon = 0, crss = 0;
 

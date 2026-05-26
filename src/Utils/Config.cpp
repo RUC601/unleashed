@@ -604,6 +604,9 @@ namespace OW { namespace Config {
             kmboxAimSensitivity = 1.0f;   // default: 1:1 scalar
             kmboxDebugLog = false;        // default: off
 
+            manualScreenWidth = 1920;      // default: 1920 px
+            manualScreenHeight = 1080;     // default: 1080 px
+
             locx = 0;                     // default: 0
             locy = 0;                     // default: 0
             therad = 0;                   // default: 0
@@ -766,6 +769,8 @@ namespace OW { namespace Config {
             drawline = ReadBool(ini, section, "drawline", drawline);
             draw_fov = ReadBool(ini, section, "draw_fov", draw_fov);
             MenuToggleKey = ReadInt(ini, section, "MenuToggleKey", MenuToggleKey);
+            manualScreenWidth = ReadInt(ini, section, "manualScreenWidth", manualScreenWidth);
+            manualScreenHeight = ReadInt(ini, section, "manualScreenHeight", manualScreenHeight);
 
             LoadColor(ini, section, "EnemyCol", EnemyCol);
             LoadColor(ini, section, "fovcol", fovcol);
@@ -895,6 +900,8 @@ namespace OW { namespace Config {
             ClampSetting("lastheroid", lastheroid, -2, (std::numeric_limits<int>::max)(), -2);
             ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 1, 0);
             ClampSetting("kmboxPort", kmboxPort, 1, 65535, 6234);
+            ClampSetting("manualScreenWidth", manualScreenWidth, 0, 16384, 1920);
+            ClampSetting("manualScreenHeight", manualScreenHeight, 0, 16384, 1080);
             ClampFloatSetting("kmboxAimSensitivity", kmboxAimSensitivity, 0.1f, 5.0f, 1.0f);
             ClampSetting("locx", locx, 0, 100000, 0);
             ClampSetting("locy", locy, 0, 100000, 0);
@@ -964,6 +971,8 @@ namespace OW { namespace Config {
             LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f debugLog=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMac,
                 kmboxComPort, kmboxAimSensitivity, ToText(kmboxDebugLog).c_str());
+            LogConfig(level, "Dump: manual screen width=%d height=%d",
+                manualScreenWidth, manualScreenHeight);
             LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s outline=%s externaloutline=%s teamoutline=%s healthoutline=%s rainbowoutline=%s",
                 ToText(draw_info).c_str(), ToText(drawbattletag).c_str(), ToText(drawhealth).c_str(), ToText(healthbar).c_str(),
                 ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), visualMaxDist, ToText(name).c_str(), ToText(ult).c_str(),
@@ -1117,6 +1126,8 @@ namespace OW { namespace Config {
         WriteBoolValue(path, "Global", "drawline", drawline);
         WriteBoolValue(path, "Global", "draw_fov", draw_fov);
         WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);
+        WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
+        WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);
         WriteColor(path, "Global", "EnemyCol", EnemyCol);
         WriteColor(path, "Global", "fovcol", fovcol);
         WriteColor(path, "Global", "fovcol2", fovcol2);

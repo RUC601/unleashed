@@ -159,13 +159,6 @@ namespace OW {
             return mem.Read<T>(address);
         }
 
-        // ---- DMA single-value writes ----------------------------------------
-        template <typename T>
-        __forceinline bool WPM(uint64_t address, T value)
-        {
-            return mem.Write<T>(address, value);
-        }
-
         // ---- DMA buffer reads -----------------------------------------------
         __forceinline void read_buf(uint64_t address, char* buffer, size_t size)
         {
@@ -180,12 +173,6 @@ namespace OW {
         __forceinline bool read_range(uint64_t address, ReadRange& range, size_t size)
         {
             return range.Read(address, size);
-        }
-
-        // ---- DMA buffer writes ----------------------------------------------
-        __forceinline void write_buf(uint64_t address, char* buffer, size_t size)
-        {
-            mem.Write(static_cast<uintptr_t>(address), static_cast<const void*>(buffer), size);
         }
 
         // ---- Relative address helper ----------------------------------------

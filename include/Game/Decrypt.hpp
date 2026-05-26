@@ -500,22 +500,6 @@ namespace OW {
         return 0;
     }
 
-    inline bool SetSenstiveValue(float value) {
-        const uintptr_t ptr = GetSenstivePTR();
-        if (!ptr)
-            return false;
-
-        bool ok = SDK->WPM<float>(ptr, value);
-        const uintptr_t mouse_scale_x =
-            SDK->dwGameBase + offset::InputMouseScaleX_RVA;
-        if (ptr == mouse_scale_x) {
-            ok = SDK->WPM<float>(
-                SDK->dwGameBase + offset::InputMouseScaleY_RVA,
-                value) && ok;
-        }
-        return ok;
-    }
-
     // =========================================================================
     // Outline — REMOVED 2026-05-25
     //

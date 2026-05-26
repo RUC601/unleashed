@@ -43,21 +43,6 @@ namespace OW {
     // Keyboard / input helpers
     // =========================================================================
 
-    inline void SendDmaKey(uint32_t key) {
-        __try {
-            SDK->WPM<uint32_t>(SDK->g_player_controller + 0x112C, key);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    }
-
-    inline uint32_t MouseButtonToDmaKey(int button) {
-        switch (button) {
-        case 0: return 0x1;
-        case 1: return 0x2;
-        case 2: return 0x4;
-        default: return 0;
-        }
-    }
-
     inline bool DmaKeyToMouseButton(uint32_t key, int& button) {
         switch (key) {
         case 0x1: button = 0; return true;
@@ -87,11 +72,6 @@ namespace OW {
                 kmbox::kmBoxBMgr.km_move(pixelX, pixelY);
             return;
         }
-
-        __try {
-            const Vector3 current = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, current + delta);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
 
     inline void SendMouseMove(float deltaX, float deltaY, int moveTimeMs = 5) {
@@ -116,24 +96,30 @@ namespace OW {
             }
             return;
         }
+    }
 
-        if (down) {
-            const uint32_t key = MouseButtonToDmaKey(button);
-            if (key != 0)
-                SendDmaKey(key);
-        }
+    inline bool SendMouseButtonMask(uint32_t keyMask, bool down) {
+        if (!Config::kmboxEnabled || keyMask == 0 || (keyMask & ~0x7u) != 0)
+            return false;
+
+        bool sent = false;
+        if (keyMask & 0x1u) { SendMouseButton(0, down); sent = true; }
+        if (keyMask & 0x2u) { SendMouseButton(1, down); sent = true; }
+        if (keyMask & 0x4u) { SendMouseButton(2, down); sent = true; }
+        return sent;
+    }
+
+    inline DWORD HoldDurationMs(float duration) {
+        if (duration <= 0.0f)
+            return 0;
+        return static_cast<DWORD>(duration);
     }
 
     inline void SetKey(uint32_t key) {
-        int button = -1;
-        if (Config::kmboxEnabled && DmaKeyToMouseButton(key, button)) {
-            SendMouseButton(button, true);
+        if (SendMouseButtonMask(key, true)) {
             Sleep(10);
-            SendMouseButton(button, false);
-            return;
+            SendMouseButtonMask(key, false);
         }
-
-        SendDmaKey(key);
     }
 
     inline int get_bind_id(int setting) {
@@ -259,35 +245,19 @@ namespace OW {
     // =========================================================================
 
     inline void SetKeyscopeHold(int Key, float duration) {
-        clock_t previous = clock();
-        Key += 2;
-        while (clock() - previous < duration) {
-            SDK->WPM<uint32_t>(SDK->g_player_controller + 0x112C, Key);
-            if (Config::horizonreco) {
-                SDK->WPM<float>(local_entity.AngleBase + 0x1768, 0.f);
-            }
-            if (Config::norecoil) {
-                SDK->WPM<float>(local_entity.AngleBase + 0x1764, Config::recoilnum);
-            }
-        }
-        if (Config::widowautounscope) {
-            while (clock() - previous < 100) {
-                SDK->WPM<uint32_t>(SDK->g_player_controller + 0x112C, 0);
-            }
-        }
+        const uint32_t keyMask = static_cast<uint32_t>(Key + 2);
+        if (!SendMouseButtonMask(keyMask, true))
+            return;
+        Sleep(HoldDurationMs(duration));
+        SendMouseButtonMask(keyMask, false);
     }
 
     inline void SetKeyHold(int Key, float duration) {
-        clock_t previous = clock();
-        while (clock() - previous < duration) {
-            SDK->WPM<uint32_t>(SDK->g_player_controller + 0x112C, Key);
-            if (Config::horizonreco) {
-                SDK->WPM<float>(local_entity.AngleBase + 0x1768, 0.f);
-            }
-            if (Config::norecoil) {
-                SDK->WPM<float>(local_entity.AngleBase + 0x1764, Config::recoilnum);
-            }
-        }
+        const uint32_t keyMask = static_cast<uint32_t>(Key);
+        if (!SendMouseButtonMask(keyMask, true))
+            return;
+        Sleep(HoldDurationMs(duration));
+        SendMouseButtonMask(keyMask, false);
     }
 
     // =========================================================================
@@ -610,10 +580,8 @@ namespace OW {
         }
 
         inline void ApplyTargetOutline(const c_entity& entity, bool secondary) {
-            if (!entity.OutlineBase) return;
-            Config::targetenemy = convertToHex(secondary ? Config::targetargb2 : Config::targetargb);
-            SDK->WPM<uint32_t>(entity.OutlineBase + 0x144, Config::targetenemy);
-            SDK->WPM<uint32_t>(entity.OutlineBase + 0x130, Config::targetenemy);
+            (void)entity;
+            (void)secondary;
         }
 
         inline void UpdateHanzoAutoSpeed(const c_entity& local) {
@@ -806,12 +774,6 @@ namespace OW {
                             target = PreditPos;
                         }
                     }
-                }
-                if (GetAsyncKeyState(get_bind_id(Config::aim_key)) && Config::externaloutline &&
-                    entities[TarGetIndex].OutlineBase) {
-                    Config::targetenemy = convertToHex(Config::targetargb);
-                    SDK->WPM<uint32_t>(entities[TarGetIndex].OutlineBase + 0x144, Config::targetenemy);
-                    SDK->WPM<uint32_t>(entities[TarGetIndex].OutlineBase + 0x130, Config::targetenemy);
                 }
             }
         }
@@ -1015,11 +977,6 @@ namespace OW {
             if (TarGetIndex != -1) {
                 Config::health = entities[TarGetIndex].PlayerHealth;
                 Config::Targetenemyi = TarGetIndex;
-                if (Config::externaloutline && entities[TarGetIndex].OutlineBase) {
-                    Config::targetenemy = convertToHex(Config::targetargb);
-                    SDK->WPM<uint32_t>(entities[TarGetIndex].OutlineBase + 0x144, Config::targetenemy);
-                    SDK->WPM<uint32_t>(entities[TarGetIndex].OutlineBase + 0x130, Config::targetenemy);
-                }
             }
         }
         return target;
@@ -1155,12 +1112,6 @@ namespace OW {
                             target = PreditPos;
                         }
                     }
-                }
-                if (GetAsyncKeyState(get_bind_id(Config::aim_key2)) && Config::externaloutline &&
-                    entities[TarGetIndex].OutlineBase) {
-                    Config::targetenemy = convertToHex(Config::targetargb2);
-                    SDK->WPM<uint32_t>(entities[TarGetIndex].OutlineBase + 0x144, Config::targetenemy);
-                    SDK->WPM<uint32_t>(entities[TarGetIndex].OutlineBase + 0x130, Config::targetenemy);
                 }
             }
         }

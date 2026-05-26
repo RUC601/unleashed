@@ -1306,6 +1306,24 @@ void UI::MiscPage() {
         UICheckbox("##kmboxDebug", &OW::Config::kmboxDebugLog);
     }
     CloseGroupBox();
+
+    UIGroupBox("Primary Screen");
+    {
+        SettingRow("Manual Width");
+        ImGui::PushItemWidth(-1);
+        ImGui::InputInt("##manualScreenWidth", &OW::Config::manualScreenWidth, 0, 0);
+        if (OW::Config::manualScreenWidth < 0)
+            OW::Config::manualScreenWidth = 0;
+        ImGui::PopItemWidth();
+
+        SettingRow("Manual Height");
+        ImGui::PushItemWidth(-1);
+        ImGui::InputInt("##manualScreenHeight", &OW::Config::manualScreenHeight, 0, 0);
+        if (OW::Config::manualScreenHeight < 0)
+            OW::Config::manualScreenHeight = 0;
+        ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
 }
 
 // =====================================================================

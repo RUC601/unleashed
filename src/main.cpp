@@ -38,12 +38,12 @@ namespace {
 
     static float CanvasWidth()
     {
-        return OW::WX > 0.0f ? OW::WX : static_cast<float>(GetSystemMetrics(SM_CXSCREEN));
+        return OW::WX > 0.0f ? OW::WX : OW::ResolveScreenWidth();
     }
 
     static float CanvasHeight()
     {
-        return OW::WY > 0.0f ? OW::WY : static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+        return OW::WY > 0.0f ? OW::WY : OW::ResolveScreenHeight();
     }
 
     static Render::Color ToRenderColor(const ImVec4& color)
@@ -222,7 +222,7 @@ void RenderCallback()
 static void InitializeKmBoxFromConfig()
 {
     if (!OW::Config::kmboxEnabled) {
-        std::printf("[KMBOX] Disabled by config; using DMA input writes.\n");
+        std::printf("[KMBOX] Disabled by config; output is disabled.\n");
         Diagnostics::Info("KMBox disabled by config.");
         return;
     }
@@ -315,6 +315,8 @@ int main()
     std::printf("[MAIN] DMA subsystem ready.\n\n");
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
     OW::Config::LoadConfig(".\\config.ini");
+    OW::RefreshScreenSizeFromConfig();
+    std::printf("[MAIN] Screen size: %.0fx%.0f\n", OW::WX, OW::WY);
     InitializeKmBoxFromConfig();
     Diagnostics::SetDmaReady(true);
     Diagnostics::Info("DMA subsystem ready. device=%s",
