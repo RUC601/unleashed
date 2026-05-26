@@ -211,10 +211,11 @@ namespace OW { namespace Config {
     inline bool kmboxEnabled = false;
     inline int  kmboxDeviceType = 0; // 0=Network/UDP, 1=Serial/COM
     inline char kmboxIp[32] = "192.168.2.188";
-    inline int  kmboxPort = 6234;
-    inline char kmboxMac[32] = "";
+    inline int  kmboxPort = 8808;
+    inline char kmboxMac[32] = "12525C53";
     inline char kmboxComPort[16] = "COM3";
     inline float kmboxAimSensitivity = 1.0f;
+    inline int   kmboxInputDelayMs = 0;
     inline bool kmboxDebugLog = false;
 
     // ---- Primary-machine display ----
