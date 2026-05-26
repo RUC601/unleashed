@@ -16,6 +16,7 @@
 #include <string>
 
 #include "Memory/Memory.h"        // ::mem   (global DMA instance)
+#include "Memory/KeyState.hpp"    // host keyboard/mouse state via DMA
 #include "Game/AbilityIcons.hpp"  // ability icon lookup table
 #include "Game/SDK.hpp"           // OW::SDK
 #include "Game/Decrypt.hpp"       // OW::GetGlobalKey, OW::DecryptComponent
@@ -565,6 +566,12 @@ static void StartBackgroundThreads()
 
     std::thread(looprpmthread).detach();
     std::printf("  [+] looprpmthread\n");
+
+    // KeyState polls the primary host's VK state through DMA. Aim/trigger
+    // paths can switch to KeyState::IsKeyDown() after the offset is configured.
+    KeyState::Start();
+    std::printf("  [+] keystate_thread%s\n",
+        KeyState::initialized.load(std::memory_order_acquire) ? "" : " (pending gafAsyncKeyStateOffset)");
 }
 
 // =============================================================================
@@ -669,6 +676,7 @@ int main()
         std::fprintf(stderr, "[FATAL] Overlay initialisation failed.\n");
         Diagnostics::Error("Overlay initialisation failed.");
         OW::Config::doingentity = 0;
+        KeyState::Stop();
         StopDiagnosticStatusThread();
         mem.CloseDma();
         Diagnostics::SetDmaReady(false);
@@ -701,6 +709,7 @@ int main()
     Diagnostics::DumpStatus();
 
     OW::Config::doingentity = 0;
+    KeyState::Stop();
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     mem.CloseDma();
     Diagnostics::SetDmaReady(false);

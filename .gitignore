@@ -7,9 +7,9 @@
 *.VC.db
 *.VC.VC.opendb
 
-# CMake build trees and generated files
+# CMake build tree and generated files
+# Keep this project on one local build directory: build/
 build/
-build-vs2026/
 out/
 CMakeFiles/
 CMakeCache.txt

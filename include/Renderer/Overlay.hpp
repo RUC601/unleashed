@@ -40,6 +40,9 @@ private:
     UINT                    m_canvasHeight = 0;
     UINT                    m_menuWidth = 0;
     UINT                    m_menuHeight = 0;
+    int                     m_menuAnchorX = 0;
+    int                     m_menuAnchorY = 0;
+    bool                    m_menuAnchorValid = false;
 
     bool RegisterWindowClasses(HINSTANCE instance);
     bool CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance);
@@ -53,6 +56,7 @@ private:
     bool InitializeImGuiContext(ImGuiContext** context, HWND hWnd);
     void ShutdownImGuiContext(ImGuiContext*& context);
     void UpdateWindowVisibility();
+    void ApplyDesiredMenuClientSize();
     void UpdateSwapChainSizes();
     void RenderCanvas(std::function<void()> renderCallback);
     void RenderMenu();

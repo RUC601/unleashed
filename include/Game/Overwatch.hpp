@@ -500,9 +500,23 @@ inline void entity_thread() {
             }
 
             auto cacheIt = componentBaseCache.find(ComponentParent);
-            const bool componentCacheHit =
+            bool componentCacheHit =
                 cacheIt != componentBaseCache.end() &&
                 cacheIt->second.linkParent == LinkParent;
+
+            if (componentCacheHit && !cacheIt->second.alive && cacheIt->second.health) {
+                OW::health_compo_t cachedHealth{};
+                if (SDK->read_range(cacheIt->second.health, &cachedHealth, sizeof(cachedHealth))) {
+                    const Vector2 cachedHealthExt = cachedHealth.health_ext;
+                    const float cachedTotalHealth =
+                        cachedHealth.health + cachedHealth.armor + cachedHealth.barrier + cachedHealthExt.Y;
+                    if (cachedTotalHealth > 0.0f) {
+                        componentBaseCache.erase(cacheIt);
+                        cacheIt = componentBaseCache.end();
+                        componentCacheHit = false;
+                    }
+                }
+            }
 
             OW::EntityHeaderSnapshot componentHeader{};
             OW::EntityHeaderSnapshot linkHeader{};

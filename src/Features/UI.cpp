@@ -1,11 +1,16 @@
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include "Features/UI.hpp"
 #include "Utils/Config.hpp"
 #include "Game/Overwatch.hpp"
 #include "Game/Structs.hpp"
 #include "Renderer/Renderer.hpp"
+#include "Utils/Diagnostics.hpp"
 #include "resource.h"
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <algorithm>
 #include <cmath>
 #include <cfloat>
 #include <cstdint>
@@ -20,8 +25,144 @@
 // =====================================================================
 namespace {
 
-    inline int g_aimbotHero = 0;
     constexpr size_t kConfigProfileNameBufferSize = 64;
+
+    struct KmboxConnectionTestResult {
+        bool ok = false;
+        std::string message;
+    };
+
+    std::string CurrentDirectoryPath()
+    {
+        char buffer[MAX_PATH]{};
+        DWORD length = GetCurrentDirectoryA(MAX_PATH, buffer);
+        if (length == 0)
+            return ".";
+
+        if (length < MAX_PATH)
+            return std::string(buffer, length);
+
+        std::vector<char> dynamicBuffer(static_cast<size_t>(length) + 1);
+        length = GetCurrentDirectoryA(static_cast<DWORD>(dynamicBuffer.size()), dynamicBuffer.data());
+        if (length == 0 || static_cast<size_t>(length) >= dynamicBuffer.size())
+            return ".";
+
+        return std::string(dynamicBuffer.data(), length);
+    }
+
+    std::string JoinPath(const std::string& directory, const char* child)
+    {
+        if (directory.empty())
+            return child;
+
+        const char tail = directory.back();
+        if (tail == '\\' || tail == '/')
+            return directory + child;
+
+        return directory + "\\" + child;
+    }
+
+    std::string SocketErrorMessage(const char* prefix, int error)
+    {
+        char buffer[96]{};
+        std::snprintf(buffer, sizeof(buffer), "%s (WSA %d)", prefix, error);
+        return buffer;
+    }
+
+    std::string Win32ErrorMessage(const char* prefix, DWORD error)
+    {
+        char buffer[96]{};
+        std::snprintf(buffer, sizeof(buffer), "%s (error %lu)", prefix, static_cast<unsigned long>(error));
+        return buffer;
+    }
+
+    KmboxConnectionTestResult TestNetworkKmboxConnection()
+    {
+        if (OW::Config::kmboxPort <= 0 || OW::Config::kmboxPort > 65535)
+            return { false, "Invalid port" };
+
+        WSADATA wsaData{};
+        const int startupStatus = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (startupStatus != 0)
+            return { false, SocketErrorMessage("WSAStartup failed", startupStatus) };
+
+        SOCKET socketHandle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (socketHandle == INVALID_SOCKET) {
+            const int error = WSAGetLastError();
+            WSACleanup();
+            return { false, SocketErrorMessage("Socket failed", error) };
+        }
+
+        const int timeoutMs = 1000;
+        setsockopt(socketHandle, SOL_SOCKET, SO_RCVTIMEO,
+                   reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+        setsockopt(socketHandle, SOL_SOCKET, SO_SNDTIMEO,
+                   reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(static_cast<u_short>(OW::Config::kmboxPort));
+        if (InetPtonA(AF_INET, OW::Config::kmboxIp, &address.sin_addr) != 1) {
+            closesocket(socketHandle);
+            WSACleanup();
+            return { false, "Invalid IP" };
+        }
+
+        const char testByte = 0x01;
+        const int sent = sendto(socketHandle, &testByte, sizeof(testByte), 0,
+                                reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+        if (sent == SOCKET_ERROR) {
+            const int error = WSAGetLastError();
+            closesocket(socketHandle);
+            WSACleanup();
+            return { false, SocketErrorMessage("Send failed", error) };
+        }
+
+        char response[32]{};
+        sockaddr_in from{};
+        int fromLength = sizeof(from);
+        const int received = recvfrom(socketHandle, response, sizeof(response), 0,
+                                      reinterpret_cast<sockaddr*>(&from), &fromLength);
+        if (received == SOCKET_ERROR) {
+            const int error = WSAGetLastError();
+            closesocket(socketHandle);
+            WSACleanup();
+            if (error == WSAETIMEDOUT || error == WSAEWOULDBLOCK)
+                return { false, "Timeout" };
+            return { false, SocketErrorMessage("Receive failed", error) };
+        }
+
+        closesocket(socketHandle);
+        WSACleanup();
+        return { true, "OK: response" };
+    }
+
+    std::string NormalizeComPortPath(const char* comPort)
+    {
+        const std::string port = (comPort && *comPort) ? comPort : "COM1";
+        if (port.rfind("\\\\.\\", 0) == 0)
+            return port;
+        return "\\\\.\\" + port;
+    }
+
+    KmboxConnectionTestResult TestSerialKmboxConnection()
+    {
+        const std::string portPath = NormalizeComPortPath(OW::Config::kmboxComPort);
+        HANDLE portHandle = CreateFileA(portPath.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                        0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (portHandle == INVALID_HANDLE_VALUE)
+            return { false, Win32ErrorMessage("Open failed", GetLastError()) };
+
+        CloseHandle(portHandle);
+        return { true, "OK: opened" };
+    }
+
+    KmboxConnectionTestResult TestKmboxConnection()
+    {
+        return OW::Config::kmboxDeviceType == 0
+            ? TestNetworkKmboxConnection()
+            : TestSerialKmboxConnection();
+    }
 
     void CopyConfigProfileName(char (&destination)[kConfigProfileNameBufferSize], const std::string& name)
     {
@@ -42,6 +183,47 @@ namespace {
         CopyConfigProfileName(profileName, name);
         OW::Config::configFileName = profileName;
         ReloadConfigProfile();
+        OW::Config::lastConfigProfile = profileName;
+    }
+
+    std::vector<std::string> EnumerateConfigProfiles()
+    {
+        std::vector<std::string> profiles;
+        WIN32_FIND_DATAA findData{};
+        const std::string searchPath = JoinPath(CurrentDirectoryPath(), "config*.ini");
+        HANDLE findHandle = FindFirstFileA(searchPath.c_str(), &findData);
+        if (findHandle != INVALID_HANDLE_VALUE) {
+            do {
+                if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+                    profiles.emplace_back(findData.cFileName);
+            } while (FindNextFileA(findHandle, &findData));
+            FindClose(findHandle);
+        }
+
+        if (std::find(profiles.begin(), profiles.end(), "config.ini") == profiles.end())
+            profiles.emplace_back("config.ini");
+
+        std::sort(profiles.begin(), profiles.end());
+        return profiles;
+    }
+
+    int FindConfigProfileIndex(const std::vector<std::string>& profiles, const std::string& name)
+    {
+        for (int i = 0; i < static_cast<int>(profiles.size()); ++i) {
+            if (profiles[static_cast<size_t>(i)] == name)
+                return i;
+        }
+        return 0;
+    }
+
+    void PersistLastConfigProfile()
+    {
+        OW::Config::SaveConfig(OW::Config::ConfigPath());
+        WritePrivateProfileStringA(
+            "Global",
+            "lastConfigProfile",
+            OW::Config::lastConfigProfile.c_str(),
+            OW::Config::ConfigPath().c_str());
     }
 
 } // anonymous namespace
@@ -52,66 +234,57 @@ namespace {
 struct HeroOption {
     const char* label;
     uint64_t heroId;
+    const char* category;
 };
 
 static const HeroOption kHeroOptions[] = {
-    { "All", 0 },
-    { "Tracer", OW::eHero::HERO_TRACER },
-    { "Widowmaker", OW::eHero::HERO_WIDOWMAKER },
-    { "Soldier76", OW::eHero::HERO_SOLDIER76 },
-    { "Genji", OW::eHero::HERO_GENJI },
-    { "Hanzo", OW::eHero::HERO_HANJO },
-    { "Cassidy", OW::eHero::HERO_MCCREE },
-    { "Pharah", OW::eHero::HERO_PHARAH },
-    { "Reaper", OW::eHero::HERO_REAPER },
-    { "Sombra", OW::eHero::HERO_SOMBRA },
-    { "Symmetra", OW::eHero::HERO_SYMMETRA },
-    { "Torbjorn", OW::eHero::HERO_TORBJORN },
-    { "Bastion", OW::eHero::HERO_BASTION },
-    { "Junkrat", OW::eHero::HERO_JUNKRAT },
-    { "Mei", OW::eHero::HERO_MEI },
-    { "Ashe", OW::eHero::HERO_ASHE },
-    { "Sojourn", OW::eHero::HERO_SOJOURN },
-    { "Venture", OW::eHero::HERO_VENTURE },
-    { "Echo", OW::eHero::HERO_ECHO },
-    { "Freja", OW::Config::HERO_PRESET_FREJA },
-    { "Reinhardt", OW::eHero::HERO_REINHARDT },
-    { "Winston", OW::eHero::HERO_WINSTON },
-    { "Zarya", OW::eHero::HERO_ZARYA },
-    { "DVa", OW::eHero::HERO_DVA },
-    { "Roadhog", OW::eHero::HERO_ROADHOG },
-    { "Orisa", OW::eHero::HERO_ORISA },
-    { "WreckingBall", OW::eHero::HERO_WRECKINGBALL },
-    { "Sigma", OW::eHero::HERO_SIGMA },
-    { "Doomfist", OW::eHero::HERO_DOOMFIST },
-    { "Ramattra", OW::eHero::HERO_RAMATTRA },
-    { "JunkerQueen", OW::eHero::HERO_JUNKERQUEEN },
-    { "Mauga", OW::eHero::HERO_MAUGA },
-    { "Hazard", OW::Config::HERO_PRESET_HAZARD },
-    { "Mercy", OW::eHero::HERO_MERCY },
-    { "Lucio", OW::eHero::HERO_LUCIO },
-    { "Zenyatta", OW::eHero::HERO_ZENYATTA },
-    { "Ana", OW::eHero::HERO_ANA },
-    { "Brigitte", OW::eHero::HERO_BRIGITTE },
-    { "Moira", OW::eHero::HERO_MOIRA },
-    { "Baptiste", OW::eHero::HERO_BAPTISTE },
-    { "Kiriko", OW::eHero::HERO_KIRIKO },
-    { "Lifeweaver", OW::eHero::HERO_LIFEWEAVER },
-    { "Illari", OW::eHero::HERO_ILLARI },
-    { "Juno", OW::Config::HERO_PRESET_JUNO },
-};
-static const char* kHero[] = {
-    "All",
-    "Tracer", "Widowmaker", "Soldier76", "Genji", "Hanzo", "Cassidy", "Pharah", "Reaper",
-    "Sombra", "Symmetra", "Torbjorn", "Bastion", "Junkrat", "Mei", "Ashe", "Sojourn",
-    "Venture", "Echo", "Freja",
-    "Reinhardt", "Winston", "Zarya", "DVa", "Roadhog", "Orisa", "WreckingBall", "Sigma",
-    "Doomfist", "Ramattra", "JunkerQueen", "Mauga", "Hazard",
-    "Mercy", "Lucio", "Zenyatta", "Ana", "Brigitte", "Moira", "Baptiste", "Kiriko",
-    "Lifeweaver", "Illari", "Juno"
+    { "All", 0, "Preset" },
+    { "Tracer", OW::eHero::HERO_TRACER, "Damage" },
+    { "Widowmaker", OW::eHero::HERO_WIDOWMAKER, "Damage" },
+    { "Soldier76", OW::eHero::HERO_SOLDIER76, "Damage" },
+    { "Genji", OW::eHero::HERO_GENJI, "Damage" },
+    { "Hanzo", OW::eHero::HERO_HANJO, "Damage" },
+    { "Cassidy", OW::eHero::HERO_MCCREE, "Damage" },
+    { "Pharah", OW::eHero::HERO_PHARAH, "Damage" },
+    { "Reaper", OW::eHero::HERO_REAPER, "Damage" },
+    { "Sombra", OW::eHero::HERO_SOMBRA, "Damage" },
+    { "Symmetra", OW::eHero::HERO_SYMMETRA, "Damage" },
+    { "Torbjorn", OW::eHero::HERO_TORBJORN, "Damage" },
+    { "Bastion", OW::eHero::HERO_BASTION, "Damage" },
+    { "Junkrat", OW::eHero::HERO_JUNKRAT, "Damage" },
+    { "Mei", OW::eHero::HERO_MEI, "Damage" },
+    { "Ashe", OW::eHero::HERO_ASHE, "Damage" },
+    { "Sojourn", OW::eHero::HERO_SOJOURN, "Damage" },
+    { "Venture", OW::eHero::HERO_VENTURE, "Damage" },
+    { "Echo", OW::eHero::HERO_ECHO, "Damage" },
+    { "Freja", OW::Config::HERO_PRESET_FREJA, "Damage" },
+    { "Reinhardt", OW::eHero::HERO_REINHARDT, "Tank" },
+    { "Winston", OW::eHero::HERO_WINSTON, "Tank" },
+    { "Zarya", OW::eHero::HERO_ZARYA, "Tank" },
+    { "DVa", OW::eHero::HERO_DVA, "Tank" },
+    { "Roadhog", OW::eHero::HERO_ROADHOG, "Tank" },
+    { "Orisa", OW::eHero::HERO_ORISA, "Tank" },
+    { "WreckingBall", OW::eHero::HERO_WRECKINGBALL, "Tank" },
+    { "Sigma", OW::eHero::HERO_SIGMA, "Tank" },
+    { "Doomfist", OW::eHero::HERO_DOOMFIST, "Tank" },
+    { "Ramattra", OW::eHero::HERO_RAMATTRA, "Tank" },
+    { "JunkerQueen", OW::eHero::HERO_JUNKERQUEEN, "Tank" },
+    { "Mauga", OW::eHero::HERO_MAUGA, "Tank" },
+    { "Hazard", OW::Config::HERO_PRESET_HAZARD, "Tank" },
+    { "Mercy", OW::eHero::HERO_MERCY, "Support" },
+    { "Lucio", OW::eHero::HERO_LUCIO, "Support" },
+    { "Zenyatta", OW::eHero::HERO_ZENYATTA, "Support" },
+    { "Ana", OW::eHero::HERO_ANA, "Support" },
+    { "Brigitte", OW::eHero::HERO_BRIGITTE, "Support" },
+    { "Moira", OW::eHero::HERO_MOIRA, "Support" },
+    { "Baptiste", OW::eHero::HERO_BAPTISTE, "Support" },
+    { "Kiriko", OW::eHero::HERO_KIRIKO, "Support" },
+    { "Lifeweaver", OW::eHero::HERO_LIFEWEAVER, "Support" },
+    { "Illari", OW::eHero::HERO_ILLARI, "Support" },
+    { "Juno", OW::Config::HERO_PRESET_JUNO, "Support" },
 };
 static const char* kAimActivationKey[] = {
-    "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt", "Key F"
+    "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt"
 };
 static const char* kAttack[]       = { "Shoot", "Ability 1", "Ability 2" };
 static const char* kBone[]         = { "Head", "Neck", "Chest" };
@@ -145,9 +318,12 @@ static float    g_gbWidth     = 0.0f;
 static float    g_gbMinHeight = 0.0f;
 static ImDrawListSplitter g_gbDrawSplitter;
 
-static constexpr float kShellWidth = 628.0f;
+static constexpr float kShellWidth = 650.0f;
 static constexpr float kShellBorder = 2.0f;
 static constexpr float kHeaderHeight = 84.0f;
+static constexpr float kMinShellHeight = 140.0f;
+static constexpr float kMaxShellHeight = 1200.0f;
+static constexpr float kBodyBottomPadding = 10.0f;
 static constexpr float kDefaultLabelWidth = 120.0f;
 static constexpr float kAimbotHeroLabelWidth = 98.0f;
 static constexpr float kAimbotLeftLabelWidth = 112.0f;
@@ -180,6 +356,8 @@ static ImFont* s_boldFont = nullptr;
 static ImGuiID s_preNewFrameInitHook = 0;
 static ID3D11ShaderResourceView* s_logoTexture = nullptr;
 static constexpr int kLogoTextureSize = 32;
+static float s_measuredBodyHeightByPage[5] = {};
+static UI::MenuClientSize s_desiredMenuClientSize{ kShellWidth, 550.0f };
 
 // Forward declarations
 static void CloseGroupBox();
@@ -243,8 +421,107 @@ static int ClampHeroSelectionIndex(int index) {
 }
 
 static const HeroOption& CurrentHeroOption() {
-    g_aimbotHero = ClampHeroSelectionIndex(g_aimbotHero);
-    return kHeroOptions[g_aimbotHero];
+    UI::state.selectedTypeIndex = ClampHeroSelectionIndex(UI::state.selectedTypeIndex);
+    return kHeroOptions[UI::state.selectedTypeIndex];
+}
+
+static int FindHeroOptionIndexById(uint64_t heroId) {
+    if (heroId == 0)
+        return 0;
+
+    for (int i = 1; i < IM_ARRAYSIZE(kHeroOptions); ++i) {
+        if (kHeroOptions[i].heroId == heroId)
+            return i;
+    }
+    return -1;
+}
+
+static const HeroOption* FindHeroOptionById(uint64_t heroId) {
+    const int index = FindHeroOptionIndexById(heroId);
+    return index >= 0 ? &kHeroOptions[index] : nullptr;
+}
+
+static ID3D11ShaderResourceView* HeroAvatarForName(const char* label) {
+    if (!label || label[0] == '\0')
+        return nullptr;
+
+    IconManager* icons = Render::GetIconManager();
+    if (!icons)
+        return nullptr;
+
+    const std::string slug = OW::HeroDisplayNameToSlug(label);
+    if (slug.empty() || slug == "all")
+        return nullptr;
+
+    if (ID3D11ShaderResourceView* avatar = icons->GetIcon(slug))
+        return avatar;
+    return icons->LoadHeroAvatar(slug);
+}
+
+static ID3D11ShaderResourceView* HeroAvatarForOption(const HeroOption& hero) {
+    if (hero.heroId == 0)
+        return nullptr;
+    return HeroAvatarForName(hero.label);
+}
+
+static std::string HeroDisplayNameForId(uint64_t heroId) {
+    if (heroId == 0)
+        return "Not detected";
+
+    if (const HeroOption* option = FindHeroOptionById(heroId))
+        return option->label;
+
+    std::string name = OW::GetHeroEngNames(heroId, OW::local_entity.LinkBase);
+    if (name.empty() || name == "Unknown") {
+        char unknown[64] = {};
+        std::snprintf(unknown, sizeof(unknown), "Unknown (0x%llX)",
+                      static_cast<unsigned long long>(heroId));
+        return unknown;
+    }
+    return name;
+}
+
+static uint64_t DetectedLocalHeroId() {
+    const Diagnostics::StatusSnapshot snapshot = Diagnostics::Snapshot();
+    return snapshot.localEntity.selectedHeroId;
+}
+
+static void ApplySelectedTypePreset() {
+    const HeroOption& hero = CurrentHeroOption();
+    if (hero.heroId == 0)
+        return;
+
+    UI::state.heroSegActive = ImClamp(UI::state.heroSegActive, 0, 6);
+    const OW::Config::HeroPreset preset =
+        OW::Config::GetHeroPresetOrDefault(hero.heroId, UI::state.heroSegActive);
+    OW::Config::ApplyHeroPresetToGlobals(preset);
+}
+
+static bool SelectTypeIndex(int index) {
+    index = ClampHeroSelectionIndex(index);
+    if (UI::state.selectedTypeIndex == index)
+        return false;
+
+    UI::state.selectedTypeIndex = index;
+    ApplySelectedTypePreset();
+    return true;
+}
+
+static void SaveSelectedTypePreset() {
+    const HeroOption& hero = CurrentHeroOption();
+    if (hero.heroId == 0)
+        return;
+
+    UI::state.heroSegActive = ImClamp(UI::state.heroSegActive, 0, 6);
+    const OW::Config::HeroPreset preset =
+        OW::Config::GetHeroPresetOrDefault(hero.heroId, UI::state.heroSegActive);
+    OW::Config::SetHeroPreset(hero.heroId, UI::state.heroSegActive, preset);
+    OW::Config::SaveHeroPresets(OW::Config::ConfigPath());
+}
+
+static void LoadSelectedTypePreset() {
+    OW::Config::LoadHeroPresets(OW::Config::ConfigPath());
+    ApplySelectedTypePreset();
 }
 
 static const char* PresetBoneName(int bone) {
@@ -276,6 +553,168 @@ static void DrawPresetSummary(const HeroOption& hero,
                   PresetBoneName(preset.bone), preset.hitbox,
                   PresetAimModeName(preset.aimMode));
     ImGui::TextUnformatted(summary);
+}
+
+static bool TypeSelectorButton(const HeroOption& hero, const ImVec2& size) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return false;
+
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
+    const ImGuiID id = window->GetID("##globalTypeSelector");
+
+    ImGui::ItemSize(bb);
+    if (!ImGui::ItemAdd(bb, id))
+        return false;
+
+    bool hovered = false;
+    bool held = false;
+    const bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+    const float hoverT = VisualTransition(id ^ 0x61ad, hovered || held, 18.0f);
+
+    const ImU32 frameCol = MixColor(kColControl, kColControlHover, hoverT);
+    window->DrawList->AddRectFilled(bb.Min, bb.Max, frameCol, kControlRounding);
+    window->DrawList->AddRect(bb.Min, bb.Max,
+                              MixColor(kColStrokeDark, kColStroke, hoverT),
+                              kControlRounding, 0, 1.0f);
+
+    const float iconSize = 20.0f;
+    const ImVec2 iconMin(bb.Min.x + 5.0f, bb.Min.y + (size.y - iconSize) * 0.5f);
+    const ImVec2 iconMax(iconMin.x + iconSize, iconMin.y + iconSize);
+    if (ID3D11ShaderResourceView* avatar = HeroAvatarForOption(hero)) {
+        window->DrawList->AddImage(reinterpret_cast<ImTextureID>(avatar), iconMin, iconMax);
+    } else {
+        window->DrawList->AddRectFilled(iconMin, iconMax, kColPanelSoft, 0.0f);
+        window->DrawList->AddRect(iconMin, iconMax, kColStroke, 0.0f);
+        const char* fallback = hero.heroId == 0 ? "All" : "?";
+        const ImVec2 fallbackSize = ImGui::CalcTextSize(fallback);
+        window->DrawList->AddText(ImVec2(iconMin.x + (iconSize - fallbackSize.x) * 0.5f,
+                                         iconMin.y + (iconSize - fallbackSize.y) * 0.5f),
+                                  kColTextMuted, fallback);
+    }
+
+    const ImVec2 textPos(iconMax.x + 7.0f,
+                         bb.Min.y + (size.y - ImGui::GetTextLineHeight()) * 0.5f);
+    window->DrawList->AddText(textPos, kColText, hero.label);
+
+    const ImVec2 caretCenter(bb.Max.x - 11.0f, bb.Min.y + size.y * 0.5f);
+    const ImU32 caretCol = MixColor(kColTextDim, kColText, hoverT);
+    window->DrawList->AddLine(ImVec2(caretCenter.x - 4.0f, caretCenter.y - 2.0f),
+                              ImVec2(caretCenter.x, caretCenter.y + 2.5f),
+                              caretCol, 1.35f);
+    window->DrawList->AddLine(ImVec2(caretCenter.x, caretCenter.y + 2.5f),
+                              ImVec2(caretCenter.x + 4.0f, caretCenter.y - 2.0f),
+                              caretCol, 1.35f);
+
+    return pressed;
+}
+
+static void DrawDetectedTypeReadout() {
+    const uint64_t heroId = DetectedLocalHeroId();
+    const bool detected = heroId != 0;
+    const std::string displayName = HeroDisplayNameForId(heroId);
+    const HeroOption* option = detected ? FindHeroOptionById(heroId) : nullptr;
+    ID3D11ShaderResourceView* avatar = option ? HeroAvatarForOption(*option) : HeroAvatarForName(displayName.c_str());
+
+    if (avatar) {
+        constexpr float kDetectedAvatarSize = 28.0f;
+        ImGui::Image(reinterpret_cast<ImTextureID>(avatar),
+                     ImVec2(kDetectedAvatarSize, kDetectedAvatarSize));
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    }
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(detected ? kColText : kColTextDim),
+                       "%s", displayName.c_str());
+}
+
+static void TypePickerPanel() {
+    ImGui::SetNextWindowSize(ImVec2(520.0f, 430.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopup("TypePickerPopup"))
+        return;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, kColPanelSoft);
+
+    const char* categories[] = { "Preset", "Damage", "Tank", "Support" };
+    constexpr float itemW = 76.0f;
+    constexpr float itemH = 76.0f;
+    constexpr float iconSize = 42.0f;
+
+    if (ImGui::BeginChild("##typePickerScroll", ImVec2(0.0f, 0.0f), true)) {
+        const float availW = ImGui::GetContentRegionAvail().x;
+        const int columns = ImClamp(static_cast<int>(availW / (itemW + 8.0f)), 1, 8);
+
+        for (const char* category : categories) {
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "%s", category);
+
+            int column = 0;
+            for (int i = 0; i < IM_ARRAYSIZE(kHeroOptions); ++i) {
+                const HeroOption& hero = kHeroOptions[i];
+                if (std::strcmp(hero.category, category) != 0)
+                    continue;
+
+                if (column > 0)
+                    ImGui::SameLine();
+
+                ImGui::PushID(i);
+                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                const bool selected = UI::state.selectedTypeIndex == i;
+                ImGui::InvisibleButton("##typeTile", ImVec2(itemW, itemH));
+                const bool hovered = ImGui::IsItemHovered();
+                if (ImGui::IsItemClicked()) {
+                    SelectTypeIndex(i);
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                const ImU32 fill = selected
+                    ? IM_COL32(0x25, 0x18, 0x20, 0xFF)
+                    : (hovered ? kColControlHover : kColControl);
+                const ImU32 border = selected ? kColAccent : (hovered ? kColStroke : kColStrokeDark);
+                drawList->AddRectFilled(pos, ImVec2(pos.x + itemW, pos.y + itemH), fill, 0.0f);
+                drawList->AddRect(pos, ImVec2(pos.x + itemW, pos.y + itemH), border, 0.0f, 0, selected ? 2.0f : 1.0f);
+
+                const ImVec2 iconMin(pos.x + (itemW - iconSize) * 0.5f, pos.y + 7.0f);
+                const ImVec2 iconMax(iconMin.x + iconSize, iconMin.y + iconSize);
+                if (ID3D11ShaderResourceView* avatar = HeroAvatarForOption(hero)) {
+                    drawList->AddImage(reinterpret_cast<ImTextureID>(avatar), iconMin, iconMax);
+                } else {
+                    drawList->AddRectFilled(iconMin, iconMax, kColPanelSoft, 0.0f);
+                    drawList->AddRect(iconMin, iconMax, kColStroke, 0.0f);
+                    const char* fallback = hero.heroId == 0 ? "All" : "?";
+                    const ImVec2 fallbackSize = ImGui::CalcTextSize(fallback);
+                    drawList->AddText(ImVec2(iconMin.x + (iconSize - fallbackSize.x) * 0.5f,
+                                             iconMin.y + (iconSize - fallbackSize.y) * 0.5f),
+                                      kColTextMuted, fallback);
+                }
+
+                const ImVec2 textSize = ImGui::CalcTextSize(hero.label);
+                const float textX = pos.x + (itemW - textSize.x) * 0.5f;
+                drawList->PushClipRect(ImVec2(pos.x + 4.0f, pos.y + 54.0f),
+                                       ImVec2(pos.x + itemW - 4.0f, pos.y + itemH - 4.0f),
+                                       true);
+                drawList->AddText(ImVec2(MaxFloat(pos.x + 4.0f, textX), pos.y + 55.0f),
+                                  selected ? kColText : kColTextMuted,
+                                  hero.label);
+                drawList->PopClipRect();
+                ImGui::PopID();
+
+                ++column;
+                if (column >= columns) {
+                    column = 0;
+                }
+            }
+
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    ImGui::EndPopup();
 }
 
 static bool CreateTextureFromIconResource(ID3D11Device* device, int resourceId, int size,
@@ -1043,7 +1482,42 @@ static void DrawTopTabIcon(ImDrawList* drawList, int tabIndex, const ImVec2& min
     }
 }
 
-static float CurrentShellHeight() {
+static int CurrentPageKey() {
+    switch (UI::state.activeTab) {
+        case UI::TAB_AIMING:
+            return UI::state.aimingSubTab == 0 ? 0 : 1;
+        case UI::TAB_VISUALS:
+            return 2;
+        case UI::TAB_THEME:
+            return 3;
+        case UI::TAB_MISC:
+            return 4;
+        default:
+            return 0;
+    }
+}
+
+static float CurrentSubBarHeight() {
+    if (UI::state.activeTab == UI::TAB_AIMING)
+        return 32.0f;
+    if (UI::state.activeTab == UI::TAB_VISUALS)
+        return 42.0f;
+    return 0.0f;
+}
+
+static float CurrentBodyTopPad() {
+    if (UI::state.activeTab == UI::TAB_AIMING)
+        return 8.0f;
+    if (UI::state.activeTab == UI::TAB_VISUALS)
+        return 10.0f;
+    return 10.0f;
+}
+
+static float CurrentShellFrameHeight() {
+    return kShellBorder * 2.0f + kHeaderHeight + CurrentSubBarHeight() + CurrentBodyTopPad();
+}
+
+static float FallbackShellHeight() {
     if (UI::state.activeTab == UI::TAB_AIMING)
         return 548.0f;
     if (UI::state.activeTab == UI::TAB_VISUALS)
@@ -1051,6 +1525,20 @@ static float CurrentShellHeight() {
     if (UI::state.activeTab == UI::TAB_MISC)
         return 190.0f;
     return 140.0f;
+}
+
+static float CurrentShellHeight() {
+    const float measuredBodyHeight = s_measuredBodyHeightByPage[CurrentPageKey()];
+    const float shellHeight = measuredBodyHeight > 0.0f
+        ? CurrentShellFrameHeight() + measuredBodyHeight
+        : FallbackShellHeight();
+    return ImClamp(shellHeight, kMinShellHeight, kMaxShellHeight);
+}
+
+static void UpdateDesiredMenuClientSize(float measuredBodyHeight) {
+    s_measuredBodyHeightByPage[CurrentPageKey()] = MaxFloat(0.0f, measuredBodyHeight);
+    s_desiredMenuClientSize.width = kShellWidth;
+    s_desiredMenuClientSize.height = CurrentShellHeight();
 }
 
 void UI::InitializeResources(ID3D11Device* device) {
@@ -1065,6 +1553,10 @@ void UI::ShutdownResources() {
         s_logoTexture->Release();
         s_logoTexture = nullptr;
     }
+}
+
+UI::MenuClientSize UI::DesiredMenuClientSize() {
+    return s_desiredMenuClientSize;
 }
 
 // =====================================================================
@@ -1138,65 +1630,50 @@ void UI::InitStyle() {
 // UI::AimbotPage
 // =====================================================================
 void UI::AimbotPage() {
-    // ---- 7-slot hero segmented ----
-    static int heroSlotSelections[7] = { 0, 1, 2, 3, 4, 5, 6 };
+    // ---- 7-slot preset selector for the current hero ----
     const int previousSlot = state.heroSegActive;
     state.heroSegActive = UISegmented(kSlotNums, 7, state.heroSegActive);
     state.heroSegActive = ImClamp(state.heroSegActive, 0, 6);
     if (previousSlot != state.heroSegActive)
-        g_aimbotHero = ClampHeroSelectionIndex(heroSlotSelections[state.heroSegActive]);
+        ApplySelectedTypePreset();
 
-    bool savePresetRequested = false;
     bool presetChanged = false;
     const HeroOption* selectedHero = &CurrentHeroOption();
     bool hasStoredPreset = false;
+    std::string activeSlotName;
     OW::Config::HeroPreset activePreset{};
 
     auto refreshActivePreset = [&]() {
-        g_aimbotHero = ClampHeroSelectionIndex(g_aimbotHero);
-        selectedHero = &kHeroOptions[g_aimbotHero];
+        state.selectedTypeIndex = ClampHeroSelectionIndex(state.selectedTypeIndex);
+        selectedHero = &kHeroOptions[state.selectedTypeIndex];
         const bool isGlobal = selectedHero->heroId == 0;
-        hasStoredPreset = isGlobal || OW::Config::HasHeroPreset(selectedHero->heroId);
+        hasStoredPreset = !isGlobal && OW::Config::HasHeroPreset(selectedHero->heroId);
+        activeSlotName = OW::Config::GetHeroSlotName(selectedHero->heroId, state.heroSegActive);
         activePreset = isGlobal
             ? OW::Config::MakeHeroPresetFromCurrent()
-            : OW::Config::GetHeroPresetOrDefault(selectedHero->heroId);
+            : OW::Config::GetHeroPresetOrDefault(selectedHero->heroId, state.heroSegActive);
     };
     refreshActivePreset();
 
-    // ---- Hero Selection ----
-    UIGroupBox("Hero Selection");
+    // ---- Type Context ----
+    UIGroupBox("Type Context");
     {
-        SettingRow("Hero", kAimbotHeroLabelWidth);
-        constexpr float kHeroAvatarSize = 48.0f;
-        const float avatarSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
-        const float heroRowWidth = ImGui::GetContentRegionAvail().x;
-        const bool hasAvatarSpace = heroRowWidth > kHeroAvatarSize + avatarSpacing + 120.0f;
-        ImGui::PushItemWidth(hasAvatarSpace ? heroRowWidth - kHeroAvatarSize - avatarSpacing : -1.0f);
-        if (UISelect("##aimHero", &g_aimbotHero, kHero, IM_ARRAYSIZE(kHero))) {
-            g_aimbotHero = ClampHeroSelectionIndex(g_aimbotHero);
-            heroSlotSelections[state.heroSegActive] = g_aimbotHero;
-            refreshActivePreset();
-        }
-        ImGui::PopItemWidth();
-        const std::string heroSlug = OW::HeroDisplayNameToSlug(selectedHero->label);
-        ID3D11ShaderResourceView* avatar = nullptr;
-        if (!heroSlug.empty()) {
-            if (IconManager* icons = Render::GetIconManager())
-                avatar = icons->GetIcon(heroSlug);
-        }
-        if (hasAvatarSpace && avatar) {
-            ImGui::SameLine(0.0f, avatarSpacing);
-            ImGui::Image(reinterpret_cast<ImTextureID>(avatar), ImVec2(kHeroAvatarSize, kHeroAvatarSize));
-        }
+        SettingRow("Detected", kAimbotHeroLabelWidth);
+        DrawDetectedTypeReadout();
 
-        SettingRow("Preset", kAimbotHeroLabelWidth);
-        if (ImGui::Button("Save Preset", ImVec2(96.0f, kControlHeight)))
-            savePresetRequested = true;
-        ImGui::SameLine();
-        if (ImGui::Button("Load Preset", ImVec2(96.0f, kControlHeight))) {
-            OW::Config::LoadHeroPresets(OW::Config::ConfigPath());
-            refreshActivePreset();
+        SettingRow("Selected", kAimbotHeroLabelWidth);
+        if (ID3D11ShaderResourceView* avatar = HeroAvatarForOption(*selectedHero)) {
+            constexpr float kSelectedAvatarSize = 28.0f;
+            ImGui::Image(reinterpret_cast<ImTextureID>(avatar),
+                         ImVec2(kSelectedAvatarSize, kSelectedAvatarSize));
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
         }
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(selectedHero->label);
+
+        SettingRow("Slot", kAimbotHeroLabelWidth);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(activeSlotName.c_str());
 
         SettingRow("Active", kAimbotHeroLabelWidth);
         DrawPresetSummary(*selectedHero, activePreset, hasStoredPreset);
@@ -1288,22 +1765,6 @@ void UI::AimbotPage() {
             // Keep Firing
             SettingRow("Keep Firing", kAimbotLeftLabelWidth);
             UICheckbox("##aimKeepFire", &OW::Config::aimbotKeepFiring);
-
-            // ---- Triggerbot ----
-            DrawDivider();
-
-            SettingRow("Triggerbot", kAimbotLeftLabelWidth);
-            UICheckbox("##aimTriggerbot", &OW::Config::triggerbot);
-
-            SettingRow("Trigger Delay", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
-            UISlider("##aimTriggerDelay", &OW::Config::aimbotTriggerDelay, 0.0f, 100.0f, "Instant");
-            ImGui::PopItemWidth();
-
-            SettingRow("Trigger Hitbox", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
-            UISlider("##aimTriggerHitbox", &OW::Config::hitbox, 0.0f, 5.0f, "0.13");
-            ImGui::PopItemWidth();
 
             // Bone Preference  (maps to OW::Config::TargetBone)
             SettingRow("Bone Preference", kAimbotLeftLabelWidth);
@@ -1421,11 +1882,65 @@ void UI::AimbotPage() {
         if (presetChanged)
             OW::Config::ApplyHeroPresetToGlobals(activePreset);
     } else {
-        if (presetChanged || savePresetRequested)
-            OW::Config::SetHeroPreset(selectedHero->heroId, activePreset);
-        if (savePresetRequested)
-            OW::Config::SaveHeroPresets(OW::Config::ConfigPath());
+        if (presetChanged)
+            OW::Config::SetHeroPreset(selectedHero->heroId, state.heroSegActive, activePreset);
     }
+}
+
+// =====================================================================
+// UI::TriggerPage
+// =====================================================================
+void UI::TriggerPage() {
+    UIGroupBox("Input Trigger");
+    {
+        SettingRow("Triggerbot", kDefaultLabelWidth);
+        UICheckbox("##triggerEnable", &OW::Config::triggerbot);
+
+        SettingRow("Trigger Delay", kDefaultLabelWidth);
+        ImGui::PushItemWidth(-1);
+        UISlider("##triggerDelay", &OW::Config::aimbotTriggerDelay, 0.0f, 100.0f, "Instant");
+        ImGui::PopItemWidth();
+
+        SettingRow("Detection Range", kDefaultLabelWidth);
+        ImGui::PushItemWidth(-1);
+        UISlider("##triggerDetectionRange", &OW::Config::hitbox, 0.0f, 5.0f, "0.13");
+        ImGui::PopItemWidth();
+
+        SettingRow("Activation Key", kDefaultLabelWidth);
+        ImGui::PushItemWidth(-1);
+        UISelect("##triggerActivationKey", &OW::Config::aim_key,
+                 kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
+        ImGui::PopItemWidth();
+
+        SettingRow("Target Filter", kDefaultLabelWidth);
+        ImGui::PushItemWidth(-1);
+        UISelect("##triggerTargetFilter", &OW::Config::aimbotTeam, kTeam, IM_ARRAYSIZE(kTeam));
+        ImGui::PopItemWidth();
+
+        SettingRow("Priority", kDefaultLabelWidth);
+        ImGui::PushItemWidth(-1);
+        UISelect("##triggerPriority", &OW::Config::targetPriority, kPriority, IM_ARRAYSIZE(kPriority));
+        ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Runtime Type");
+    {
+        SettingRow("Detected", kDefaultLabelWidth);
+        DrawDetectedTypeReadout();
+
+        const HeroOption& selectedHero = CurrentHeroOption();
+        SettingRow("Selected", kDefaultLabelWidth);
+        if (ID3D11ShaderResourceView* avatar = HeroAvatarForOption(selectedHero)) {
+            constexpr float kSelectedAvatarSize = 28.0f;
+            ImGui::Image(reinterpret_cast<ImTextureID>(avatar),
+                         ImVec2(kSelectedAvatarSize, kSelectedAvatarSize));
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+        }
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(selectedHero.label);
+    }
+    CloseGroupBox();
 }
 
 // =====================================================================
@@ -1490,35 +2005,37 @@ void UI::MiscPage() {
     {
         static char profileName[kConfigProfileNameBufferSize] = "";
         static bool profileNameInitialized = false;
+
+        std::vector<std::string> profiles = EnumerateConfigProfiles();
+        std::vector<const char*> profileItems;
+        profileItems.reserve(profiles.size());
+        for (const std::string& profile : profiles)
+            profileItems.push_back(profile.c_str());
+
         if (!profileNameInitialized) {
-            CopyConfigProfileName(profileName, OW::Config::configFileName);
+            const std::string initialProfile = OW::Config::lastConfigProfile.empty()
+                ? OW::Config::configFileName
+                : OW::Config::lastConfigProfile;
+            const int initialIndex = FindConfigProfileIndex(profiles, initialProfile);
+            const std::string selectedInitialProfile = profiles[static_cast<size_t>(initialIndex)];
+            CopyConfigProfileName(profileName, selectedInitialProfile);
+            if (OW::Config::configFileName != selectedInitialProfile)
+                SelectConfigProfile(selectedInitialProfile.c_str(), profileName);
+            OW::Config::lastConfigProfile = selectedInitialProfile;
             profileNameInitialized = true;
         }
 
         SettingRow("Active Profile");
-        const float defaultButtonWidth = 60.0f;
-        const float testButtonWidth = 50.0f;
-        const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
-        const float inputWidth = MaxFloat(
-            80.0f,
-            ImGui::GetContentRegionAvail().x - defaultButtonWidth - testButtonWidth - spacing * 2.0f);
-
-        ImGui::PushItemWidth(inputWidth);
-        if (ImGui::InputText("##profileName", profileName, sizeof(profileName),
-                             ImGuiInputTextFlags_EnterReturnsTrue)) {
-            OW::Config::configFileName = profileName;
-            ReloadConfigProfile();
-            CopyConfigProfileName(profileName, OW::Config::configFileName);
+        ImGui::PushItemWidth(-1);
+        int selectedProfileIndex = FindConfigProfileIndex(profiles, OW::Config::configFileName);
+        if (UISelect("##configProfile", &selectedProfileIndex,
+                     profileItems.data(), static_cast<int>(profileItems.size()))) {
+            const std::string selectedProfile = profiles[static_cast<size_t>(selectedProfileIndex)];
+            SelectConfigProfile(selectedProfile.c_str(), profileName);
+            OW::Config::lastConfigProfile = selectedProfile;
+            PersistLastConfigProfile();
         }
         ImGui::PopItemWidth();
-
-        ImGui::SameLine();
-        if (ImGui::Button("Default", ImVec2(defaultButtonWidth, kControlHeight)))
-            SelectConfigProfile("config.ini", profileName);
-
-        ImGui::SameLine();
-        if (ImGui::Button("Test1", ImVec2(testButtonWidth, kControlHeight)))
-            SelectConfigProfile("config_test1.ini", profileName);
     }
     CloseGroupBox();
 
@@ -1537,6 +2054,8 @@ void UI::MiscPage() {
     UIGroupBox("KMBox Settings");
     {
         bool kmboxSaveRequested = false;
+        static bool kmboxConnectionTestOk = false;
+        static std::string kmboxConnectionTestMessage;
         ImGui::PushID("KMBoxSettings");
 
         SettingRow("Enable KMBox");
@@ -1615,6 +2134,21 @@ void UI::MiscPage() {
         SettingRow("Debug Logging");
         kmboxSaveRequested |= ImGui::Checkbox("##Debug", &OW::Config::kmboxDebugLog);
 
+        SettingRow("Connection Test");
+        if (ImGui::Button("Test", ImVec2(72.0f, kControlHeight))) {
+            const KmboxConnectionTestResult testResult = TestKmboxConnection();
+            kmboxConnectionTestOk = testResult.ok;
+            kmboxConnectionTestMessage = testResult.message;
+        }
+        if (!kmboxConnectionTestMessage.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(
+                kmboxConnectionTestOk ? ImVec4(0.30f, 0.90f, 0.45f, 1.0f)
+                                      : ImVec4(1.00f, 0.28f, 0.28f, 1.0f),
+                "%s",
+                kmboxConnectionTestMessage.c_str());
+        }
+
         if (kmboxSaveRequested)
             OW::Config::SaveConfig(OW::Config::ConfigPath());
 
@@ -1682,8 +2216,9 @@ void UI::Render() {
     auto* dl = ImGui::GetWindowDrawList();
 
     ImVec2 shellMin = viewport->Pos;
-    float shellWidth = MaxFloat(kShellWidth, viewport->Size.x);
-    float shellHeight = MaxFloat(CurrentShellHeight(), viewport->Size.y);
+    float shellWidth = kShellWidth;
+    float shellHeight = CurrentShellHeight();
+    s_desiredMenuClientSize = { shellWidth, shellHeight };
 
     ImVec2 shellMax(shellMin.x + shellWidth, shellMin.y + shellHeight);
     dl->AddRectFilled(shellMin, shellMax, kColShell0);
@@ -1726,6 +2261,22 @@ void UI::Render() {
 
         DrawText(dl, s_boldFont, ImVec2(brandPos.x + 40.0f, brandPos.y + 2.0f),
                  kColText, "UNLEASHED");
+
+        const float selectorW = 172.0f;
+        const float presetButtonW = 82.0f;
+        const float actionGap = 6.0f;
+        const float actionW = selectorW + presetButtonW * 2.0f + actionGap * 2.0f;
+        ImGui::SetCursorScreenPos(ImVec2(headerRect.Max.x - actionW - 12.0f,
+                                         headerRect.Min.y + 11.0f));
+        if (TypeSelectorButton(CurrentHeroOption(), ImVec2(selectorW, 26.0f)))
+            ImGui::OpenPopup("TypePickerPopup");
+        ImGui::SameLine(0.0f, actionGap);
+        if (ImGui::Button("Save Preset", ImVec2(presetButtonW, 26.0f)))
+            SaveSelectedTypePreset();
+        ImGui::SameLine(0.0f, actionGap);
+        if (ImGui::Button("Load Preset", ImVec2(presetButtonW, 26.0f)))
+            LoadSelectedTypePreset();
+        TypePickerPanel();
 
         // Top tab bar at the bottom of the header
         ImGui::SetCursorScreenPos(ImVec2(winPos.x + 8.0f, winPos.y + kHeaderHeight - 43.0f));
@@ -1787,14 +2338,15 @@ void UI::Render() {
     // Determine which sub-tabs to show
     const char* subTabNames[4] = { nullptr };
     int subTabCount = 0;
-    int fixedActiveSub = 0;
     int* activeSub  = nullptr;
 
     switch (state.activeTab) {
         case TAB_AIMING:
             subTabNames[0] = "Aimbot";
-            subTabCount = 1;
-            activeSub   = &fixedActiveSub;
+            subTabNames[1] = "Trigger";
+            subTabCount = 2;
+            state.aimingSubTab = ImClamp(state.aimingSubTab, 0, subTabCount - 1);
+            activeSub   = &state.aimingSubTab;
             break;
         case TAB_VISUALS:
             subTabNames[0] = "Players";
@@ -1809,10 +2361,7 @@ void UI::Render() {
             break;
     }
 
-    float subBarHeight = 0.0f;
-    if (subTabCount > 0) {
-        subBarHeight = (state.activeTab == TAB_AIMING) ? 16.0f : 42.0f;
-    }
+    float subBarHeight = subTabCount > 0 ? CurrentSubBarHeight() : 0.0f;
 
     ImRect subBarRect(ImVec2(winPos.x, contentBandY),
                       ImVec2(winPos.x + winW, contentBandY + subBarHeight));
@@ -1858,10 +2407,7 @@ void UI::Render() {
     // ==================================================================
     // PAGE BODY
     // ==================================================================
-    float bodyTopPad = 10.0f;
-    if (state.activeTab == TAB_AIMING)       bodyTopPad = 8.0f;
-    else if (state.activeTab == TAB_VISUALS) bodyTopPad = 10.0f;
-
+    float bodyTopPad = CurrentBodyTopPad();
     float bodyY = contentBandY + subBarHeight + bodyTopPad;
     float bodyH = MaxFloat(0.0f, contentMax.y - bodyY);
 
@@ -1869,6 +2415,7 @@ void UI::Render() {
     ImGui::SetCursorScreenPos(ImVec2(winPos.x, bodyY));
     ImGui::BeginChild("PageBody", ImVec2(winW, bodyH), false,
                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDecoration);
+    const float bodyCursorStartY = ImGui::GetCursorPosY();
 
     // Apply page-body padding.
     ImGui::Dummy(ImVec2(0.0f, 0.0f));
@@ -1876,7 +2423,10 @@ void UI::Render() {
 
     // Render the active page
     if (state.activeTab == TAB_AIMING) {
-        AimbotPage();
+        if (state.aimingSubTab == 0)
+            AimbotPage();
+        else
+            TriggerPage();
     } else if (state.activeTab == TAB_VISUALS) {
         VisualsPage();
     } else if (state.activeTab == TAB_THEME) {
@@ -1889,6 +2439,9 @@ void UI::Render() {
     CloseGroupBox();
 
     ImGui::Unindent(11.0f);
+    const float measuredBodyHeight =
+        ImGui::GetCursorPosY() - bodyCursorStartY + kBodyBottomPadding;
+    UpdateDesiredMenuClientSize(measuredBodyHeight);
     ImGui::EndChild();
 
     dl->AddRect(shellMin, shellMax, IM_COL32(0x02, 0x03, 0x06, 0xFF), 0.0f, 0, 2.0f);

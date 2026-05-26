@@ -36,6 +36,7 @@ set(GAME_HEADERS
     include/Kmbox/KmBoxConfig.h
     include/Kmbox/KmBoxData.h
     include/Kmbox/KmBoxNetManager.h
+    include/Memory/KeyState.hpp
     include/Memory/Memory.h
     include/Memory/MemoryRanges.h
     include/Renderer/IconManager.hpp

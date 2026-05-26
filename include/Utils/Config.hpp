@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <mutex>
@@ -15,6 +16,7 @@
 namespace OW { namespace Config {
 
     inline std::string configFileName = "config.ini";
+    inline std::string lastConfigProfile = "config.ini";
     std::string ConfigPath();
 
     // ---- Synchronisation ----
@@ -41,10 +43,12 @@ namespace OW { namespace Config {
 
     // ---- Keys ----
     inline int AimKey      = 0x01;   // VK_LBUTTON
-    inline int aim_key     = 6;      // default 'F'
-    inline int aim_key2    = 6;
+    inline int aim_key     = 1;      // Left Mouse
+    inline int aim_key2    = 1;      // Left Mouse
     inline int togglekey   = 0;
     inline int MenuToggleKey = VK_HOME;
+    inline uint64_t gafAsyncKeyStateOffset = 0; // win32kbase.sys-relative host key-state offset
+    inline int gafAsyncKeyStateSize = 256;      // 256-byte VK array or 64-byte compact bitmap
 
     // ---- General aim ----
     inline float Fov        = 200.f;
@@ -235,7 +239,12 @@ namespace OW { namespace Config {
         int priority = 0;        // 0=FOV, 1=HP, 2=Distance
     };
 
-    inline std::unordered_map<uint64_t, HeroPreset> heroPresets;
+    struct HeroSlotPreset {
+        std::string name = "Preset";
+        HeroPreset preset{};
+    };
+
+    inline std::unordered_map<uint64_t, std::array<HeroSlotPreset, 7>> heroPresets;
     inline int targetPriority = 0;
 
     // UI-only placeholders for heroes not present in the current local eHero enum.
@@ -255,7 +264,10 @@ namespace OW { namespace Config {
     bool TryGetHeroPreset(uint64_t heroId, HeroPreset& outPreset);
     bool HasHeroPreset(uint64_t heroId);
     HeroPreset GetHeroPresetOrDefault(uint64_t heroId);
+    HeroPreset GetHeroPresetOrDefault(uint64_t heroId, int slotIndex);
     void SetHeroPreset(uint64_t heroId, const HeroPreset& preset);
+    void SetHeroPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset);
+    std::string GetHeroSlotName(uint64_t heroId, int slotIndex);
     void ApplyHeroPresetToGlobals(const HeroPreset& preset);
     void SaveHeroPresets(const std::string& path);
     void LoadHeroPresets(const std::string& path);

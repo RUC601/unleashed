@@ -253,6 +253,37 @@ namespace OW { namespace Config {
             return true;
         }
 
+        bool ParseStrictUint64(const std::string& raw, uint64_t& out)
+        {
+            const std::string value = IniFile::Trim(raw);
+            if (value.empty())
+                return false;
+
+            int base = 10;
+            const char* start = value.c_str();
+            if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) {
+                base = 16;
+                start += 2;
+                if (*start == '\0')
+                    return false;
+            }
+
+            errno = 0;
+            char* end = nullptr;
+            const unsigned long long parsed = std::strtoull(start, &end, base);
+            if (errno == ERANGE || end == start)
+                return false;
+
+            while (end && *end != '\0') {
+                if (!std::isspace(static_cast<unsigned char>(*end)))
+                    return false;
+                ++end;
+            }
+
+            out = static_cast<uint64_t>(parsed);
+            return true;
+        }
+
         bool ParseStrictFloat(const std::string& raw, float& out)
         {
             const std::string value = IniFile::Trim(raw);
@@ -323,6 +354,13 @@ namespace OW { namespace Config {
             return std::to_string(value);
         }
 
+        std::string ToText(uint64_t value)
+        {
+            char buffer[32] = {};
+            std::snprintf(buffer, sizeof(buffer), "0x%llX", static_cast<unsigned long long>(value));
+            return buffer;
+        }
+
         std::string ToText(float value)
         {
             char buffer[64] = {};
@@ -352,6 +390,24 @@ namespace OW { namespace Config {
 
             int value = def;
             if (!ParseStrictInt(raw, value)) {
+                LogInvalid(section, key, raw, ToText(def));
+                return def;
+            }
+
+            LogLoaded(section, key, ToText(value));
+            return value;
+        }
+
+        uint64_t ReadUInt64(const IniFile& ini, const char* section, const char* key, uint64_t def)
+        {
+            std::string raw;
+            if (!ini.TryGet(section, key, raw)) {
+                LogDefault(section, key, ToText(def));
+                return def;
+            }
+
+            uint64_t value = def;
+            if (!ParseStrictUint64(raw, value)) {
                 LogInvalid(section, key, raw, ToText(def));
                 return def;
             }
@@ -469,6 +525,11 @@ namespace OW { namespace Config {
             WriteValue(path, section, key, buffer);
         }
 
+        void WriteUInt64Value(const std::string& path, const char* section, const char* key, uint64_t value)
+        {
+            WriteValue(path, section, key, ToText(value).c_str());
+        }
+
         void WriteBoolValue(const std::string& path, const char* section, const char* key, bool value)
         {
             WriteIntValue(path, section, key, value ? 1 : 0);
@@ -507,9 +568,35 @@ namespace OW { namespace Config {
             return ini.sections.find(IniFile::Normalize(section)) != ini.sections.end();
         }
 
+        constexpr int kHeroPresetSlotCount = 7;
+
+        int ClampHeroPresetSlotIndex(int slotIndex)
+        {
+            return std::clamp(slotIndex, 0, kHeroPresetSlotCount - 1);
+        }
+
+        std::string DefaultHeroSlotName(int slotIndex)
+        {
+            return std::string("Preset ") + std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
+        }
+
+        std::string NormalizeHeroSlotName(const std::string& name, int slotIndex)
+        {
+            const std::string trimmed = IniFile::Trim(name);
+            if (trimmed.empty() || trimmed == "Preset")
+                return DefaultHeroSlotName(slotIndex);
+            return trimmed;
+        }
+
         std::string HeroPresetSectionName(const char* presetName)
         {
             return std::string("Hero_") + (presetName ? presetName : "Unknown");
+        }
+
+        std::string HeroPresetSlotSectionName(const char* presetName, int slotIndex)
+        {
+            return HeroPresetSectionName(presetName) + "_" +
+                std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
         }
 
         std::string HeroPresetSectionName(uint64_t heroId)
@@ -519,6 +606,12 @@ namespace OW { namespace Config {
                     return HeroPresetSectionName(def.presetName);
             }
             return std::string("Hero_") + std::to_string(heroId);
+        }
+
+        std::string HeroPresetSlotSectionName(uint64_t heroId, int slotIndex)
+        {
+            return HeroPresetSectionName(heroId) + "_" +
+                std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
         }
 
         int RuntimeBoneToPresetBone(int runtimeBone)
@@ -552,8 +645,13 @@ namespace OW { namespace Config {
 
         void ValidateHeroPresetsUnlocked()
         {
-            for (auto& item : heroPresets)
-                item.second = ValidateHeroPresetValue(item.second);
+            for (auto& item : heroPresets) {
+                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                    HeroSlotPreset& slot = item.second[static_cast<size_t>(slotIndex)];
+                    slot.name = NormalizeHeroSlotName(slot.name, slotIndex);
+                    slot.preset = ValidateHeroPresetValue(slot.preset);
+                }
+            }
         }
 
         void ResetHeroDefaultsUnlocked()
@@ -577,8 +675,8 @@ namespace OW { namespace Config {
             hanzoautospeed = false;       // default: false
 
             AimKey = 0x01;                // default: VK_LBUTTON
-            aim_key = 6;                  // default: key index 6
-            aim_key2 = 6;                 // default: key index 6
+            aim_key = 1;                  // default: Left Mouse
+            aim_key2 = 1;                 // default: Left Mouse
             togglekey = 0;                // default: disabled
 
             Fov = 200.0f;                 // default: 200
@@ -720,6 +818,9 @@ namespace OW { namespace Config {
             crosscircle = false;          // default: false
             eyeray = false;               // default: false
             MenuToggleKey = VK_HOME;      // default: VK_HOME
+            gafAsyncKeyStateOffset = 0;   // default: disabled until configured per host build
+            gafAsyncKeyStateSize = 256;   // default: standard 256-byte VK array
+            lastConfigProfile = "config.ini";
 
             enargb = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);       // default: 1,0,0,0.4
             invisnenargb = ImVec4(1.0f, 0.0f, 0.0f, 0.4f); // default: 1,0,0,0.4
@@ -805,17 +906,22 @@ namespace OW { namespace Config {
             ApplyAimMode(preset.aimMode);
         }
 
-        HeroPreset ReadHeroPresetSectionUnlocked(const IniFile& ini, const char* section, HeroPreset defaults)
+        HeroSlotPreset ReadHeroPresetSectionUnlocked(const IniFile& ini, const char* section,
+                                                     HeroSlotPreset defaults, int slotIndex)
         {
-            HeroPreset preset = defaults;
-            preset.fov = ReadFov2Compat(ini, section, "fov", preset.fov);
-            preset.smooth = ReadFov2Compat(ini, section, "smooth", preset.smooth);
-            preset.bone = ReadInt(ini, section, "bone", preset.bone);
-            preset.hitbox = ReadFixedFloat(ini, section, "hitbox", preset.hitbox);
-            preset.aimMode = ReadInt(ini, section, "aimMode", preset.aimMode);
-            preset.prediction = ReadBool(ini, section, "prediction", preset.prediction);
-            preset.priority = ReadInt(ini, section, "priority", preset.priority);
-            return ValidateHeroPresetValue(preset);
+            HeroSlotPreset slot = defaults;
+            slot.name = NormalizeHeroSlotName(
+                ReadString(ini, section, "name", DefaultHeroSlotName(slotIndex).c_str()),
+                slotIndex);
+            slot.preset.fov = ReadFov2Compat(ini, section, "fov", slot.preset.fov);
+            slot.preset.smooth = ReadFov2Compat(ini, section, "smooth", slot.preset.smooth);
+            slot.preset.bone = ReadInt(ini, section, "bone", slot.preset.bone);
+            slot.preset.hitbox = ReadFixedFloat(ini, section, "hitbox", slot.preset.hitbox);
+            slot.preset.aimMode = ReadInt(ini, section, "aimMode", slot.preset.aimMode);
+            slot.preset.prediction = ReadBool(ini, section, "prediction", slot.preset.prediction);
+            slot.preset.priority = ReadInt(ini, section, "priority", slot.preset.priority);
+            slot.preset = ValidateHeroPresetValue(slot.preset);
+            return slot;
         }
 
         HeroPreset ReadLegacyHeroPresetSectionUnlocked(const IniFile& ini, const char* section, HeroPreset defaults)
@@ -833,15 +939,19 @@ namespace OW { namespace Config {
             return ValidateHeroPresetValue(preset);
         }
 
-        void WriteHeroPresetSection(const std::string& path, const char* section, const HeroPreset& rawPreset)
+        void WriteHeroPresetSection(const std::string& path, const char* section,
+                                    const HeroSlotPreset& rawSlot, int slotIndex)
         {
-            const HeroPreset preset = ValidateHeroPresetValue(rawPreset);
+            const std::string name = NormalizeHeroSlotName(rawSlot.name, slotIndex);
+            const HeroPreset preset = ValidateHeroPresetValue(rawSlot.preset);
+            WriteStringValue(path, section, "name", name.c_str());
             WritePlainFloatValue(path, section, "fov", preset.fov);
             WritePlainFloatValue(path, section, "smooth", preset.smooth);
             WriteIntValue(path, section, "bone", preset.bone);
             WritePlainFloatValue(path, section, "hitbox", preset.hitbox);
             WriteIntValue(path, section, "aimMode", preset.aimMode);
-            WriteBoolValue(path, section, "prediction", preset.prediction);
+            const std::string prediction = ToText(preset.prediction);
+            WriteStringValue(path, section, "prediction", prediction.c_str());
             WriteIntValue(path, section, "priority", preset.priority);
         }
 
@@ -850,8 +960,12 @@ namespace OW { namespace Config {
             ValidateHeroPresetsUnlocked();
             WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
             for (const auto& item : heroPresets) {
-                const std::string section = HeroPresetSectionName(item.first);
-                WriteHeroPresetSection(path, section.c_str(), item.second);
+                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                    const std::string section = HeroPresetSlotSectionName(item.first, slotIndex);
+                    WriteHeroPresetSection(path, section.c_str(),
+                                           item.second[static_cast<size_t>(slotIndex)],
+                                           slotIndex);
+                }
             }
         }
 
@@ -871,19 +985,42 @@ namespace OW { namespace Config {
         void LoadHeroPresetsUnlocked(const IniFile& ini)
         {
             heroPresets.clear();
-            const HeroPreset defaults{};
+            const HeroPreset presetDefaults{};
 
             for (const HeroPresetDefinition& def : kHeroPresetDefinitions) {
-                const std::string presetSection = HeroPresetSectionName(def.presetName);
-                HeroPreset preset{};
-                if (SectionExists(ini, presetSection.c_str())) {
-                    preset = ReadHeroPresetSectionUnlocked(ini, presetSection.c_str(), defaults);
-                    heroPresets[def.heroId] = preset;
-                    continue;
+                std::array<HeroSlotPreset, kHeroPresetSlotCount> slots{};
+                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex)
+                    slots[static_cast<size_t>(slotIndex)].name = DefaultHeroSlotName(slotIndex);
+
+                bool loadedAnySlot = false;
+                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                    const std::string presetSection = HeroPresetSlotSectionName(def.presetName, slotIndex);
+                    if (SectionExists(ini, presetSection.c_str())) {
+                        slots[static_cast<size_t>(slotIndex)] = ReadHeroPresetSectionUnlocked(
+                            ini,
+                            presetSection.c_str(),
+                            slots[static_cast<size_t>(slotIndex)],
+                            slotIndex);
+                        loadedAnySlot = true;
+                    }
                 }
 
-                if (TryLoadLegacyPresetForDefinition(ini, def, defaults, preset))
-                    heroPresets[def.heroId] = preset;
+                if (!loadedAnySlot) {
+                    const std::string legacyPresetSection = HeroPresetSectionName(def.presetName);
+                    if (SectionExists(ini, legacyPresetSection.c_str())) {
+                        slots[0] = ReadHeroPresetSectionUnlocked(ini, legacyPresetSection.c_str(), slots[0], 0);
+                        loadedAnySlot = true;
+                    } else {
+                        HeroPreset legacyPreset{};
+                        if (TryLoadLegacyPresetForDefinition(ini, def, presetDefaults, legacyPreset)) {
+                            slots[0].preset = legacyPreset;
+                            loadedAnySlot = true;
+                        }
+                    }
+                }
+
+                if (loadedAnySlot)
+                    heroPresets[def.heroId] = slots;
             }
 
             ValidateHeroPresetsUnlocked();
@@ -1085,6 +1222,9 @@ namespace OW { namespace Config {
             draw_fov = ReadBool(ini, section, "draw_fov", draw_fov);
             targetPriority = ReadInt(ini, section, "targetPriority", targetPriority);
             MenuToggleKey = ReadInt(ini, section, "MenuToggleKey", MenuToggleKey);
+            gafAsyncKeyStateOffset = ReadUInt64(ini, section, "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
+            gafAsyncKeyStateSize = ReadInt(ini, section, "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
+            lastConfigProfile = ReadString(ini, section, "lastConfigProfile", lastConfigProfile.c_str());
             manualScreenWidth = ReadInt(ini, section, "manualScreenWidth", manualScreenWidth);
             manualScreenHeight = ReadInt(ini, section, "manualScreenHeight", manualScreenHeight);
 
@@ -1180,10 +1320,16 @@ namespace OW { namespace Config {
             config_version = kCurrentConfigVersion;
 
             ClampSetting("AimKey", AimKey, 1, 255, 0x01);
-            ClampSetting("aim_key", aim_key, 0, 54, 6);
-            ClampSetting("aim_key2", aim_key2, 0, 54, 6);
+            ClampSetting("aim_key", aim_key, 0, 5, 1);
+            ClampSetting("aim_key2", aim_key2, 0, 5, 1);
             ClampSetting("togglekey", togglekey, 0, 54, 0);
             ClampSetting("MenuToggleKey", MenuToggleKey, 1, 255, VK_HOME);
+            if (gafAsyncKeyStateSize != 64 && gafAsyncKeyStateSize != 256) {
+                LogConfig(Diagnostics::LogLevel::Warn,
+                    "gafAsyncKeyStateSize out of range (%d); using default 256.",
+                    gafAsyncKeyStateSize);
+                gafAsyncKeyStateSize = 256;
+            }
 
             ClampFloatSetting("Fov", Fov, 0.0f, 500.0f, 200.0f);
             ClampFloatSetting("Fov2", Fov2, 0.0f, 500.0f, 200.0f);
@@ -1341,6 +1487,8 @@ namespace OW { namespace Config {
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMac,
                 kmboxComPort, kmboxAimSensitivity, gameMouseSensitivity, sensReference,
                 ToText(autoSyncSensitivity).c_str(), kmboxInputDelayMs, ToText(kmboxDebugLog).c_str());
+            LogConfig(level, "Dump: keystate offset=%s size=%d",
+                ToText(gafAsyncKeyStateOffset).c_str(), gafAsyncKeyStateSize);
             LogConfig(level, "Dump: manual screen width=%d height=%d",
                 manualScreenWidth, manualScreenHeight);
             LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s",
@@ -1394,7 +1542,7 @@ namespace OW { namespace Config {
         if (item == heroPresets.end())
             return false;
 
-        outPreset = ValidateHeroPresetValue(item->second);
+        outPreset = ValidateHeroPresetValue(item->second[0].preset);
         return true;
     }
 
@@ -1406,20 +1554,46 @@ namespace OW { namespace Config {
 
     HeroPreset GetHeroPresetOrDefault(uint64_t heroId)
     {
+        return GetHeroPresetOrDefault(heroId, 0);
+    }
+
+    HeroPreset GetHeroPresetOrDefault(uint64_t heroId, int slotIndex)
+    {
         std::lock_guard<std::mutex> lock(mutex);
         const auto item = heroPresets.find(heroId);
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
         if (item != heroPresets.end())
-            return ValidateHeroPresetValue(item->second);
+            return ValidateHeroPresetValue(item->second[static_cast<size_t>(clampedSlotIndex)].preset);
         return MakeHeroPresetFromCurrentUnlocked();
     }
 
     void SetHeroPreset(uint64_t heroId, const HeroPreset& preset)
     {
+        SetHeroPreset(heroId, 0, preset);
+    }
+
+    void SetHeroPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset)
+    {
         if (heroId == 0)
             return;
 
         std::lock_guard<std::mutex> lock(mutex);
-        heroPresets[heroId] = ValidateHeroPresetValue(preset);
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        auto& slots = heroPresets[heroId];
+        for (int i = 0; i < kHeroPresetSlotCount; ++i)
+            slots[static_cast<size_t>(i)].name = NormalizeHeroSlotName(slots[static_cast<size_t>(i)].name, i);
+        slots[static_cast<size_t>(clampedSlotIndex)].preset = ValidateHeroPresetValue(preset);
+    }
+
+    std::string GetHeroSlotName(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        const auto item = heroPresets.find(heroId);
+        if (item == heroPresets.end())
+            return DefaultHeroSlotName(clampedSlotIndex);
+
+        return NormalizeHeroSlotName(item->second[static_cast<size_t>(clampedSlotIndex)].name, clampedSlotIndex);
     }
 
     void ApplyHeroPresetToGlobals(const HeroPreset& preset)
@@ -1460,6 +1634,9 @@ namespace OW { namespace Config {
             SaveAimbotSettingsUnlocked(path);
             SaveAimMethodSettingsUnlocked(path);
             SaveKmboxSettingsUnlocked(path);
+            WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
+            WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
+            WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
             LogConfig(Diagnostics::LogLevel::Info,
                 "Saved global config to %s without a current hero.", path.c_str());
             return;
@@ -1560,6 +1737,9 @@ namespace OW { namespace Config {
         WriteBoolValue(path, "Global", "draw_fov", draw_fov);
         WriteIntValue(path, "Global", "targetPriority", targetPriority);
         WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);
+        WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
+        WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
+        WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
         WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
         WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);
         WriteColor(path, "Global", "EnemyCol", EnemyCol);

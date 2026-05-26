@@ -65,6 +65,38 @@ namespace
         default:          return 0;
         }
     }
+
+    void LogMouseButtonChanges(unsigned char previous, unsigned char current)
+    {
+        struct ButtonMap {
+            unsigned char mask;
+            const char* name;
+        };
+
+        constexpr ButtonMap buttons[] = {
+            { 0x01, "VK_LBUTTON" },
+            { 0x02, "VK_RBUTTON" },
+            { 0x08, "VK_XBUTTON1" },
+            { 0x10, "VK_XBUTTON2" },
+        };
+
+        const unsigned char changed = previous ^ current;
+        for (const ButtonMap& button : buttons) {
+            if ((changed & button.mask) != 0) {
+                Diagnostics::Info("[KMBOX-NET] input button state changed. button=%s down=%d mask=0x%02X",
+                    button.name,
+                    (current & button.mask) != 0 ? 1 : 0,
+                    static_cast<unsigned int>(current));
+            }
+        }
+    }
+
+    bool IsOutputCommand(KmBoxCommandType type)
+    {
+        return type == KmBoxCommandType::MouseMove ||
+            type == KmBoxCommandType::MouseAutoMove ||
+            type == KmBoxCommandType::MouseButton;
+    }
 }
 
 KmBoxNetManager::KmBoxNetManager()
@@ -412,6 +444,11 @@ void KmBoxNetManager::QueueWorkerLoop()
                 ToString(command.type), status);
             CloseSocket();
             EnsureConnected();
+        } else if (IsOutputCommand(command.type)) {
+            const unsigned long long count =
+                outputSendCount.fetch_add(1, std::memory_order_acq_rel) + 1;
+            Diagnostics::Info("[KMBOX-NET] output send count=%llu type=%s",
+                count, ToString(command.type));
         }
 
         lastFlush = std::chrono::steady_clock::now();
@@ -640,12 +677,24 @@ void KmBoxKeyBoard::ListenThread()
     int Status = WSAStartup(wVersionRequested, &wsaData);
     if (Status != success) {
         Diagnostics::Error("[KMBOX-NET] Monitor WSAStartup failed. status=%d", Status);
+        {
+            std::lock_guard<std::mutex> lock(this->monitorMutex);
+            this->monitorStartStatus = err_creat_socket;
+            this->monitorStartResolved = true;
+        }
+        this->monitorStartCv.notify_all();
         return;
     }
 
     this->s_ListenSocket = socket(AF_INET, SOCK_DGRAM, 0);
     if (!IsValidSocket(this->s_ListenSocket)) {
         Diagnostics::Error("[KMBOX-NET] Monitor socket creation failed. WSA=%d", WSAGetLastError());
+        {
+            std::lock_guard<std::mutex> lock(this->monitorMutex);
+            this->monitorStartStatus = err_creat_socket;
+            this->monitorStartResolved = true;
+        }
+        this->monitorStartCv.notify_all();
         WSACleanup();
         return;
     }
@@ -661,21 +710,51 @@ void KmBoxKeyBoard::ListenThread()
             this->MonitorPort, WSAGetLastError());
         closesocket(this->s_ListenSocket);
         this->s_ListenSocket = 0;
+        {
+            std::lock_guard<std::mutex> lock(this->monitorMutex);
+            this->monitorStartStatus = err_net_rx_timeout;
+            this->monitorStartResolved = true;
+        }
+        this->monitorStartCv.notify_all();
         WSACleanup();
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(this->monitorMutex);
+        this->monitorStartStatus = success;
+        this->monitorStartResolved = true;
+    }
+    this->monitorStartCv.notify_all();
+    Diagnostics::Info("[KMBOX-NET] monitor listener bound. port=%u", this->MonitorPort);
+
     SOCKADDR AddrClient{};
-    int FromLen = sizeof(SOCKADDR);
     char Buffer[1024]{};
 
     this->ListenerRuned.store(true, std::memory_order_release);
     while (this->ListenerRuned.load(std::memory_order_acquire)) {
+        int FromLen = sizeof(SOCKADDR);
         const int Ret = recvfrom(this->s_ListenSocket, Buffer, sizeof(Buffer), 0, &AddrClient, &FromLen);
         if (Ret >= static_cast<int>(sizeof(this->hw_Mouse) + sizeof(this->hw_Keyboard))) {
+            unsigned char previousButtons = 0;
+            unsigned char currentButtons = 0;
             std::lock_guard<std::mutex> lock(this->monitorMutex);
+            previousButtons = this->hw_Mouse.buttons;
             memcpy(&this->hw_Mouse, Buffer, sizeof(this->hw_Mouse));
             memcpy(&this->hw_Keyboard, &Buffer[sizeof(this->hw_Mouse)], sizeof(this->hw_Keyboard));
+            currentButtons = this->hw_Mouse.buttons;
+
+            const unsigned long long packetCount =
+                this->inputPacketCount.fetch_add(1, std::memory_order_acq_rel) + 1;
+            if (packetCount == 1) {
+                Diagnostics::Info("[KMBOX-NET] first input packet received. bytes=%d mouse_buttons=0x%02X",
+                    Ret, static_cast<unsigned int>(currentButtons));
+            }
+
+            if (previousButtons != currentButtons) {
+                this->lastLoggedMouseButtons.store(currentButtons, std::memory_order_release);
+                LogMouseButtonChanges(previousButtons, currentButtons);
+            }
         } else if (Ret <= 0) {
             break;
         }
@@ -689,16 +768,32 @@ void KmBoxKeyBoard::ListenThread()
 
 int KmBoxKeyBoard::StartMonitor(WORD Port)
 {
-    if (!kmbox::KmBoxMgr.EnsureConnected())
+    Diagnostics::Info("[KMBOX-NET] monitor start requested. port=%u", Port);
+
+    if (!kmbox::KmBoxMgr.EnsureConnected()) {
+        Diagnostics::Info("[KMBOX-NET] monitor start failed. port=%u status=%d",
+            Port, err_creat_socket);
         return err_creat_socket;
+    }
 
     client_data packet = kmbox::KmBoxMgr.BuildPacket(cmd_monitor, Port | 0xaa55 << 16);
     const int status = kmbox::KmBoxMgr.SendSynchronousCommand(cmd_monitor, packet.head.rand,
         sizeof(cmd_head_t), KmBoxCommandType::Monitor, &packet);
-    if (status != success)
+    if (status != success) {
+        Diagnostics::Info("[KMBOX-NET] monitor command failed. port=%u status=%d", Port, status);
         return status;
+    }
 
     this->MonitorPort = Port;
+    this->inputPacketCount.store(0, std::memory_order_release);
+    this->lastLoggedMouseButtons.store(0, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(this->monitorMutex);
+        this->hw_Mouse = {};
+        this->hw_Keyboard = {};
+        this->monitorStartStatus = err_creat_socket;
+        this->monitorStartResolved = false;
+    }
 
     if (IsValidSocket(this->s_ListenSocket)) {
         closesocket(this->s_ListenSocket);
@@ -709,7 +804,23 @@ int KmBoxKeyBoard::StartMonitor(WORD Port)
         this->t_Listen.join();
 
     this->t_Listen = std::thread(&KmBoxKeyBoard::ListenThread, this);
-    std::this_thread::sleep_for(std::chrono::milliseconds(8));
+    {
+        std::unique_lock<std::mutex> lock(this->monitorMutex);
+        if (!this->monitorStartCv.wait_for(lock, std::chrono::milliseconds(500),
+            [this]() { return this->monitorStartResolved; })) {
+            Diagnostics::Info("[KMBOX-NET] monitor start failed. port=%u status=%d",
+                Port, err_net_rx_timeout);
+            return err_net_rx_timeout;
+        }
+
+        if (this->monitorStartStatus != success) {
+            Diagnostics::Info("[KMBOX-NET] monitor start failed. port=%u status=%d",
+                Port, this->monitorStartStatus);
+            return this->monitorStartStatus;
+        }
+    }
+
+    Diagnostics::Info("[KMBOX-NET] monitor start succeeded. port=%u", Port);
     return success;
 }
 

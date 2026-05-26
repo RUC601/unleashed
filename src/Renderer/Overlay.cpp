@@ -14,6 +14,7 @@ namespace {
 
 constexpr int kDefaultMenuClientWidth = 650;
 constexpr int kDefaultMenuClientHeight = 550;
+constexpr int kMinimumMenuClientHeight = 140;
 constexpr int kMenuResizeGrip = 8;
 constexpr int kMenuDragHeight = 38;
 constexpr wchar_t kCanvasClassName[] = L"UnleashedOverlayCanvasDX11";
@@ -21,13 +22,29 @@ constexpr wchar_t kMenuClassName[] = L"UnleashedOverlayMenuDX11";
 
 ImGuiContext* g_menuContext = nullptr;
 
+int AbsInt(int value) {
+    return value < 0 ? -value : value;
+}
+
+int MaxInt(int a, int b) {
+    return a > b ? a : b;
+}
+
+int MinInt(int a, int b) {
+    return a < b ? a : b;
+}
+
+int RoundClientSize(float value) {
+    return static_cast<int>(value + 0.5f);
+}
+
 void ApplyMinimumMenuTrackSize(LPARAM lParam) {
     MINMAXINFO* minMax = reinterpret_cast<MINMAXINFO*>(lParam);
     if (!minMax)
         return;
 
     minMax->ptMinTrackSize.x = kDefaultMenuClientWidth;
-    minMax->ptMinTrackSize.y = kDefaultMenuClientHeight;
+    minMax->ptMinTrackSize.y = kMinimumMenuClientHeight;
 }
 
 LRESULT HitTestBorderlessMenu(HWND hWnd, LPARAM lParam) {
@@ -550,6 +567,54 @@ void Overlay::UpdateWindowVisibility() {
     }
 }
 
+void Overlay::ApplyDesiredMenuClientSize() {
+    if (!m_menuHWnd || !IsWindowVisible(m_menuHWnd))
+        return;
+
+    const UI::MenuClientSize desired = UI::DesiredMenuClientSize();
+    int desiredClientW = MaxInt(1, RoundClientSize(desired.width));
+    int desiredClientH = MaxInt(kMinimumMenuClientHeight, RoundClientSize(desired.height));
+
+    RECT clientRect = {};
+    RECT windowRect = {};
+    if (!GetClientRect(m_menuHWnd, &clientRect) || !GetWindowRect(m_menuHWnd, &windowRect))
+        return;
+
+    const int currentClientW = clientRect.right - clientRect.left;
+    const int currentClientH = clientRect.bottom - clientRect.top;
+    if (currentClientW <= 0 || currentClientH <= 0)
+        return;
+
+    const int windowW = windowRect.right - windowRect.left;
+    const int windowH = windowRect.bottom - windowRect.top;
+    const int nonClientW = windowW - currentClientW;
+    const int nonClientH = windowH - currentClientH;
+    if (!m_menuAnchorValid) {
+        m_menuAnchorX = windowRect.left;
+        m_menuAnchorY = windowRect.top;
+        m_menuAnchorValid = true;
+    }
+
+    RECT workArea = {};
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0)) {
+        const int maxWindowH = workArea.bottom - windowRect.top;
+        if (maxWindowH > nonClientH + kMinimumMenuClientHeight)
+            desiredClientH = MinInt(desiredClientH, maxWindowH - nonClientH);
+    }
+
+    const int targetWindowW = desiredClientW + nonClientW;
+    const int targetWindowH = desiredClientH + nonClientH;
+    if (AbsInt(windowW - targetWindowW) <= 1 && AbsInt(windowH - targetWindowH) <= 1) {
+        m_menuAnchorX = windowRect.left;
+        m_menuAnchorY = windowRect.top;
+        return;
+    }
+
+    SetWindowPos(m_menuHWnd, HWND_TOPMOST, m_menuAnchorX, m_menuAnchorY,
+                 targetWindowW, targetWindowH,
+                 SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+}
+
 void Overlay::UpdateSwapChainSizes() {
     RECT canvasRect = {};
     if (GetClientRect(m_canvasHWnd, &canvasRect)) {
@@ -562,6 +627,8 @@ void Overlay::UpdateSwapChainSizes() {
             }
         }
     }
+
+    ApplyDesiredMenuClientSize();
 
     RECT menuRect = {};
     if (GetClientRect(m_menuHWnd, &menuRect)) {

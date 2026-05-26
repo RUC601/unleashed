@@ -39,6 +39,11 @@ public:
     SOCKET s_ListenSocket = 0;
     std::atomic<bool> ListenerRuned{ false };
     std::mutex monitorMutex;
+    std::condition_variable monitorStartCv;
+    bool monitorStartResolved = false;
+    int monitorStartStatus = err_creat_socket;
+    std::atomic<unsigned long long> inputPacketCount{ 0 };
+    std::atomic<unsigned char> lastLoggedMouseButtons{ 0 };
 public:
     standard_keyboard_report_t hw_Keyboard;
     standard_mouse_report_t hw_Mouse;
@@ -78,6 +83,7 @@ private:
     std::deque<KmBoxQueuedNetCommand> commandQueue;
     std::thread queueThread;
     std::thread heartbeatThread;
+    std::atomic<unsigned long long> outputSendCount{ 0 };
 private:
     int NetHandler();
     int SendData(int DataLength);

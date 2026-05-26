@@ -8,19 +8,28 @@ namespace UI {
 
     struct State {
         Tab   activeTab      = TAB_AIMING;
+        int   aimingSubTab   = 0;   // 0 = Aimbot, 1 = Trigger
         int   visualsSubTab  = 0;   // 0 = Players
         int   heroSegActive  = 0;   // Hero config slot (0-6)
+        int   selectedTypeIndex = 0; // Shared hero/type selection, 0 = All
         bool  initialized    = false;
     };
     inline State state;
 
+    struct MenuClientSize {
+        float width = 0.0f;
+        float height = 0.0f;
+    };
+
     void InitStyle();
     void InitializeResources(ID3D11Device* device);
     void ShutdownResources();
+    MenuClientSize DesiredMenuClientSize();
     void Render();
 
     // Per-page render functions
     void AimbotPage();
+    void TriggerPage();
     void VisualsPage();
     void ThemePage();
     void MiscPage();
