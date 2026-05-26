@@ -40,12 +40,17 @@ public:
     ~KmBoxBManager();
 
     int init();
+    int init(const std::string& portName);
 
     void km_move(int X, int Y);
 
     void km_move_auto(int X, int Y, int runtime);
 
     void km_click();
+
+    void km_left(bool down);
+    void km_right(bool down);
+    void km_middle(bool down);
 
 };
 

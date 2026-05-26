@@ -259,6 +259,18 @@ namespace OW { namespace Config {
             return buffer;
         }
 
+        std::string ToText(const char* value)
+        {
+            return value ? std::string(value) : std::string();
+        }
+
+        template <size_t N>
+        void CopyString(char (&dest)[N], const std::string& value)
+        {
+            std::snprintf(dest, N, "%s", value.c_str());
+            dest[N - 1] = '\0';
+        }
+
         int ReadInt(const IniFile& ini, const char* section, const char* key, int def)
         {
             std::string raw;
@@ -293,6 +305,18 @@ namespace OW { namespace Config {
 
             LogLoaded(section, key, ToText(value));
             return value;
+        }
+
+        std::string ReadString(const IniFile& ini, const char* section, const char* key, const char* def)
+        {
+            std::string raw;
+            if (!ini.TryGet(section, key, raw)) {
+                LogDefault(section, key, ToText(def));
+                return def ? std::string(def) : std::string();
+            }
+
+            LogLoaded(section, key, raw);
+            return raw;
         }
 
         float ReadFixedFloat(const IniFile& ini, const char* section, const char* key, float def)
@@ -377,6 +401,11 @@ namespace OW { namespace Config {
         void WriteBoolValue(const std::string& path, const char* section, const char* key, bool value)
         {
             WriteIntValue(path, section, key, value ? 1 : 0);
+        }
+
+        void WriteStringValue(const std::string& path, const char* section, const char* key, const char* value)
+        {
+            WriteValue(path, section, key, value ? value : "");
         }
 
         void WriteFixedFloatValue(const std::string& path, const char* section, const char* key, float value)
@@ -565,6 +594,16 @@ namespace OW { namespace Config {
 
             namespoofer = false;          // default: false
             fakename[0] = '\0';           // default: empty string
+
+            kmboxEnabled = false;         // default: disabled
+            kmboxDeviceType = 0;          // default: Network/UDP
+            CopyString(kmboxIp, "192.168.2.188");
+            kmboxPort = 6234;             // default KMBox UDP port
+            kmboxMac[0] = '\0';           // default: empty MAC
+            CopyString(kmboxComPort, "COM3");
+            kmboxAimSensitivity = 1.0f;   // default: 1:1 scalar
+            kmboxDebugLog = false;        // default: off
+
             locx = 0;                     // default: 0
             locy = 0;                     // default: 0
             therad = 0;                   // default: 0
@@ -738,6 +777,20 @@ namespace OW { namespace Config {
             LoadColor(ini, section, "allyargb", allyargb);
         }
 
+        void LoadKmboxSettingsUnlocked(const IniFile& ini)
+        {
+            constexpr const char* section = "KMBox";
+
+            kmboxEnabled = ReadBool(ini, section, "kmboxEnabled", kmboxEnabled);
+            kmboxDeviceType = ReadInt(ini, section, "kmboxDeviceType", kmboxDeviceType);
+            CopyString(kmboxIp, ReadString(ini, section, "kmboxIp", kmboxIp));
+            kmboxPort = ReadInt(ini, section, "kmboxPort", kmboxPort);
+            CopyString(kmboxMac, ReadString(ini, section, "kmboxMac", kmboxMac));
+            CopyString(kmboxComPort, ReadString(ini, section, "kmboxComPort", kmboxComPort));
+            kmboxAimSensitivity = ReadFixedFloat(ini, section, "kmboxAimSensitivity", kmboxAimSensitivity);
+            kmboxDebugLog = ReadBool(ini, section, "kmboxDebugLog", kmboxDebugLog);
+        }
+
         template <typename T>
         void ClampSetting(const char* name, T& value, T minValue, T maxValue, T fallback)
         {
@@ -840,6 +893,9 @@ namespace OW { namespace Config {
             ClampSetting("Targetenemyifov", Targetenemyifov, -1, 100000, -1);
             ClampSetting("doingentity", doingentity, 0, 1, 1);
             ClampSetting("lastheroid", lastheroid, -2, (std::numeric_limits<int>::max)(), -2);
+            ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 1, 0);
+            ClampSetting("kmboxPort", kmboxPort, 1, 65535, 6234);
+            ClampFloatSetting("kmboxAimSensitivity", kmboxAimSensitivity, 0.1f, 5.0f, 1.0f);
             ClampSetting("locx", locx, 0, 100000, 0);
             ClampSetting("locy", locy, 0, 100000, 0);
             ClampSetting("therad", therad, 0, 10000, 0);
@@ -905,6 +961,9 @@ namespace OW { namespace Config {
             LogConfig(level, "Dump: fov-change enablechangefov=%s CHANGEFOV=%.3f trackback=%s secondaim=%s highPriority=%s",
                 ToText(enablechangefov).c_str(), CHANGEFOV, ToText(trackback).c_str(),
                 ToText(secondaim).c_str(), ToText(highPriority).c_str());
+            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f debugLog=%s",
+                ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMac,
+                kmboxComPort, kmboxAimSensitivity, ToText(kmboxDebugLog).c_str());
             LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s outline=%s externaloutline=%s teamoutline=%s healthoutline=%s rainbowoutline=%s",
                 ToText(draw_info).c_str(), ToText(drawbattletag).c_str(), ToText(drawhealth).c_str(), ToText(healthbar).c_str(),
                 ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), visualMaxDist, ToText(name).c_str(), ToText(ult).c_str(),
@@ -1067,6 +1126,15 @@ namespace OW { namespace Config {
         WriteColor(path, "Global", "targetargb2", targetargb2);
         WriteColor(path, "Global", "allyargb", allyargb);
 
+        WriteBoolValue(path, "KMBox", "kmboxEnabled", kmboxEnabled);
+        WriteIntValue(path, "KMBox", "kmboxDeviceType", kmboxDeviceType);
+        WriteStringValue(path, "KMBox", "kmboxIp", kmboxIp);
+        WriteIntValue(path, "KMBox", "kmboxPort", kmboxPort);
+        WriteStringValue(path, "KMBox", "kmboxMac", kmboxMac);
+        WriteStringValue(path, "KMBox", "kmboxComPort", kmboxComPort);
+        WriteFixedFloatValue(path, "KMBox", "kmboxAimSensitivity", kmboxAimSensitivity);
+        WriteBoolValue(path, "KMBox", "kmboxDebugLog", kmboxDebugLog);
+
         LogConfig(Diagnostics::LogLevel::Info,
             "Saved config for hero %s to %s.", heroName.c_str(), path.c_str());
     }
@@ -1112,6 +1180,7 @@ namespace OW { namespace Config {
 
         LoadHeroSettingsUnlocked(ini, heroName.c_str(), heroId);
         LoadGlobalSettingsUnlocked(ini);
+        LoadKmboxSettingsUnlocked(ini);
         ValidateUnlocked();
         DumpUnlocked(Diagnostics::LogLevel::Debug);
 

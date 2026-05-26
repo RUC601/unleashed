@@ -20,6 +20,8 @@
 #include "Game/Decrypt.hpp"       // OW::GetGlobalKey, OW::DecryptComponent
 #include "Game/Overwatch.hpp"     // main threads: viewmatrix, entity, aimbot, ...
 #include "Game/Offsets.hpp"       // offset constants
+#include "Kmbox/KmBoxNetManager.h" // kmbox::KmBoxMgr
+#include "Kmbox/KmboxB.h"         // kmbox::kmBoxBMgr
 #include "Utils/Config.hpp"       // OW::Config
 #include "Renderer/Overlay.hpp"   // g_Overlay
 #include "Renderer/Renderer.hpp"  // Render:: drawing primitives
@@ -217,6 +219,42 @@ void RenderCallback()
     DrawCrosshair();
 }
 
+static void InitializeKmBoxFromConfig()
+{
+    if (!OW::Config::kmboxEnabled) {
+        std::printf("[KMBOX] Disabled by config; using DMA input writes.\n");
+        Diagnostics::Info("KMBox disabled by config.");
+        return;
+    }
+
+    if (OW::Config::kmboxDeviceType == 0) {
+        std::printf("[KMBOX] Initialising network device %s:%d...\n",
+            OW::Config::kmboxIp, OW::Config::kmboxPort);
+        const int status = kmbox::KmBoxMgr.InitDevice(
+            OW::Config::kmboxIp,
+            static_cast<WORD>(OW::Config::kmboxPort),
+            OW::Config::kmboxMac);
+        if (status == success) {
+            std::printf("[KMBOX] Network device ready.\n");
+            Diagnostics::Info("KMBox network device ready. ip=%s port=%d",
+                OW::Config::kmboxIp, OW::Config::kmboxPort);
+        } else {
+            std::printf("[KMBOX] Network initialisation failed. status=%d\n", status);
+            Diagnostics::Error("KMBox network initialisation failed. status=%d", status);
+        }
+    } else {
+        std::printf("[KMBOX] Initialising serial device on %s...\n", OW::Config::kmboxComPort);
+        const int status = kmbox::kmBoxBMgr.init(OW::Config::kmboxComPort);
+        if (status == success) {
+            std::printf("[KMBOX] Serial device ready.\n");
+            Diagnostics::Info("KMBox serial device ready. port=%s", OW::Config::kmboxComPort);
+        } else {
+            std::printf("[KMBOX] Serial initialisation failed. status=%d\n", status);
+            Diagnostics::Error("KMBox serial initialisation failed. status=%d", status);
+        }
+    }
+}
+
 // =============================================================================
 // Background thread launcher
 // =============================================================================
@@ -277,6 +315,7 @@ int main()
     std::printf("[MAIN] DMA subsystem ready.\n\n");
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
     OW::Config::LoadConfig(".\\config.ini");
+    InitializeKmBoxFromConfig();
     Diagnostics::SetDmaReady(true);
     Diagnostics::Info("DMA subsystem ready. device=%s",
         mem.GetDmaDeviceString().empty() ? "<unknown>" : mem.GetDmaDeviceString().c_str());

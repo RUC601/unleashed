@@ -83,6 +83,17 @@ static bool open_port(HANDLE& hSerial, const char* portName, DWORD baudRate)
     return true;
 }
 
+static std::string normalize_port_name(const std::string& portName)
+{
+    if (portName.empty() || portName.rfind("\\\\.\\", 0) == 0)
+        return portName;
+
+    if (portName.rfind("COM", 0) == 0 && portName.size() > 4)
+        return "\\\\.\\" + portName;
+
+    return portName;
+}
+
 KmBoxBManager::~KmBoxBManager()
 {
     StopWorkers();
@@ -282,10 +293,15 @@ void KmBoxBManager::HeartbeatLoop()
 
 int KmBoxBManager::init()
 {
+    return init("");
+}
+
+int KmBoxBManager::init(const std::string& portName)
+{
     SetConnectionState(KmBoxConnectionState::Connecting);
-    std::string port = find_port("USB-SERIAL CH340");
+    std::string port = portName.empty() ? find_port("USB-SERIAL CH340") : normalize_port_name(portName);
     if (port.empty()) {
-        Diagnostics::Error("[KMBOX-B] USB-SERIAL CH340 port not found.");
+        Diagnostics::Error("[KMBOX-B] Serial port not found.");
         SetConnectionState(KmBoxConnectionState::Disconnected);
         return -1;
     }
@@ -315,4 +331,22 @@ void KmBoxBManager::km_click()
     std::string command1 = "km.left(" + std::to_string(0) + ")\r\n";
     EnqueueCommand(command, KmBoxCommandType::MouseButton);
     EnqueueCommand(command1, KmBoxCommandType::MouseButton);
+}
+
+void KmBoxBManager::km_left(bool down)
+{
+    std::string command = "km.left(" + std::to_string(down ? 1 : 0) + ")\r\n";
+    EnqueueCommand(command, KmBoxCommandType::MouseButton);
+}
+
+void KmBoxBManager::km_right(bool down)
+{
+    std::string command = "km.right(" + std::to_string(down ? 1 : 0) + ")\r\n";
+    EnqueueCommand(command, KmBoxCommandType::MouseButton);
+}
+
+void KmBoxBManager::km_middle(bool down)
+{
+    std::string command = "km.middle(" + std::to_string(down ? 1 : 0) + ")\r\n";
+    EnqueueCommand(command, KmBoxCommandType::MouseButton);
 }

@@ -749,10 +749,29 @@ namespace AimbotDetail {
         SDK->WPM<float>(OW::GetSenstivePTR(), locked ? 0.f : origin_sens);
     }
 
+    inline void MoveAimDelta(const Vector3& current_angle, const Vector3& target_angle, int move_time_ms = 5) {
+        OW::SendMouseMove(target_angle - current_angle, move_time_ms);
+    }
+
+    inline void ClickMouseButton(int button, DWORD sleep_ms = 10) {
+        OW::SendMouseButton(button, true);
+        Sleep(sleep_ms);
+        OW::SendMouseButton(button, false);
+    }
+
+    inline void ClickDmaMouseKey(uint32_t key, DWORD sleep_ms = 10) {
+        int button = -1;
+        if (OW::DmaKeyToMouseButton(key, button)) {
+            ClickMouseButton(button, sleep_ms);
+        } else {
+            OW::SetKey(key);
+            Sleep(sleep_ms);
+        }
+    }
+
     inline void PressWithSensitivity(uint32_t key, float origin_sens, DWORD sleep_ms = 1) {
         SetSensitivityLocked(true, origin_sens);
-        OW::SetKey(key);
-        Sleep(sleep_ms);
+        ClickDmaMouseKey(key, sleep_ms);
         SetSensitivityLocked(false, origin_sens);
     }
 
@@ -863,7 +882,7 @@ namespace AimbotDetail {
     inline void FirePrimaryNormal() {
         const c_entity local = LocalEntity();
         if (local.HeroID == OW::eHero::HERO_GENJI || local.HeroID == OW::eHero::HERO_KIRIKO) {
-            OW::SetKey(0x2);
+            ClickMouseButton(1);
             if (OW::Config::dontshot) OW::Config::shotcount++;
             return;
         }
@@ -873,13 +892,13 @@ namespace AimbotDetail {
              local.HeroID == OW::eHero::HERO_ASHE) && GetAsyncKeyState(0x2)) {
             OW::SetKeyscopeHold(0x1, 30);
         } else {
-            OW::SetKey(0x1);
+            ClickMouseButton(0);
         }
     }
 
     inline void FireHanzo() {
         const c_entity local = LocalEntity();
-        if (local.skill2act) OW::SetKey(0x1);
+        if (local.skill2act) ClickMouseButton(0);
         else OW::SetKeyHold(0x1000, 100);
     }
 
@@ -920,7 +939,7 @@ namespace AimbotDetail {
         if (OW::Config::health <= OW::Config::AutoRMBhealth &&
             dist <= OW::Config::AutoRMBdistance &&
             OW::Config::AutoRMB) {
-            OW::SetKey(0x2);
+            ClickMouseButton(1);
         }
     }
 
@@ -949,8 +968,8 @@ namespace AimbotDetail {
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     if (!TargetDelayReady(nullptr, false, false)) continue;
-                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170,
-                                      OW::Config::Rage ? aim.target_angle : aim.smoothed_angle);
+                    MoveAimDelta(aim.local_angle,
+                                 OW::Config::Rage ? aim.target_angle : aim.smoothed_angle);
                     RunCloseRangeActions(vec);
                 }
 
@@ -968,12 +987,12 @@ namespace AimbotDetail {
 
         if (OW::Config::fakesilent) {
             Vector3 original_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.target_angle);
+            MoveAimDelta(original_angle, aim.target_angle);
             PressWithSensitivity(0x1, origin_sens, 25);
             OW::Config::shooted = true;
-            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, original_angle);
+            MoveAimDelta(aim.target_angle, original_angle);
         } else {
-            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.target_angle);
+            MoveAimDelta(aim.local_angle, aim.target_angle);
             PressWithSensitivity(0x1, origin_sens, 1);
             OW::Config::shooted = true;
         }
@@ -985,15 +1004,15 @@ namespace AimbotDetail {
 
         if (OW::Config::fakesilent) {
             Vector3 original_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.target_angle);
+            MoveAimDelta(original_angle, aim.target_angle);
             SetSensitivityLocked(true, origin_sens);
             FireHanzo();
             Sleep(25);
             SetSensitivityLocked(false, origin_sens);
             OW::Config::shooted = true;
-            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, original_angle);
+            MoveAimDelta(aim.target_angle, original_angle);
         } else {
-            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.target_angle);
+            MoveAimDelta(aim.local_angle, aim.target_angle);
             FireHanzo();
             OW::Config::shooted = true;
         }
@@ -1025,15 +1044,15 @@ namespace AimbotDetail {
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     if (DelayedShotTimedOut(state)) {
                         const c_entity local = LocalEntity();
-                        OW::SetKey((local.HeroID == OW::eHero::HERO_GENJI ||
-                                    local.HeroID == OW::eHero::HERO_KIRIKO) ? 0x2 : 0x1);
+                        ClickMouseButton((local.HeroID == OW::eHero::HERO_GENJI ||
+                                          local.HeroID == OW::eHero::HERO_KIRIKO) ? 1 : 0);
                         OW::Config::shooted = true;
                         continue;
                     }
 
                     if (RunPrimaryRageShot(aim, origin_sens)) continue;
 
-                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.smoothed_angle);
+                    MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox)) {
                         SetSensitivityLocked(true, origin_sens);
                         FirePrimaryNormal();
@@ -1048,8 +1067,8 @@ namespace AimbotDetail {
                         OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::missbox)) {
                         OW::Config::shotcount = 0;
                         const c_entity local = LocalEntity();
-                        OW::SetKey((local.HeroID == OW::eHero::HERO_GENJI ||
-                                    local.HeroID == OW::eHero::HERO_KIRIKO) ? 0x2 : 0x1);
+                        ClickMouseButton((local.HeroID == OW::eHero::HERO_GENJI ||
+                                          local.HeroID == OW::eHero::HERO_KIRIKO) ? 1 : 0);
                         OW::Config::shooted = true;
                         continue;
                     }
@@ -1085,7 +1104,7 @@ namespace AimbotDetail {
                     if (RunHanzoRageShot(aim, origin_sens)) continue;
                     if (!TargetDelayReady(&state, true, true)) continue;
 
-                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.smoothed_angle);
+                    MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox)) {
                         SetSensitivityLocked(true, origin_sens);
                         FireHanzo();
@@ -1139,8 +1158,8 @@ namespace AimbotDetail {
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     const float dist2 = CameraPosition().DistTo(vec);
                     if ((!local.skillcd1 && dist2 < 20.f) || dist2 < 7.f) {
-                        SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170,
-                                          OW::Config::Rage ? aim.target_angle : aim.smoothed_angle);
+                        MoveAimDelta(aim.local_angle,
+                                     OW::Config::Rage ? aim.target_angle : aim.smoothed_angle);
                     }
                     if (!local.skillcd1 && OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 0.8f)) {
                         if (detecttoggle && !first) {
@@ -1152,7 +1171,7 @@ namespace AimbotDetail {
                         first = 0;
                     }
                     if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f) && dist2 < 5.f)
-                        OW::SetKey(0x1);
+                        ClickMouseButton(0);
                     if (local.skillcd1 != 0 && !detecttoggle) detecttoggle = 1;
                 }
             }
@@ -1187,7 +1206,7 @@ namespace AimbotDetail {
             if (OW::Config::health <= OW::Config::AutoRMBhealth &&
                 dist <= OW::Config::AutoRMBdistance &&
                 !(target.skill1act && target.HeroID == OW::eHero::HERO_VENTURE)) {
-                OW::SetKey(0x2);
+                ClickMouseButton(1);
                 Sleep(1);
             }
         }
@@ -1316,12 +1335,12 @@ namespace AimbotDetail {
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     RunCloseRangeActions(vec);
-                    SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, aim.smoothed_angle);
+                    MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     if (OW::Config::Flick2 &&
                         OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox2)) {
                         const int tk = OW::Config::togglekey;
-                        if (tk == 0)       OW::SetKey(0x1);
-                        else if (tk == 1)  OW::SetKey(0x2);
+                        if (tk == 0)       ClickMouseButton(0);
+                        else if (tk == 1)  ClickMouseButton(1);
                         else if (tk == 2)  OW::SetKey(0x8);
                         else if (tk == 3)  OW::SetKey(0x10);
                         else if (tk == 4)  OW::SetKey(0x20);

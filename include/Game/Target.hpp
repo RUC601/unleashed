@@ -8,11 +8,14 @@
 #include <ctime>
 #include <limits>
 #include <mutex>
+#include <cstdio>
 #include <unordered_map>
 #include <windows.h>
 
 #include "Game/Decrypt.hpp"
 #include "Game/Entity.hpp"
+#include "Kmbox/KmBoxNetManager.h"
+#include "Kmbox/KmboxB.h"
 #include "Utils/Config.hpp"
 
 extern std::mutex g_mutex;
@@ -40,10 +43,97 @@ namespace OW {
     // Keyboard / input helpers
     // =========================================================================
 
-    inline void SetKey(uint32_t key) {
+    inline void SendDmaKey(uint32_t key) {
         __try {
             SDK->WPM<uint32_t>(SDK->g_player_controller + 0x112C, key);
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
+
+    inline uint32_t MouseButtonToDmaKey(int button) {
+        switch (button) {
+        case 0: return 0x1;
+        case 1: return 0x2;
+        case 2: return 0x4;
+        default: return 0;
+        }
+    }
+
+    inline bool DmaKeyToMouseButton(uint32_t key, int& button) {
+        switch (key) {
+        case 0x1: button = 0; return true;
+        case 0x2: button = 1; return true;
+        case 0x4: button = 2; return true;
+        default: return false;
+        }
+    }
+
+    inline void SendMouseMove(const Vector3& delta, int moveTimeMs = 5) {
+        if (Config::kmboxEnabled) {
+            const float sensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 5.0f);
+            const int pixelX = static_cast<int>(std::lround(delta.X * sensitivity));
+            const int pixelY = static_cast<int>(std::lround(delta.Y * sensitivity));
+
+            if (Config::kmboxDebugLog) {
+                std::printf("[KMBOX] mouse.move delta=(%.6f, %.6f, %.6f) pixels=(%d,%d) time=%dms type=%d\n",
+                    delta.X, delta.Y, delta.Z, pixelX, pixelY, moveTimeMs, Config::kmboxDeviceType);
+            }
+
+            if (pixelX == 0 && pixelY == 0)
+                return;
+
+            if (Config::kmboxDeviceType == 0)
+                kmbox::KmBoxMgr.Mouse.Move(pixelX, pixelY);
+            else
+                kmbox::kmBoxBMgr.km_move(pixelX, pixelY);
+            return;
+        }
+
+        __try {
+            const Vector3 current = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+            SDK->WPM<Vector3>(SDK->g_player_controller + 0x1170, current + delta);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
+
+    inline void SendMouseMove(float deltaX, float deltaY, int moveTimeMs = 5) {
+        SendMouseMove(Vector3(deltaX, deltaY, 0.0f), moveTimeMs);
+    }
+
+    inline void SendMouseButton(int button, bool down) {
+        if (Config::kmboxEnabled) {
+            if (Config::kmboxDebugLog) {
+                std::printf("[KMBOX] mouse.button button=%d down=%d type=%d\n",
+                    button, down ? 1 : 0, Config::kmboxDeviceType);
+            }
+
+            if (Config::kmboxDeviceType == 0) {
+                if (button == 0) kmbox::KmBoxMgr.Mouse.Left(down);
+                else if (button == 1) kmbox::KmBoxMgr.Mouse.Right(down);
+                else if (button == 2) kmbox::KmBoxMgr.Mouse.Middle(down);
+            } else {
+                if (button == 0) kmbox::kmBoxBMgr.km_left(down);
+                else if (button == 1) kmbox::kmBoxBMgr.km_right(down);
+                else if (button == 2) kmbox::kmBoxBMgr.km_middle(down);
+            }
+            return;
+        }
+
+        if (down) {
+            const uint32_t key = MouseButtonToDmaKey(button);
+            if (key != 0)
+                SendDmaKey(key);
+        }
+    }
+
+    inline void SetKey(uint32_t key) {
+        int button = -1;
+        if (Config::kmboxEnabled && DmaKeyToMouseButton(key, button)) {
+            SendMouseButton(button, true);
+            Sleep(10);
+            SendMouseButton(button, false);
+            return;
+        }
+
+        SendDmaKey(key);
     }
 
     inline int get_bind_id(int setting) {

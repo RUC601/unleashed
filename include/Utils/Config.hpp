@@ -207,6 +207,16 @@ namespace OW { namespace Config {
     inline bool namespoofer   = false;
     inline char fakename[64]  = "";
 
+    // ---- KMBox input output ----
+    inline bool kmboxEnabled = false;
+    inline int  kmboxDeviceType = 0; // 0=Network/UDP, 1=Serial/COM
+    inline char kmboxIp[32] = "192.168.2.188";
+    inline int  kmboxPort = 6234;
+    inline char kmboxMac[32] = "";
+    inline char kmboxComPort[16] = "COM3";
+    inline float kmboxAimSensitivity = 1.0f;
+    inline bool kmboxDebugLog = false;
+
     // ---- Crosshair tracking circle ----
     inline int locx = 0, locy = 0, therad = 0, pon = 0, crss = 0;
 
