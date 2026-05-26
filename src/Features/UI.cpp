@@ -1410,6 +1410,8 @@ void UI::ThemePage() {
 // UI::MiscPage
 // =====================================================================
 void UI::MiscPage() {
+    ImGui::PushID("MiscPage");
+
     UIGroupBox("Menu");
     {
         SettingRow("Toggle Key");
@@ -1424,51 +1426,63 @@ void UI::MiscPage() {
 
     UIGroupBox("KMBox Settings");
     {
+        bool kmboxSaveRequested = false;
+        ImGui::PushID("KMBoxSettings");
+
         SettingRow("Enable KMBox");
-        UICheckbox("##kmboxEnable", &OW::Config::kmboxEnabled);
+        kmboxSaveRequested |= ImGui::Checkbox("##Enable", &OW::Config::kmboxEnabled);
 
         SettingRow("Device Type");
         ImGui::PushItemWidth(-1);
-        UISelect("##kmboxDeviceType", &OW::Config::kmboxDeviceType,
-                 kKmBoxDeviceTypes, IM_ARRAYSIZE(kKmBoxDeviceTypes));
+        kmboxSaveRequested |= ImGui::Combo("##DeviceType", &OW::Config::kmboxDeviceType,
+                                           kKmBoxDeviceTypes, IM_ARRAYSIZE(kKmBoxDeviceTypes));
         ImGui::PopItemWidth();
 
         if (OW::Config::kmboxDeviceType == 0) {
             SettingRow("IP");
             ImGui::PushItemWidth(-1);
-            ImGui::InputText("##kmboxIp", OW::Config::kmboxIp, IM_ARRAYSIZE(OW::Config::kmboxIp));
+            ImGui::InputText("##Ip", OW::Config::kmboxIp, IM_ARRAYSIZE(OW::Config::kmboxIp));
+            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
 
             SettingRow("Port");
             ImGui::PushItemWidth(-1);
-            ImGui::InputInt("##kmboxPort", &OW::Config::kmboxPort, 0, 0);
+            ImGui::InputInt("##Port", &OW::Config::kmboxPort, 0, 0);
+            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
 
             SettingRow("MAC");
             ImGui::PushItemWidth(-1);
-            ImGui::InputText("##kmboxMac", OW::Config::kmboxMac, IM_ARRAYSIZE(OW::Config::kmboxMac));
+            ImGui::InputText("##Mac", OW::Config::kmboxMac, IM_ARRAYSIZE(OW::Config::kmboxMac));
+            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
         } else {
             SettingRow("COM Port");
             ImGui::PushItemWidth(-1);
-            ImGui::InputText("##kmboxComPort", OW::Config::kmboxComPort, IM_ARRAYSIZE(OW::Config::kmboxComPort));
+            ImGui::InputText("##ComPort", OW::Config::kmboxComPort, IM_ARRAYSIZE(OW::Config::kmboxComPort));
+            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
         }
 
         SettingRow("Aim Sensitivity");
         ImGui::PushItemWidth(-1);
-        UISlider("##kmboxAimSensitivity", &OW::Config::kmboxAimSensitivity, 0.1f, 5.0f, "1.00");
+        kmboxSaveRequested |= ImGui::SliderFloat("##AimSensitivity", &OW::Config::kmboxAimSensitivity,
+                                                 0.1f, 5.0f, "%.2f");
         ImGui::PopItemWidth();
 
         SettingRow("Input Delay (ms)");
         ImGui::PushItemWidth(-1);
-        float kmboxDelayF = static_cast<float>(OW::Config::kmboxInputDelayMs);
-        if (UISlider("##kmboxInputDelay", &kmboxDelayF, 0.0f, 20.0f, "0 ms"))
-            OW::Config::kmboxInputDelayMs = static_cast<int>(kmboxDelayF);
+        kmboxSaveRequested |= ImGui::SliderInt("##InputDelay", &OW::Config::kmboxInputDelayMs,
+                                               0, 20, "%d ms");
         ImGui::PopItemWidth();
 
         SettingRow("Debug Logging");
-        UICheckbox("##kmboxDebug", &OW::Config::kmboxDebugLog);
+        kmboxSaveRequested |= ImGui::Checkbox("##Debug", &OW::Config::kmboxDebugLog);
+
+        if (kmboxSaveRequested)
+            OW::Config::SaveConfig(".\\config.ini");
+
+        ImGui::PopID();
     }
     CloseGroupBox();
 
@@ -1489,6 +1503,8 @@ void UI::MiscPage() {
         ImGui::PopItemWidth();
     }
     CloseGroupBox();
+
+    ImGui::PopID();
 }
 
 // =====================================================================

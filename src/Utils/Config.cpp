@@ -36,6 +36,11 @@ namespace OW { namespace Config {
         constexpr int kCurrentConfigVersion = 2;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
+        constexpr const char* kDefaultKmboxIp = "192.168.2.188";
+        constexpr int kDefaultKmboxPort = 8808;
+        constexpr const char* kDefaultKmboxMac = "12525C53";
+        constexpr const char* kDefaultKmboxComPort = "COM3";
+        constexpr int kDefaultKmboxInputDelayMs = 0;
 
         using SectionValues = std::unordered_map<std::string, std::string>;
 
@@ -713,11 +718,12 @@ namespace OW { namespace Config {
 
             kmboxEnabled = false;         // default: disabled
             kmboxDeviceType = 0;          // default: Network/UDP
-            CopyString(kmboxIp, "192.168.2.188");
-            kmboxPort = 6234;             // default KMBox UDP port
-            kmboxMac[0] = '\0';           // default: empty MAC
-            CopyString(kmboxComPort, "COM3");
+            CopyString(kmboxIp, kDefaultKmboxIp);
+            kmboxPort = kDefaultKmboxPort;
+            CopyString(kmboxMac, kDefaultKmboxMac);
+            CopyString(kmboxComPort, kDefaultKmboxComPort);
             kmboxAimSensitivity = 1.0f;   // default: 1:1 scalar
+            kmboxInputDelayMs = kDefaultKmboxInputDelayMs;
             kmboxDebugLog = false;        // default: off
 
             manualScreenWidth = 1920;      // default: 1920 px
@@ -1027,7 +1033,21 @@ namespace OW { namespace Config {
             CopyString(kmboxMac, ReadString(ini, section, "kmboxMac", kmboxMac));
             CopyString(kmboxComPort, ReadString(ini, section, "kmboxComPort", kmboxComPort));
             kmboxAimSensitivity = ReadFixedFloat(ini, section, "kmboxAimSensitivity", kmboxAimSensitivity);
+            kmboxInputDelayMs = ReadInt(ini, section, "kmboxInputDelayMs", kmboxInputDelayMs);
             kmboxDebugLog = ReadBool(ini, section, "kmboxDebugLog", kmboxDebugLog);
+        }
+
+        void SaveKmboxSettingsUnlocked(const std::string& path)
+        {
+            WriteBoolValue(path, "KMBox", "kmboxEnabled", kmboxEnabled);
+            WriteIntValue(path, "KMBox", "kmboxDeviceType", kmboxDeviceType);
+            WriteStringValue(path, "KMBox", "kmboxIp", kmboxIp);
+            WriteIntValue(path, "KMBox", "kmboxPort", kmboxPort);
+            WriteStringValue(path, "KMBox", "kmboxMac", kmboxMac);
+            WriteStringValue(path, "KMBox", "kmboxComPort", kmboxComPort);
+            WriteFixedFloatValue(path, "KMBox", "kmboxAimSensitivity", kmboxAimSensitivity);
+            WriteIntValue(path, "KMBox", "kmboxInputDelayMs", kmboxInputDelayMs);
+            WriteBoolValue(path, "KMBox", "kmboxDebugLog", kmboxDebugLog);
         }
 
         template <typename T>
@@ -1134,7 +1154,8 @@ namespace OW { namespace Config {
             ClampSetting("lastheroid", lastheroid, -2, (std::numeric_limits<int>::max)(), -2);
             ClampSetting("targetPriority", targetPriority, 0, 2, 0);
             ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 1, 0);
-            ClampSetting("kmboxPort", kmboxPort, 1, 65535, 6234);
+            ClampSetting("kmboxPort", kmboxPort, 1, 65535, kDefaultKmboxPort);
+            ClampSetting("kmboxInputDelayMs", kmboxInputDelayMs, 0, 20, kDefaultKmboxInputDelayMs);
             ClampSetting("manualScreenWidth", manualScreenWidth, 0, 16384, 1920);
             ClampSetting("manualScreenHeight", manualScreenHeight, 0, 16384, 1080);
             ClampFloatSetting("kmboxAimSensitivity", kmboxAimSensitivity, 0.1f, 5.0f, 1.0f);
@@ -1204,9 +1225,9 @@ namespace OW { namespace Config {
             LogConfig(level, "Dump: fov-change enablechangefov=%s CHANGEFOV=%.3f trackback=%s secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(enablechangefov).c_str(), CHANGEFOV, ToText(trackback).c_str(),
                 ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
-            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f debugLog=%s",
+            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f inputDelayMs=%d debugLog=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMac,
-                kmboxComPort, kmboxAimSensitivity, ToText(kmboxDebugLog).c_str());
+                kmboxComPort, kmboxAimSensitivity, kmboxInputDelayMs, ToText(kmboxDebugLog).c_str());
             LogConfig(level, "Dump: manual screen width=%d height=%d",
                 manualScreenWidth, manualScreenHeight);
             LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s outline=%s externaloutline=%s teamoutline=%s healthoutline=%s rainbowoutline=%s",
@@ -1323,7 +1344,10 @@ namespace OW { namespace Config {
         ValidateUnlocked();
 
         if (heroId == 0) {
-            LogConfig(Diagnostics::LogLevel::Warn, "Skipping config save because hero id is 0.");
+            WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
+            SaveKmboxSettingsUnlocked(path);
+            LogConfig(Diagnostics::LogLevel::Info,
+                "Saved global KMBox config to %s without a current hero.", path.c_str());
             return;
         }
 
@@ -1443,14 +1467,7 @@ namespace OW { namespace Config {
         WriteColor(path, "Global", "targetargb2", targetargb2);
         WriteColor(path, "Global", "allyargb", allyargb);
 
-        WriteBoolValue(path, "KMBox", "kmboxEnabled", kmboxEnabled);
-        WriteIntValue(path, "KMBox", "kmboxDeviceType", kmboxDeviceType);
-        WriteStringValue(path, "KMBox", "kmboxIp", kmboxIp);
-        WriteIntValue(path, "KMBox", "kmboxPort", kmboxPort);
-        WriteStringValue(path, "KMBox", "kmboxMac", kmboxMac);
-        WriteStringValue(path, "KMBox", "kmboxComPort", kmboxComPort);
-        WriteFixedFloatValue(path, "KMBox", "kmboxAimSensitivity", kmboxAimSensitivity);
-        WriteBoolValue(path, "KMBox", "kmboxDebugLog", kmboxDebugLog);
+        SaveKmboxSettingsUnlocked(path);
 
         SaveHeroPresetsUnlocked(path);
 
