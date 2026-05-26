@@ -1460,6 +1460,13 @@ void UI::MiscPage() {
         UISlider("##kmboxAimSensitivity", &OW::Config::kmboxAimSensitivity, 0.1f, 5.0f, "1.00");
         ImGui::PopItemWidth();
 
+        SettingRow("Input Delay (ms)");
+        ImGui::PushItemWidth(-1);
+        float kmboxDelayF = static_cast<float>(OW::Config::kmboxInputDelayMs);
+        if (UISlider("##kmboxInputDelay", &kmboxDelayF, 0.0f, 20.0f, "0 ms"))
+            OW::Config::kmboxInputDelayMs = static_cast<int>(kmboxDelayF);
+        ImGui::PopItemWidth();
+
         SettingRow("Debug Logging");
         UICheckbox("##kmboxDebug", &OW::Config::kmboxDebugLog);
     }

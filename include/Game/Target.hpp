@@ -52,7 +52,8 @@ namespace OW {
         }
     }
 
-    inline void SendMouseMove(const Vector3& delta, int moveTimeMs = 5) {
+    inline void SendMouseMove(const Vector3& delta, int moveTimeMs = -1) {
+        if (moveTimeMs < 0) moveTimeMs = Config::kmboxInputDelayMs;
         if (Config::kmboxEnabled) {
             const float sensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 5.0f);
             const int pixelX = static_cast<int>(std::lround(delta.X * sensitivity));
@@ -74,7 +75,7 @@ namespace OW {
         }
     }
 
-    inline void SendMouseMove(float deltaX, float deltaY, int moveTimeMs = 5) {
+    inline void SendMouseMove(float deltaX, float deltaY, int moveTimeMs = -1) {
         SendMouseMove(Vector3(deltaX, deltaY, 0.0f), moveTimeMs);
     }
 
