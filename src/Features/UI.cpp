@@ -43,24 +43,6 @@ namespace {
     inline float  g_aimbotMaxDist           = 100.0f;// MISSING from OW::Config
     inline float  g_aimbotMinDist           = 0.0f;  // MISSING from OW::Config
 
-    // ---- Visuals ----
-    inline bool   g_visualBox               = true;  // Partial: OW::Config::draw_info
-    inline bool   g_visualSkeleton          = true;  // Maps to OW::Config::draw_skel
-    inline bool   g_visualRadar             = true;  // Maps to OW::Config::radar
-    inline bool   g_visualHealthbar         = true;  // Maps to OW::Config::drawhealth / healthbar
-    inline bool   g_visualGlow              = true;  // MISSING from OW::Config
-    inline bool   g_visualHero              = false; // MISSING from OW::Config
-    inline bool   g_visualDamage            = true;  // MISSING from OW::Config
-    inline bool   g_visualLines             = false; // Maps to OW::Config::drawline
-    inline bool   g_visualDistance          = false; // Maps to OW::Config::dist
-    inline float  g_visualFloat             = 32.0f; // MISSING from OW::Config
-    inline float  g_visualDisplay           = 24.0f; // MISSING from OW::Config
-    inline bool   g_visualHideTeam          = true;  // MISSING from OW::Config
-    inline bool   g_visualHideInvisibleText  = true; // MISSING from OW::Config
-    inline bool   g_visualShowTeamRadar     = true;  // MISSING from OW::Config
-    inline bool   g_visualHideInvisibleHealth = true;// MISSING from OW::Config
-    inline float  g_visualMaxTextDist       = 100.0f;// MISSING from OW::Config
-
 } // anonymous namespace
 
 // =====================================================================
@@ -1338,35 +1320,33 @@ void UI::AimbotPage() {
 // UI::VisualsPage
 // =====================================================================
 void UI::VisualsPage() {
-    // Player Visual Features -- 3-column grid of checkboxes
+    // Player Visual Features -- renderer-backed OW::Config toggles.
     UIGroupBox("Player Visual Features");
     {
         const char* labels[] = {
-            "Box ESP", "Healthbar", "Damage Text",
-            "Skeleton", "Glow", "Lines",
-            "Radar", "Hero", "Distance"
+            "Box", "Skeleton", "Healthbar",
+            "Radar", "Lines", "Distance",
+            "Battletag", "Name", "Ultimate",
+            "Skill Info", "FOV Circle", "Health Packs",
+            "Crosshair", "Radar Lines", "Healthbar Style 2"
         };
         bool* values[] = {
-            &OW::Config::draw_info, &OW::Config::drawhealth, &g_visualDamage,
-            &OW::Config::draw_skel, &g_visualGlow, &OW::Config::drawline,
-            &OW::Config::radar, &g_visualHero, &OW::Config::dist
+            &OW::Config::draw_info, &OW::Config::draw_skel, &OW::Config::drawhealth,
+            &OW::Config::radar, &OW::Config::drawline, &OW::Config::dist,
+            &OW::Config::drawbattletag, &OW::Config::name, &OW::Config::ult,
+            &OW::Config::skillinfo, &OW::Config::draw_fov, &OW::Config::draw_hp_pack,
+            &OW::Config::crosscircle, &OW::Config::radarline, &OW::Config::healthbar2
         };
-        const float ratios[] = { 1.0f, 1.0f, 1.0f };
-        DrawCheckboxGrid3(labels, values, 3, 26.0f, ratios);
+        const float ratios[] = { 1.0f, 1.0f, 1.2f };
+        DrawCheckboxGrid3(labels, values, 5, 26.0f, ratios);
     }
     CloseGroupBox();
 
-    // Damage Text Options
-    UIGroupBox("Damage Text Options");
+    UIGroupBox("Healthbar");
     {
-        SettingRow("Floating Distance");
+        SettingRow("Text Size");
         ImGui::PushItemWidth(-1);
-        UISlider("##visFloat", &g_visualFloat, 0.0f, 100.0f, "200 cm");
-        ImGui::PopItemWidth();
-
-        SettingRow("Display Time");
-        ImGui::PushItemWidth(-1);
-        UISlider("##visDisplay", &g_visualDisplay, 0.0f, 100.0f, "1000 ms");
+        UISlider("##healthbarTextSize", &OW::Config::healthbartextsize, 10.0f, 24.0f, "16 px");
         ImGui::PopItemWidth();
     }
     CloseGroupBox();
@@ -1374,27 +1354,9 @@ void UI::VisualsPage() {
     // Filters
     UIGroupBox("Filters");
     {
-        const char* labels[] = {
-            "Hide Team", "Show Team On Radar", nullptr,
-            "Hide Invisible Text", "Hide Invisible Healthbar", nullptr
-        };
-        bool* values[] = {
-            &g_visualHideTeam, &g_visualShowTeamRadar, nullptr,
-            &g_visualHideInvisibleText, &g_visualHideInvisibleHealth, nullptr
-        };
-        const float ratios[] = { 1.0f, 1.45f, 0.7f };
-        DrawCheckboxGrid3(labels, values, 2, 19.0f, ratios);
-
-        ImGui::Dummy(ImVec2(0.0f, 9.0f));
-
         SettingRow("Max Distance");
         ImGui::PushItemWidth(-1);
         UISlider("##visMaxDist", &OW::Config::visualMaxDist, 0.0f, 100.0f, "100 m");
-        ImGui::PopItemWidth();
-
-        SettingRow("Max Text Distance");
-        ImGui::PushItemWidth(-1);
-        UISlider("##visMaxTxtDist", &g_visualMaxTextDist, 0.0f, 100.0f, "Unlimited");
         ImGui::PopItemWidth();
     }
     CloseGroupBox();

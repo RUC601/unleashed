@@ -753,8 +753,9 @@ namespace OW {
         uint64_t v11 = v10;
         uint64_t v12 = SDK->RPM<uint64_t>(v9 + v6) + 16 * v10;
         while (SDK->RPM<uint16_t>(v12) != v8) {
+            if (v11 == 0) return 0;
             v12 -= 16;
-            if (--v11 < 0) return 0;
+            --v11;
         }
         uint64_t v13 = SDK->RPM<uint64_t>(v12 + 8);
         if (!v13) return 0;

@@ -150,7 +150,7 @@ namespace OW {
         union {
             OFF_MEMB(XMFLOAT3,  velocity, 0x50);
             OFF_MEMB(XMFLOAT3,  location, 0x1B0 + 0x50);
-            OFF_MEMB(uint64_t,  bonedata, 0x8A0);
+            OFF_MEMB(uint64_t,  bonedata, 0x8B0);
         };
     };
 

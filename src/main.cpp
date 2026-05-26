@@ -127,17 +127,115 @@ namespace {
         drawLine(snapshot.viewMatrixResolved && snapshot.viewMatrixValid ? okColor : badColor,
             snapshot.viewMatrixResolved && snapshot.viewMatrixValid ? "VM: valid" : "VM: zero/invalid");
 
-        std::snprintf(line, sizeof(line), "Entities: %zu raw", snapshot.lastScanEntityCount);
-        drawLine(snapshot.lastScanEntityCount > 0 ? okColor : warnColor, line);
+        std::snprintf(line, sizeof(line), "Entities: scan %zu proc %zu",
+            snapshot.lastScanEntityCount,
+            snapshot.entityProcess.raw);
+        drawLine(snapshot.lastScanEntityCount > 0 && snapshot.entityProcess.raw == 0 ? warnColor :
+            snapshot.lastScanEntityCount > 0 ? okColor : warnColor, line);
 
-        std::snprintf(line, sizeof(line), "Validated: %zu", snapshot.entityCount);
+        std::snprintf(line, sizeof(line), "Validated: %zu", snapshot.entityProcess.validated);
         drawLine(snapshot.entityCount > 0 ? okColor : warnColor, line);
+
+        std::snprintf(line, sizeof(line), "Drop: null %zu dup %zu hp %zu link %zu",
+            snapshot.entityProcess.nullPair,
+            snapshot.entityProcess.duplicate,
+            snapshot.entityProcess.healthBaseFail,
+            snapshot.entityProcess.linkBaseFail);
+        drawLine(textColor, line);
+
+        std::snprintf(line, sizeof(line), "Hero: miss %zu fbFail %zu name? %zu",
+            snapshot.entityProcess.heroBaseMissing,
+            snapshot.entityProcess.heroFallbackFail,
+            snapshot.entityProcess.nameUnknown);
+        drawLine(textColor, line);
+
+        std::snprintf(line, sizeof(line), "Bone: cand %zu base %zu vbd %zu skel %zu/%zu",
+            snapshot.entityProcess.boneCandidates,
+            snapshot.entityProcess.boneBaseNonZero,
+            snapshot.entityProcess.velocityBoneDataNonZero,
+            snapshot.entityProcess.skeletonHeadValid,
+            snapshot.entityProcess.skeletonAnyValid);
+        drawLine(snapshot.entityProcess.boneCandidates > 0 &&
+            snapshot.entityProcess.skeletonHeadValid == 0 ? warnColor : textColor, line);
+
+        std::snprintf(line, sizeof(line), "Bone ptr: ptr %zu base %zu",
+            snapshot.entityProcess.boneDataPtrNonZero,
+            snapshot.entityProcess.bonesBaseNonZero);
+        drawLine(snapshot.entityProcess.boneCandidates > 0 &&
+            snapshot.entityProcess.bonesBaseNonZero == 0 ? warnColor : textColor, line);
+
+        std::snprintf(line, sizeof(line), "Bone id: tbl %zu cnt %zu rd %zu head %zu",
+            snapshot.entityProcess.velocityBoneIdTableNonZero,
+            snapshot.entityProcess.velocityBoneCountValid,
+            snapshot.entityProcess.velocityBoneIdTableReadable,
+            snapshot.entityProcess.velocityBoneHeadIdFound);
+        drawLine(snapshot.entityProcess.boneCandidates > 0 &&
+            snapshot.entityProcess.velocityBoneHeadIdFound < snapshot.entityProcess.boneCandidates ? warnColor : textColor, line);
+
+        std::snprintf(line, sizeof(line), "Head: res %zu id %zu loc %zu world %zu",
+            snapshot.entityProcess.headProbeResolved,
+            snapshot.entityProcess.headProbeIdFound,
+            snapshot.entityProcess.headProbeLocalNonZero,
+            snapshot.entityProcess.headProbeWorldNonZero);
+        drawLine(snapshot.entityProcess.headProbeCandidates > 0 &&
+            snapshot.entityProcess.headProbeWorldNonZero < snapshot.entityProcess.headProbeCandidates ? warnColor : textColor, line);
+
+        std::snprintf(line, sizeof(line), "Head path: near %zu/%zu far %zu/%zu ex %zu",
+            snapshot.entityProcess.headProbeNearWorldNonZero,
+            snapshot.entityProcess.headProbeNearCandidates,
+            snapshot.entityProcess.headProbeFarWorldNonZero,
+            snapshot.entityProcess.headProbeFarCandidates,
+            snapshot.entityProcess.headProbeExceptions);
+        drawLine(snapshot.entityProcess.headProbeFarCandidates > 0 &&
+            snapshot.entityProcess.headProbeFarWorldNonZero == 0 ? warnColor : textColor, line);
 
         std::snprintf(line, sizeof(line), "Render: radar=%d player=%d skill=%d",
             snapshot.renderDrawRadarCalled ? 1 : 0,
             snapshot.renderPlayerInfoCalled ? 1 : 0,
             snapshot.renderSkillInfoCalled ? 1 : 0);
         drawLine(textColor, line);
+
+        std::snprintf(line, sizeof(line), "PI: in %zu proj %zu draw %zu",
+            snapshot.playerInfo.input,
+            snapshot.playerInfo.projected,
+            snapshot.playerInfo.drawn);
+        drawLine(snapshot.playerInfo.input > 0 && snapshot.playerInfo.drawn == 0 ? warnColor : textColor, line);
+
+        std::snprintf(line, sizeof(line), "PI skip: hp %zu dead %zu self %zu dist %zu",
+            snapshot.playerInfo.skippedLocalHealth,
+            snapshot.playerInfo.skippedDead,
+            snapshot.playerInfo.skippedLocalEntity,
+            snapshot.playerInfo.skippedDistance);
+        drawLine(textColor, line);
+
+        std::snprintf(line, sizeof(line), "W2S: low %zu high %zu box %zu win %zu",
+            snapshot.playerInfo.skippedWorldToScreenLow,
+            snapshot.playerInfo.skippedWorldToScreenHigh,
+            snapshot.playerInfo.skippedBox,
+            snapshot.playerInfo.skippedWindow);
+        drawLine(textColor, line);
+
+        std::snprintf(line, sizeof(line), "Local: sel %zu hp %d best %dcm",
+            snapshot.localEntity.selected,
+            snapshot.localEntity.selectedHealth,
+            snapshot.localEntity.bestDistanceCm);
+        drawLine(snapshot.localEntity.selected == 0 || snapshot.localEntity.selectedHealth <= 0 ? warnColor : textColor, line);
+
+        std::snprintf(line, sizeof(line), "Local cand: angle %zu near %zu named %zu",
+            snapshot.localEntity.angleCandidates,
+            snapshot.localEntity.nearCameraCandidates,
+            snapshot.localEntity.namedCandidates);
+        drawLine(textColor, line);
+
+        std::snprintf(line, sizeof(line), "Best: hp %d hero 0x%llX",
+            snapshot.localEntity.bestHealth,
+            static_cast<unsigned long long>(snapshot.localEntity.bestHeroId));
+        drawLine(textColor, line);
+
+        std::snprintf(line, sizeof(line), "Coords: head0 %zu pos!0 %zu",
+            snapshot.localEntity.zeroHeadCandidates,
+            snapshot.localEntity.nonZeroPositionCandidates);
+        drawLine(snapshot.localEntity.zeroHeadCandidates > 0 ? warnColor : textColor, line);
 
         if (snapshot.renderEntityListEmpty)
             drawLine(badColor, "NO ENTITY DATA \xE2\x80\x94 check pipeline");
@@ -295,6 +393,9 @@ void RenderCallback()
         PlayerInfo();
         skillInfoCalled = true;
         skillinfo();
+    } else {
+        Diagnostics::PlayerInfoStats emptyPlayerInfoStats{};
+        Diagnostics::SetPlayerInfoStats(emptyPlayerInfoStats);
     }
 
     DrawHealthPacks();

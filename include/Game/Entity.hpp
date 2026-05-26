@@ -2,12 +2,14 @@
 #include <cstdint>
 #include <array>
 #include <string>
+#include <cmath>
 #include <DirectXMath.h>
 using namespace DirectX;
 
 #include "Game/Structs.hpp"
 #include "Game/Offsets.hpp"
 #include "Game/SDK.hpp"
+#include "Utils/Diagnostics.hpp"
 
 namespace OW {
 
@@ -73,6 +75,23 @@ namespace OW {
         Vector3 chest_pos{};
         std::array<Vector3, 18> skeleton_bones{};
         std::array<bool, 18> skeleton_bone_valid{};
+        uint64_t bone_fallback_logged_offset = UINT64_MAX;
+        bool debugHeadLookupAttempted = false;
+        bool debugHeadLookupResolved = false;
+        bool debugHeadIdFound = false;
+        bool debugHeadLocalFinite = false;
+        bool debugHeadLocalNonZero = false;
+        bool debugHeadWorldNonZero = false;
+        bool debugHeadLookupException = false;
+        uint64_t debugHeadBoneData = 0;
+        uint64_t debugHeadBonesBase = 0;
+        uint64_t debugHeadBonePtr = 0;
+        uint64_t debugHeadBoneIdTable = 0;
+        uint64_t debugHeadLocalAddress = 0;
+        uint16_t debugHeadBoneCount = 0;
+        int debugHeadMappedIndex = -1;
+        XMFLOAT3 debugHeadLocal{};
+        Vector3 debugHeadWorld{};
 
         // =====================================================================
         // Constructors / operators
@@ -104,37 +123,251 @@ namespace OW {
         // =====================================================================
         // Bone helpers
         // =====================================================================
+        static constexpr uint16_t kMaxBoneIdCount = 1024;
+
+        struct BoneDebugProbe {
+            int requestedBoneId = 0;
+            bool preconditions = false;
+            bool resolved = false;
+            bool idFound = false;
+            bool localFinite = false;
+            bool localNonZero = false;
+            bool worldNonZero = false;
+            bool exception = false;
+            uint64_t boneData = 0;
+            uint64_t bonesBase = 0;
+            uint64_t bonePtr = 0;
+            uint64_t boneIdTable = 0;
+            uint64_t localAddress = 0;
+            uint16_t boneCount = 0;
+            int mappedIndex = -1;
+            XMFLOAT3 local{};
+            Vector3 world{};
+        };
+
+        static bool IsFiniteBoneValue(const XMFLOAT3& value) {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        }
+
+        static bool IsNonZeroBoneValue(const XMFLOAT3& value) {
+            return value.x != 0.0f || value.y != 0.0f || value.z != 0.0f;
+        }
+
+        static bool IsFiniteVectorValue(const Vector3& value) {
+            return std::isfinite(value.X) && std::isfinite(value.Y) && std::isfinite(value.Z);
+        }
+
         int get_bone_id(uint64_t bonedata, int bone_id) {
+            const bool debugHead = bone_id == OW::BONE_HEAD;
+            if (debugHead) {
+                debugHeadLookupAttempted = true;
+                debugHeadLookupResolved = false;
+                debugHeadIdFound = false;
+                debugHeadLookupException = false;
+                debugHeadBoneData = bonedata;
+                debugHeadBonesBase = 0;
+                debugHeadBonePtr = 0;
+                debugHeadBoneIdTable = 0;
+                debugHeadBoneCount = 0;
+                debugHeadMappedIndex = -1;
+                debugHeadLocalAddress = 0;
+                debugHeadLocal = {};
+                debugHeadWorld = {};
+                debugHeadLocalFinite = false;
+                debugHeadLocalNonZero = false;
+                debugHeadWorldNonZero = false;
+            }
             __try {
                 uint64_t bonePtr = SDK->RPM<uint64_t>(bonedata);
-                uint32_t* v1 = (uint32_t*)SDK->RPM<uint64_t>(bonePtr + 0x38);
+                if (debugHead)
+                    debugHeadBonePtr = bonePtr;
+                if (!bonePtr)
+                    return 0;
+
+                uint64_t boneIdTable = SDK->RPM<uint64_t>(bonePtr + 0x38);
+                if (debugHead)
+                    debugHeadBoneIdTable = boneIdTable;
+                if (!boneIdTable)
+                    return 0;
+
                 uint16_t count = SDK->RPM<uint16_t>(bonePtr + 0x64);
-                for (int i = 0; i < count; i++) {
-                    if (SDK->RPM<uint16_t>((uint64_t)(v1 + i)) == bone_id) {
+                if (debugHead)
+                    debugHeadBoneCount = count;
+                if (count == 0 || count > kMaxBoneIdCount)
+                    return 0;
+
+                if (debugHead)
+                    debugHeadLookupResolved = true;
+
+                std::array<uint32_t, kMaxBoneIdCount> boneIds{};
+                if (!SDK->read_range(boneIdTable, boneIds.data(), sizeof(uint32_t) * count))
+                    return 0;
+
+                for (uint16_t i = 0; i < count; i++) {
+                    if (static_cast<uint16_t>(boneIds[i]) == bone_id) {
+                        if (debugHead) {
+                            debugHeadIdFound = true;
+                            debugHeadMappedIndex = static_cast<int>(i);
+                        }
                         return i;
                     }
                 }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                if (debugHead)
+                    debugHeadLookupException = true;
+            }
             return 0;
+        }
+
+        bool ResolveBoneDataCandidate(uint64_t pBoneData, uint64_t& bonesBase) {
+            bonesBase = 0;
+            if (!pBoneData)
+                return false;
+
+            bonesBase = SDK->RPM<uint64_t>(pBoneData + 0x20);
+            if (!bonesBase)
+                return false;
+
+            const uint64_t bonePtr = SDK->RPM<uint64_t>(pBoneData);
+            if (!bonePtr)
+                return false;
+
+            const uint64_t boneIdTable = SDK->RPM<uint64_t>(bonePtr + 0x38);
+            if (!boneIdTable)
+                return false;
+
+            const uint16_t count = SDK->RPM<uint16_t>(bonePtr + 0x64);
+            return count > 0 && count <= kMaxBoneIdCount;
+        }
+
+        uint64_t ResolveBoneData(uint64_t& bonesBase) {
+            if (this->VelocityBase) {
+                const uint64_t pBoneData = SDK->RPM<uint64_t>(this->VelocityBase + 0x8B0);
+                if (ResolveBoneDataCandidate(pBoneData, bonesBase))
+                    return pBoneData;
+            }
+
+            if (!this->BoneBase)
+                return 0;
+
+            constexpr std::array<uint64_t, 3> entryOffsets = { 0x20, 0x0, 0x10 };
+            for (const uint64_t entryOffset : entryOffsets) {
+                const uint64_t pBoneData = SDK->RPM<uint64_t>(this->BoneBase + entryOffset);
+                if (!ResolveBoneDataCandidate(pBoneData, bonesBase))
+                    continue;
+
+                if (this->bone_fallback_logged_offset != entryOffset) {
+                    Diagnostics::Info(
+                        "[BONE] BoneBase fallback resolved entry=0x%llX bone_base=0x%llX bonedata=0x%llX bones_base=0x%llX.",
+                        static_cast<unsigned long long>(entryOffset),
+                        static_cast<unsigned long long>(this->BoneBase),
+                        static_cast<unsigned long long>(pBoneData),
+                        static_cast<unsigned long long>(bonesBase));
+                    this->bone_fallback_logged_offset = entryOffset;
+                }
+                return pBoneData;
+            }
+
+            return 0;
+        }
+
+        BoneDebugProbe ProbeBone(int boneId) {
+            BoneDebugProbe probe{};
+            probe.requestedBoneId = boneId;
+            __try {
+                probe.preconditions = this->pos != Vector3(0, 0, 0) && this->PlayerHealth > 0;
+                if (!probe.preconditions)
+                    return probe;
+
+                probe.boneData = ResolveBoneData(probe.bonesBase);
+                if (!probe.boneData || !probe.bonesBase)
+                    return probe;
+
+                probe.bonePtr = SDK->RPM<uint64_t>(probe.boneData);
+                if (!probe.bonePtr)
+                    return probe;
+
+                probe.boneIdTable = SDK->RPM<uint64_t>(probe.bonePtr + 0x38);
+                if (!probe.boneIdTable)
+                    return probe;
+
+                probe.boneCount = SDK->RPM<uint16_t>(probe.bonePtr + 0x64);
+                if (probe.boneCount == 0 || probe.boneCount > kMaxBoneIdCount)
+                    return probe;
+
+                probe.resolved = true;
+                std::array<uint32_t, kMaxBoneIdCount> boneIds{};
+                if (!SDK->read_range(probe.boneIdTable, boneIds.data(), sizeof(uint32_t) * probe.boneCount))
+                    return probe;
+
+                for (uint16_t i = 0; i < probe.boneCount; ++i) {
+                    if (static_cast<uint16_t>(boneIds[i]) == boneId) {
+                        probe.idFound = true;
+                        probe.mappedIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+
+                if (!probe.idFound)
+                    return probe;
+
+                probe.localAddress = probe.bonesBase + (0x30 * static_cast<uint64_t>(probe.mappedIndex)) + 0x20;
+                probe.local = SDK->RPM<XMFLOAT3>(probe.localAddress);
+                probe.localFinite = IsFiniteBoneValue(probe.local);
+                probe.localNonZero = probe.localFinite && IsNonZeroBoneValue(probe.local);
+                if (!probe.localFinite)
+                    return probe;
+
+                XMFLOAT3 result{};
+                XMMATRIX rotMatrix = XMMatrixRotationY(this->Rot.X);
+                XMStoreFloat3(&result, XMVector3Transform(XMLoadFloat3(&probe.local), rotMatrix));
+                if (this->HeroID == eHero::HERO_WRECKINGBALL)
+                    probe.world = Vector3(result.x, result.y - 0.7f, result.z) + this->pos;
+                else
+                    probe.world = Vector3(result.x, result.y, result.z) + this->pos;
+                probe.worldNonZero = IsFiniteVectorValue(probe.world) && probe.world != Vector3(0, 0, 0);
+                return probe;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                probe.exception = true;
+                return probe;
+            }
         }
 
         Vector3 GetBonePos(int index) {
             __try {
                 if (this->pos != Vector3(0, 0, 0) && this->PlayerHealth > 0) {
-                    uint64_t pBoneData = SDK->RPM<uint64_t>(this->VelocityBase + 0x8A0);
+                    uint64_t bonesBase = 0;
+                    uint64_t pBoneData = ResolveBoneData(bonesBase);
+                    if (index == OW::BONE_HEAD) {
+                        debugHeadLookupAttempted = true;
+                        debugHeadBoneData = pBoneData;
+                        debugHeadBonesBase = bonesBase;
+                    }
                     if (pBoneData) {
-                        uint64_t bonesBase = SDK->RPM<uint64_t>(pBoneData + 0x20);
                         if (bonesBase) {
+                            const int mappedBoneIndex = get_bone_id(pBoneData, index);
+                            const uint64_t boneAddress = bonesBase + (0x30 * static_cast<uint64_t>(mappedBoneIndex)) + 0x20;
                             XMFLOAT3 currentBone = SDK->RPM<XMFLOAT3>(
-                                bonesBase + (0x30 * get_bone_id(pBoneData, index)) + 0x20
+                                boneAddress
                             );
                             XMFLOAT3 Result{};
                             XMMATRIX rotMatrix = XMMatrixRotationY(this->Rot.X);
                             XMStoreFloat3(&Result, XMVector3Transform(XMLoadFloat3(&currentBone), rotMatrix));
+                            Vector3 worldBone{};
                             if (this->HeroID == eHero::HERO_WRECKINGBALL) {
-                                return Vector3(Result.x, Result.y - 0.7f, Result.z) + this->pos;
+                                worldBone = Vector3(Result.x, Result.y - 0.7f, Result.z) + this->pos;
+                            } else {
+                                worldBone = Vector3(Result.x, Result.y, Result.z) + this->pos;
                             }
-                            return Vector3(Result.x, Result.y, Result.z) + this->pos;
+                            if (index == OW::BONE_HEAD) {
+                                debugHeadLocalAddress = boneAddress;
+                                debugHeadLocal = currentBone;
+                                debugHeadLocalFinite = IsFiniteBoneValue(currentBone);
+                                debugHeadLocalNonZero = debugHeadLocalFinite && IsNonZeroBoneValue(currentBone);
+                                debugHeadWorld = worldBone;
+                                debugHeadWorldNonZero = IsFiniteVectorValue(worldBone) && worldBone != Vector3(0, 0, 0);
+                            }
+                            return worldBone;
                         }
                     }
                 }
@@ -271,9 +504,9 @@ namespace OW {
                          Vector3& vece, Vector3& vecf, Vector3& vecg, Vector3& vech) {
             __try {
                 if (this->pos != Vector3(0, 0, 0) && this->PlayerHealth > 0) {
-                    uint64_t pBoneData = SDK->RPM<uint64_t>(this->VelocityBase + 0x8A0);
+                    uint64_t bonesBase = 0;
+                    uint64_t pBoneData = ResolveBoneData(bonesBase);
                     if (pBoneData) {
-                        uint64_t bonesBase = SDK->RPM<uint64_t>(pBoneData + 0x20);
                         if (bonesBase) {
                             XMFLOAT3 currentBone = SDK->RPM<XMFLOAT3>(
                                 bonesBase + (0x30 * get_bone_id(pBoneData, 17)) + 0x20
@@ -322,9 +555,9 @@ namespace OW {
                             Vector3& arrow3, Vector3& arrow4) {
             __try {
                 if (this->pos != Vector3(0, 0, 0) && this->PlayerHealth > 0) {
-                    uint64_t pBoneData = SDK->RPM<uint64_t>(this->VelocityBase + 0x8A0);
+                    uint64_t bonesBase = 0;
+                    uint64_t pBoneData = ResolveBoneData(bonesBase);
                     if (pBoneData) {
-                        uint64_t bonesBase = SDK->RPM<uint64_t>(pBoneData + 0x20);
                         if (bonesBase) {
                             XMFLOAT3 b = SDK->RPM<XMFLOAT3>(
                                 bonesBase + (0x30 * get_bone_id(pBoneData, 17)) + 0x20
