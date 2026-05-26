@@ -3,6 +3,7 @@
 #include <array>
 #include <string>
 #include <cmath>
+#include <cstring>
 #include <DirectXMath.h>
 using namespace DirectX;
 
@@ -75,6 +76,24 @@ namespace OW {
         Vector3 chest_pos{};
         std::array<Vector3, 18> skeleton_bones{};
         std::array<bool, 18> skeleton_bone_valid{};
+        Vector3 cached_bot_chest_bone{};
+        bool cached_bot_chest_bone_valid = false;
+
+        // Render interpolation samples. The processing thread writes the current
+        // positions and carries the previous published positions for the renderer.
+        uint32_t render_sample_tick_ms = 0;
+        uint32_t previous_render_sample_tick_ms = 0;
+        bool has_previous_render_sample = false;
+        Vector3 previous_head_pos{};
+        Vector3 previous_velocity{};
+        Vector3 previous_pos{};
+        Vector3 previous_neck_pos{};
+        Vector3 previous_chest_pos{};
+        std::array<Vector3, 18> previous_skeleton_bones{};
+        std::array<bool, 18> previous_skeleton_bone_valid{};
+        Vector3 previous_cached_bot_chest_bone{};
+        bool previous_cached_bot_chest_bone_valid = false;
+
         uint64_t bone_fallback_logged_offset = UINT64_MAX;
         bool debugHeadLookupAttempted = false;
         bool debugHeadLookupResolved = false;
@@ -143,6 +162,29 @@ namespace OW {
             int mappedIndex = -1;
             XMFLOAT3 local{};
             Vector3 world{};
+        };
+
+        struct BoneResolveInfo {
+            uint64_t boneData = 0;
+            uint64_t bonesBase = 0;
+            uint64_t bonePtr = 0;
+            uint64_t boneIdTable = 0;
+            uint16_t boneCount = 0;
+        };
+
+        struct SkeletonBoneCache {
+            bool valid = false;
+            uint64_t heroId = 0;
+            uint64_t boneData = 0;
+            uint64_t bonesBase = 0;
+            uint64_t bonePtr = 0;
+            uint64_t boneIdTable = 0;
+            uint16_t boneCount = 0;
+            std::array<int, 18> requestedBoneIds{};
+            std::array<int, 18> mappedIndices{};
+            int maxMappedIndex = -1;
+            int botChestMappedIndex = -1;
+            bool hasBotChest = false;
         };
 
         static bool IsFiniteBoneValue(const XMFLOAT3& value) {
@@ -219,41 +261,52 @@ namespace OW {
             return 0;
         }
 
-        bool ResolveBoneDataCandidate(uint64_t pBoneData, uint64_t& bonesBase) {
-            bonesBase = 0;
+        bool ResolveBoneDataCandidate(uint64_t pBoneData, BoneResolveInfo& info) {
+            info = {};
             if (!pBoneData)
                 return false;
 
-            bonesBase = SDK->RPM<uint64_t>(pBoneData + 0x20);
-            if (!bonesBase)
+            info.boneData = pBoneData;
+            info.bonesBase = SDK->RPM<uint64_t>(pBoneData + 0x20);
+            if (!info.bonesBase)
                 return false;
 
-            const uint64_t bonePtr = SDK->RPM<uint64_t>(pBoneData);
-            if (!bonePtr)
+            info.bonePtr = SDK->RPM<uint64_t>(pBoneData);
+            if (!info.bonePtr)
                 return false;
 
-            const uint64_t boneIdTable = SDK->RPM<uint64_t>(bonePtr + 0x38);
-            if (!boneIdTable)
+            info.boneIdTable = SDK->RPM<uint64_t>(info.bonePtr + 0x38);
+            if (!info.boneIdTable)
                 return false;
 
-            const uint16_t count = SDK->RPM<uint16_t>(bonePtr + 0x64);
-            return count > 0 && count <= kMaxBoneIdCount;
+            info.boneCount = SDK->RPM<uint16_t>(info.bonePtr + 0x64);
+            return info.boneCount > 0 && info.boneCount <= kMaxBoneIdCount;
         }
 
-        uint64_t ResolveBoneData(uint64_t& bonesBase) {
+        bool ResolveBoneDataCandidate(uint64_t pBoneData, uint64_t& bonesBase) {
+            BoneResolveInfo info{};
+            const bool resolved = ResolveBoneDataCandidate(pBoneData, info);
+            bonesBase = info.bonesBase;
+            return resolved;
+        }
+
+        BoneResolveInfo ResolveBoneDataInfo(uint64_t knownVelocityBoneData = 0) {
+            BoneResolveInfo info{};
             if (this->VelocityBase) {
-                const uint64_t pBoneData = SDK->RPM<uint64_t>(this->VelocityBase + 0x8B0);
-                if (ResolveBoneDataCandidate(pBoneData, bonesBase))
-                    return pBoneData;
+                const uint64_t pBoneData = knownVelocityBoneData
+                    ? knownVelocityBoneData
+                    : SDK->RPM<uint64_t>(this->VelocityBase + 0x8B0);
+                if (ResolveBoneDataCandidate(pBoneData, info))
+                    return info;
             }
 
             if (!this->BoneBase)
-                return 0;
+                return {};
 
             constexpr std::array<uint64_t, 3> entryOffsets = { 0x20, 0x0, 0x10 };
             for (const uint64_t entryOffset : entryOffsets) {
                 const uint64_t pBoneData = SDK->RPM<uint64_t>(this->BoneBase + entryOffset);
-                if (!ResolveBoneDataCandidate(pBoneData, bonesBase))
+                if (!ResolveBoneDataCandidate(pBoneData, info))
                     continue;
 
                 if (this->bone_fallback_logged_offset != entryOffset) {
@@ -261,14 +314,20 @@ namespace OW {
                         "[BONE] BoneBase fallback resolved entry=0x%llX bone_base=0x%llX bonedata=0x%llX bones_base=0x%llX.",
                         static_cast<unsigned long long>(entryOffset),
                         static_cast<unsigned long long>(this->BoneBase),
-                        static_cast<unsigned long long>(pBoneData),
-                        static_cast<unsigned long long>(bonesBase));
+                        static_cast<unsigned long long>(info.boneData),
+                        static_cast<unsigned long long>(info.bonesBase));
                     this->bone_fallback_logged_offset = entryOffset;
                 }
-                return pBoneData;
+                return info;
             }
 
-            return 0;
+            return {};
+        }
+
+        uint64_t ResolveBoneData(uint64_t& bonesBase) {
+            const BoneResolveInfo info = ResolveBoneDataInfo();
+            bonesBase = info.bonesBase;
+            return info.boneData;
         }
 
         BoneDebugProbe ProbeBone(int boneId) {
@@ -335,6 +394,15 @@ namespace OW {
 
         Vector3 GetBonePos(int index) {
             __try {
+                if (index == 83 && cached_bot_chest_bone_valid)
+                    return cached_bot_chest_bone;
+
+                const std::array<int, 18> cachedIndices = GetSkel();
+                for (size_t i = 0; i < cachedIndices.size(); ++i) {
+                    if (cachedIndices[i] == index && skeleton_bone_valid[i])
+                        return skeleton_bones[i];
+                }
+
                 if (this->pos != Vector3(0, 0, 0) && this->PlayerHealth > 0) {
                     uint64_t bonesBase = 0;
                     uint64_t pBoneData = ResolveBoneData(bonesBase);
@@ -415,6 +483,7 @@ namespace OW {
                 case eHero::HERO_TRAININGBOT2:
                 case eHero::HERO_TRAININGBOT3:
                 case eHero::HERO_TRAININGBOT4:
+                case eHero::HERO_TRAININGBOT8:
                     return {BONE_HEAD, BONE_NECK, BONE_BODY, BONE_BODY_BOT,
                             BONE_L_SHOULDER, BONE_R_SHOULDER,
                             BONE_L_ELBOW, BONE_R_ELBOW,
@@ -484,16 +553,265 @@ namespace OW {
             }
         }
 
-        void CacheSkeletonBones() {
+        void CacheSkeletonBones(uint64_t knownVelocityBoneData = 0) {
+            CacheSkeletonBonesCached(nullptr, knownVelocityBoneData);
+        }
+
+        void CacheSkeletonBones(SkeletonBoneCache& cache, uint64_t knownVelocityBoneData = 0) {
+            CacheSkeletonBonesCached(&cache, knownVelocityBoneData);
+        }
+
+        void CacheSkeletonBonesCached(SkeletonBoneCache* cache, uint64_t knownVelocityBoneData) {
             skeleton_bone_valid.fill(false);
+            skeleton_bones.fill(Vector3{});
+            cached_bot_chest_bone = {};
+            cached_bot_chest_bone_valid = false;
             if (this->pos == Vector3(0, 0, 0) || this->PlayerHealth <= 0.f)
                 return;
 
             const std::array<int, 18> indices = GetSkel();
-            for (size_t i = 0; i < indices.size(); ++i) {
-                Vector3 bone = GetBonePos(indices[i]);
-                skeleton_bones[i] = bone;
-                skeleton_bone_valid[i] = (bone != Vector3(0, 0, 0));
+            const bool needsBotChestBone = (
+                this->HeroID == eHero::HERO_TRAININGBOT1 ||
+                this->HeroID == eHero::HERO_TRAININGBOT2 ||
+                this->HeroID == eHero::HERO_TRAININGBOT3 ||
+                this->HeroID == eHero::HERO_TRAININGBOT4 ||
+                this->HeroID == eHero::HERO_TRAININGBOT8 ||
+                this->HeroID == eHero::HERO_TRAININGBOT5 ||
+                this->HeroID == eHero::HERO_TRAININGBOT6 ||
+                this->HeroID == eHero::HERO_TRAININGBOT7);
+            auto fallbackSlowPath = [&]() {
+                for (size_t i = 0; i < indices.size(); ++i) {
+                    Vector3 bone = GetBonePos(indices[i]);
+                    skeleton_bones[i] = bone;
+                    skeleton_bone_valid[i] = (bone != Vector3(0, 0, 0));
+                }
+                if (needsBotChestBone) {
+                    cached_bot_chest_bone = GetBonePos(83);
+                    cached_bot_chest_bone_valid = cached_bot_chest_bone != Vector3(0, 0, 0);
+                }
+            };
+
+            __try {
+                debugHeadLookupAttempted = true;
+                debugHeadLookupResolved = false;
+                debugHeadIdFound = false;
+                debugHeadLookupException = false;
+                debugHeadBoneData = 0;
+                debugHeadBonesBase = 0;
+                debugHeadBonePtr = 0;
+                debugHeadBoneIdTable = 0;
+                debugHeadBoneCount = 0;
+                debugHeadMappedIndex = -1;
+                debugHeadLocalAddress = 0;
+                debugHeadLocal = {};
+                debugHeadWorld = {};
+                debugHeadLocalFinite = false;
+                debugHeadLocalNonZero = false;
+                debugHeadWorldNonZero = false;
+
+                std::array<int, 18> mappedIndices{};
+                mappedIndices.fill(-1);
+                int maxMappedIndex = -1;
+                int botChestMappedIndex = -1;
+
+                uint64_t pBoneData = 0;
+                uint64_t bonesBase = 0;
+                uint64_t bonePtr = 0;
+                uint64_t boneIdTable = 0;
+                uint16_t boneCount = 0;
+
+                bool mapReady = false;
+                if (cache && cache->valid &&
+                    cache->heroId == this->HeroID &&
+                    cache->requestedBoneIds == indices &&
+                    cache->hasBotChest == needsBotChestBone &&
+                    (!knownVelocityBoneData || cache->boneData == knownVelocityBoneData)) {
+                    pBoneData = cache->boneData;
+                    bonesBase = cache->bonesBase;
+                    bonePtr = cache->bonePtr;
+                    boneIdTable = cache->boneIdTable;
+                    boneCount = cache->boneCount;
+                    mappedIndices = cache->mappedIndices;
+                    maxMappedIndex = cache->maxMappedIndex;
+                    botChestMappedIndex = cache->botChestMappedIndex;
+                    mapReady = pBoneData && bonesBase && bonePtr && boneIdTable &&
+                        boneCount > 0 && boneCount <= kMaxBoneIdCount &&
+                        maxMappedIndex >= 0;
+                }
+
+                if (!mapReady) {
+                    const BoneResolveInfo boneInfo = ResolveBoneDataInfo(knownVelocityBoneData);
+                    pBoneData = boneInfo.boneData;
+                    bonesBase = boneInfo.bonesBase;
+                    bonePtr = boneInfo.bonePtr;
+                    boneIdTable = boneInfo.boneIdTable;
+                    boneCount = boneInfo.boneCount;
+                }
+
+                debugHeadBoneData = pBoneData;
+                debugHeadBonesBase = bonesBase;
+                if (!pBoneData || !bonesBase) {
+                    fallbackSlowPath();
+                    return;
+                }
+
+                debugHeadBonePtr = bonePtr;
+                if (!bonePtr) {
+                    fallbackSlowPath();
+                    return;
+                }
+
+                debugHeadBoneIdTable = boneIdTable;
+                if (!boneIdTable) {
+                    fallbackSlowPath();
+                    return;
+                }
+
+                debugHeadBoneCount = boneCount;
+                if (boneCount == 0 || boneCount > kMaxBoneIdCount) {
+                    fallbackSlowPath();
+                    return;
+                }
+
+                debugHeadLookupResolved = true;
+
+                if (!mapReady) {
+                    std::array<uint32_t, kMaxBoneIdCount> boneIds{};
+                    if (!SDK->read_range(boneIdTable, boneIds.data(), sizeof(uint32_t) * boneCount)) {
+                        if (cache)
+                            cache->valid = false;
+                        fallbackSlowPath();
+                        return;
+                    }
+
+                    for (size_t requested = 0; requested < indices.size(); ++requested) {
+                        for (uint16_t boneIndex = 0; boneIndex < boneCount; ++boneIndex) {
+                            if (static_cast<uint16_t>(boneIds[boneIndex]) != static_cast<uint16_t>(indices[requested]))
+                                continue;
+
+                            mappedIndices[requested] = static_cast<int>(boneIndex);
+                            if (mappedIndices[requested] > maxMappedIndex)
+                                maxMappedIndex = mappedIndices[requested];
+                            break;
+                        }
+                    }
+                    if (needsBotChestBone) {
+                        for (uint16_t boneIndex = 0; boneIndex < boneCount; ++boneIndex) {
+                            if (static_cast<uint16_t>(boneIds[boneIndex]) != 83)
+                                continue;
+
+                            botChestMappedIndex = static_cast<int>(boneIndex);
+                            if (botChestMappedIndex > maxMappedIndex)
+                                maxMappedIndex = botChestMappedIndex;
+                            break;
+                        }
+                    }
+
+                    if (cache) {
+                        cache->valid = maxMappedIndex >= 0;
+                        cache->heroId = this->HeroID;
+                        cache->boneData = pBoneData;
+                        cache->bonesBase = bonesBase;
+                        cache->bonePtr = bonePtr;
+                        cache->boneIdTable = boneIdTable;
+                        cache->boneCount = boneCount;
+                        cache->requestedBoneIds = indices;
+                        cache->mappedIndices = mappedIndices;
+                        cache->maxMappedIndex = maxMappedIndex;
+                        cache->botChestMappedIndex = botChestMappedIndex;
+                        cache->hasBotChest = needsBotChestBone;
+                    }
+                }
+
+                for (size_t requested = 0; requested < indices.size(); ++requested) {
+                    if (indices[requested] != OW::BONE_HEAD || mappedIndices[requested] < 0)
+                        continue;
+
+                    debugHeadIdFound = true;
+                    debugHeadMappedIndex = mappedIndices[requested];
+                    break;
+                }
+
+                if (maxMappedIndex < 0)
+                    return;
+
+                constexpr size_t kBoneStride = 0x30;
+                constexpr size_t kBoneValueOffset = 0x20;
+                constexpr size_t kMaxBoneBlockBytes = kBoneStride * kMaxBoneIdCount + sizeof(XMFLOAT3);
+                const size_t boneBlockBytes =
+                    kBoneStride * static_cast<size_t>(maxMappedIndex) + sizeof(XMFLOAT3);
+                if (boneBlockBytes == 0 || boneBlockBytes > kMaxBoneBlockBytes) {
+                    fallbackSlowPath();
+                    return;
+                }
+
+                std::array<uint8_t, kMaxBoneBlockBytes> boneBlock;
+                if (!SDK->read_range(bonesBase + kBoneValueOffset, boneBlock.data(), boneBlockBytes)) {
+                    if (cache)
+                        cache->valid = false;
+                    fallbackSlowPath();
+                    return;
+                }
+
+                const XMMATRIX rotMatrix = XMMatrixRotationY(this->Rot.X);
+                for (size_t i = 0; i < indices.size(); ++i) {
+                    const int mappedIndex = mappedIndices[i];
+                    if (mappedIndex < 0)
+                        continue;
+
+                    const size_t localOffset = kBoneStride * static_cast<size_t>(mappedIndex);
+                    if (localOffset + sizeof(XMFLOAT3) > boneBlockBytes)
+                        continue;
+
+                    XMFLOAT3 localBone{};
+                    std::memcpy(&localBone, boneBlock.data() + localOffset, sizeof(localBone));
+                    const bool localFinite = IsFiniteBoneValue(localBone);
+                    const bool localNonZero = localFinite && IsNonZeroBoneValue(localBone);
+
+                    XMFLOAT3 transformed{};
+                    if (localFinite)
+                        XMStoreFloat3(&transformed, XMVector3Transform(XMLoadFloat3(&localBone), rotMatrix));
+
+                    Vector3 worldBone{};
+                    if (localFinite) {
+                        if (this->HeroID == eHero::HERO_WRECKINGBALL)
+                            worldBone = Vector3(transformed.x, transformed.y - 0.7f, transformed.z) + this->pos;
+                        else
+                            worldBone = Vector3(transformed.x, transformed.y, transformed.z) + this->pos;
+                    }
+
+                    skeleton_bones[i] = worldBone;
+                    skeleton_bone_valid[i] = IsFiniteVectorValue(worldBone) && worldBone != Vector3(0, 0, 0);
+
+                    if (indices[i] == OW::BONE_HEAD) {
+                        debugHeadLocalAddress = bonesBase + kBoneValueOffset +
+                            kBoneStride * static_cast<uint64_t>(mappedIndex);
+                        debugHeadLocal = localBone;
+                        debugHeadLocalFinite = localFinite;
+                        debugHeadLocalNonZero = localNonZero;
+                        debugHeadWorld = worldBone;
+                        debugHeadWorldNonZero = skeleton_bone_valid[i];
+                    }
+                }
+
+                if (needsBotChestBone && botChestMappedIndex >= 0) {
+                    const size_t localOffset = kBoneStride * static_cast<size_t>(botChestMappedIndex);
+                    if (localOffset + sizeof(XMFLOAT3) <= boneBlockBytes) {
+                        XMFLOAT3 localBone{};
+                        std::memcpy(&localBone, boneBlock.data() + localOffset, sizeof(localBone));
+                        if (IsFiniteBoneValue(localBone)) {
+                            XMFLOAT3 transformed{};
+                            XMStoreFloat3(&transformed, XMVector3Transform(XMLoadFloat3(&localBone), rotMatrix));
+                            cached_bot_chest_bone = Vector3(transformed.x, transformed.y, transformed.z) + this->pos;
+                            cached_bot_chest_bone_valid =
+                                IsFiniteVectorValue(cached_bot_chest_bone) &&
+                                cached_bot_chest_bone != Vector3(0, 0, 0);
+                        }
+                    }
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                debugHeadLookupException = true;
+                fallbackSlowPath();
             }
         }
 
@@ -600,6 +918,7 @@ namespace OW {
                               HeroID == eHero::HERO_TRAININGBOT2 ||
                               HeroID == eHero::HERO_TRAININGBOT3 ||
                               HeroID == eHero::HERO_TRAININGBOT4 ||
+                              HeroID == eHero::HERO_TRAININGBOT8 ||
                               HeroID == eHero::HERO_TRAININGBOT5 ||
                               HeroID == eHero::HERO_TRAININGBOT6 ||
                               HeroID == eHero::HERO_TRAININGBOT7);

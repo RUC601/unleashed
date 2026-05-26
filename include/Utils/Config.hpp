@@ -91,10 +91,34 @@ namespace OW { namespace Config {
     inline int  shotcount  = 0;
     inline int  shotmanydont = 3;
 
-    // ---- Recoil ----
-    inline bool norecoil    = false;
-    inline float recoilnum  = 0.5f;
-    inline bool horizonreco = false;
+    // ---- Aimbot UI options ----
+    inline bool  aimbotAutoshot = false;
+    inline bool  aimbotKeepFiring = true;
+    inline float aimbotMaxHead = 100.0f;
+    inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier
+    inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
+    inline float aimPidP = 0.5f;
+    inline float aimPidI = 0.01f;
+    inline float aimPidD = 0.1f;
+    inline float aimPidMaxIntegral = 10.0f;
+    inline float aimPidDeadzone = 1.0f;
+    inline int   aimBezierControlPoints = 2;
+    inline float aimBezierCurvature = 0.5f;
+    inline float aimBezierSpeed = 50.0f;
+    inline float aimbotStickiness = 100.0f;
+    inline float aimbotSmoothY = 50.0f;
+    inline float aimbotMaxAim = 100.0f;
+    inline float aimbotMinCharge = 5.0f;
+    inline float aimbotMaxCharge = 100.0f;
+    inline bool  aimbotIgnoreInvisible = false;
+    inline int   aimbotTrace = 0; // 0=Strict, 1=Relaxed, 2=Off
+    inline int   aimbotUnlock = 0; // 0=Anytime, 1=On Release, 2=Never
+    inline float aimbotLockTime = 20.0f;
+    inline float aimbotMaxDist = 100.0f;
+    inline float aimbotMinDist = 0.0f;
+    inline int   aimbotAttack = 0; // 0=Shoot, 1=Ability1, 2=Ability2
+    inline int   aimbotTeam = 0; // 0=Enemies, 1=Allies, 2=All
+    inline int   aimbotPriority = 0; // 0=FOV, 1=HP, 2=Distance
 
     // ---- Hero-specific ----
     inline bool GenjiBlade       = false;
@@ -132,10 +156,6 @@ namespace OW { namespace Config {
     inline float SkillHealth   = 50.f;
     inline bool AntiAFK        = false;
 
-    inline bool enablechangefov = false;
-    inline float CHANGEFOV    = 103.f;
-    inline bool trackback     = false;
-
     // ---- Secondary aim ----
     inline bool secondaim   = false;
     inline bool highPriority = false;
@@ -153,13 +173,6 @@ namespace OW { namespace Config {
     inline bool ult             = true;
     inline bool draw_skel       = true;
     inline bool skillinfo       = false;
-    inline bool outline         = false;
-    inline bool externaloutline = false;
-    inline bool teamoutline     = false;
-    inline bool healthoutline   = false;
-    inline bool rainbowoutline  = false;
-    inline bool draw_edge       = false;
-    inline bool drawbox3d       = false;
     inline bool radar           = false;
     inline bool radarline       = false;
     inline bool drawline        = false;
@@ -167,7 +180,11 @@ namespace OW { namespace Config {
     inline bool draw_hp_pack    = false;
     inline bool crosscircle     = false;
     inline bool eyeray          = false;
-    inline bool testvalue       = false;
+
+    // Legacy compile shims for untouched Overwatch.hpp references. Not persisted.
+    extern bool draw_edge;
+    extern bool drawbox3d;
+    extern bool manualsave;
 
     // ---- Outline colours (float4, 0-1 range) ----
     inline ImVec4 enargb        = ImVec4(1.f, 0.f, 0.f, 0.4f);
@@ -181,17 +198,6 @@ namespace OW { namespace Config {
     inline ImVec4 fovcol     = ImVec4(1.f, 1.f, 1.f, 1.f);
     inline ImVec4 fovcol2    = ImVec4(1.f, 1.f, 1.f, 1.f);
 
-    // ---- Computed outline colors (DWORD) ----
-    inline DWORD visenemy     = 0;
-    inline DWORD invisenemy   = 0;
-    inline DWORD targetenemy  = 0;
-    inline DWORD targetenemy2 = 0;
-    inline DWORD Allycolor    = 0;
-
-    // ---- Rainbow ----
-    inline int cps1 = 0, cps2 = 0, cps3 = 0;
-    inline ImVec4 rainbowargb = ImVec4(0.f, 0.f, 0.f, 1.f);
-
     // ---- Targeting state ----
     inline int  Targetenemyi    = -1;
     inline int  Targetenemyifov = -1;
@@ -201,13 +207,7 @@ namespace OW { namespace Config {
     inline int  doingentity  = 1;
     inline int  lastheroid   = -2;
     inline bool Menu         = true;
-    inline bool manualsave   = false;
-    inline bool loginornot   = false;
     inline std::string nowhero = "Unknown";
-
-    // ---- Namespoofer ----
-    inline bool namespoofer   = false;
-    inline char fakename[64]  = "";
 
     // ---- KMBox input output ----
     inline bool kmboxEnabled = false;

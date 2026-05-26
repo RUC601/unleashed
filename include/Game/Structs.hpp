@@ -94,6 +94,7 @@ namespace OW {
         HERO_TRAININGBOT2  = 0x2E0000000000337,
         HERO_TRAININGBOT3  = 0x2E000000000035A,
         HERO_TRAININGBOT4  = 0x2E000000000016C,
+        HERO_TRAININGBOT8  = 0x2E0000000000362,
         HERO_TRAININGBOT5  = 0x2E0000000000363,
         HERO_TRAININGBOT6  = 0x2E0000000000349,
         HERO_TRAININGBOT7  = 0x2E0000000000339,
@@ -131,6 +132,7 @@ namespace OW {
         union {
             OFF_MEMB(float,  health,          0xE0);
             OFF_MEMB(float,  health_max,      0xDC);
+            OFF_MEMB(Vector2, health_ext,     0xF0);
             OFF_MEMB(float,  armor,           0x220);
             OFF_MEMB(float,  armor_max,       0x21C);
             OFF_MEMB(float,  barrier,         0x360);

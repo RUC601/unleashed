@@ -30,12 +30,17 @@
 namespace OW { namespace Config {
 
     int config_version = 2;
+    bool draw_edge = false;
+    bool drawbox3d = false;
+    bool manualsave = false;
 
     namespace {
 
         constexpr int kCurrentConfigVersion = 2;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
+        constexpr const char* kAimbotSection = "Aimbot";
+        constexpr const char* kAimMethodSection = "AimMethod";
         constexpr const char* kDefaultKmboxIp = "192.168.2.188";
         constexpr int kDefaultKmboxPort = 8808;
         constexpr const char* kDefaultKmboxMac = "12525C53";
@@ -615,10 +620,6 @@ namespace OW { namespace Config {
             shotcount = 0;                // default: 0
             shotmanydont = 3;             // default: 3
 
-            norecoil = false;             // default: false
-            recoilnum = 0.5f;             // default: 0.5
-            horizonreco = false;          // default: false
-
             GenjiBlade = false;           // default: false
             AutoShiftGenji = false;       // default: false
             widowautounscope = false;     // default: false
@@ -649,10 +650,6 @@ namespace OW { namespace Config {
             SkillHealth = 50.0f;          // default: 50
             AntiAFK = false;              // default: false
 
-            enablechangefov = false;      // default: false
-            CHANGEFOV = 103.0f;           // default: 103
-            trackback = false;            // default: false
-
             secondaim = false;            // default: false
             highPriority = false;         // default: false
             targetPriority = 0;           // default: FOV priority
@@ -660,6 +657,41 @@ namespace OW { namespace Config {
             Targetenemyi = -1;            // default: -1
             Targetenemyifov = -1;         // default: -1
             health = 0.0f;                // default: 0
+        }
+
+        void ResetAimbotDefaultsUnlocked()
+        {
+            aimbotAutoshot = false;
+            aimbotKeepFiring = true;
+            aimbotMaxHead = 100.0f;
+            aimbotSmoothType = 0;
+            aimbotStickiness = 100.0f;
+            aimbotSmoothY = 50.0f;
+            aimbotMaxAim = 100.0f;
+            aimbotMinCharge = 5.0f;
+            aimbotMaxCharge = 100.0f;
+            aimbotIgnoreInvisible = false;
+            aimbotTrace = 0;
+            aimbotUnlock = 0;
+            aimbotLockTime = 20.0f;
+            aimbotMaxDist = 100.0f;
+            aimbotMinDist = 0.0f;
+            aimbotAttack = 0;
+            aimbotTeam = 0;
+            aimbotPriority = 0;
+        }
+
+        void ResetAimMethodDefaultsUnlocked()
+        {
+            aimMethod = 0;
+            aimPidP = 0.5f;
+            aimPidI = 0.01f;
+            aimPidD = 0.1f;
+            aimPidMaxIntegral = 10.0f;
+            aimPidDeadzone = 1.0f;
+            aimBezierControlPoints = 2;
+            aimBezierCurvature = 0.5f;
+            aimBezierSpeed = 50.0f;
         }
 
         void ResetGlobalDefaultsUnlocked()
@@ -677,13 +709,6 @@ namespace OW { namespace Config {
             ult = true;                   // default: true
             draw_skel = true;             // default: true
             skillinfo = false;            // default: false
-            outline = false;              // default: false
-            externaloutline = false;      // default: false
-            teamoutline = false;          // default: false
-            healthoutline = false;        // default: false
-            rainbowoutline = false;       // default: false
-            draw_edge = false;            // default: false
-            drawbox3d = false;            // default: false
             radar = false;                // default: false
             radarline = false;            // default: false
             drawline = false;             // default: false
@@ -691,7 +716,6 @@ namespace OW { namespace Config {
             draw_hp_pack = false;         // default: false
             crosscircle = false;          // default: false
             eyeray = false;               // default: false
-            testvalue = false;            // default: false
             MenuToggleKey = VK_HOME;      // default: VK_HOME
 
             enargb = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);       // default: 1,0,0,0.4
@@ -702,19 +726,6 @@ namespace OW { namespace Config {
             EnemyCol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);     // default: 1,1,1,1
             fovcol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);       // default: 1,1,1,1
             fovcol2 = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);      // default: 1,1,1,1
-
-            visenemy = 0;                 // default: 0
-            invisenemy = 0;               // default: 0
-            targetenemy = 0;              // default: 0
-            targetenemy2 = 0;             // default: 0
-            Allycolor = 0;                // default: 0
-            cps1 = 0;                     // default: 0
-            cps2 = 0;                     // default: 0
-            cps3 = 0;                     // default: 0
-            rainbowargb = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);  // default: 0,0,0,1
-
-            namespoofer = false;          // default: false
-            fakename[0] = '\0';           // default: empty string
 
             kmboxEnabled = false;         // default: disabled
             kmboxDeviceType = 0;          // default: Network/UDP
@@ -922,10 +933,7 @@ namespace OW { namespace Config {
             shotmanydont = ReadInt(ini, section, "dontmanyshot", shotmanydont);
             hitboxdelayshoot = ReadBool(ini, section, "hitboxdelayshoot", hitboxdelayshoot);
             hiboxdelaytime = ReadInt(ini, section, "hitboxdelaytime", hiboxdelaytime);
-            recoilnum = ReadFixedFloat(ini, section, "recoilnum", recoilnum);
             accvalue = ReadFixedFloat(ini, section, "accvalue", accvalue);
-            norecoil = ReadBool(ini, section, "norecoil", norecoil);
-            horizonreco = ReadBool(ini, section, "horizonreco", horizonreco);
             switch_team = ReadBool(ini, section, "switch_team", switch_team);
             switch_team2 = ReadBool(ini, section, "switch_team2", switch_team2);
             Bone = ReadInt(ini, section, "Bone", Bone);
@@ -953,8 +961,6 @@ namespace OW { namespace Config {
             hitbox2 = ReadFixedFloat(ini, section, "hitbox2", hitbox2);
             Fov2 = ReadFov2Compat(ini, section, "Fov2", Fov2);
             minFov2 = Fov2;
-            enablechangefov = ReadBool(ini, section, "enablechangefov", enablechangefov);
-            CHANGEFOV = ReadFixedFloat(ini, section, "CHANGEFOV", CHANGEFOV);
 
             ApplyAimMode(ReadInt(ini, section, "Aim Mode", CurrentAimMode()));
             AutoShoot = ReadBool(ini, section, "autoshootonoff", AutoShoot);
@@ -976,6 +982,84 @@ namespace OW { namespace Config {
             }
         }
 
+        void LoadAimbotSettingsUnlocked(const IniFile& ini)
+        {
+            constexpr const char* section = kAimbotSection;
+
+            aimbotAutoshot = ReadBool(ini, section, "aimbotAutoshot", aimbotAutoshot);
+            aimbotKeepFiring = ReadBool(ini, section, "aimbotKeepFiring", aimbotKeepFiring);
+            aimbotMaxHead = ReadFixedFloat(ini, section, "aimbotMaxHead", aimbotMaxHead);
+            aimbotSmoothType = ReadInt(ini, section, "aimbotSmoothType", aimbotSmoothType);
+            aimbotStickiness = ReadFixedFloat(ini, section, "aimbotStickiness", aimbotStickiness);
+            aimbotSmoothY = ReadFixedFloat(ini, section, "aimbotSmoothY", aimbotSmoothY);
+            aimbotMaxAim = ReadFixedFloat(ini, section, "aimbotMaxAim", aimbotMaxAim);
+            aimbotMinCharge = ReadFixedFloat(ini, section, "aimbotMinCharge", aimbotMinCharge);
+            aimbotMaxCharge = ReadFixedFloat(ini, section, "aimbotMaxCharge", aimbotMaxCharge);
+            aimbotIgnoreInvisible = ReadBool(ini, section, "aimbotIgnoreInvisible", aimbotIgnoreInvisible);
+            aimbotTrace = ReadInt(ini, section, "aimbotTrace", aimbotTrace);
+            aimbotUnlock = ReadInt(ini, section, "aimbotUnlock", aimbotUnlock);
+            aimbotLockTime = ReadFixedFloat(ini, section, "aimbotLockTime", aimbotLockTime);
+            aimbotMaxDist = ReadFixedFloat(ini, section, "aimbotMaxDist", aimbotMaxDist);
+            aimbotMinDist = ReadFixedFloat(ini, section, "aimbotMinDist", aimbotMinDist);
+            aimbotAttack = ReadInt(ini, section, "aimbotAttack", aimbotAttack);
+            aimbotTeam = ReadInt(ini, section, "aimbotTeam", aimbotTeam);
+            aimbotPriority = ReadInt(ini, section, "aimbotPriority", aimbotPriority);
+        }
+
+        void LoadAimMethodSettingsUnlocked(const IniFile& ini)
+        {
+            constexpr const char* section = kAimMethodSection;
+
+            aimMethod = ReadInt(ini, section, "aimMethod", aimMethod);
+            aimPidP = ReadFixedFloat(ini, section, "aimPidP", aimPidP);
+            aimPidI = ReadFixedFloat(ini, section, "aimPidI", aimPidI);
+            aimPidD = ReadFixedFloat(ini, section, "aimPidD", aimPidD);
+            aimPidMaxIntegral = ReadFixedFloat(ini, section, "aimPidMaxIntegral", aimPidMaxIntegral);
+            aimPidDeadzone = ReadFixedFloat(ini, section, "aimPidDeadzone", aimPidDeadzone);
+            aimBezierControlPoints = ReadInt(ini, section, "aimBezierControlPoints", aimBezierControlPoints);
+            aimBezierCurvature = ReadFixedFloat(ini, section, "aimBezierCurvature", aimBezierCurvature);
+            aimBezierSpeed = ReadFixedFloat(ini, section, "aimBezierSpeed", aimBezierSpeed);
+        }
+
+        void SaveAimbotSettingsUnlocked(const std::string& path)
+        {
+            constexpr const char* section = kAimbotSection;
+
+            WriteBoolValue(path, section, "aimbotAutoshot", aimbotAutoshot);
+            WriteBoolValue(path, section, "aimbotKeepFiring", aimbotKeepFiring);
+            WriteFixedFloatValue(path, section, "aimbotMaxHead", aimbotMaxHead);
+            WriteIntValue(path, section, "aimbotSmoothType", aimbotSmoothType);
+            WriteFixedFloatValue(path, section, "aimbotStickiness", aimbotStickiness);
+            WriteFixedFloatValue(path, section, "aimbotSmoothY", aimbotSmoothY);
+            WriteFixedFloatValue(path, section, "aimbotMaxAim", aimbotMaxAim);
+            WriteFixedFloatValue(path, section, "aimbotMinCharge", aimbotMinCharge);
+            WriteFixedFloatValue(path, section, "aimbotMaxCharge", aimbotMaxCharge);
+            WriteBoolValue(path, section, "aimbotIgnoreInvisible", aimbotIgnoreInvisible);
+            WriteIntValue(path, section, "aimbotTrace", aimbotTrace);
+            WriteIntValue(path, section, "aimbotUnlock", aimbotUnlock);
+            WriteFixedFloatValue(path, section, "aimbotLockTime", aimbotLockTime);
+            WriteFixedFloatValue(path, section, "aimbotMaxDist", aimbotMaxDist);
+            WriteFixedFloatValue(path, section, "aimbotMinDist", aimbotMinDist);
+            WriteIntValue(path, section, "aimbotAttack", aimbotAttack);
+            WriteIntValue(path, section, "aimbotTeam", aimbotTeam);
+            WriteIntValue(path, section, "aimbotPriority", aimbotPriority);
+        }
+
+        void SaveAimMethodSettingsUnlocked(const std::string& path)
+        {
+            constexpr const char* section = kAimMethodSection;
+
+            WriteIntValue(path, section, "aimMethod", aimMethod);
+            WriteFixedFloatValue(path, section, "aimPidP", aimPidP);
+            WriteFixedFloatValue(path, section, "aimPidI", aimPidI);
+            WriteFixedFloatValue(path, section, "aimPidD", aimPidD);
+            WriteFixedFloatValue(path, section, "aimPidMaxIntegral", aimPidMaxIntegral);
+            WriteFixedFloatValue(path, section, "aimPidDeadzone", aimPidDeadzone);
+            WriteIntValue(path, section, "aimBezierControlPoints", aimBezierControlPoints);
+            WriteFixedFloatValue(path, section, "aimBezierCurvature", aimBezierCurvature);
+            WriteFixedFloatValue(path, section, "aimBezierSpeed", aimBezierSpeed);
+        }
+
         void LoadGlobalSettingsUnlocked(const IniFile& ini)
         {
             constexpr const char* section = "Global";
@@ -983,7 +1067,6 @@ namespace OW { namespace Config {
             draw_hp_pack = ReadBool(ini, section, "draw_hp_pack", draw_hp_pack);
             crosscircle = ReadBool(ini, section, "crosscircle", crosscircle);
             eyeray = ReadBool(ini, section, "eyeray", eyeray);
-            trackback = ReadBool(ini, section, "trackback", trackback);
             draw_info = ReadBool(ini, section, "draw_info", draw_info);
             drawbattletag = ReadBool(ini, section, "drawbattletag", drawbattletag);
             drawhealth = ReadBool(ini, section, "drawhealth", drawhealth);
@@ -996,13 +1079,6 @@ namespace OW { namespace Config {
             ult = ReadBool(ini, section, "ult", ult);
             draw_skel = ReadBool(ini, section, "draw_skel", draw_skel);
             skillinfo = ReadBool(ini, section, "skillinfo", skillinfo);
-            outline = ReadBool(ini, section, "outline", outline);
-            externaloutline = ReadBool(ini, section, "externaloutline", externaloutline);
-            teamoutline = ReadBool(ini, section, "teamoutline", teamoutline);
-            healthoutline = ReadBool(ini, section, "healthoutline", healthoutline);
-            rainbowoutline = ReadBool(ini, section, "rainbowoutline", rainbowoutline);
-            draw_edge = ReadBool(ini, section, "draw_edge", draw_edge);
-            drawbox3d = ReadBool(ini, section, "drawbox3d", drawbox3d);
             radar = ReadBool(ini, section, "radar", radar);
             radarline = ReadBool(ini, section, "radarline", radarline);
             drawline = ReadBool(ini, section, "drawline", drawline);
@@ -1122,13 +1198,27 @@ namespace OW { namespace Config {
             ClampFloatSetting("predit_level2", predit_level2, 0.0f, 2000.0f, 110.0f);
             ClampFloatSetting("comarea", comarea, 0.0f, 20.0f, 0.01f);
             ClampFloatSetting("comspeed", comspeed, 0.0f, 20.0f, 0.5f);
-            ClampFloatSetting("recoilnum", recoilnum, 0.0f, 20.0f, 0.5f);
+            ClampFloatSetting("aimbotMaxHead", aimbotMaxHead, 0.0f, 100.0f, 100.0f);
+            ClampFloatSetting("aimPidP", aimPidP, 0.0f, 2.0f, 0.5f);
+            ClampFloatSetting("aimPidI", aimPidI, 0.0f, 0.5f, 0.01f);
+            ClampFloatSetting("aimPidD", aimPidD, 0.0f, 1.0f, 0.1f);
+            ClampFloatSetting("aimPidMaxIntegral", aimPidMaxIntegral, 1.0f, 50.0f, 10.0f);
+            ClampFloatSetting("aimPidDeadzone", aimPidDeadzone, 0.0f, 10.0f, 1.0f);
+            ClampFloatSetting("aimBezierCurvature", aimBezierCurvature, 0.0f, 1.0f, 0.5f);
+            ClampFloatSetting("aimBezierSpeed", aimBezierSpeed, 1.0f, 200.0f, 50.0f);
+            ClampFloatSetting("aimbotStickiness", aimbotStickiness, 0.0f, 100.0f, 100.0f);
+            ClampFloatSetting("aimbotSmoothY", aimbotSmoothY, 0.0f, 100.0f, 50.0f);
+            ClampFloatSetting("aimbotMaxAim", aimbotMaxAim, 0.0f, 100.0f, 100.0f);
+            ClampFloatSetting("aimbotMinCharge", aimbotMinCharge, 0.0f, 100.0f, 5.0f);
+            ClampFloatSetting("aimbotMaxCharge", aimbotMaxCharge, 0.0f, 100.0f, 100.0f);
+            ClampFloatSetting("aimbotLockTime", aimbotLockTime, 0.0f, 5000.0f, 20.0f);
+            ClampFloatSetting("aimbotMaxDist", aimbotMaxDist, 0.0f, 500.0f, 100.0f);
+            ClampFloatSetting("aimbotMinDist", aimbotMinDist, 0.0f, 500.0f, 0.0f);
             ClampFloatSetting("meleehealth", meleehealth, 0.0f, 1000.0f, 30.0f);
             ClampFloatSetting("meleedistance", meleedistance, 0.0f, 500.0f, 5.0f);
             ClampFloatSetting("AutoRMBhealth", AutoRMBhealth, 0.0f, 1000.0f, 100.0f);
             ClampFloatSetting("AutoRMBdistance", AutoRMBdistance, 0.0f, 500.0f, 30.0f);
             ClampFloatSetting("SkillHealth", SkillHealth, 0.0f, 1000.0f, 50.0f);
-            ClampFloatSetting("CHANGEFOV", CHANGEFOV, 1.0f, 179.0f, 103.0f);
             ClampFloatSetting("healthbartextsize", healthbartextsize, 4.0f, 72.0f, 16.0f);
             ClampFloatSetting("visualMaxDist", visualMaxDist, 0.0f, 1000.0f, 100.0f);
             ClampFloatSetting("lasthealth", lasthealth, 0.0f, 1000.0f, 0.0f);
@@ -1153,6 +1243,14 @@ namespace OW { namespace Config {
             ClampSetting("doingentity", doingentity, 0, 1, 1);
             ClampSetting("lastheroid", lastheroid, -2, (std::numeric_limits<int>::max)(), -2);
             ClampSetting("targetPriority", targetPriority, 0, 2, 0);
+            ClampSetting("aimMethod", aimMethod, 0, 2, 0);
+            ClampSetting("aimbotSmoothType", aimbotSmoothType, 0, 2, 0);
+            ClampSetting("aimBezierControlPoints", aimBezierControlPoints, 2, 6, 2);
+            ClampSetting("aimbotTrace", aimbotTrace, 0, 2, 0);
+            ClampSetting("aimbotUnlock", aimbotUnlock, 0, 2, 0);
+            ClampSetting("aimbotAttack", aimbotAttack, 0, 2, 0);
+            ClampSetting("aimbotTeam", aimbotTeam, 0, 2, 0);
+            ClampSetting("aimbotPriority", aimbotPriority, 0, 2, 0);
             ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 1, 0);
             ClampSetting("kmboxPort", kmboxPort, 1, 65535, kDefaultKmboxPort);
             ClampSetting("kmboxInputDelayMs", kmboxInputDelayMs, 0, 20, kDefaultKmboxInputDelayMs);
@@ -1174,7 +1272,6 @@ namespace OW { namespace Config {
             ClampColor("EnemyCol", EnemyCol);
             ClampColor("fovcol", fovcol);
             ClampColor("fovcol2", fovcol2);
-            ClampColor("rainbowargb", rainbowargb);
         }
 
         std::string ColorText(const ImVec4& value)
@@ -1210,8 +1307,14 @@ namespace OW { namespace Config {
                 ToText(lockontarget).c_str(), ToText(trackcompensate).c_str(), comarea, comspeed, ToText(aiaim).c_str(),
                 ToText(targetdelay).c_str(), targetdelaytime, ToText(hitboxdelayshoot).c_str(), hiboxdelaytime,
                 ToText(dontshot).c_str(), shotcount, shotmanydont);
-            LogConfig(level, "Dump: recoil norecoil=%s recoilnum=%.3f horizonreco=%s",
-                ToText(norecoil).c_str(), recoilnum, ToText(horizonreco).c_str());
+            LogConfig(level, "Dump: aimbot ui autoshot=%s keepFiring=%s maxHead=%.3f smoothType=%d stickiness=%.3f smoothY=%.3f maxAim=%.3f minCharge=%.3f maxCharge=%.3f ignoreInvisible=%s trace=%d unlock=%d lockTime=%.3f maxDist=%.3f minDist=%.3f attack=%d team=%d priority=%d",
+                ToText(aimbotAutoshot).c_str(), ToText(aimbotKeepFiring).c_str(), aimbotMaxHead,
+                aimbotSmoothType, aimbotStickiness, aimbotSmoothY, aimbotMaxAim, aimbotMinCharge,
+                aimbotMaxCharge, ToText(aimbotIgnoreInvisible).c_str(), aimbotTrace, aimbotUnlock,
+                aimbotLockTime, aimbotMaxDist, aimbotMinDist, aimbotAttack, aimbotTeam, aimbotPriority);
+            LogConfig(level, "Dump: aim method method=%d pidP=%.3f pidI=%.3f pidD=%.3f pidMaxIntegral=%.3f pidDeadzone=%.3f bezierControlPoints=%d bezierCurvature=%.3f bezierSpeed=%.3f",
+                aimMethod, aimPidP, aimPidI, aimPidD, aimPidMaxIntegral, aimPidDeadzone,
+                aimBezierControlPoints, aimBezierCurvature, aimBezierSpeed);
             LogConfig(level, "Dump: hero GenjiBlade=%s AutoShiftGenji=%s widowautounscope=%s",
                 ToText(GenjiBlade).c_str(), ToText(AutoShiftGenji).c_str(), ToText(widowautounscope).c_str());
             LogConfig(level, "Dump: shoot AutoShoot=%s Shoottime=%d shooted=%s shooted2=%s lasttime=%d lasthealth=%.3f skilled=%s slasttime=%d sskilled=%s reloading=%s",
@@ -1222,30 +1325,28 @@ namespace OW { namespace Config {
             LogConfig(level, "Dump: auto AutoMelee=%s meleehealth=%.3f meleedistance=%.3f AutoRMB=%s AutoRMBhealth=%.3f AutoRMBdistance=%.3f AutoSkill=%s SkillHealth=%.3f AntiAFK=%s",
                 ToText(AutoMelee).c_str(), meleehealth, meleedistance, ToText(AutoRMB).c_str(), AutoRMBhealth,
                 AutoRMBdistance, ToText(AutoSkill).c_str(), SkillHealth, ToText(AntiAFK).c_str());
-            LogConfig(level, "Dump: fov-change enablechangefov=%s CHANGEFOV=%.3f trackback=%s secondaim=%s highPriority=%s targetPriority=%d",
-                ToText(enablechangefov).c_str(), CHANGEFOV, ToText(trackback).c_str(),
+            LogConfig(level, "Dump: secondary secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
             LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f inputDelayMs=%d debugLog=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMac,
                 kmboxComPort, kmboxAimSensitivity, kmboxInputDelayMs, ToText(kmboxDebugLog).c_str());
             LogConfig(level, "Dump: manual screen width=%d height=%d",
                 manualScreenWidth, manualScreenHeight);
-            LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s outline=%s externaloutline=%s teamoutline=%s healthoutline=%s rainbowoutline=%s",
+            LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s",
                 ToText(draw_info).c_str(), ToText(drawbattletag).c_str(), ToText(drawhealth).c_str(), ToText(healthbar).c_str(),
                 ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), visualMaxDist, ToText(name).c_str(), ToText(ult).c_str(),
-                ToText(draw_skel).c_str(), ToText(skillinfo).c_str(), ToText(outline).c_str(), ToText(externaloutline).c_str(),
-                ToText(teamoutline).c_str(), ToText(healthoutline).c_str(), ToText(rainbowoutline).c_str());
-            LogConfig(level, "Dump: overlays draw_edge=%s drawbox3d=%s radar=%s radarline=%s drawline=%s draw_fov=%s draw_hp_pack=%s crosscircle=%s eyeray=%s testvalue=%s",
-                ToText(draw_edge).c_str(), ToText(drawbox3d).c_str(), ToText(radar).c_str(), ToText(radarline).c_str(),
+                ToText(draw_skel).c_str(), ToText(skillinfo).c_str());
+            LogConfig(level, "Dump: overlays radar=%s radarline=%s drawline=%s draw_fov=%s draw_hp_pack=%s crosscircle=%s eyeray=%s",
+                ToText(radar).c_str(), ToText(radarline).c_str(),
                 ToText(drawline).c_str(), ToText(draw_fov).c_str(), ToText(draw_hp_pack).c_str(),
-                ToText(crosscircle).c_str(), ToText(eyeray).c_str(), ToText(testvalue).c_str());
-            LogConfig(level, "Dump: colors EnemyCol=%s fovcol=%s fovcol2=%s enargb=%s invisnenargb=%s targetargb=%s targetargb2=%s allyargb=%s rainbowargb=%s",
+                ToText(crosscircle).c_str(), ToText(eyeray).c_str());
+            LogConfig(level, "Dump: colors EnemyCol=%s fovcol=%s fovcol2=%s enargb=%s invisnenargb=%s targetargb=%s targetargb2=%s allyargb=%s",
                 ColorText(EnemyCol).c_str(), ColorText(fovcol).c_str(), ColorText(fovcol2).c_str(),
                 ColorText(enargb).c_str(), ColorText(invisnenargb).c_str(), ColorText(targetargb).c_str(),
-                ColorText(targetargb2).c_str(), ColorText(allyargb).c_str(), ColorText(rainbowargb).c_str());
-            LogConfig(level, "Dump: state Targetenemyi=%d Targetenemyifov=%d health=%.3f doingentity=%d lastheroid=%d Menu=%s manualsave=%s loginornot=%s nowhero=%s namespoofer=%s fakename=%s locx=%d locy=%d therad=%d pon=%d crss=%d",
-                Targetenemyi, Targetenemyifov, health, doingentity, lastheroid, ToText(Menu).c_str(), ToText(manualsave).c_str(),
-                ToText(loginornot).c_str(), nowhero.c_str(), ToText(namespoofer).c_str(), fakename, locx, locy, therad, pon, crss);
+                ColorText(targetargb2).c_str(), ColorText(allyargb).c_str());
+            LogConfig(level, "Dump: state Targetenemyi=%d Targetenemyifov=%d health=%.3f doingentity=%d lastheroid=%d Menu=%s nowhero=%s locx=%d locy=%d therad=%d pon=%d crss=%d",
+                Targetenemyi, Targetenemyifov, health, doingentity, lastheroid, ToText(Menu).c_str(),
+                nowhero.c_str(), locx, locy, therad, pon, crss);
         }
 
     } // namespace
@@ -1345,9 +1446,11 @@ namespace OW { namespace Config {
 
         if (heroId == 0) {
             WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
+            SaveAimbotSettingsUnlocked(path);
+            SaveAimMethodSettingsUnlocked(path);
             SaveKmboxSettingsUnlocked(path);
             LogConfig(Diagnostics::LogLevel::Info,
-                "Saved global KMBox config to %s without a current hero.", path.c_str());
+                "Saved global config to %s without a current hero.", path.c_str());
             return;
         }
 
@@ -1355,6 +1458,8 @@ namespace OW { namespace Config {
         const char* section = heroName.c_str();
 
         WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
+        SaveAimbotSettingsUnlocked(path);
+        SaveAimMethodSettingsUnlocked(path);
 
         WriteBoolValue(path, section, "highPriority", highPriority);
         WriteBoolValue(path, section, "aiaim", aiaim);
@@ -1385,10 +1490,7 @@ namespace OW { namespace Config {
         WriteIntValue(path, section, "dontmanyshot", shotmanydont);
         WriteBoolValue(path, section, "hitboxdelayshoot", hitboxdelayshoot);
         WriteIntValue(path, section, "hitboxdelaytime", hiboxdelaytime);
-        WriteFixedFloatValue(path, section, "recoilnum", recoilnum);
         WriteFixedFloatValue(path, section, "accvalue", accvalue);
-        WriteBoolValue(path, section, "norecoil", norecoil);
-        WriteBoolValue(path, section, "horizonreco", horizonreco);
         WriteBoolValue(path, section, "switch_team", switch_team);
         WriteBoolValue(path, section, "switch_team2", switch_team2);
         WriteIntValue(path, section, "Bone", Bone);
@@ -1415,8 +1517,6 @@ namespace OW { namespace Config {
         WriteFixedFloatValue(path, section, "accvalue2", accvalue2);
         WriteFixedFloatValue(path, section, "hitbox2", hitbox2);
         WriteFixedFloatValue(path, section, "Fov2", Fov2);
-        WriteBoolValue(path, section, "enablechangefov", enablechangefov);
-        WriteFixedFloatValue(path, section, "CHANGEFOV", CHANGEFOV);
 
         if (heroId == OW::eHero::HERO_GENJI) {
             WriteBoolValue(path, section, "GenjiBlade", GenjiBlade);
@@ -1430,7 +1530,6 @@ namespace OW { namespace Config {
         WriteBoolValue(path, "Global", "draw_hp_pack", draw_hp_pack);
         WriteBoolValue(path, "Global", "crosscircle", crosscircle);
         WriteBoolValue(path, "Global", "eyeray", eyeray);
-        WriteBoolValue(path, "Global", "trackback", trackback);
         WriteBoolValue(path, "Global", "draw_info", draw_info);
         WriteBoolValue(path, "Global", "drawbattletag", drawbattletag);
         WriteBoolValue(path, "Global", "drawhealth", drawhealth);
@@ -1443,13 +1542,6 @@ namespace OW { namespace Config {
         WriteBoolValue(path, "Global", "ult", ult);
         WriteBoolValue(path, "Global", "draw_skel", draw_skel);
         WriteBoolValue(path, "Global", "skillinfo", skillinfo);
-        WriteBoolValue(path, "Global", "outline", outline);
-        WriteBoolValue(path, "Global", "externaloutline", externaloutline);
-        WriteBoolValue(path, "Global", "teamoutline", teamoutline);
-        WriteBoolValue(path, "Global", "healthoutline", healthoutline);
-        WriteBoolValue(path, "Global", "rainbowoutline", rainbowoutline);
-        WriteBoolValue(path, "Global", "draw_edge", draw_edge);
-        WriteBoolValue(path, "Global", "drawbox3d", drawbox3d);
         WriteBoolValue(path, "Global", "radar", radar);
         WriteBoolValue(path, "Global", "radarline", radarline);
         WriteBoolValue(path, "Global", "drawline", drawline);
@@ -1481,6 +1573,8 @@ namespace OW { namespace Config {
 
         const std::string heroName = HeroSectionName(heroId, linkBase);
         ResetHeroDefaultsUnlocked();
+        ResetAimbotDefaultsUnlocked();
+        ResetAimMethodDefaultsUnlocked();
         ResetGlobalDefaultsUnlocked();
 
         IniFile ini;
@@ -1516,6 +1610,8 @@ namespace OW { namespace Config {
         config_version = kCurrentConfigVersion;
 
         LoadHeroSettingsUnlocked(ini, heroName.c_str(), heroId);
+        LoadAimbotSettingsUnlocked(ini);
+        LoadAimMethodSettingsUnlocked(ini);
         LoadGlobalSettingsUnlocked(ini);
         LoadKmboxSettingsUnlocked(ini);
         LoadHeroPresetsUnlocked(ini);

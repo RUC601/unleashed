@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <unordered_map>
 #include <windows.h>
 #include <process.h>
 #include <DirectXMath.h>
@@ -161,6 +162,8 @@ inline std::mutex g_mutex;
 
 inline void entity_scan_thread() {
     Diagnostics::Info("Entity scan thread started.");
+    size_t lastLoggedScanCount = static_cast<size_t>(-1);
+    DWORD lastScanLogTick = 0;
     while (OW::Config::doingentity == 1) {
         bool should_scan = false;
         {
@@ -173,7 +176,13 @@ inline void entity_scan_thread() {
             Diagnostics::RecordEntityScanCycle(scanned.size());
             Diagnostics::Trace("Entity scan cycle found %zu raw entities.", scanned.size());
             if (OW::PipelineDebugEnabled()) {
-                Diagnostics::Info("[PIPELINE] Stage 3 entity scan raw=%zu", scanned.size());
+                const DWORD now = GetTickCount();
+                if (lastLoggedScanCount != scanned.size() || lastScanLogTick == 0 ||
+                    now - lastScanLogTick >= 1000) {
+                    Diagnostics::Info("[PIPELINE] Stage 3 entity scan raw=%zu", scanned.size());
+                    lastLoggedScanCount = scanned.size();
+                    lastScanLogTick = now;
+                }
             }
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
@@ -193,17 +202,92 @@ inline void entity_scan_thread() {
 // =========================================================================
 
 inline void entity_thread() {
-    int entitytime = 0;
+    constexpr DWORD kEntityExchangeIntervalMs = 16;
+    DWORD entitytime = 0;
     Vector3 lastpos{};
     size_t lastLoggedRawCount = static_cast<size_t>(-1);
     size_t lastLoggedValidatedCount = static_cast<size_t>(-1);
     DWORD lastProcessLogTick = 0;
+    uint64_t entityCycleCount = 0;
+    DWORD entityCycleRateTick = GetTickCount();
+    double entityCycleHz = 0.0;
+
+    struct ComponentBaseCache {
+        uint64_t linkParent = 0;
+        uint64_t health = 0;
+        uint64_t link = 0;
+        uint64_t team = 0;
+        uint64_t velocity = 0;
+        uint64_t hero = 0;
+        uint64_t bone = 0;
+        uint64_t rotation = 0;
+        uint64_t skill = 0;
+        uint64_t visibility = 0;
+        uint64_t angle = 0;
+        uint64_t enemyAngle = 0;
+        DWORD healthUpdateTick = 0;
+        bool healthValid = false;
+        float playerHealth = 0.0f;
+        float playerHealthMax = 0.0f;
+        float minHealth = 0.0f;
+        float maxHealth = 0.0f;
+        float minArmorHealth = 0.0f;
+        float maxArmorHealth = 0.0f;
+        float minBarrierHealth = 0.0f;
+        float maxBarrierHealth = 0.0f;
+        bool alive = false;
+        bool imort = false;
+        bool barrprot = false;
+        bool heroValid = false;
+        uint64_t heroId = 0;
+        DWORD slowUpdateTick = 0;
+        bool slowValid = false;
+        bool isEnemy = false;
+        bool vis = false;
+        bool skill1act = false;
+        bool skill2act = false;
+        float ultimate = 0.0f;
+        float skillcd1 = 0.0f;
+        float skillcd2 = 0.0f;
+        bool reloading = false;
+        std::string heroName = "Unknown";
+        OW::c_entity::SkeletonBoneCache skeletonCache{};
+    };
+    std::unordered_map<uint64_t, ComponentBaseCache> componentBaseCache{};
+    componentBaseCache.reserve(128);
+
+    struct DynamicEntityCache {
+        uint64_t linkParent = 0;
+        bool valid = false;
+        uint64_t entityId = 0;
+        uintptr_t meshBase = 0;
+        XMFLOAT3 pos{};
+        DWORD updateTick = 0;
+    };
+    std::unordered_map<uint64_t, DynamicEntityCache> dynamicEntityCache{};
+    dynamicEntityCache.reserve(64);
+
+    auto recordEntityCycle = [&]() {
+        ++entityCycleCount;
+        const DWORD now = GetTickCount();
+        if ((entityCycleCount % 60ull) == 0ull) {
+            const DWORD elapsed = now - entityCycleRateTick;
+            entityCycleHz = elapsed > 0 ? (60000.0 / static_cast<double>(elapsed)) : 0.0;
+            entityCycleRateTick = now;
+            if (OW::PipelineDebugEnabled()) {
+                Diagnostics::Info("[PIPELINE] entity_thread cycle %llu at ~%.1f Hz.",
+                    static_cast<unsigned long long>(entityCycleCount),
+                    entityCycleHz);
+            }
+        }
+        Diagnostics::RecordEntityProcessCycle(entityCycleHz);
+    };
 
     while (OW::Config::doingentity == 1) {
         SDK->BeginFrame();
 
         if (entitytime == 0) entitytime = GetTickCount();
-        if (GetTickCount() - entitytime >= 100) {
+        if (GetTickCount() - entitytime >= kEntityExchangeIntervalMs) {
             std::lock_guard<std::mutex> lock(g_mutex);
             if (OW::abletotread) {
                 OW::ow_entities = OW::ow_entities_scan;
@@ -213,15 +297,19 @@ inline void entity_thread() {
         }
 
         std::vector<std::pair<uint64_t, uint64_t>> raw_entities;
+        std::vector<OW::c_entity> previous_entities;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             raw_entities = OW::ow_entities;
+            previous_entities = OW::entities;
         }
 
         // No entities available
         if (raw_entities.empty()) {
             Diagnostics::EntityProcessStats stats{};
             Diagnostics::LocalEntityStats localStats{};
+            componentBaseCache.clear();
+            dynamicEntityCache.clear();
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 OW::entities = {};
@@ -240,9 +328,14 @@ inline void entity_thread() {
                     lastProcessLogTick = now;
                 }
             }
-            Sleep(1000);
+            recordEntityCycle();
+            Sleep(16);
             continue;
         }
+        if (componentBaseCache.size() > 512)
+            componentBaseCache.clear();
+        if (dynamicEntityCache.size() > 512)
+            dynamicEntityCache.clear();
 
         std::vector<OW::c_entity> tmp_entities{};
         std::vector<OW::hpanddy> hpdy_entities{};
@@ -251,6 +344,9 @@ inline void entity_thread() {
         processStats.raw = raw_entities.size();
         Diagnostics::LocalEntityStats localStats{};
         bool sampledBoneCandidateHasAngle = false;
+        const DWORD processLoopTick = GetTickCount();
+        const bool detailedProcessLog = OW::PipelineDebugEnabled() &&
+            (lastProcessLogTick == 0 || processLoopTick - lastProcessLogTick >= 1000);
         const auto cameraLocation = OW::viewMatrix_xor.get_location();
         const auto toCentimeters = [](float value) -> int {
             return std::isfinite(value) ? static_cast<int>(value * 100.0f) : 0;
@@ -259,9 +355,52 @@ inline void entity_thread() {
         localStats.cameraYCm = std::isfinite(cameraLocation.y) ? static_cast<int>(cameraLocation.y * 100.0f) : 0;
         localStats.cameraZCm = std::isfinite(cameraLocation.z) ? static_cast<int>(cameraLocation.z * 100.0f) : 0;
 
+        std::unordered_map<uint64_t, const OW::c_entity*> previousEntityByAddress;
+        previousEntityByAddress.reserve(previous_entities.size());
+        for (const OW::c_entity& previous : previous_entities) {
+            if (previous.address)
+                previousEntityByAddress.emplace(previous.address, &previous);
+        }
+
+        auto attachPreviousRenderSample = [&](OW::c_entity& entity) {
+            entity.render_sample_tick_ms = processLoopTick;
+
+            const auto previousIt = previousEntityByAddress.find(entity.address);
+            if (previousIt == previousEntityByAddress.end() || !previousIt->second) {
+                entity.previous_render_sample_tick_ms = processLoopTick;
+                entity.has_previous_render_sample = false;
+                entity.previous_head_pos = entity.head_pos;
+                entity.previous_velocity = entity.velocity;
+                entity.previous_pos = entity.pos;
+                entity.previous_neck_pos = entity.neck_pos;
+                entity.previous_chest_pos = entity.chest_pos;
+                entity.previous_skeleton_bones = entity.skeleton_bones;
+                entity.previous_skeleton_bone_valid = entity.skeleton_bone_valid;
+                entity.previous_cached_bot_chest_bone = entity.cached_bot_chest_bone;
+                entity.previous_cached_bot_chest_bone_valid = entity.cached_bot_chest_bone_valid;
+                return;
+            }
+
+            const OW::c_entity& previous = *previousIt->second;
+            entity.previous_render_sample_tick_ms =
+                previous.render_sample_tick_ms ? previous.render_sample_tick_ms : processLoopTick;
+            entity.has_previous_render_sample =
+                previous.render_sample_tick_ms != 0 &&
+                previous.render_sample_tick_ms != processLoopTick;
+            entity.previous_head_pos = previous.head_pos;
+            entity.previous_velocity = previous.velocity;
+            entity.previous_pos = previous.pos;
+            entity.previous_neck_pos = previous.neck_pos;
+            entity.previous_chest_pos = previous.chest_pos;
+            entity.previous_skeleton_bones = previous.skeleton_bones;
+            entity.previous_skeleton_bone_valid = previous.skeleton_bone_valid;
+            entity.previous_cached_bot_chest_bone = previous.cached_bot_chest_bone;
+            entity.previous_cached_bot_chest_bone_valid = previous.cached_bot_chest_bone_valid;
+        };
+
         for (size_t i = 0; i < raw_entities.size(); i++) {
             OW::c_entity entity{};
-            const bool progressLog = OW::PipelineDebugEnabled() && (i < 3 || (i % 16) == 0);
+            const bool progressLog = detailedProcessLog && (i < 3 || (i % 16) == 0);
             if (progressLog) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu/%zu start component=0x%llX link=0x%llX.",
                     i,
@@ -284,56 +423,127 @@ inline void entity_thread() {
                 continue;
             }
 
-            OW::EntityHeaderSnapshot componentHeader{};
-            componentHeader.Read(ComponentParent);
-            const OW::EntityHeaderSnapshot* componentSnapshot =
-                componentHeader.valid ? &componentHeader : nullptr;
-
-            OW::EntityHeaderSnapshot linkHeader{};
-            const OW::EntityHeaderSnapshot* linkSnapshot = componentSnapshot;
-            if (LinkParent != ComponentParent) {
-                linkHeader.Read(LinkParent);
-                linkSnapshot = linkHeader.valid ? &linkHeader : nullptr;
+            auto dynamicCacheIt = dynamicEntityCache.find(ComponentParent);
+            if (dynamicCacheIt != dynamicEntityCache.end() &&
+                dynamicCacheIt->second.linkParent != LinkParent) {
+                dynamicEntityCache.erase(dynamicCacheIt);
+                dynamicCacheIt = dynamicEntityCache.end();
             }
-            if (progressLog) {
-                Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu headers component_valid=%d link_valid=%d.",
-                    i,
-                    componentHeader.valid ? 1 : 0,
-                    linkSnapshot ? 1 : 0);
+            if (dynamicCacheIt != dynamicEntityCache.end() && dynamicCacheIt->second.valid) {
+                DynamicEntityCache& cachedDynamic = dynamicCacheIt->second;
+                if (cachedDynamic.meshBase &&
+                    (cachedDynamic.updateTick == 0 ||
+                     processLoopTick - cachedDynamic.updateTick >= 250)) {
+                    OW::velocity_compo_t hpdyVelocity{};
+                    if (SDK->read_range(cachedDynamic.meshBase, &hpdyVelocity, sizeof(hpdyVelocity))) {
+                        cachedDynamic.pos = hpdyVelocity.location;
+                        cachedDynamic.updateTick = processLoopTick;
+                    }
+                }
+
+                OW::hpanddy hpdyentity{};
+                hpdyentity.entityid = cachedDynamic.entityId;
+                hpdyentity.MeshBase = cachedDynamic.meshBase;
+                hpdyentity.POS = cachedDynamic.pos;
+                hpdy_entities.push_back(hpdyentity);
+                processStats.dynamic++;
+                continue;
+            }
+
+            auto cacheIt = componentBaseCache.find(ComponentParent);
+            const bool componentCacheHit =
+                cacheIt != componentBaseCache.end() &&
+                cacheIt->second.linkParent == LinkParent;
+
+            OW::EntityHeaderSnapshot componentHeader{};
+            OW::EntityHeaderSnapshot linkHeader{};
+            const OW::EntityHeaderSnapshot* componentSnapshot = nullptr;
+            const OW::EntityHeaderSnapshot* linkSnapshot = nullptr;
+
+            if (!componentCacheHit) {
+                componentHeader.Read(ComponentParent);
+                componentSnapshot = componentHeader.valid ? &componentHeader : nullptr;
+                linkSnapshot = componentSnapshot;
+                if (LinkParent != ComponentParent) {
+                    linkHeader.Read(LinkParent);
+                    linkSnapshot = linkHeader.valid ? &linkHeader : nullptr;
+                }
+                if (progressLog) {
+                    Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu headers component_valid=%d link_valid=%d cache_hit=0.",
+                        i,
+                        componentHeader.valid ? 1 : 0,
+                        linkSnapshot ? 1 : 0);
+                }
+            } else if (progressLog) {
+                Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu headers cache_hit=1.", i);
             }
 
             // Check for special entity IDs (HP packs, Bob, etc.)
-            uint64_t ptrValue = 0;
-            if (!componentHeader.ReadParentOffset(0x30, ptrValue))
-                ptrValue = SDK->RPM<uint64_t>(ComponentParent + 0x30);
-            uint64_t Ptr = ptrValue & 0xFFFFFFFFFFFFFFC0;
-            if (Ptr && Ptr < 0xFFFFFFFFFFFFFFEF) {
-                uint64_t EntityID = SDK->RPM<uint64_t>(Ptr + 0x10);
-                if (EntityID == 0x400000000000060 || EntityID == 0x40000000000480A ||
-                    EntityID == 0x40000000000005F || EntityID == 0x400000000002533) {
-                    OW::hpanddy hpdyentity{};
-                    hpdyentity.entityid = EntityID;
-                    hpdyentity.MeshBase = OW::DecryptComponent(
-                        ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
-                    hpdyentity.POS = SDK->RPM<XMFLOAT3>(hpdyentity.MeshBase + 0x380 + 0x50);
-                    hpdy_entities.push_back(hpdyentity);
-                    processStats.dynamic++;
-                    continue;
+            if (!componentCacheHit) {
+                uint64_t ptrValue = 0;
+                if (!componentHeader.ReadParentOffset(0x30, ptrValue))
+                    ptrValue = SDK->RPM<uint64_t>(ComponentParent + 0x30);
+                uint64_t Ptr = ptrValue & 0xFFFFFFFFFFFFFFC0;
+                if (Ptr && Ptr < 0xFFFFFFFFFFFFFFEF) {
+                    uint64_t EntityID = SDK->RPM<uint64_t>(Ptr + 0x10);
+                    if (EntityID == 0x400000000000060 || EntityID == 0x40000000000480A ||
+                        EntityID == 0x40000000000005F || EntityID == 0x400000000002533) {
+                        OW::hpanddy hpdyentity{};
+                        hpdyentity.entityid = EntityID;
+                        hpdyentity.MeshBase = OW::DecryptComponent(
+                            ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
+                        OW::velocity_compo_t hpdyVelocity{};
+                        if (hpdyentity.MeshBase &&
+                            SDK->read_range(hpdyentity.MeshBase, &hpdyVelocity, sizeof(hpdyVelocity))) {
+                            hpdyentity.POS = hpdyVelocity.location;
+                        } else if (hpdyentity.MeshBase) {
+                            hpdyentity.POS = SDK->RPM<XMFLOAT3>(hpdyentity.MeshBase + 0x380 + 0x50);
+                        }
+                        DynamicEntityCache dynamicCache{};
+                        dynamicCache.linkParent = LinkParent;
+                        dynamicCache.valid = true;
+                        dynamicCache.entityId = EntityID;
+                        dynamicCache.meshBase = hpdyentity.MeshBase;
+                        dynamicCache.pos = hpdyentity.POS;
+                        dynamicCache.updateTick = processLoopTick;
+                        dynamicEntityCache.insert_or_assign(ComponentParent, dynamicCache);
+                        hpdy_entities.push_back(hpdyentity);
+                        processStats.dynamic++;
+                        continue;
+                    }
                 }
             }
 
-            // Decrypt all component bases
-            entity.HealthBase    = OW::DecryptComponent(ComponentParent, OW::TYPE_HEALTH, componentSnapshot);
-            entity.LinkBase      = OW::DecryptComponent(LinkParent, OW::TYPE_LINK, linkSnapshot);
-            entity.TeamBase      = OW::DecryptComponent(ComponentParent, OW::TYPE_TEAM, componentSnapshot);
-            entity.VelocityBase  = OW::DecryptComponent(ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
-            entity.HeroBase      = OW::DecryptComponent(LinkParent, OW::TYPE_P_HEROID, linkSnapshot);
-            entity.BoneBase      = OW::DecryptComponent(ComponentParent, OW::TYPE_BONE, componentSnapshot);
-            entity.RotationBase  = OW::DecryptComponent(ComponentParent, OW::TYPE_ROTATION, componentSnapshot);
-            entity.SkillBase     = OW::DecryptComponent(ComponentParent, OW::TYPE_SKILL, componentSnapshot);
-            entity.VisBase       = OW::DecryptComponent(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
-            entity.AngleBase     = OW::DecryptComponent(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
-            entity.EnemyAngleBase = OW::DecryptComponent(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
+            // Component bases are stable for a live entity; cache them to avoid
+            // repeating the expensive component-table decrypt path every cycle.
+            if (!componentCacheHit) {
+                ComponentBaseCache cache{};
+                cache.linkParent = LinkParent;
+                cache.health     = OW::DecryptComponent(ComponentParent, OW::TYPE_HEALTH, componentSnapshot);
+                cache.link       = OW::DecryptComponent(LinkParent, OW::TYPE_LINK, linkSnapshot);
+                cache.team       = OW::DecryptComponent(ComponentParent, OW::TYPE_TEAM, componentSnapshot);
+                cache.velocity   = OW::DecryptComponent(ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
+                cache.hero       = OW::DecryptComponent(LinkParent, OW::TYPE_P_HEROID, linkSnapshot);
+                cache.bone       = OW::DecryptComponent(ComponentParent, OW::TYPE_BONE, componentSnapshot);
+                cache.rotation   = OW::DecryptComponent(ComponentParent, OW::TYPE_ROTATION, componentSnapshot);
+                cache.skill      = OW::DecryptComponent(ComponentParent, OW::TYPE_SKILL, componentSnapshot);
+                cache.visibility = OW::DecryptComponent(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
+                cache.angle      = OW::DecryptComponent(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
+                cache.enemyAngle = OW::DecryptComponent(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
+                cacheIt = componentBaseCache.insert_or_assign(ComponentParent, cache).first;
+            }
+
+            entity.HealthBase     = cacheIt->second.health;
+            entity.LinkBase       = cacheIt->second.link;
+            entity.TeamBase       = cacheIt->second.team;
+            entity.VelocityBase   = cacheIt->second.velocity;
+            entity.HeroBase       = cacheIt->second.hero;
+            entity.BoneBase       = cacheIt->second.bone;
+            entity.RotationBase   = cacheIt->second.rotation;
+            entity.SkillBase      = cacheIt->second.skill;
+            entity.VisBase        = cacheIt->second.visibility;
+            entity.AngleBase      = cacheIt->second.angle;
+            entity.EnemyAngleBase = cacheIt->second.enemyAngle;
             if (progressLog) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu decrypt health=0x%llX link=0x%llX velocity=0x%llX hero=0x%llX bone=0x%llX angle=0x%llX.",
                     i,
@@ -344,8 +554,10 @@ inline void entity_thread() {
                     static_cast<unsigned long long>(entity.BoneBase),
                     static_cast<unsigned long long>(entity.AngleBase));
             }
-            if (!entity.LinkBase)
+            if (!entity.LinkBase) {
+                componentBaseCache.erase(ComponentParent);
                 processStats.linkBaseFail++;
+            }
 
             // Skip duplicates
             if (entity == lastentity) {
@@ -354,21 +566,52 @@ inline void entity_thread() {
             }
             lastentity = entity;
 
+            OW::velocity_compo_t velo_compo{};
+            const bool velocityRead = entity.VelocityBase &&
+                SDK->read_range(entity.VelocityBase, &velo_compo, sizeof(velo_compo));
+
             // ---- Health ----
             if (entity.HealthBase) {
-                auto health_compo = SDK->RPM<OW::health_compo_t>(entity.HealthBase);
-                Vector2 healthext = SDK->RPM<Vector2>(entity.HealthBase + 0xF0);
-                entity.PlayerHealth    = health_compo.health + health_compo.armor + health_compo.barrier + healthext.Y;
-                entity.PlayerHealthMax = health_compo.health_max + health_compo.armor_max + health_compo.barrier_max + healthext.X;
-                entity.MinHealth       = health_compo.health;
-                entity.MaxHealth       = health_compo.health_max;
-                entity.MinArmorHealth   = health_compo.armor;
-                entity.MaxArmorHealth   = health_compo.armor_max;
-                entity.MinBarrierHealth = health_compo.barrier;
-                entity.MaxBarrierHealth = health_compo.barrier_max;
-                entity.Alive   = (entity.PlayerHealth > 0.f);
-                entity.imort   = health_compo.isImmortal;
-                entity.barrprot = health_compo.isBarrierProjected;
+                ComponentBaseCache& componentCache = cacheIt->second;
+                const bool refreshHealth =
+                    !componentCache.healthValid ||
+                    processLoopTick - componentCache.healthUpdateTick >= 100;
+                if (refreshHealth) {
+                    OW::health_compo_t health_compo{};
+                    if (!SDK->read_range(entity.HealthBase, &health_compo, sizeof(health_compo))) {
+                        componentBaseCache.erase(ComponentParent);
+                        processStats.healthBaseFail++;
+                        Diagnostics::RecordInvalidEntity();
+                        continue;
+                    }
+                    const Vector2 healthext = health_compo.health_ext;
+                    componentCache.playerHealth =
+                        health_compo.health + health_compo.armor + health_compo.barrier + healthext.Y;
+                    componentCache.playerHealthMax =
+                        health_compo.health_max + health_compo.armor_max + health_compo.barrier_max + healthext.X;
+                    componentCache.minHealth = health_compo.health;
+                    componentCache.maxHealth = health_compo.health_max;
+                    componentCache.minArmorHealth = health_compo.armor;
+                    componentCache.maxArmorHealth = health_compo.armor_max;
+                    componentCache.minBarrierHealth = health_compo.barrier;
+                    componentCache.maxBarrierHealth = health_compo.barrier_max;
+                    componentCache.alive = componentCache.playerHealth > 0.f;
+                    componentCache.imort = health_compo.isImmortal;
+                    componentCache.barrprot = health_compo.isBarrierProjected;
+                    componentCache.healthUpdateTick = processLoopTick;
+                    componentCache.healthValid = true;
+                }
+                entity.PlayerHealth = componentCache.playerHealth;
+                entity.PlayerHealthMax = componentCache.playerHealthMax;
+                entity.MinHealth = componentCache.minHealth;
+                entity.MaxHealth = componentCache.maxHealth;
+                entity.MinArmorHealth = componentCache.minArmorHealth;
+                entity.MaxArmorHealth = componentCache.maxArmorHealth;
+                entity.MinBarrierHealth = componentCache.minBarrierHealth;
+                entity.MaxBarrierHealth = componentCache.maxBarrierHealth;
+                entity.Alive = componentCache.alive;
+                entity.imort = componentCache.imort;
+                entity.barrprot = componentCache.barrprot;
             } else {
                 processStats.healthBaseFail++;
                 Diagnostics::RecordInvalidEntity();
@@ -382,28 +625,40 @@ inline void entity_thread() {
             }
 
             // ---- Velocity / position / bones ----
-            if (entity.VelocityBase) {
-                auto velo_compo = SDK->RPM<OW::velocity_compo_t>(entity.VelocityBase);
+            if (velocityRead) {
                 entity.pos      = Vector3(velo_compo.location.x, velo_compo.location.y - 1.f, velo_compo.location.z);
                 entity.velocity = Vector3(velo_compo.velocity.x, velo_compo.velocity.y, velo_compo.velocity.z);
             }
 
             // ---- Hero ID ----
             if (entity.HeroBase) {
-                auto hero_compo = SDK->RPM<OW::hero_compo_t>(entity.HeroBase);
-                entity.HeroID = hero_compo.heroid;
+                ComponentBaseCache& componentCache = cacheIt->second;
+                if (componentCache.heroValid) {
+                    entity.HeroID = componentCache.heroId;
+                } else {
+                    OW::hero_compo_t hero_compo{};
+                    if (SDK->read_range(entity.HeroBase, &hero_compo, sizeof(hero_compo))) {
+                        entity.HeroID = hero_compo.heroid;
+                        componentCache.heroId = entity.HeroID;
+                        componentCache.heroValid = entity.HeroID != 0;
+                    }
+                }
             } else {
                 processStats.heroBaseMissing++;
                 // Fallback: identify by MaxHealth
                 if (entity.MaxHealth == 225) {
-                    XMFLOAT3 temppos = SDK->RPM<XMFLOAT3>(entity.VelocityBase + 0x380 + 0x50);
+                    XMFLOAT3 temppos = velocityRead
+                        ? velo_compo.location
+                        : SDK->RPM<XMFLOAT3>(entity.VelocityBase + 0x380 + 0x50);
                     entity.head_pos = Vector3(temppos.x, temppos.y + 1.f, temppos.z);
                     entity.HeroID = 0x16dd; // TOBTERT
                     entity.neck_pos = entity.head_pos;
                     entity.chest_pos = entity.head_pos;
                     entity.pos = entity.neck_pos;
                 } else if (entity.MaxHealth == 30) {
-                    XMFLOAT3 temppos = SDK->RPM<XMFLOAT3>(entity.VelocityBase + 0x380 + 0x50);
+                    XMFLOAT3 temppos = velocityRead
+                        ? velo_compo.location
+                        : SDK->RPM<XMFLOAT3>(entity.VelocityBase + 0x380 + 0x50);
                     entity.head_pos = Vector3(temppos.x, temppos.y, temppos.z);
                     entity.HeroID = 0x16ee; // SYMTERT
                     entity.neck_pos = entity.head_pos;
@@ -432,73 +687,54 @@ inline void entity_thread() {
                 if (entity.BoneBase)
                     processStats.boneBaseNonZero++;
 
-                const uint64_t velocityBoneData = SDK->RPM<uint64_t>(entity.VelocityBase + 0x8B0);
-                if (velocityBoneData)
-                    processStats.velocityBoneDataNonZero++;
+                const uint64_t velocityBoneData = velocityRead
+                    ? velo_compo.bonedata
+                    : SDK->RPM<uint64_t>(entity.VelocityBase + 0x8B0);
 
-                const uint64_t boneDataPtr = velocityBoneData ? SDK->RPM<uint64_t>(velocityBoneData) : 0;
-                if (boneDataPtr)
-                    processStats.boneDataPtrNonZero++;
-
-                const uint64_t bonesBase = velocityBoneData ? SDK->RPM<uint64_t>(velocityBoneData + 0x20) : 0;
-                if (bonesBase)
-                    processStats.bonesBaseNonZero++;
-
-                const uint64_t boneIdTable = boneDataPtr ? SDK->RPM<uint64_t>(boneDataPtr + 0x38) : 0;
-                if (boneIdTable)
-                    processStats.velocityBoneIdTableNonZero++;
-
-                const uint16_t boneCount = boneDataPtr ? SDK->RPM<uint16_t>(boneDataPtr + 0x64) : 0;
-                const bool boneCountValid = boneCount > 0 && boneCount <= OW::c_entity::kMaxBoneIdCount;
-                if (boneCountValid)
-                    processStats.velocityBoneCountValid++;
-
-                bool boneIdTableReadable = false;
-                int headIndex = -1;
-                if (boneIdTable && boneCountValid) {
-                    std::array<uint32_t, OW::c_entity::kMaxBoneIdCount> boneIds{};
-                    boneIdTableReadable = SDK->read_range(
-                        boneIdTable,
-                        boneIds.data(),
-                        sizeof(uint32_t) * boneCount);
-                    if (boneIdTableReadable) {
-                        processStats.velocityBoneIdTableReadable++;
-                        for (uint16_t boneIndex = 0; boneIndex < boneCount; ++boneIndex) {
-                            if (static_cast<uint16_t>(boneIds[boneIndex]) == OW::BONE_HEAD) {
-                                headIndex = static_cast<int>(boneIndex);
-                                processStats.velocityBoneHeadIdFound++;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (processStats.sampleBoneAddress == 0 ||
-                    (entity.AngleBase && !sampledBoneCandidateHasAngle)) {
-                    processStats.sampleBoneAddress = entity.address;
-                    processStats.sampleVelocityBase = entity.VelocityBase;
-                    processStats.sampleBoneBase = entity.BoneBase;
-                    processStats.sampleVelocityBoneData = velocityBoneData;
-                    processStats.sampleBoneDataPtr = boneDataPtr;
-                    processStats.sampleBonesBase = bonesBase;
-                    processStats.sampleBoneIdTable = boneIdTable;
-                    processStats.sampleBoneCount = static_cast<int>(boneCount);
-                    processStats.sampleBoneIdTableReadable = boneIdTableReadable ? 1 : 0;
-                    processStats.sampleBoneHeadIndex = headIndex;
-                    sampledBoneCandidateHasAngle = entity.AngleBase != 0;
-                }
-
-                if (OW::PipelineDebugEnabled()) {
+                if (detailedProcessLog) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu bone_start hero=0x%llX velocity=0x%llX bone=0x%llX vbd=0x%llX bones_base=0x%llX.",
                         i,
                         static_cast<unsigned long long>(entity.HeroID),
                         static_cast<unsigned long long>(entity.VelocityBase),
                         static_cast<unsigned long long>(entity.BoneBase),
                         static_cast<unsigned long long>(velocityBoneData),
-                        static_cast<unsigned long long>(bonesBase));
+                        0ull);
                 }
-                entity.CacheSkeletonBones();
-                if (OW::PipelineDebugEnabled()) {
+                entity.CacheSkeletonBones(cacheIt->second.skeletonCache, velocityBoneData);
+
+                if (entity.debugHeadBoneData)
+                    processStats.velocityBoneDataNonZero++;
+                if (entity.debugHeadBonePtr)
+                    processStats.boneDataPtrNonZero++;
+                if (entity.debugHeadBonesBase)
+                    processStats.bonesBaseNonZero++;
+                if (entity.debugHeadBoneIdTable)
+                    processStats.velocityBoneIdTableNonZero++;
+                const bool boneCountValid =
+                    entity.debugHeadBoneCount > 0 &&
+                    entity.debugHeadBoneCount <= OW::c_entity::kMaxBoneIdCount;
+                if (boneCountValid)
+                    processStats.velocityBoneCountValid++;
+                if (entity.debugHeadLookupResolved)
+                    processStats.velocityBoneIdTableReadable++;
+                if (entity.debugHeadIdFound)
+                    processStats.velocityBoneHeadIdFound++;
+
+                if (processStats.sampleBoneAddress == 0 ||
+                    (entity.AngleBase && !sampledBoneCandidateHasAngle)) {
+                    processStats.sampleBoneAddress = entity.address;
+                    processStats.sampleVelocityBase = entity.VelocityBase;
+                    processStats.sampleBoneBase = entity.BoneBase;
+                    processStats.sampleVelocityBoneData = entity.debugHeadBoneData;
+                    processStats.sampleBoneDataPtr = entity.debugHeadBonePtr;
+                    processStats.sampleBonesBase = entity.debugHeadBonesBase;
+                    processStats.sampleBoneIdTable = entity.debugHeadBoneIdTable;
+                    processStats.sampleBoneCount = static_cast<int>(entity.debugHeadBoneCount);
+                    processStats.sampleBoneIdTableReadable = entity.debugHeadLookupResolved ? 1 : 0;
+                    processStats.sampleBoneHeadIndex = entity.debugHeadMappedIndex;
+                    sampledBoneCandidateHasAngle = entity.AngleBase != 0;
+                }
+                if (detailedProcessLog) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu bone_done head_res=%d id=%d local=%d world=%d idx=%d head=(%.2f,%.2f,%.2f).",
                         i,
                         entity.debugHeadLookupResolved ? 1 : 0,
@@ -510,7 +746,7 @@ inline void entity_thread() {
                         entity.debugHeadWorld.Y,
                         entity.debugHeadWorld.Z);
                 }
-                if (OW::PipelineDebugEnabled()) {
+                if (detailedProcessLog) {
                     processStats.headProbeCandidates++;
                     if (entity.debugHeadLookupResolved)
                         processStats.headProbeResolved++;
@@ -588,8 +824,17 @@ inline void entity_thread() {
                 entity.head_pos.Y += 0.02f;
             }
 
-            if (entity.HeroID == OW::eHero::HERO_DVA &&
-                OW::GetHeroEngNames(entity.HeroID, entity.LinkBase) != "Hana") {
+            ComponentBaseCache& slowCache = cacheIt->second;
+            const DWORD slowNow = GetTickCount();
+            const bool refreshSlowFields =
+                !slowCache.slowValid || slowNow - slowCache.slowUpdateTick >= 500;
+            std::string name = refreshSlowFields
+                ? OW::GetHeroEngNames(entity.HeroID, entity.LinkBase)
+                : slowCache.heroName;
+            if (name.empty())
+                name = "Unknown";
+
+            if (entity.HeroID == OW::eHero::HERO_DVA && name != "Hana") {
                 entity.imort = false;
                 entity.head_pos.Y -= 0.1f;
                 entity.chest_pos = entity.neck_pos;
@@ -600,12 +845,17 @@ inline void entity_thread() {
                                   entity.HeroID == OW::eHero::HERO_TRAININGBOT2 ||
                                   entity.HeroID == OW::eHero::HERO_TRAININGBOT3 ||
                                   entity.HeroID == OW::eHero::HERO_TRAININGBOT4 ||
+                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT8 ||
                                   entity.HeroID == OW::eHero::HERO_TRAININGBOT5 ||
                                   entity.HeroID == OW::eHero::HERO_TRAININGBOT6 ||
                                   entity.HeroID == OW::eHero::HERO_TRAININGBOT7);
-            if (isStandardBot)
-                entity.chest_pos = entity.GetBonePos(83);
-            if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+            if (isStandardBot) {
+                if (entity.cached_bot_chest_bone_valid)
+                    entity.chest_pos = entity.cached_bot_chest_bone;
+                else
+                    entity.chest_pos = entity.GetBonePos(83);
+            }
+            if (detailedProcessLog && processStats.boneCandidates > 0) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu post_bone_adjust.", i);
             }
 
@@ -619,13 +869,15 @@ inline void entity_thread() {
                     entity.battletag = buffer;
                 }
             }
-            if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+            if (detailedProcessLog && processStats.boneCandidates > 0) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu post_battletag.", i);
             }
 
             // ---- Team ----
-            if (entity.TeamBase) {
-                if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+            if (!refreshSlowFields) {
+                entity.Team = slowCache.isEnemy;
+            } else if (entity.TeamBase) {
+                if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu team_start team_base=0x%llX local_team_base=0x%llX.",
                         i,
                         static_cast<unsigned long long>(entity.TeamBase),
@@ -633,7 +885,8 @@ inline void entity_thread() {
                 }
                 auto team = entity.GetTeam();
                 entity.Team = (team == OW::eTeam::TEAM_DEATHMATCH || team != OW::local_entity.GetTeam());
-                if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+                slowCache.isEnemy = entity.Team;
+                if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu team_done team=%d enemy=%d.",
                         i,
                         static_cast<int>(team),
@@ -642,21 +895,30 @@ inline void entity_thread() {
             }
 
             // ---- Visibility (May 2026 UC p330: new direct decrypt from VisBase) ----
-            if (entity.VisBase) {
-                if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+            if (!refreshSlowFields) {
+                entity.Vis = slowCache.vis;
+            } else if (entity.VisBase) {
+                if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu vis_start vis_base=0x%llX.",
                         i,
                         static_cast<unsigned long long>(entity.VisBase));
                 }
                 entity.Vis = OW::DecryptVis(entity.VisBase) != 0;
-                if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+                slowCache.vis = entity.Vis;
+                if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu vis_done vis=%d.", i, entity.Vis ? 1 : 0);
                 }
             }
 
             // ---- Skills ----
-            if (entity.SkillBase) {
-                if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+            if (!refreshSlowFields) {
+                entity.skill1act = slowCache.skill1act;
+                entity.skill2act = slowCache.skill2act;
+                entity.ultimate = slowCache.ultimate;
+                entity.skillcd1 = slowCache.skillcd1;
+                entity.skillcd2 = slowCache.skillcd2;
+            } else if (entity.SkillBase) {
+                if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu skill_start skill_base=0x%llX.",
                         i,
                         static_cast<unsigned long long>(entity.SkillBase));
@@ -664,21 +926,25 @@ inline void entity_thread() {
                 entity.skill1act = OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E3);
                 entity.skill2act = OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E9);
                 entity.ultimate  = OW::readult(entity.SkillBase + 0x40, 0, 0x1e32);
+                slowCache.skill1act = entity.skill1act;
+                slowCache.skill2act = entity.skill2act;
+                slowCache.ultimate = entity.ultimate;
 
                 // Sombra stealth: treat as invisible when translocated
                 if (entity.HeroID == OW::eHero::HERO_SOMBRA && entity.Team &&
                     !OW::Config::Rage && !OW::Config::fov360 &&
                     !OW::Config::silent && !OW::Config::fakesilent) {
                     entity.Vis = (entity.Vis && !OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x7C5));
+                    slowCache.vis = entity.Vis;
                 }
-                if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+                if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu skill_done.", i);
                 }
             }
 
             // ---- Player controller / local entity detection ----
             if (entity.AngleBase) {
-                if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+                if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_start angle=0x%llX.",
                         i,
                         static_cast<unsigned long long>(entity.AngleBase));
@@ -699,7 +965,7 @@ inline void entity_thread() {
                 if (dist <= 1.f)
                     localStats.nearCameraCandidates++;
 
-                const std::string localHeroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
+                const std::string& localHeroName = name;
                 if (localHeroName != "Unknown")
                     localStats.namedCandidates++;
                 if (distanceCm >= 0 &&
@@ -718,23 +984,27 @@ inline void entity_thread() {
                 }
 
                 if (dist <= 1.f && localHeroName != "Unknown") {
-                    if (OW::PipelineDebugEnabled()) {
+                    if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_start skill_base=0x%llX hero=%s.",
                             i,
                             static_cast<unsigned long long>(entity.SkillBase),
                             localHeroName.c_str());
                     }
-                    entity.skillcd1 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x189c);
-                    if (OW::PipelineDebugEnabled()) {
+                    if (refreshSlowFields)
+                        slowCache.skillcd1 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x189c);
+                    entity.skillcd1 = slowCache.skillcd1;
+                    if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_done value=%.3f.",
                             i,
                             entity.skillcd1);
                     }
-                    if (OW::PipelineDebugEnabled()) {
+                    if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd2_start.", i);
                     }
-                    entity.skillcd2 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x1f89);
-                    if (OW::PipelineDebugEnabled()) {
+                    if (refreshSlowFields)
+                        slowCache.skillcd2 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x1f89);
+                    entity.skillcd2 = slowCache.skillcd2;
+                    if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd2_done value=%.3f.",
                             i,
                             entity.skillcd2);
@@ -749,30 +1019,37 @@ inline void entity_thread() {
                     localStats.selectedHeroId = entity.HeroID;
                     localStats.selectedAngleBase = entity.AngleBase;
                     localStats.selectedHealth = static_cast<int>(entity.PlayerHealth + 0.5f);
-                    if (OW::PipelineDebugEnabled()) {
+                    if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select reload_start.", i);
                     }
-                    OW::Config::reloading = OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x4BF);
-                    if (OW::PipelineDebugEnabled()) {
+                    if (refreshSlowFields)
+                        slowCache.reloading = OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x4BF);
+                    OW::Config::reloading = slowCache.reloading;
+                    if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select reload_done.", i);
                     }
                     if (entity.GetTeam() == OW::eTeam::TEAM_DEATHMATCH)
                         entity.Team = false;
                 }
-                if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+                if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_done selected=%zu.", i, localStats.selected);
                 }
             }
 
             // Add to list if valid
-            if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+            if (refreshSlowFields) {
+                slowCache.heroName = name;
+                slowCache.slowUpdateTick = slowNow;
+                slowCache.slowValid = true;
+            }
+            if (detailedProcessLog && processStats.boneCandidates > 0) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu name_start.", i);
             }
-            std::string name = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
-            if (OW::PipelineDebugEnabled() && processStats.boneCandidates > 0) {
+            if (detailedProcessLog && processStats.boneCandidates > 0) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu name_done name=%s.", i, name.c_str());
             }
             if (ComponentParent && LinkParent && name != "Unknown") {
+                attachPreviousRenderSample(entity);
                 tmp_entities.push_back(entity);
             } else {
                 if (name == "Unknown")
@@ -899,7 +1176,8 @@ inline void entity_thread() {
                 lastProcessLogTick = now;
             }
         }
-        Sleep(3);
+        recordEntityCycle();
+        Sleep(1);
     }
 }
 
@@ -1015,6 +1293,117 @@ namespace OverlayRenderDetail {
         return from + (to - from) * Clamp01(t);
     }
 
+    inline bool IsFiniteVector(const Vector3& value) {
+        return std::isfinite(value.X) && std::isfinite(value.Y) && std::isfinite(value.Z);
+    }
+
+    inline bool IsNonZeroVector(const Vector3& value) {
+        return value != Vector3(0.0f, 0.0f, 0.0f);
+    }
+
+    inline Vector3 LerpVector(const Vector3& from, const Vector3& to, float t) {
+        const float alpha = Clamp01(t);
+        return Vector3(
+            Lerp(from.X, to.X, alpha),
+            Lerp(from.Y, to.Y, alpha),
+            Lerp(from.Z, to.Z, alpha));
+    }
+
+    inline Vector3 LerpWorldPosition(const Vector3& from, const Vector3& to, float t) {
+        if (!IsFiniteVector(from) || !IsFiniteVector(to) ||
+            !IsNonZeroVector(from) || !IsNonZeroVector(to)) {
+            return to;
+        }
+        return LerpVector(from, to, t);
+    }
+
+    inline Vector3 LerpFiniteVector(const Vector3& from, const Vector3& to, float t) {
+        if (!IsFiniteVector(from) || !IsFiniteVector(to))
+            return to;
+        return LerpVector(from, to, t);
+    }
+
+    inline Vector3 SelectInterpolationAnchor(const OW::c_entity& entity, bool previous) {
+        const Vector3 position = previous ? entity.previous_pos : entity.pos;
+        if (IsFiniteVector(position) && IsNonZeroVector(position))
+            return position;
+
+        const Vector3 head = previous ? entity.previous_head_pos : entity.head_pos;
+        return head;
+    }
+
+    inline bool CanInterpolateEntity(const OW::c_entity& entity) {
+        if (!entity.has_previous_render_sample)
+            return false;
+        if (!IsFiniteVector(entity.head_pos) || !IsFiniteVector(entity.previous_head_pos))
+            return false;
+
+        const Vector3 currentAnchor = SelectInterpolationAnchor(entity, false);
+        const Vector3 previousAnchor = SelectInterpolationAnchor(entity, true);
+        if (!IsFiniteVector(currentAnchor) || !IsFiniteVector(previousAnchor) ||
+            !IsNonZeroVector(currentAnchor) || !IsNonZeroVector(previousAnchor)) {
+            return false;
+        }
+
+        const float movement = previousAnchor.DistTo(currentAnchor);
+        return std::isfinite(movement) && movement <= 8.0f;
+    }
+
+    inline float EntityInterpolationAlpha(const OW::c_entity& entity, DWORD now) {
+        if (!CanInterpolateEntity(entity))
+            return 1.0f;
+
+        const DWORD previousTick = entity.previous_render_sample_tick_ms;
+        const DWORD currentTick = entity.render_sample_tick_ms;
+        if (previousTick == 0 || currentTick == 0 || currentTick <= previousTick)
+            return 1.0f;
+
+        const DWORD interval = currentTick - previousTick;
+        if (interval < 4 || interval > 250)
+            return 1.0f;
+
+        if (now - currentTick > 250)
+            return 1.0f;
+
+        constexpr DWORD kInterpolationDelayMs = 16;
+        const DWORD renderTick = (now > kInterpolationDelayMs) ? (now - kInterpolationDelayMs) : now;
+        if (renderTick <= previousTick)
+            return 0.0f;
+        if (renderTick >= currentTick)
+            return 1.0f;
+
+        return static_cast<float>(renderTick - previousTick) / static_cast<float>(interval);
+    }
+
+    inline OW::c_entity InterpolateEntityForRender(const OW::c_entity& source, DWORD now) {
+        const float alpha = EntityInterpolationAlpha(source, now);
+        if (alpha >= 0.999f)
+            return source;
+
+        OW::c_entity entity = source;
+        entity.head_pos = LerpWorldPosition(source.previous_head_pos, source.head_pos, alpha);
+        entity.velocity = LerpFiniteVector(source.previous_velocity, source.velocity, alpha);
+        entity.pos = LerpWorldPosition(source.previous_pos, source.pos, alpha);
+        entity.neck_pos = LerpWorldPosition(source.previous_neck_pos, source.neck_pos, alpha);
+        entity.chest_pos = LerpWorldPosition(source.previous_chest_pos, source.chest_pos, alpha);
+
+        for (size_t i = 0; i < entity.skeleton_bones.size(); ++i) {
+            if (source.previous_skeleton_bone_valid[i] && source.skeleton_bone_valid[i]) {
+                entity.skeleton_bones[i] =
+                    LerpWorldPosition(source.previous_skeleton_bones[i], source.skeleton_bones[i], alpha);
+                entity.skeleton_bone_valid[i] = true;
+            }
+        }
+
+        if (source.previous_cached_bot_chest_bone_valid && source.cached_bot_chest_bone_valid) {
+            entity.cached_bot_chest_bone =
+                LerpWorldPosition(source.previous_cached_bot_chest_bone, source.cached_bot_chest_bone, alpha);
+            entity.cached_bot_chest_bone_valid = true;
+        }
+
+        return entity;
+    }
+
     inline int ToByte(float value) {
         return static_cast<int>(Clamp01(value) * 255.0f + 0.5f);
     }
@@ -1040,6 +1429,180 @@ namespace OverlayRenderDetail {
         return point.X > 0.0f && point.Y > 0.0f &&
                point.X < OW::WX && point.Y < OW::WY &&
                std::isfinite(point.X) && std::isfinite(point.Y);
+    }
+
+    inline bool IsReasonableProjectedPoint(const Vector2& point) {
+        return std::isfinite(point.X) && std::isfinite(point.Y) &&
+               point.X > -OW::WX && point.X < OW::WX * 2.0f &&
+               point.Y > -OW::WY && point.Y < OW::WY * 2.0f;
+    }
+
+    struct ProjectedEntityBounds {
+        float left = 0.0f;
+        float top = 0.0f;
+        float bottom = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        float centerX = 0.0f;
+    };
+
+    struct ProjectedBoundsState {
+        bool valid = false;
+        float height = 0.0f;
+        float width = 0.0f;
+        DWORD tick = 0;
+    };
+
+    inline bool TryProjectPoint(const Vector3& world, Vector2& screen) {
+        if (!IsFiniteVector(world) || !IsNonZeroVector(world))
+            return false;
+        if (!OW::viewMatrix.WorldToScreen(world, &screen, Vector2(OW::WX, OW::WY)))
+            return false;
+        return IsReasonableProjectedPoint(screen);
+    }
+
+    inline bool TryBuildHeadOffsetBounds(const OW::c_entity& entity, ProjectedEntityBounds& bounds) {
+        Vector2 low{}, high{};
+        const Vector3 head = entity.head_pos;
+        if (!TryProjectPoint(Vector3(head.X, head.Y - 1.5f, head.Z), low))
+            return false;
+        if (!TryProjectPoint(Vector3(head.X, head.Y + 1.0f, head.Z), high))
+            return false;
+
+        const float height = std::fabs(low.Y - high.Y);
+        const float width = height * 0.85f;
+        if (height <= 2.0f || width <= 2.0f || !std::isfinite(height) || !std::isfinite(width))
+            return false;
+
+        bounds.top = (low.Y < high.Y) ? low.Y : high.Y;
+        bounds.bottom = (low.Y > high.Y) ? low.Y : high.Y;
+        bounds.centerX = (low.X + high.X) * 0.5f;
+        bounds.height = height;
+        bounds.width = width;
+        bounds.left = bounds.centerX - bounds.width * 0.5f;
+        return true;
+    }
+
+    inline bool TryBuildProjectedBounds(const OW::c_entity& entity, ProjectedEntityBounds& bounds) {
+        float minX = 0.0f;
+        float maxX = 0.0f;
+        float minY = 0.0f;
+        float maxY = 0.0f;
+        int projectedCount = 0;
+
+        auto includeScreenPoint = [&](const Vector2& screen) {
+            if (projectedCount == 0) {
+                minX = maxX = screen.X;
+                minY = maxY = screen.Y;
+            } else {
+                minX = (screen.X < minX) ? screen.X : minX;
+                maxX = (screen.X > maxX) ? screen.X : maxX;
+                minY = (screen.Y < minY) ? screen.Y : minY;
+                maxY = (screen.Y > maxY) ? screen.Y : maxY;
+            }
+            ++projectedCount;
+        };
+
+        auto includeWorldPoint = [&](const Vector3& world) {
+            Vector2 screen{};
+            if (TryProjectPoint(world, screen))
+                includeScreenPoint(screen);
+        };
+
+        for (size_t i = 0; i < entity.skeleton_bones.size(); ++i) {
+            if (entity.skeleton_bone_valid[i])
+                includeWorldPoint(entity.skeleton_bones[i]);
+        }
+        includeWorldPoint(entity.head_pos);
+        includeWorldPoint(entity.neck_pos);
+        includeWorldPoint(entity.chest_pos);
+        includeWorldPoint(entity.pos);
+        if (entity.cached_bot_chest_bone_valid)
+            includeWorldPoint(entity.cached_bot_chest_bone);
+
+        if (projectedCount < 3)
+            return TryBuildHeadOffsetBounds(entity, bounds);
+
+        float height = maxY - minY;
+        if (height <= 8.0f || !std::isfinite(height))
+            return TryBuildHeadOffsetBounds(entity, bounds);
+
+        Vector2 headScreen{};
+        Vector2 posScreen{};
+        const bool hasHead = TryProjectPoint(entity.head_pos, headScreen);
+        const bool hasPos = TryProjectPoint(entity.pos, posScreen);
+        float centerX = (minX + maxX) * 0.5f;
+        if (hasHead && hasPos)
+            centerX = (headScreen.X + posScreen.X) * 0.5f;
+        else if (hasHead)
+            centerX = headScreen.X;
+
+        const float verticalMarginTop = height * 0.08f;
+        const float verticalMarginBottom = height * 0.05f;
+        const float top = minY - verticalMarginTop;
+        const float bottom = maxY + verticalMarginBottom;
+        height = bottom - top;
+
+        const float bodyWidth = (maxX - minX) * 1.20f;
+        const float minimumBodyWidth = height * 0.55f;
+        float width = (bodyWidth > minimumBodyWidth) ? bodyWidth : minimumBodyWidth;
+        width = std::clamp(width, height * 0.45f, height * 0.95f);
+
+        if (height <= 2.0f || width <= 2.0f ||
+            !std::isfinite(top) || !std::isfinite(bottom) ||
+            !std::isfinite(centerX) || !std::isfinite(width)) {
+            return false;
+        }
+
+        bounds.top = top;
+        bounds.bottom = bottom;
+        bounds.height = height;
+        bounds.width = width;
+        bounds.centerX = centerX;
+        bounds.left = centerX - width * 0.5f;
+        return true;
+    }
+
+    inline void StabilizeProjectedBounds(
+        uint64_t address,
+        ProjectedEntityBounds& bounds,
+        DWORD now,
+        std::unordered_map<uint64_t, ProjectedBoundsState>& states) {
+        auto stateIt = states.find(address);
+        if (stateIt != states.end() && stateIt->second.valid &&
+            stateIt->second.height > 2.0f && now - stateIt->second.tick <= 250) {
+            const DWORD elapsed = now - stateIt->second.tick;
+            const float frameScale = std::clamp(static_cast<float>(elapsed) / 16.0f, 1.0f, 4.0f);
+            const float maxScaleStep = 1.0f + 0.10f * frameScale;
+            const float minHeight = stateIt->second.height / maxScaleStep;
+            const float maxHeight = stateIt->second.height * maxScaleStep;
+            const float targetHeight = std::clamp(bounds.height, minHeight, maxHeight);
+            const float centerY = (bounds.top + bounds.bottom) * 0.5f;
+
+            bounds.height = Lerp(stateIt->second.height, targetHeight, 0.65f);
+            bounds.width = std::clamp(bounds.width, bounds.height * 0.45f, bounds.height * 0.95f);
+            bounds.top = centerY - bounds.height * 0.5f;
+            bounds.bottom = centerY + bounds.height * 0.5f;
+            bounds.left = bounds.centerX - bounds.width * 0.5f;
+        }
+
+        ProjectedBoundsState next{};
+        next.valid = true;
+        next.height = bounds.height;
+        next.width = bounds.width;
+        next.tick = now;
+        states.insert_or_assign(address, next);
+    }
+
+    inline void PruneProjectedBoundsStates(
+        std::unordered_map<uint64_t, ProjectedBoundsState>& states,
+        DWORD now) {
+        for (auto it = states.begin(); it != states.end();) {
+            if (now - it->second.tick > 1000)
+                it = states.erase(it);
+            else
+                ++it;
+        }
     }
 
     inline bool IsSpecialEntity(const OW::c_entity& entity) {
@@ -1306,6 +1869,8 @@ inline void PlayerInfo() {
     Diagnostics::PlayerInfoStats renderStats{};
     renderStats.input = entity_snapshot.size();
     static DWORD lastPlayerInfoLogTick = 0;
+    static std::unordered_map<uint64_t, OverlayRenderDetail::ProjectedBoundsState> projectedBoundsStates;
+    const DWORD renderTick = GetTickCount();
 
     auto publishStats = [&]() {
         Diagnostics::SetPlayerInfoStats(renderStats);
@@ -1333,6 +1898,7 @@ inline void PlayerInfo() {
     };
 
     if (entity_snapshot.empty()) {
+        projectedBoundsStates.clear();
         publishStats();
         return;
     }
@@ -1343,7 +1909,7 @@ inline void PlayerInfo() {
     }
 
     for (size_t index = 0; index < entity_snapshot.size(); ++index) {
-        OW::c_entity entity = entity_snapshot[index];
+        OW::c_entity entity = OverlayRenderDetail::InterpolateEntityForRender(entity_snapshot[index], renderTick);
         if (!entity.Alive) {
             renderStats.skippedDead++;
             continue;
@@ -1372,30 +1938,25 @@ inline void PlayerInfo() {
             continue;
         }
 
-        Vector2 Vec2_A{}, Vec2_B{};
-        if (!OW::viewMatrix.WorldToScreen(Vector3(Vec3.X, Vec3.Y - 1.5f, Vec3.Z), &Vec2_A, Vector2(OW::WX, OW::WY))) {
+        OverlayRenderDetail::ProjectedEntityBounds bounds{};
+        if (!OverlayRenderDetail::TryBuildProjectedBounds(entity, bounds)) {
             renderStats.skippedWorldToScreen++;
-            renderStats.skippedWorldToScreenLow++;
-            continue;
-        }
-        if (!OW::viewMatrix.WorldToScreen(Vector3(Vec3.X, Vec3.Y + 1.f, Vec3.Z), &Vec2_B, Vector2(OW::WX, OW::WY))) {
-            renderStats.skippedWorldToScreen++;
-            renderStats.skippedWorldToScreenHigh++;
             continue;
         }
 
-        float height = fabsf(Vec2_A.Y - Vec2_B.Y);
-        float width  = height * 0.85f;
+        OverlayRenderDetail::StabilizeProjectedBounds(entity.address, bounds, renderTick, projectedBoundsStates);
+        float height = bounds.height;
+        float width  = bounds.width;
         if (height <= 2.0f || width <= 2.0f || !std::isfinite(height) || !std::isfinite(width)) {
             renderStats.skippedBox++;
             continue;
         }
         renderStats.projected++;
 
-        float top    = (Vec2_A.Y < Vec2_B.Y) ? Vec2_A.Y : Vec2_B.Y;
-        float bottom = (Vec2_A.Y > Vec2_B.Y) ? Vec2_A.Y : Vec2_B.Y;
-        float centerX = (Vec2_A.X + Vec2_B.X) * 0.5f;
-        float left = centerX - width * 0.5f;
+        float top = bounds.top;
+        float bottom = bounds.bottom;
+        float centerX = bounds.centerX;
+        float left = bounds.left;
 
         ImU32 color = OverlayRenderDetail::EntityColor(entity, index, distanceOpacity);
         ImU32 boxColor = OverlayRenderDetail::EntityBoxColor(entity, index, distanceOpacity);
@@ -1515,6 +2076,7 @@ inline void PlayerInfo() {
         if (drewAny)
             renderStats.drawn++;
     }
+    OverlayRenderDetail::PruneProjectedBoundsStates(projectedBoundsStates, renderTick);
     publishStats();
 }
 

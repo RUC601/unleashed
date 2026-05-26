@@ -15,34 +15,11 @@
 #include <vector>
 
 // =====================================================================
-// LOCAL CONFIGURATION FALLBACKS
-// These variables match settings from the React UI prototype that do not
-// yet have corresponding entries in OW::Config (Config.hpp).  When those
-// are added, remove the local versions and reference OW::Config directly.
+// LOCAL UI STATE
 // =====================================================================
 namespace {
 
-    // ---- Aimbot ----
-    inline int    g_aimbotHero              = 0;     // MISSING from OW::Config
-    inline int    g_aimbotAttack            = 0;     // MISSING from OW::Config
-    inline bool   g_aimbotAutoshot          = false; // MISSING from OW::Config
-    inline bool   g_aimbotKeepFiring        = true;  // MISSING from OW::Config
-    inline float  g_aimbotMaxHead           = 100.0f;// MISSING from OW::Config
-    inline int    g_aimbotSmoothType        = 0;     // MISSING from OW::Config (0=Constant Speed)
-    inline float  g_aimbotStickiness        = 100.0f;// MISSING from OW::Config
-    inline float  g_aimbotSmoothY           = 50.0f; // MISSING from OW::Config
-    inline int    g_aimbotPriority          = 0;     // MISSING from OW::Config
-    inline int    g_aimbotTeam              = 0;     // MISSING from OW::Config
-    inline float  g_aimbotMaxAim            = 100.0f;// MISSING from OW::Config
-    inline float  g_aimbotHitbox            = 25.0f; // MISSING from OW::Config
-    inline float  g_aimbotMinCharge         = 5.0f;  // MISSING from OW::Config
-    inline float  g_aimbotMaxCharge         = 100.0f;// MISSING from OW::Config
-    inline bool   g_aimbotIgnoreInvisible   = false; // MISSING from OW::Config
-    inline int    g_aimbotTrace             = 0;     // MISSING from OW::Config
-    inline int    g_aimbotUnlock            = 0;     // MISSING from OW::Config
-    inline float  g_aimbotLockTime          = 20.0f; // MISSING from OW::Config
-    inline float  g_aimbotMaxDist           = 100.0f;// MISSING from OW::Config
-    inline float  g_aimbotMinDist           = 0.0f;  // MISSING from OW::Config
+    inline int g_aimbotHero = 0;
 
 } // anonymous namespace
 
@@ -114,6 +91,7 @@ static const char* kAimKey[]       = { "Undefined", "Mouse 4", "Mouse 5", "Left 
 static const char* kAttack[]       = { "Shoot", "Ability 1", "Ability 2" };
 static const char* kBone[]         = { "Head", "Neck", "Chest" };
 static const char* kAimMode[]      = { "Tracking", "Flick", "HanzoFlick", "Silent" };
+static const char* kAimMethod[]    = { "Linear", "PID", "Bezier" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPriority[]     = { "Lowest FOV", "Lowest HP", "Distance" };
 static const char* kTeam[]         = { "Enemies", "Allies", "All" };
@@ -254,16 +232,22 @@ static const char* PresetAimModeName(int mode) {
     return kAimMode[mode];
 }
 
+static const char* PresetAimMethodName(int method) {
+    method = ImClamp(method, 0, IM_ARRAYSIZE(kAimMethod) - 1);
+    return kAimMethod[method];
+}
+
 static void DrawPresetSummary(const HeroOption& hero,
                               const OW::Config::HeroPreset& preset,
                               bool hasStoredPreset) {
-    char summary[256] = {};
+    char summary[320] = {};
     const char* scope = hero.heroId == 0
         ? "Global defaults"
         : (hasStoredPreset ? "Stored preset" : "Using global defaults");
     std::snprintf(summary, sizeof(summary),
-                  "%s - %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f | %s",
-                  hero.label, scope, preset.fov, preset.smooth,
+                  "%s - %s | Method %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f | %s",
+                  hero.label, scope, PresetAimMethodName(OW::Config::aimMethod),
+                  preset.fov, preset.smooth,
                   PresetBoneName(preset.bone), preset.hitbox,
                   PresetAimModeName(preset.aimMode));
     ImGui::TextUnformatted(summary);
@@ -778,6 +762,22 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
     return valueChanged;
 }
 
+static bool UISlider(const char* label, int* value, float v_min, float v_max,
+                     const char* formatText) {
+    const int minValue = static_cast<int>(std::lround(v_min));
+    const int maxValue = static_cast<int>(std::lround(v_max));
+    const int clampedValue = ImClamp(*value, minValue, maxValue);
+    float sliderValue = static_cast<float>(clampedValue);
+
+    const bool sliderChanged = UISlider(label, &sliderValue, v_min, v_max, formatText);
+    const int roundedValue = ImClamp(static_cast<int>(std::lround(sliderValue)), minValue, maxValue);
+    if (roundedValue != *value) {
+        *value = roundedValue;
+        return true;
+    }
+    return sliderChanged;
+}
+
 // =====================================================================
 // UISelect  --  Custom-styled dropdown using ImGui BeginCombo.
 //               Dropdown items get a red #e41143 background on hover/active.
@@ -1165,13 +1165,67 @@ void UI::AimbotPage() {
     // ---- Two columns ----
     UITwoColumns([&]() {
         // LEFT: Aimbot Hero Basic Options
-        UIGroupBox("Aimbot Hero Basic Options", 440.0f);
+        UIGroupBox("Aimbot Hero Basic Options", 560.0f);
         {
             // Aim Mode
             SettingRow("Aim Mode", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
             presetChanged |= UISelect("##aimMode", &activePreset.aimMode, kAimMode, IM_ARRAYSIZE(kAimMode));
             ImGui::PopItemWidth();
+
+            // Aim Method
+            SettingRow("Aim Method", kAimbotLeftLabelWidth);
+            ImGui::PushItemWidth(-1);
+            UISelect("##aimMethod", &OW::Config::aimMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod));
+            ImGui::PopItemWidth();
+
+            if (OW::Config::aimMethod == 0) {
+                SettingRow("Smooth Type", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISelect("##aimSmoothType", &OW::Config::aimbotSmoothType,
+                         kAimSmoothType, IM_ARRAYSIZE(kAimSmoothType));
+                ImGui::PopItemWidth();
+            } else if (OW::Config::aimMethod == 1) {
+                SettingRow("P Gain", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISlider("##aimPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
+                ImGui::PopItemWidth();
+
+                SettingRow("I Gain", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISlider("##aimPidI", &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
+                ImGui::PopItemWidth();
+
+                SettingRow("D Gain", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISlider("##aimPidD", &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
+                ImGui::PopItemWidth();
+
+                SettingRow("Max Integral", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISlider("##aimPidMaxI", &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
+                ImGui::PopItemWidth();
+
+                SettingRow("Deadzone", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISlider("##aimPidDz", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
+                ImGui::PopItemWidth();
+            } else if (OW::Config::aimMethod == 2) {
+                SettingRow("Control Points", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISlider("##aimBezCP", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
+                ImGui::PopItemWidth();
+
+                SettingRow("Curvature", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISlider("##aimBezCurve", &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
+                ImGui::PopItemWidth();
+
+                SettingRow("Speed", kAimbotLeftLabelWidth);
+                ImGui::PushItemWidth(-1);
+                UISlider("##aimBezSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
+                ImGui::PopItemWidth();
+            }
 
             // AimKey  (maps to OW::Config::AimKey, but uses index vs VK)
             SettingRow("AimKey", kAimbotLeftLabelWidth);
@@ -1183,16 +1237,16 @@ void UI::AimbotPage() {
             // Attack
             SettingRow("Attack", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISelect("##aimAttack", &g_aimbotAttack, kAttack, IM_ARRAYSIZE(kAttack));
+            UISelect("##aimAttack", &OW::Config::aimbotAttack, kAttack, IM_ARRAYSIZE(kAttack));
             ImGui::PopItemWidth();
 
             // Autoshot
             SettingRow("Autoshot", kAimbotLeftLabelWidth);
-            UICheckbox("##aimAutoshot", &g_aimbotAutoshot);
+            UICheckbox("##aimAutoshot", &OW::Config::aimbotAutoshot);
 
             // Keep Firing
             SettingRow("Keep Firing", kAimbotLeftLabelWidth);
-            UICheckbox("##aimKeepFire", &g_aimbotKeepFiring);
+            UICheckbox("##aimKeepFire", &OW::Config::aimbotKeepFiring);
 
             // Bone Preference  (maps to OW::Config::TargetBone)
             SettingRow("Bone Preference", kAimbotLeftLabelWidth);
@@ -1207,13 +1261,13 @@ void UI::AimbotPage() {
             // Max Head Distance
             SettingRow("Max Head Distance", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimMaxHead", &g_aimbotMaxHead, 0.0f, 100.0f, "Max");
+            UISlider("##aimMaxHead", &OW::Config::aimbotMaxHead, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Stickiness
             SettingRow("Stickiness", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimStick", &g_aimbotStickiness, 0.0f, 100.0f, "Max");
+            UISlider("##aimStick", &OW::Config::aimbotStickiness, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Smooth
@@ -1237,7 +1291,7 @@ void UI::AimbotPage() {
             // Target Team
             SettingRow("Target Team", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISelect("##aimTeam", &g_aimbotTeam, kTeam, IM_ARRAYSIZE(kTeam));
+            UISelect("##aimTeam", &OW::Config::aimbotTeam, kTeam, IM_ARRAYSIZE(kTeam));
             ImGui::PopItemWidth();
         }
         CloseGroupBox();
@@ -1248,7 +1302,7 @@ void UI::AimbotPage() {
             // Max Aim Time
             SettingRow("Max Aim Time", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimMaxAim", &g_aimbotMaxAim, 0.0f, 100.0f, "Endless");
+            UISlider("##aimMaxAim", &OW::Config::aimbotMaxAim, 0.0f, 100.0f, "Endless");
             ImGui::PopItemWidth();
 
             // Hitbox Size
@@ -1260,47 +1314,47 @@ void UI::AimbotPage() {
             // Aim Min Charge
             SettingRow("Aim Min Charge", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimMinChg", &g_aimbotMinCharge, 0.0f, 100.0f, "5 %");
+            UISlider("##aimMinChg", &OW::Config::aimbotMinCharge, 0.0f, 100.0f, "5 %");
             ImGui::PopItemWidth();
 
             // Autoshot Max Charge
             SettingRow("Autoshot Max Charge", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimMaxChg", &g_aimbotMaxCharge, 0.0f, 100.0f, "100 %");
+            UISlider("##aimMaxChg", &OW::Config::aimbotMaxCharge, 0.0f, 100.0f, "100 %");
             ImGui::PopItemWidth();
 
             // Ignore Invisible Targets
             SettingRow("Ignore Invisible Targets", kAimbotRightLabelWidth);
-            UICheckbox("##aimIgnoreInvis", &g_aimbotIgnoreInvisible);
+            UICheckbox("##aimIgnoreInvis", &OW::Config::aimbotIgnoreInvisible);
 
             // Trace Condition
             SettingRow("Trace Condition", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISelect("##aimTrace", &g_aimbotTrace, kTrace, IM_ARRAYSIZE(kTrace));
+            UISelect("##aimTrace", &OW::Config::aimbotTrace, kTrace, IM_ARRAYSIZE(kTrace));
             ImGui::PopItemWidth();
 
             // Unlock Condition
             SettingRow("Unlock Condition", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISelect("##aimUnlock", &g_aimbotUnlock, kUnlock, IM_ARRAYSIZE(kUnlock));
+            UISelect("##aimUnlock", &OW::Config::aimbotUnlock, kUnlock, IM_ARRAYSIZE(kUnlock));
             ImGui::PopItemWidth();
 
             // Lock Time
             SettingRow("Lock Time", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimLockTime", &g_aimbotLockTime, 0.0f, 100.0f, "200 ms");
+            UISlider("##aimLockTime", &OW::Config::aimbotLockTime, 0.0f, 100.0f, "200 ms");
             ImGui::PopItemWidth();
 
             // Max Distance
             SettingRow("Max Distance", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimMaxDist", &g_aimbotMaxDist, 0.0f, 100.0f, "Max");
+            UISlider("##aimMaxDist", &OW::Config::aimbotMaxDist, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Min Distance
             SettingRow("Min Distance", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimMinDist", &g_aimbotMinDist, 0.0f, 100.0f, "0 m");
+            UISlider("##aimMinDist", &OW::Config::aimbotMinDist, 0.0f, 100.0f, "0 m");
             ImGui::PopItemWidth();
         }
         CloseGroupBox();

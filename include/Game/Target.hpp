@@ -419,6 +419,7 @@ namespace OW {
                    heroId == eHero::HERO_TRAININGBOT2 ||
                    heroId == eHero::HERO_TRAININGBOT3 ||
                    heroId == eHero::HERO_TRAININGBOT4 ||
+                   heroId == eHero::HERO_TRAININGBOT8 ||
                    heroId == eHero::HERO_TRAININGBOT5 ||
                    heroId == eHero::HERO_TRAININGBOT6 ||
                    heroId == eHero::HERO_TRAININGBOT7;
@@ -735,6 +736,7 @@ namespace OW {
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT2 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT3 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT4 ||
+                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT8 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT5 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT6 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT7);
@@ -873,6 +875,7 @@ namespace OW {
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT2 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT3 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT4 ||
+                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT8 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT5 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT6 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT7);
@@ -954,6 +957,7 @@ namespace OW {
                                       entities[i].HeroID == eHero::HERO_TRAININGBOT2 ||
                                       entities[i].HeroID == eHero::HERO_TRAININGBOT3 ||
                                       entities[i].HeroID == eHero::HERO_TRAININGBOT4 ||
+                                      entities[i].HeroID == eHero::HERO_TRAININGBOT8 ||
                                       entities[i].HeroID == eHero::HERO_TRAININGBOT5 ||
                                       entities[i].HeroID == eHero::HERO_TRAININGBOT6 ||
                                       entities[i].HeroID == eHero::HERO_TRAININGBOT7);
@@ -1064,6 +1068,7 @@ namespace OW {
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT2 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT3 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT4 ||
+                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT8 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT5 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT6 ||
                                   entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT7);
@@ -1164,6 +1169,21 @@ namespace OW {
             }
         }
         return target;
+    }
+
+    inline Vector3 SmoothDispatch(Vector3 local, Vector3 target, float speed, float accel) {
+        (void)accel;
+
+        switch (Config::aimMethod) {
+        case 0:
+            return SmoothLinear(local, target, speed);
+        case 1:
+            return SmoothLinear(local, target, speed);
+        case 2:
+            return SmoothLinear(local, target, speed);
+        default:
+            return SmoothLinear(local, target, speed);
+        }
     }
 
 } // namespace OW

@@ -150,6 +150,8 @@ struct StatusSnapshot {
     size_t entityCount = 0;
     size_t lastScanEntityCount = 0;
     uint64_t entityScanCycles = 0;
+    uint64_t entityProcessCycles = 0;
+    double entityProcessHz = 0.0;
     double fps = 0.0;
     DmaReadStats dmaReads{};
     ErrorCounters errors{};
@@ -193,6 +195,7 @@ void RecordDmaRead(bool success, uint64_t latencyUs);
 void RecordDecryptFailure();
 void RecordInvalidEntity();
 void RecordEntityScanCycle(size_t entityCount);
+void RecordEntityProcessCycle(double measuredHz);
 
 void SetEntityCount(size_t entityCount);
 void SetDmaReady(bool ready);

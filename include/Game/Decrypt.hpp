@@ -708,6 +708,7 @@ namespace OW {
             case eHero::HERO_TRAININGBOT2: return "Tank Bot";
             case eHero::HERO_TRAININGBOT3: return "Sniper Bot";
             case eHero::HERO_TRAININGBOT4: return "Friend Bot";
+            case eHero::HERO_TRAININGBOT8: return "Training Bot";
             case eHero::HERO_TRAININGBOT5: return "Friend Tank Bot";
             case eHero::HERO_TRAININGBOT6: return "Rocket Bot";
             case eHero::HERO_TRAININGBOT7: return "Training Bot";

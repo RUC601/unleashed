@@ -33,6 +33,8 @@ std::atomic<uint64_t> g_invalidEntities{ 0 };
 std::atomic<uint64_t> g_entityCount{ 0 };
 std::atomic<uint64_t> g_lastScanEntityCount{ 0 };
 std::atomic<uint64_t> g_entityScanCycles{ 0 };
+std::atomic<uint64_t> g_entityProcessCycles{ 0 };
+std::atomic<uint64_t> g_entityProcessHzMilli{ 0 };
 std::atomic<uint64_t> g_framesRendered{ 0 };
 
 std::atomic<bool> g_dmaReady{ false };
@@ -378,6 +380,16 @@ void RecordEntityScanCycle(size_t entityCount)
     g_entityScanCycles.fetch_add(1, std::memory_order_relaxed);
 }
 
+void RecordEntityProcessCycle(double measuredHz)
+{
+    g_entityProcessCycles.fetch_add(1, std::memory_order_relaxed);
+    if (measuredHz >= 0.0) {
+        g_entityProcessHzMilli.store(
+            static_cast<uint64_t>(measuredHz * 1000.0 + 0.5),
+            std::memory_order_relaxed);
+    }
+}
+
 void SetEntityCount(size_t entityCount)
 {
     g_entityCount.store(static_cast<uint64_t>(entityCount), std::memory_order_relaxed);
@@ -519,6 +531,9 @@ StatusSnapshot Snapshot()
     snapshot.entityCount = static_cast<size_t>(g_entityCount.load(std::memory_order_relaxed));
     snapshot.lastScanEntityCount = static_cast<size_t>(g_lastScanEntityCount.load(std::memory_order_relaxed));
     snapshot.entityScanCycles = g_entityScanCycles.load(std::memory_order_relaxed);
+    snapshot.entityProcessCycles = g_entityProcessCycles.load(std::memory_order_relaxed);
+    snapshot.entityProcessHz =
+        static_cast<double>(g_entityProcessHzMilli.load(std::memory_order_relaxed)) / 1000.0;
 
     {
         std::lock_guard<std::mutex> lock(g_fpsMutex);
@@ -646,10 +661,12 @@ void DumpStatus()
     UpdateFps();
     const StatusSnapshot snapshot = Snapshot();
 
-    Info("STATUS entities=%zu last_scan=%zu scan_cycles=%llu fps=%.1f dma_reads=%llu ok=%llu fail=%llu latency_us[min/avg/max]=%llu/%llu/%llu errors[dma/decrypt/invalid]=%llu/%llu/%llu key=%s key1=0x%llX key2=0x%llX dma=%s process=%s",
+    Info("STATUS entities=%zu last_scan=%zu scan_cycles=%llu process_cycles=%llu entity_hz=%.1f fps=%.1f dma_reads=%llu ok=%llu fail=%llu latency_us[min/avg/max]=%llu/%llu/%llu errors[dma/decrypt/invalid]=%llu/%llu/%llu key=%s key1=0x%llX key2=0x%llX dma=%s process=%s",
         snapshot.entityCount,
         snapshot.lastScanEntityCount,
         static_cast<unsigned long long>(snapshot.entityScanCycles),
+        static_cast<unsigned long long>(snapshot.entityProcessCycles),
+        snapshot.entityProcessHz,
         snapshot.fps,
         static_cast<unsigned long long>(snapshot.dmaReads.total),
         static_cast<unsigned long long>(snapshot.dmaReads.succeeded),
