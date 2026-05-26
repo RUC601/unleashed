@@ -1,5 +1,6 @@
 #include "Features/UI.hpp"
 #include "Utils/Config.hpp"
+#include "Game/Structs.hpp"
 #include "Renderer/Renderer.hpp"
 #include "resource.h"
 #include <imgui.h>
@@ -65,10 +66,71 @@ namespace {
 // =====================================================================
 // SELECT OPTION STRINGS (matching React selectOptions)
 // =====================================================================
-static const char* kHero[]         = { "All", "Tracer", "Widowmaker", "Soldier: 76" };
+struct HeroOption {
+    const char* label;
+    uint64_t heroId;
+};
+
+static const HeroOption kHeroOptions[] = {
+    { "All", 0 },
+    { "Tracer", OW::eHero::HERO_TRACER },
+    { "Widowmaker", OW::eHero::HERO_WIDOWMAKER },
+    { "Soldier76", OW::eHero::HERO_SOLDIER76 },
+    { "Genji", OW::eHero::HERO_GENJI },
+    { "Hanzo", OW::eHero::HERO_HANJO },
+    { "Cassidy", OW::eHero::HERO_MCCREE },
+    { "Pharah", OW::eHero::HERO_PHARAH },
+    { "Reaper", OW::eHero::HERO_REAPER },
+    { "Sombra", OW::eHero::HERO_SOMBRA },
+    { "Symmetra", OW::eHero::HERO_SYMMETRA },
+    { "Torbjorn", OW::eHero::HERO_TORBJORN },
+    { "Bastion", OW::eHero::HERO_BASTION },
+    { "Junkrat", OW::eHero::HERO_JUNKRAT },
+    { "Mei", OW::eHero::HERO_MEI },
+    { "Ashe", OW::eHero::HERO_ASHE },
+    { "Sojourn", OW::eHero::HERO_SOJOURN },
+    { "Venture", OW::eHero::HERO_VENTURE },
+    { "Echo", OW::eHero::HERO_ECHO },
+    { "Freja", OW::Config::HERO_PRESET_FREJA },
+    { "Reinhardt", OW::eHero::HERO_REINHARDT },
+    { "Winston", OW::eHero::HERO_WINSTON },
+    { "Zarya", OW::eHero::HERO_ZARYA },
+    { "DVa", OW::eHero::HERO_DVA },
+    { "Roadhog", OW::eHero::HERO_ROADHOG },
+    { "Orisa", OW::eHero::HERO_ORISA },
+    { "WreckingBall", OW::eHero::HERO_WRECKINGBALL },
+    { "Sigma", OW::eHero::HERO_SIGMA },
+    { "Doomfist", OW::eHero::HERO_DOOMFIST },
+    { "Ramattra", OW::eHero::HERO_RAMATTRA },
+    { "JunkerQueen", OW::eHero::HERO_JUNKERQUEEN },
+    { "Mauga", OW::eHero::HERO_MAUGA },
+    { "Hazard", OW::Config::HERO_PRESET_HAZARD },
+    { "Mercy", OW::eHero::HERO_MERCY },
+    { "Lucio", OW::eHero::HERO_LUCIO },
+    { "Zenyatta", OW::eHero::HERO_ZENYATTA },
+    { "Ana", OW::eHero::HERO_ANA },
+    { "Brigitte", OW::eHero::HERO_BRIGITTE },
+    { "Moira", OW::eHero::HERO_MOIRA },
+    { "Baptiste", OW::eHero::HERO_BAPTISTE },
+    { "Kiriko", OW::eHero::HERO_KIRIKO },
+    { "Lifeweaver", OW::eHero::HERO_LIFEWEAVER },
+    { "Illari", OW::eHero::HERO_ILLARI },
+    { "Juno", OW::Config::HERO_PRESET_JUNO },
+};
+static const char* kHero[] = {
+    "All",
+    "Tracer", "Widowmaker", "Soldier76", "Genji", "Hanzo", "Cassidy", "Pharah", "Reaper",
+    "Sombra", "Symmetra", "Torbjorn", "Bastion", "Junkrat", "Mei", "Ashe", "Sojourn",
+    "Venture", "Echo", "Freja",
+    "Reinhardt", "Winston", "Zarya", "DVa", "Roadhog", "Orisa", "WreckingBall", "Sigma",
+    "Doomfist", "Ramattra", "JunkerQueen", "Mauga", "Hazard",
+    "Mercy", "Lucio", "Zenyatta", "Ana", "Brigitte", "Moira", "Baptiste", "Kiriko",
+    "Lifeweaver", "Illari", "Juno"
+};
 static const char* kAimKey[]       = { "Undefined", "Mouse 4", "Mouse 5", "Left Shift" };
 static const char* kAttack[]       = { "Shoot", "Ability 1", "Ability 2" };
 static const char* kBone[]         = { "Head", "Neck", "Chest" };
+static const char* kAimMode[]      = { "Tracking", "Flick", "HanzoFlick", "Silent" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPriority[]     = { "Lowest FOV", "Lowest HP", "Distance" };
 static const char* kTeam[]         = { "Enemies", "Allies", "All" };
@@ -188,6 +250,40 @@ static int FindMenuToggleKeyIndex(int vk) {
             return i;
     }
     return 0;
+}
+
+static int ClampHeroSelectionIndex(int index) {
+    return ImClamp(index, 0, IM_ARRAYSIZE(kHeroOptions) - 1);
+}
+
+static const HeroOption& CurrentHeroOption() {
+    g_aimbotHero = ClampHeroSelectionIndex(g_aimbotHero);
+    return kHeroOptions[g_aimbotHero];
+}
+
+static const char* PresetBoneName(int bone) {
+    bone = ImClamp(bone, 0, IM_ARRAYSIZE(kBone) - 1);
+    return kBone[bone];
+}
+
+static const char* PresetAimModeName(int mode) {
+    mode = ImClamp(mode, 0, IM_ARRAYSIZE(kAimMode) - 1);
+    return kAimMode[mode];
+}
+
+static void DrawPresetSummary(const HeroOption& hero,
+                              const OW::Config::HeroPreset& preset,
+                              bool hasStoredPreset) {
+    char summary[256] = {};
+    const char* scope = hero.heroId == 0
+        ? "Global defaults"
+        : (hasStoredPreset ? "Stored preset" : "Using global defaults");
+    std::snprintf(summary, sizeof(summary),
+                  "%s - %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f | %s",
+                  hero.label, scope, preset.fov, preset.smooth,
+                  PresetBoneName(preset.bone), preset.hitbox,
+                  PresetAimModeName(preset.aimMode));
+    ImGui::TextUnformatted(summary);
 }
 
 static bool CreateTextureFromIconResource(ID3D11Device* device, int resourceId, int size,
@@ -1033,23 +1129,67 @@ void UI::InitStyle() {
 // =====================================================================
 void UI::AimbotPage() {
     // ---- 7-slot hero segmented ----
+    static int heroSlotSelections[7] = { 0, 1, 2, 3, 4, 5, 6 };
+    const int previousSlot = state.heroSegActive;
     state.heroSegActive = UISegmented(kSlotNums, 7, state.heroSegActive);
+    state.heroSegActive = ImClamp(state.heroSegActive, 0, 6);
+    if (previousSlot != state.heroSegActive)
+        g_aimbotHero = ClampHeroSelectionIndex(heroSlotSelections[state.heroSegActive]);
+
+    bool savePresetRequested = false;
+    bool presetChanged = false;
+    const HeroOption* selectedHero = &CurrentHeroOption();
+    bool hasStoredPreset = false;
+    OW::Config::HeroPreset activePreset{};
+
+    auto refreshActivePreset = [&]() {
+        g_aimbotHero = ClampHeroSelectionIndex(g_aimbotHero);
+        selectedHero = &kHeroOptions[g_aimbotHero];
+        const bool isGlobal = selectedHero->heroId == 0;
+        hasStoredPreset = isGlobal || OW::Config::HasHeroPreset(selectedHero->heroId);
+        activePreset = isGlobal
+            ? OW::Config::MakeHeroPresetFromCurrent()
+            : OW::Config::GetHeroPresetOrDefault(selectedHero->heroId);
+    };
+    refreshActivePreset();
 
     // ---- Hero Selection ----
     UIGroupBox("Hero Selection");
     {
         SettingRow("Hero", kAimbotHeroLabelWidth);
         ImGui::PushItemWidth(-1);
-        UISelect("##aimHero", &g_aimbotHero, kHero, IM_ARRAYSIZE(kHero));
+        if (UISelect("##aimHero", &g_aimbotHero, kHero, IM_ARRAYSIZE(kHero))) {
+            g_aimbotHero = ClampHeroSelectionIndex(g_aimbotHero);
+            heroSlotSelections[state.heroSegActive] = g_aimbotHero;
+            refreshActivePreset();
+        }
         ImGui::PopItemWidth();
+
+        SettingRow("Preset", kAimbotHeroLabelWidth);
+        if (ImGui::Button("Save Preset", ImVec2(96.0f, kControlHeight)))
+            savePresetRequested = true;
+        ImGui::SameLine();
+        if (ImGui::Button("Load Preset", ImVec2(96.0f, kControlHeight))) {
+            OW::Config::LoadHeroPresets(".\\config.ini");
+            refreshActivePreset();
+        }
+
+        SettingRow("Active", kAimbotHeroLabelWidth);
+        DrawPresetSummary(*selectedHero, activePreset, hasStoredPreset);
     }
     CloseGroupBox();
 
     // ---- Two columns ----
-    UITwoColumns([]() {
+    UITwoColumns([&]() {
         // LEFT: Aimbot Hero Basic Options
-        UIGroupBox("Aimbot Hero Basic Options", 370.0f);
+        UIGroupBox("Aimbot Hero Basic Options", 440.0f);
         {
+            // Aim Mode
+            SettingRow("Aim Mode", kAimbotLeftLabelWidth);
+            ImGui::PushItemWidth(-1);
+            presetChanged |= UISelect("##aimMode", &activePreset.aimMode, kAimMode, IM_ARRAYSIZE(kAimMode));
+            ImGui::PopItemWidth();
+
             // AimKey  (maps to OW::Config::AimKey, but uses index vs VK)
             SettingRow("AimKey", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
@@ -1074,8 +1214,12 @@ void UI::AimbotPage() {
             // Bone Preference  (maps to OW::Config::TargetBone)
             SettingRow("Bone Preference", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISelect("##aimBone", &OW::Config::TargetBone, kBone, IM_ARRAYSIZE(kBone));
+            presetChanged |= UISelect("##aimBone", &activePreset.bone, kBone, IM_ARRAYSIZE(kBone));
             ImGui::PopItemWidth();
+
+            // Prediction
+            SettingRow("Prediction", kAimbotLeftLabelWidth);
+            presetChanged |= UICheckbox("##aimPrediction", &activePreset.prediction);
 
             // Max Head Distance
             SettingRow("Max Head Distance", kAimbotLeftLabelWidth);
@@ -1089,18 +1233,22 @@ void UI::AimbotPage() {
             UISlider("##aimStick", &g_aimbotStickiness, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
-            // REMOVED: smoothing is internal-only, DMA external uses raw angles
+            // Smooth
+            SettingRow("Smooth", kAimbotLeftLabelWidth);
+            ImGui::PushItemWidth(-1);
+            presetChanged |= UISlider("##aimSmooth", &activePreset.smooth, 0.0f, 100.0f, "50.00 %");
+            ImGui::PopItemWidth();
 
-            // FOV  (partial: OW::Config::Fov uses 150.0 range)
+            // FOV
             SettingRow("FOV", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimFov", &OW::Config::Fov, 0.0f, 100.0f, "10.00 deg");
+            presetChanged |= UISlider("##aimFov", &activePreset.fov, 0.0f, 500.0f, "200");
             ImGui::PopItemWidth();
 
             // Target Priority
             SettingRow("Target Priority", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISelect("##aimPriority", &g_aimbotPriority, kPriority, IM_ARRAYSIZE(kPriority));
+            presetChanged |= UISelect("##aimPriority", &activePreset.priority, kPriority, IM_ARRAYSIZE(kPriority));
             ImGui::PopItemWidth();
 
             // Target Team
@@ -1110,7 +1258,7 @@ void UI::AimbotPage() {
             ImGui::PopItemWidth();
         }
         CloseGroupBox();
-    }, []() {
+    }, [&]() {
         // RIGHT: Aimbot Hero Expert Options
         UIGroupBox("Aimbot Hero Expert Options", 425.0f);
         {
@@ -1123,7 +1271,7 @@ void UI::AimbotPage() {
             // Hitbox Size
             SettingRow("Hitbox Size", kAimbotRightLabelWidth);
             ImGui::PushItemWidth(-1);
-            UISlider("##aimHitbox", &g_aimbotHitbox, 0.0f, 100.0f, "25 %");
+            presetChanged |= UISlider("##aimHitbox", &activePreset.hitbox, 0.0f, 5.0f, "0.13");
             ImGui::PopItemWidth();
 
             // Aim Min Charge
@@ -1174,6 +1322,16 @@ void UI::AimbotPage() {
         }
         CloseGroupBox();
     });
+
+    if (selectedHero->heroId == 0) {
+        if (presetChanged)
+            OW::Config::ApplyHeroPresetToGlobals(activePreset);
+    } else {
+        if (presetChanged || savePresetRequested)
+            OW::Config::SetHeroPreset(selectedHero->heroId, activePreset);
+        if (savePresetRequested)
+            OW::Config::SaveHeroPresets(".\\config.ini");
+    }
 }
 
 // =====================================================================

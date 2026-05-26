@@ -39,6 +39,62 @@ namespace OW { namespace Config {
 
         using SectionValues = std::unordered_map<std::string, std::string>;
 
+        struct HeroPresetDefinition {
+            uint64_t heroId;
+            const char* presetName;
+            const char* legacyName;
+            const char* legacyAlias;
+        };
+
+        constexpr HeroPresetDefinition kHeroPresetDefinitions[] = {
+            { OW::eHero::HERO_TRACER,       "Tracer",       "Tracer",         nullptr },
+            { OW::eHero::HERO_WIDOWMAKER,   "Widowmaker",   "Widowmaker",     nullptr },
+            { OW::eHero::HERO_SOLDIER76,    "Soldier76",    "Soldier 76",     nullptr },
+            { OW::eHero::HERO_GENJI,        "Genji",        "Genji",          nullptr },
+            { OW::eHero::HERO_HANJO,        "Hanzo",        "Hanzo",          nullptr },
+            { OW::eHero::HERO_MCCREE,       "Cassidy",      "McCree",         "Cassidy" },
+            { OW::eHero::HERO_PHARAH,       "Pharah",       "Pharah",         nullptr },
+            { OW::eHero::HERO_REAPER,       "Reaper",       "Reaper",         nullptr },
+            { OW::eHero::HERO_SOMBRA,       "Sombra",       "Sombra",         nullptr },
+            { OW::eHero::HERO_SYMMETRA,     "Symmetra",     "Symmetra",       nullptr },
+            { OW::eHero::HERO_TORBJORN,     "Torbjorn",     "Torbjorn",       nullptr },
+            { OW::eHero::HERO_BASTION,      "Bastion",      "Bastion",        nullptr },
+            { OW::eHero::HERO_JUNKRAT,      "Junkrat",      "Junkrat",        nullptr },
+            { OW::eHero::HERO_MEI,          "Mei",          "Mei",            nullptr },
+            { OW::eHero::HERO_ASHE,         "Ashe",         "Ashe",           nullptr },
+            { OW::eHero::HERO_SOJOURN,      "Sojourn",      "Sojourn",        nullptr },
+            { OW::eHero::HERO_VENTURE,      "Venture",      "Venture",        nullptr },
+            { OW::eHero::HERO_ECHO,         "Echo",         "Echo",           nullptr },
+            { HERO_PRESET_FREJA,            "Freja",        nullptr,          nullptr },
+            { OW::eHero::HERO_REINHARDT,    "Reinhardt",    "Reinhardt",      nullptr },
+            { OW::eHero::HERO_WINSTON,      "Winston",      "Winston",        nullptr },
+            { OW::eHero::HERO_ZARYA,        "Zarya",        "Zarya",          nullptr },
+            { OW::eHero::HERO_DVA,          "DVa",          "D.Va",           "Hana" },
+            { OW::eHero::HERO_ROADHOG,      "Roadhog",      "Roadhog",        nullptr },
+            { OW::eHero::HERO_ORISA,        "Orisa",        "Orisa",          nullptr },
+            { OW::eHero::HERO_WRECKINGBALL, "WreckingBall", "Wrecking Ball",  nullptr },
+            { OW::eHero::HERO_SIGMA,        "Sigma",        "Sigma",          nullptr },
+            { OW::eHero::HERO_DOOMFIST,     "Doomfist",     "Doomfist",       nullptr },
+            { OW::eHero::HERO_RAMATTRA,     "Ramattra",     "Ramattra",       nullptr },
+            { OW::eHero::HERO_JUNKERQUEEN,  "JunkerQueen",  "Junker Queen",   nullptr },
+            { OW::eHero::HERO_MAUGA,        "Mauga",        "Mauga",          nullptr },
+            { HERO_PRESET_HAZARD,           "Hazard",       nullptr,          nullptr },
+            { OW::eHero::HERO_MERCY,        "Mercy",        "Mercy",          nullptr },
+            { OW::eHero::HERO_LUCIO,        "Lucio",        "Lucio",          nullptr },
+            { OW::eHero::HERO_ZENYATTA,     "Zenyatta",     "Zenyatta",       nullptr },
+            { OW::eHero::HERO_ANA,          "Ana",          "Ana",            nullptr },
+            { OW::eHero::HERO_BRIGITTE,     "Brigitte",     "Brigitte",       nullptr },
+            { OW::eHero::HERO_MOIRA,        "Moira",        "Moira",          nullptr },
+            { OW::eHero::HERO_BAPTISTE,     "Baptiste",     "Baptiste",       nullptr },
+            { OW::eHero::HERO_KIRIKO,       "Kiriko",       "Kiriko",         nullptr },
+            { OW::eHero::HERO_LIFEWEAVER,   "Lifeweaver",   "LifeWeaver",     "Lifeweaver" },
+            { OW::eHero::HERO_ILLARI,       "Illari",       "Illari",         nullptr },
+            { HERO_PRESET_JUNO,             "Juno",         nullptr,          nullptr },
+        };
+
+        void ApplyAimMode(int mode);
+        int CurrentAimMode();
+
         struct IniFile {
             std::unordered_map<std::string, SectionValues> sections;
 
@@ -414,6 +470,11 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, key, fixedValue);
         }
 
+        void WritePlainFloatValue(const std::string& path, const char* section, const char* key, float value)
+        {
+            WriteValue(path, section, key, ToText(value).c_str());
+        }
+
         void WriteColor(const std::string& path, const char* section, const char* prefix, const ImVec4& color)
         {
             const std::string x = std::string(prefix) + "x";
@@ -424,6 +485,60 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, y.c_str(), color.y);
             WriteFixedFloatValue(path, section, z.c_str(), color.z);
             WriteFixedFloatValue(path, section, w.c_str(), color.w);
+        }
+
+        bool SectionExists(const IniFile& ini, const char* section)
+        {
+            return ini.sections.find(IniFile::Normalize(section)) != ini.sections.end();
+        }
+
+        std::string HeroPresetSectionName(const char* presetName)
+        {
+            return std::string("Hero_") + (presetName ? presetName : "Unknown");
+        }
+
+        std::string HeroPresetSectionName(uint64_t heroId)
+        {
+            for (const HeroPresetDefinition& def : kHeroPresetDefinitions) {
+                if (def.heroId == heroId)
+                    return HeroPresetSectionName(def.presetName);
+            }
+            return std::string("Hero_") + std::to_string(heroId);
+        }
+
+        int RuntimeBoneToPresetBone(int runtimeBone)
+        {
+            if (runtimeBone == 1) return 0; // head
+            if (runtimeBone == 2) return 1; // neck
+            return 2;                       // chest
+        }
+
+        int PresetBoneToRuntimeBone(int presetBone)
+        {
+            if (presetBone == 0) return 1; // head
+            if (presetBone == 1) return 2; // neck
+            return 0;                      // chest
+        }
+
+        HeroPreset ValidateHeroPresetValue(HeroPreset preset)
+        {
+            if (!std::isfinite(preset.fov)) preset.fov = 200.0f;
+            if (!std::isfinite(preset.smooth)) preset.smooth = 5.0f;
+            if (!std::isfinite(preset.hitbox)) preset.hitbox = 0.13f;
+
+            preset.fov = std::clamp(preset.fov, 0.0f, 500.0f);
+            preset.smooth = std::clamp(preset.smooth, 0.0f, 100.0f);
+            preset.bone = std::clamp(preset.bone, 0, 2);
+            preset.hitbox = std::clamp(preset.hitbox, 0.0f, 5.0f);
+            preset.aimMode = std::clamp(preset.aimMode, 0, 3);
+            preset.priority = std::clamp(preset.priority, 0, 2);
+            return preset;
+        }
+
+        void ValidateHeroPresetsUnlocked()
+        {
+            for (auto& item : heroPresets)
+                item.second = ValidateHeroPresetValue(item.second);
         }
 
         void ResetHeroDefaultsUnlocked()
@@ -535,6 +650,7 @@ namespace OW { namespace Config {
 
             secondaim = false;            // default: false
             highPriority = false;         // default: false
+            targetPriority = 0;           // default: FOV priority
 
             Targetenemyi = -1;            // default: -1
             Targetenemyifov = -1;         // default: -1
@@ -640,6 +756,123 @@ namespace OW { namespace Config {
             if (silent) return 3;
             if (triggerbot) return 4;
             return -1;
+        }
+
+        HeroPreset MakeHeroPresetFromCurrentUnlocked()
+        {
+            HeroPreset preset{};
+            preset.fov = Fov;
+            preset.smooth = Smooth;
+            if (preset.smooth <= 0.0f)
+                preset.smooth = Tracking_smooth > 0.0f ? Tracking_smooth : Flick_smooth;
+            preset.bone = RuntimeBoneToPresetBone(Bone);
+            preset.hitbox = hitbox;
+            preset.aimMode = CurrentAimMode();
+            if (preset.aimMode < 0 || preset.aimMode > 3)
+                preset.aimMode = 0;
+            preset.prediction = Prediction;
+            preset.priority = targetPriority;
+            return ValidateHeroPresetValue(preset);
+        }
+
+        void ApplyHeroPresetUnlocked(const HeroPreset& rawPreset)
+        {
+            const HeroPreset preset = ValidateHeroPresetValue(rawPreset);
+            Fov = preset.fov;
+            minFov1 = preset.fov;
+            Smooth = preset.smooth;
+            Tracking_smooth = preset.smooth;
+            Flick_smooth = preset.smooth;
+            Bone = PresetBoneToRuntimeBone(preset.bone);
+            TargetBone = preset.bone;
+            hitbox = preset.hitbox;
+            Prediction = preset.prediction;
+            targetPriority = preset.priority;
+            ApplyAimMode(preset.aimMode);
+        }
+
+        HeroPreset ReadHeroPresetSectionUnlocked(const IniFile& ini, const char* section, HeroPreset defaults)
+        {
+            HeroPreset preset = defaults;
+            preset.fov = ReadFov2Compat(ini, section, "fov", preset.fov);
+            preset.smooth = ReadFov2Compat(ini, section, "smooth", preset.smooth);
+            preset.bone = ReadInt(ini, section, "bone", preset.bone);
+            preset.hitbox = ReadFixedFloat(ini, section, "hitbox", preset.hitbox);
+            preset.aimMode = ReadInt(ini, section, "aimMode", preset.aimMode);
+            preset.prediction = ReadBool(ini, section, "prediction", preset.prediction);
+            preset.priority = ReadInt(ini, section, "priority", preset.priority);
+            return ValidateHeroPresetValue(preset);
+        }
+
+        HeroPreset ReadLegacyHeroPresetSectionUnlocked(const IniFile& ini, const char* section, HeroPreset defaults)
+        {
+            HeroPreset preset = defaults;
+            preset.fov = static_cast<float>(ReadInt(ini, section, "FOV", static_cast<int>(preset.fov)));
+            const int aimMode = ReadInt(ini, section, "Aim Mode", preset.aimMode);
+            const float trackingSmooth = ReadFixedFloat(ini, section, "Tracking_smooth", preset.smooth);
+            const float flickSmooth = ReadFixedFloat(ini, section, "Flick_smooth", trackingSmooth);
+            preset.smooth = (aimMode == 1 || aimMode == 2) ? flickSmooth : trackingSmooth;
+            preset.bone = RuntimeBoneToPresetBone(ReadInt(ini, section, "Bone", PresetBoneToRuntimeBone(preset.bone)));
+            preset.hitbox = ReadFixedFloat(ini, section, "hitbox", preset.hitbox);
+            preset.aimMode = std::clamp(aimMode, 0, 3);
+            preset.prediction = ReadBool(ini, section, "predictdec", preset.prediction);
+            return ValidateHeroPresetValue(preset);
+        }
+
+        void WriteHeroPresetSection(const std::string& path, const char* section, const HeroPreset& rawPreset)
+        {
+            const HeroPreset preset = ValidateHeroPresetValue(rawPreset);
+            WritePlainFloatValue(path, section, "fov", preset.fov);
+            WritePlainFloatValue(path, section, "smooth", preset.smooth);
+            WriteIntValue(path, section, "bone", preset.bone);
+            WritePlainFloatValue(path, section, "hitbox", preset.hitbox);
+            WriteIntValue(path, section, "aimMode", preset.aimMode);
+            WriteBoolValue(path, section, "prediction", preset.prediction);
+            WriteIntValue(path, section, "priority", preset.priority);
+        }
+
+        void SaveHeroPresetsUnlocked(const std::string& path)
+        {
+            ValidateHeroPresetsUnlocked();
+            WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
+            for (const auto& item : heroPresets) {
+                const std::string section = HeroPresetSectionName(item.first);
+                WriteHeroPresetSection(path, section.c_str(), item.second);
+            }
+        }
+
+        bool TryLoadLegacyPresetForDefinition(const IniFile& ini, const HeroPresetDefinition& def, HeroPreset defaults, HeroPreset& outPreset)
+        {
+            if (def.legacyName && SectionExists(ini, def.legacyName)) {
+                outPreset = ReadLegacyHeroPresetSectionUnlocked(ini, def.legacyName, defaults);
+                return true;
+            }
+            if (def.legacyAlias && SectionExists(ini, def.legacyAlias)) {
+                outPreset = ReadLegacyHeroPresetSectionUnlocked(ini, def.legacyAlias, defaults);
+                return true;
+            }
+            return false;
+        }
+
+        void LoadHeroPresetsUnlocked(const IniFile& ini)
+        {
+            heroPresets.clear();
+            const HeroPreset defaults{};
+
+            for (const HeroPresetDefinition& def : kHeroPresetDefinitions) {
+                const std::string presetSection = HeroPresetSectionName(def.presetName);
+                HeroPreset preset{};
+                if (SectionExists(ini, presetSection.c_str())) {
+                    preset = ReadHeroPresetSectionUnlocked(ini, presetSection.c_str(), defaults);
+                    heroPresets[def.heroId] = preset;
+                    continue;
+                }
+
+                if (TryLoadLegacyPresetForDefinition(ini, def, defaults, preset))
+                    heroPresets[def.heroId] = preset;
+            }
+
+            ValidateHeroPresetsUnlocked();
         }
 
         void LoadColor(const IniFile& ini, const char* section, const char* prefix, ImVec4& color)
@@ -768,6 +1001,7 @@ namespace OW { namespace Config {
             radarline = ReadBool(ini, section, "radarline", radarline);
             drawline = ReadBool(ini, section, "drawline", drawline);
             draw_fov = ReadBool(ini, section, "draw_fov", draw_fov);
+            targetPriority = ReadInt(ini, section, "targetPriority", targetPriority);
             MenuToggleKey = ReadInt(ini, section, "MenuToggleKey", MenuToggleKey);
             manualScreenWidth = ReadInt(ini, section, "manualScreenWidth", manualScreenWidth);
             manualScreenHeight = ReadInt(ini, section, "manualScreenHeight", manualScreenHeight);
@@ -898,6 +1132,7 @@ namespace OW { namespace Config {
             ClampSetting("Targetenemyifov", Targetenemyifov, -1, 100000, -1);
             ClampSetting("doingentity", doingentity, 0, 1, 1);
             ClampSetting("lastheroid", lastheroid, -2, (std::numeric_limits<int>::max)(), -2);
+            ClampSetting("targetPriority", targetPriority, 0, 2, 0);
             ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 1, 0);
             ClampSetting("kmboxPort", kmboxPort, 1, 65535, 6234);
             ClampSetting("manualScreenWidth", manualScreenWidth, 0, 16384, 1920);
@@ -908,6 +1143,7 @@ namespace OW { namespace Config {
             ClampSetting("therad", therad, 0, 10000, 0);
             ClampSetting("pon", pon, 0, 10000, 0);
             ClampSetting("crss", crss, 0, 10000, 0);
+            ValidateHeroPresetsUnlocked();
 
             ClampColor("enargb", enargb);
             ClampColor("invisnenargb", invisnenargb);
@@ -965,9 +1201,9 @@ namespace OW { namespace Config {
             LogConfig(level, "Dump: auto AutoMelee=%s meleehealth=%.3f meleedistance=%.3f AutoRMB=%s AutoRMBhealth=%.3f AutoRMBdistance=%.3f AutoSkill=%s SkillHealth=%.3f AntiAFK=%s",
                 ToText(AutoMelee).c_str(), meleehealth, meleedistance, ToText(AutoRMB).c_str(), AutoRMBhealth,
                 AutoRMBdistance, ToText(AutoSkill).c_str(), SkillHealth, ToText(AntiAFK).c_str());
-            LogConfig(level, "Dump: fov-change enablechangefov=%s CHANGEFOV=%.3f trackback=%s secondaim=%s highPriority=%s",
+            LogConfig(level, "Dump: fov-change enablechangefov=%s CHANGEFOV=%.3f trackback=%s secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(enablechangefov).c_str(), CHANGEFOV, ToText(trackback).c_str(),
-                ToText(secondaim).c_str(), ToText(highPriority).c_str());
+                ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
             LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f debugLog=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMac,
                 kmboxComPort, kmboxAimSensitivity, ToText(kmboxDebugLog).c_str());
@@ -1010,6 +1246,75 @@ namespace OW { namespace Config {
     {
         std::lock_guard<std::mutex> lock(mutex);
         DumpUnlocked(Diagnostics::LogLevel::Info);
+    }
+
+    HeroPreset MakeHeroPresetFromCurrent()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return MakeHeroPresetFromCurrentUnlocked();
+    }
+
+    bool TryGetHeroPreset(uint64_t heroId, HeroPreset& outPreset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto item = heroPresets.find(heroId);
+        if (item == heroPresets.end())
+            return false;
+
+        outPreset = ValidateHeroPresetValue(item->second);
+        return true;
+    }
+
+    bool HasHeroPreset(uint64_t heroId)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return heroPresets.find(heroId) != heroPresets.end();
+    }
+
+    HeroPreset GetHeroPresetOrDefault(uint64_t heroId)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto item = heroPresets.find(heroId);
+        if (item != heroPresets.end())
+            return ValidateHeroPresetValue(item->second);
+        return MakeHeroPresetFromCurrentUnlocked();
+    }
+
+    void SetHeroPreset(uint64_t heroId, const HeroPreset& preset)
+    {
+        if (heroId == 0)
+            return;
+
+        std::lock_guard<std::mutex> lock(mutex);
+        heroPresets[heroId] = ValidateHeroPresetValue(preset);
+    }
+
+    void ApplyHeroPresetToGlobals(const HeroPreset& preset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        ApplyHeroPresetUnlocked(preset);
+    }
+
+    void SaveHeroPresets(const std::string& path)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SaveHeroPresetsUnlocked(path);
+    }
+
+    void LoadHeroPresets(const std::string& path)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        IniFile ini;
+        if (!LoadIniFile(path, ini)) {
+            heroPresets.clear();
+            LogConfig(Diagnostics::LogLevel::Warn,
+                "%s is missing or unreadable; no hero presets were loaded.",
+                path.c_str());
+            return;
+        }
+
+        LoadHeroPresetsUnlocked(ini);
     }
 
     void SaveConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase)
@@ -1125,6 +1430,7 @@ namespace OW { namespace Config {
         WriteBoolValue(path, "Global", "radarline", radarline);
         WriteBoolValue(path, "Global", "drawline", drawline);
         WriteBoolValue(path, "Global", "draw_fov", draw_fov);
+        WriteIntValue(path, "Global", "targetPriority", targetPriority);
         WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);
         WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
         WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);
@@ -1146,6 +1452,8 @@ namespace OW { namespace Config {
         WriteFixedFloatValue(path, "KMBox", "kmboxAimSensitivity", kmboxAimSensitivity);
         WriteBoolValue(path, "KMBox", "kmboxDebugLog", kmboxDebugLog);
 
+        SaveHeroPresetsUnlocked(path);
+
         LogConfig(Diagnostics::LogLevel::Info,
             "Saved config for hero %s to %s.", heroName.c_str(), path.c_str());
     }
@@ -1161,6 +1469,7 @@ namespace OW { namespace Config {
         IniFile ini;
         if (!LoadIniFile(path, ini)) {
             config_version = kCurrentConfigVersion;
+            heroPresets.clear();
             LogConfig(Diagnostics::LogLevel::Warn,
                 "%s is missing or unreadable; using all documented defaults.",
                 path.c_str());
@@ -1192,6 +1501,7 @@ namespace OW { namespace Config {
         LoadHeroSettingsUnlocked(ini, heroName.c_str(), heroId);
         LoadGlobalSettingsUnlocked(ini);
         LoadKmboxSettingsUnlocked(ini);
+        LoadHeroPresetsUnlocked(ini);
         ValidateUnlocked();
         DumpUnlocked(Diagnostics::LogLevel::Debug);
 

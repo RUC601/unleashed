@@ -915,6 +915,32 @@ namespace AimbotDetail {
         bool dodelay = false;
     };
 
+    inline OW::c_entity LocalEntity();
+
+    struct ScopedHeroPresetOverride {
+        bool active = false;
+        OW::Config::HeroPreset original{};
+
+        ScopedHeroPresetOverride() {
+            const OW::c_entity local = LocalEntity();
+            if (local.HeroID == 0)
+                return;
+
+            OW::Config::HeroPreset preset{};
+            if (!OW::Config::TryGetHeroPreset(local.HeroID, preset))
+                return;
+
+            original = OW::Config::MakeHeroPresetFromCurrent();
+            OW::Config::ApplyHeroPresetToGlobals(preset);
+            active = true;
+        }
+
+        ~ScopedHeroPresetOverride() {
+            if (active)
+                OW::Config::ApplyHeroPresetToGlobals(original);
+        }
+    };
+
     struct AimData {
         Vector3 local_angle{};
         Vector3 target_angle{};
@@ -1588,6 +1614,11 @@ namespace AimbotDetail {
         RunReaperReloadCancel();
         RunSecondAim();
     }
+
+    inline void RunAimbotTickWithHeroPreset(RuntimeState& state, float& origin_sens) {
+        ScopedHeroPresetOverride heroPresetOverride;
+        RunAimbotTick(state, origin_sens);
+    }
 }
 
 inline void aimbot_thread() {
@@ -1596,7 +1627,7 @@ inline void aimbot_thread() {
         static float origin_sens = 0.f;
 
         while (true) {
-            AimbotDetail::RunAimbotTick(state, origin_sens);
+            AimbotDetail::RunAimbotTickWithHeroPreset(state, origin_sens);
             Sleep(2);
         }
     } __except (1) {}

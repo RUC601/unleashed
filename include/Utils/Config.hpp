@@ -1,8 +1,10 @@
 #pragma once
 
 #include <Windows.h>
+#include <cstdint>
 #include <string>
 #include <mutex>
+#include <unordered_map>
 #include <imgui.h>
 
 // -----------------------------------------------------------------------
@@ -218,6 +220,25 @@ namespace OW { namespace Config {
     inline int   kmboxInputDelayMs = 0;
     inline bool kmboxDebugLog = false;
 
+    // ---- Per-hero aimbot presets ----
+    struct HeroPreset {
+        float fov = 200.f;       // FOV circle size
+        float smooth = 5.0f;     // aim smoothing, 0-100
+        int bone = 0;            // 0=head, 1=neck, 2=chest
+        float hitbox = 0.13f;    // hitbox radius/size
+        int aimMode = 0;         // 0=Tracking, 1=Flick, 2=HanzoFlick, 3=Silent
+        bool prediction = false; // movement prediction
+        int priority = 0;        // 0=FOV, 1=HP, 2=Distance
+    };
+
+    inline std::unordered_map<uint64_t, HeroPreset> heroPresets;
+    inline int targetPriority = 0;
+
+    // UI-only placeholders for heroes not present in the current local eHero enum.
+    inline constexpr uint64_t HERO_PRESET_FREJA  = 0xFFFFFFFFFFFF0001ull;
+    inline constexpr uint64_t HERO_PRESET_HAZARD = 0xFFFFFFFFFFFF0002ull;
+    inline constexpr uint64_t HERO_PRESET_JUNO   = 0xFFFFFFFFFFFF0003ull;
+
     // ---- Primary-machine display ----
     inline int manualScreenWidth = 1920;
     inline int manualScreenHeight = 1080;
@@ -226,6 +247,16 @@ namespace OW { namespace Config {
     inline int locx = 0, locy = 0, therad = 0, pon = 0, crss = 0;
 
     // ---- Persistence ----
+    HeroPreset MakeHeroPresetFromCurrent();
+    bool TryGetHeroPreset(uint64_t heroId, HeroPreset& outPreset);
+    bool HasHeroPreset(uint64_t heroId);
+    HeroPreset GetHeroPresetOrDefault(uint64_t heroId);
+    void SetHeroPreset(uint64_t heroId, const HeroPreset& preset);
+    void ApplyHeroPresetToGlobals(const HeroPreset& preset);
+    void SaveHeroPresets(const std::string& path);
+    void LoadHeroPresets(const std::string& path);
+    void SaveConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);
+    void LoadConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);
     void SaveConfig(const std::string& path);
     void LoadConfig(const std::string& path);
 
