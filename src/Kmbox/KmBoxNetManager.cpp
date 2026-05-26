@@ -32,6 +32,39 @@ namespace
         default:                 return KmBoxCommandType::Unknown;
         }
     }
+
+    WORD VirtualKeyToHidKey(WORD vKey)
+    {
+        if (vKey >= 'A' && vKey <= 'Z')
+            return static_cast<WORD>(KEY_A + (vKey - 'A'));
+
+        if (vKey >= '1' && vKey <= '9')
+            return static_cast<WORD>(KEY_1_EXCLAMATION_MARK + (vKey - '1'));
+
+        if (vKey == '0')
+            return KEY_0_CPARENTHESIS;
+
+        if (vKey >= VK_F1 && vKey <= VK_F12)
+            return static_cast<WORD>(KEY_F1 + (vKey - VK_F1));
+
+        switch (vKey) {
+        case VK_CONTROL:
+        case VK_LCONTROL: return KEY_LEFTCONTROL;
+        case VK_RCONTROL: return KEY_RIGHTCONTROL;
+        case VK_SHIFT:
+        case VK_LSHIFT:   return KEY_LEFTSHIFT;
+        case VK_RSHIFT:   return KEY_RIGHTSHIFT;
+        case VK_MENU:
+        case VK_LMENU:    return KEY_LEFTALT;
+        case VK_RMENU:    return KEY_RIGHTALT;
+        case VK_LWIN:     return KEY_LEFT_GUI;
+        case VK_RWIN:     return KEY_RIGHT_GUI;
+        case VK_SPACE:    return KEY_SPACEBAR;
+        case VK_RETURN:   return KEY_ENTER;
+        case VK_ESCAPE:   return KEY_ESCAPE;
+        default:          return 0;
+        }
+    }
 }
 
 KmBoxNetManager::KmBoxNetManager()
@@ -703,7 +736,11 @@ KmBoxKeyBoard::~KmBoxKeyBoard()
 
 bool KmBoxKeyBoard::GetKeyState(WORD vKey)
 {
-    unsigned char KeyValue = vKey & 0xff;
+    const WORD hidKey = VirtualKeyToHidKey(vKey);
+    if (hidKey == 0)
+        return false;
+
+    unsigned char KeyValue = hidKey & 0xff;
     if (!this->ListenerRuned.load(std::memory_order_acquire))
         return false;
 
@@ -732,4 +769,25 @@ bool KmBoxKeyBoard::GetKeyState(WORD vKey)
             return true;
     }
     return false;
+}
+
+bool KmBoxKeyBoard::IsMouseButtonPressed(int vkButton)
+{
+    if (!this->ListenerRuned.load(std::memory_order_acquire))
+        return false;
+
+    standard_mouse_report_t mouse{};
+    {
+        std::lock_guard<std::mutex> lock(this->monitorMutex);
+        mouse = this->hw_Mouse;
+    }
+
+    switch (vkButton) {
+    case VK_LBUTTON:  return (mouse.buttons & 0x01) != 0;
+    case VK_RBUTTON:  return (mouse.buttons & 0x02) != 0;
+    case VK_MBUTTON:  return (mouse.buttons & 0x04) != 0;
+    case VK_XBUTTON1: return (mouse.buttons & 0x08) != 0;
+    case VK_XBUTTON2: return (mouse.buttons & 0x10) != 0;
+    default:          return false;
+    }
 }

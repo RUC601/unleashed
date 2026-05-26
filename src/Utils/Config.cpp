@@ -34,6 +34,11 @@ namespace OW { namespace Config {
     bool drawbox3d = false;
     bool manualsave = false;
 
+    std::string ConfigPath()
+    {
+        return ".\\" + configFileName;
+    }
+
     namespace {
 
         constexpr int kCurrentConfigVersion = 2;
@@ -540,7 +545,7 @@ namespace OW { namespace Config {
             preset.smooth = std::clamp(preset.smooth, 0.0f, 100.0f);
             preset.bone = std::clamp(preset.bone, 0, 2);
             preset.hitbox = std::clamp(preset.hitbox, 0.0f, 5.0f);
-            preset.aimMode = std::clamp(preset.aimMode, 0, 3);
+            preset.aimMode = std::clamp(preset.aimMode, 0, 1);
             preset.priority = std::clamp(preset.priority, 0, 2);
             return preset;
         }
@@ -561,11 +566,8 @@ namespace OW { namespace Config {
             Tracking2 = false;            // default: false
             Flick = false;                // default: false
             Flick2 = false;               // default: false
-            hanzo_flick = false;          // default: false
-            silent = false;               // default: false
-            Rage = false;                 // default: false
-            fakesilent = false;           // default: false
 
+            projectile_arc = false;       // default: false
             Prediction = false;           // default: false
             Prediction2 = false;          // default: false
             Gravitypredit = false;        // default: false
@@ -663,6 +665,7 @@ namespace OW { namespace Config {
         {
             aimbotAutoshot = false;
             aimbotKeepFiring = true;
+            aimbotTriggerDelay = 0.0f;
             aimbotMaxHead = 100.0f;
             aimbotSmoothType = 0;
             aimbotStickiness = 100.0f;
@@ -734,6 +737,9 @@ namespace OW { namespace Config {
             CopyString(kmboxMac, kDefaultKmboxMac);
             CopyString(kmboxComPort, kDefaultKmboxComPort);
             kmboxAimSensitivity = 1.0f;   // default: 1:1 scalar
+            gameMouseSensitivity = 15.0f; // default: OW baseline until DMA updates it
+            sensReference = 15.0f;        // default: OW baseline calibration point
+            autoSyncSensitivity = false;  // default: manual scalar only
             kmboxInputDelayMs = kDefaultKmboxInputDelayMs;
             kmboxDebugLog = false;        // default: off
 
@@ -751,16 +757,10 @@ namespace OW { namespace Config {
         {
             Tracking = false;
             Flick = false;
-            hanzo_flick = false;
-            silent = false;
-            triggerbot = false;
 
-            switch (mode) {
+            switch (std::clamp(mode, 0, 1)) {
             case 0: Tracking = true; break;
             case 1: Flick = true; break;
-            case 2: hanzo_flick = true; break;
-            case 3: silent = true; break;
-            case 4: triggerbot = true; break;
             default: break;
             }
         }
@@ -769,10 +769,7 @@ namespace OW { namespace Config {
         {
             if (Tracking) return 0;
             if (Flick) return 1;
-            if (hanzo_flick) return 2;
-            if (silent) return 3;
-            if (triggerbot) return 4;
-            return -1;
+            return 0;
         }
 
         HeroPreset MakeHeroPresetFromCurrentUnlocked()
@@ -785,7 +782,7 @@ namespace OW { namespace Config {
             preset.bone = RuntimeBoneToPresetBone(Bone);
             preset.hitbox = hitbox;
             preset.aimMode = CurrentAimMode();
-            if (preset.aimMode < 0 || preset.aimMode > 3)
+            if (preset.aimMode < 0 || preset.aimMode > 1)
                 preset.aimMode = 0;
             preset.prediction = Prediction;
             preset.priority = targetPriority;
@@ -825,13 +822,13 @@ namespace OW { namespace Config {
         {
             HeroPreset preset = defaults;
             preset.fov = static_cast<float>(ReadInt(ini, section, "FOV", static_cast<int>(preset.fov)));
-            const int aimMode = ReadInt(ini, section, "Aim Mode", preset.aimMode);
+            const int aimMode = std::clamp(ReadInt(ini, section, "Aim Mode", preset.aimMode), 0, 1);
             const float trackingSmooth = ReadFixedFloat(ini, section, "Tracking_smooth", preset.smooth);
             const float flickSmooth = ReadFixedFloat(ini, section, "Flick_smooth", trackingSmooth);
-            preset.smooth = (aimMode == 1 || aimMode == 2) ? flickSmooth : trackingSmooth;
+            preset.smooth = aimMode == 1 ? flickSmooth : trackingSmooth;
             preset.bone = RuntimeBoneToPresetBone(ReadInt(ini, section, "Bone", PresetBoneToRuntimeBone(preset.bone)));
             preset.hitbox = ReadFixedFloat(ini, section, "hitbox", preset.hitbox);
-            preset.aimMode = std::clamp(aimMode, 0, 3);
+            preset.aimMode = aimMode;
             preset.prediction = ReadBool(ini, section, "predictdec", preset.prediction);
             return ValidateHeroPresetValue(preset);
         }
@@ -947,6 +944,7 @@ namespace OW { namespace Config {
             AutoRMBdistance = ReadFixedFloat(ini, section, "AutoRMBdistance", AutoRMBdistance);
             AutoRMBhealth = ReadFixedFloat(ini, section, "AutoRMBhealth", AutoRMBhealth);
             secondaim = ReadBool(ini, section, "secondaim", secondaim);
+            triggerbot = ReadBool(ini, section, "triggerbot", triggerbot);
             triggerbot2 = ReadBool(ini, section, "triggerbot2", triggerbot2);
             Tracking2 = ReadBool(ini, section, "Tracking2", Tracking2);
             Flick2 = ReadBool(ini, section, "Flick2", Flick2);
@@ -988,6 +986,7 @@ namespace OW { namespace Config {
 
             aimbotAutoshot = ReadBool(ini, section, "aimbotAutoshot", aimbotAutoshot);
             aimbotKeepFiring = ReadBool(ini, section, "aimbotKeepFiring", aimbotKeepFiring);
+            aimbotTriggerDelay = ReadFixedFloat(ini, section, "aimbotTriggerDelay", aimbotTriggerDelay);
             aimbotMaxHead = ReadFixedFloat(ini, section, "aimbotMaxHead", aimbotMaxHead);
             aimbotSmoothType = ReadInt(ini, section, "aimbotSmoothType", aimbotSmoothType);
             aimbotStickiness = ReadFixedFloat(ini, section, "aimbotStickiness", aimbotStickiness);
@@ -1027,6 +1026,7 @@ namespace OW { namespace Config {
 
             WriteBoolValue(path, section, "aimbotAutoshot", aimbotAutoshot);
             WriteBoolValue(path, section, "aimbotKeepFiring", aimbotKeepFiring);
+            WriteFixedFloatValue(path, section, "aimbotTriggerDelay", aimbotTriggerDelay);
             WriteFixedFloatValue(path, section, "aimbotMaxHead", aimbotMaxHead);
             WriteIntValue(path, section, "aimbotSmoothType", aimbotSmoothType);
             WriteFixedFloatValue(path, section, "aimbotStickiness", aimbotStickiness);
@@ -1109,6 +1109,9 @@ namespace OW { namespace Config {
             CopyString(kmboxMac, ReadString(ini, section, "kmboxMac", kmboxMac));
             CopyString(kmboxComPort, ReadString(ini, section, "kmboxComPort", kmboxComPort));
             kmboxAimSensitivity = ReadFixedFloat(ini, section, "kmboxAimSensitivity", kmboxAimSensitivity);
+            gameMouseSensitivity = ReadFixedFloat(ini, section, "gameMouseSensitivity", gameMouseSensitivity);
+            sensReference = ReadFixedFloat(ini, section, "sensReference", sensReference);
+            autoSyncSensitivity = ReadBool(ini, section, "autoSyncSensitivity", autoSyncSensitivity);
             kmboxInputDelayMs = ReadInt(ini, section, "kmboxInputDelayMs", kmboxInputDelayMs);
             kmboxDebugLog = ReadBool(ini, section, "kmboxDebugLog", kmboxDebugLog);
         }
@@ -1122,6 +1125,9 @@ namespace OW { namespace Config {
             WriteStringValue(path, "KMBox", "kmboxMac", kmboxMac);
             WriteStringValue(path, "KMBox", "kmboxComPort", kmboxComPort);
             WriteFixedFloatValue(path, "KMBox", "kmboxAimSensitivity", kmboxAimSensitivity);
+            WriteFixedFloatValue(path, "KMBox", "gameMouseSensitivity", gameMouseSensitivity);
+            WriteFixedFloatValue(path, "KMBox", "sensReference", sensReference);
+            WriteBoolValue(path, "KMBox", "autoSyncSensitivity", autoSyncSensitivity);
             WriteIntValue(path, "KMBox", "kmboxInputDelayMs", kmboxInputDelayMs);
             WriteBoolValue(path, "KMBox", "kmboxDebugLog", kmboxDebugLog);
         }
@@ -1198,6 +1204,7 @@ namespace OW { namespace Config {
             ClampFloatSetting("predit_level2", predit_level2, 0.0f, 2000.0f, 110.0f);
             ClampFloatSetting("comarea", comarea, 0.0f, 20.0f, 0.01f);
             ClampFloatSetting("comspeed", comspeed, 0.0f, 20.0f, 0.5f);
+            ClampFloatSetting("aimbotTriggerDelay", aimbotTriggerDelay, 0.0f, 5000.0f, 0.0f);
             ClampFloatSetting("aimbotMaxHead", aimbotMaxHead, 0.0f, 100.0f, 100.0f);
             ClampFloatSetting("aimPidP", aimPidP, 0.0f, 2.0f, 0.5f);
             ClampFloatSetting("aimPidI", aimPidI, 0.0f, 0.5f, 0.01f);
@@ -1257,6 +1264,8 @@ namespace OW { namespace Config {
             ClampSetting("manualScreenWidth", manualScreenWidth, 0, 16384, 1920);
             ClampSetting("manualScreenHeight", manualScreenHeight, 0, 16384, 1080);
             ClampFloatSetting("kmboxAimSensitivity", kmboxAimSensitivity, 0.1f, 5.0f, 1.0f);
+            ClampFloatSetting("gameMouseSensitivity", gameMouseSensitivity, 0.01f, 100.0f, 15.0f);
+            ClampFloatSetting("sensReference", sensReference, 0.01f, 100.0f, 15.0f);
             ClampSetting("locx", locx, 0, 100000, 0);
             ClampSetting("locy", locy, 0, 100000, 0);
             ClampSetting("therad", therad, 0, 10000, 0);
@@ -1285,14 +1294,14 @@ namespace OW { namespace Config {
         void DumpUnlocked(Diagnostics::LogLevel level)
         {
             LogConfig(level, "Dump: config_version=%d", config_version);
-            LogConfig(level, "Dump: aim modes enableAimbot=%s triggerbot=%s triggerbot2=%s Tracking=%s Tracking2=%s Flick=%s Flick2=%s hanzo_flick=%s silent=%s Rage=%s fakesilent=%s",
+            LogConfig(level, "Dump: aim modes enableAimbot=%s triggerbot=%s triggerbot2=%s Tracking=%s Tracking2=%s Flick=%s Flick2=%s",
                 ToText(enableAimbot).c_str(), ToText(triggerbot).c_str(), ToText(triggerbot2).c_str(),
                 ToText(Tracking).c_str(), ToText(Tracking2).c_str(), ToText(Flick).c_str(),
-                ToText(Flick2).c_str(), ToText(hanzo_flick).c_str(), ToText(silent).c_str(),
-                ToText(Rage).c_str(), ToText(fakesilent).c_str());
-            LogConfig(level, "Dump: prediction Prediction=%s Prediction2=%s Gravitypredit=%s Gravitypredit2=%s predit_level=%.3f predit_level2=%.3f hanzoautospeed=%s",
-                ToText(Prediction).c_str(), ToText(Prediction2).c_str(), ToText(Gravitypredit).c_str(),
-                ToText(Gravitypredit2).c_str(), predit_level, predit_level2, ToText(hanzoautospeed).c_str());
+                ToText(Flick2).c_str());
+            LogConfig(level, "Dump: prediction projectile_arc=%s Prediction=%s Prediction2=%s Gravitypredit=%s Gravitypredit2=%s predit_level=%.3f predit_level2=%.3f hanzoautospeed=%s",
+                ToText(projectile_arc).c_str(), ToText(Prediction).c_str(), ToText(Prediction2).c_str(),
+                ToText(Gravitypredit).c_str(), ToText(Gravitypredit2).c_str(), predit_level, predit_level2,
+                ToText(hanzoautospeed).c_str());
             LogConfig(level, "Dump: keys AimKey=%d aim_key=%d aim_key2=%d togglekey=%d MenuToggleKey=%d",
                 AimKey, aim_key, aim_key2, togglekey, MenuToggleKey);
             LogConfig(level, "Dump: aim Fov=%.3f Fov2=%.3f minFov1=%.3f minFov2=%.3f Smooth=%.3f fov360=%s autoscalefov=%s hitbox=%.3f hitbox2=%.3f missbox=%.3f",
@@ -1307,11 +1316,12 @@ namespace OW { namespace Config {
                 ToText(lockontarget).c_str(), ToText(trackcompensate).c_str(), comarea, comspeed, ToText(aiaim).c_str(),
                 ToText(targetdelay).c_str(), targetdelaytime, ToText(hitboxdelayshoot).c_str(), hiboxdelaytime,
                 ToText(dontshot).c_str(), shotcount, shotmanydont);
-            LogConfig(level, "Dump: aimbot ui autoshot=%s keepFiring=%s maxHead=%.3f smoothType=%d stickiness=%.3f smoothY=%.3f maxAim=%.3f minCharge=%.3f maxCharge=%.3f ignoreInvisible=%s trace=%d unlock=%d lockTime=%.3f maxDist=%.3f minDist=%.3f attack=%d team=%d priority=%d",
-                ToText(aimbotAutoshot).c_str(), ToText(aimbotKeepFiring).c_str(), aimbotMaxHead,
-                aimbotSmoothType, aimbotStickiness, aimbotSmoothY, aimbotMaxAim, aimbotMinCharge,
-                aimbotMaxCharge, ToText(aimbotIgnoreInvisible).c_str(), aimbotTrace, aimbotUnlock,
-                aimbotLockTime, aimbotMaxDist, aimbotMinDist, aimbotAttack, aimbotTeam, aimbotPriority);
+            LogConfig(level, "Dump: aimbot ui autoshot=%s keepFiring=%s triggerDelay=%.3f maxHead=%.3f smoothType=%d stickiness=%.3f smoothY=%.3f maxAim=%.3f minCharge=%.3f maxCharge=%.3f ignoreInvisible=%s trace=%d unlock=%d lockTime=%.3f maxDist=%.3f minDist=%.3f attack=%d team=%d priority=%d",
+                ToText(aimbotAutoshot).c_str(), ToText(aimbotKeepFiring).c_str(), aimbotTriggerDelay,
+                aimbotMaxHead, aimbotSmoothType, aimbotStickiness, aimbotSmoothY, aimbotMaxAim,
+                aimbotMinCharge, aimbotMaxCharge, ToText(aimbotIgnoreInvisible).c_str(), aimbotTrace,
+                aimbotUnlock, aimbotLockTime, aimbotMaxDist, aimbotMinDist, aimbotAttack, aimbotTeam,
+                aimbotPriority);
             LogConfig(level, "Dump: aim method method=%d pidP=%.3f pidI=%.3f pidD=%.3f pidMaxIntegral=%.3f pidDeadzone=%.3f bezierControlPoints=%d bezierCurvature=%.3f bezierSpeed=%.3f",
                 aimMethod, aimPidP, aimPidI, aimPidD, aimPidMaxIntegral, aimPidDeadzone,
                 aimBezierControlPoints, aimBezierCurvature, aimBezierSpeed);
@@ -1327,9 +1337,10 @@ namespace OW { namespace Config {
                 AutoRMBdistance, ToText(AutoSkill).c_str(), SkillHealth, ToText(AntiAFK).c_str());
             LogConfig(level, "Dump: secondary secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
-            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f inputDelayMs=%d debugLog=%s",
+            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f gameMouseSensitivity=%.3f sensReference=%.3f autoSyncSensitivity=%s inputDelayMs=%d debugLog=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMac,
-                kmboxComPort, kmboxAimSensitivity, kmboxInputDelayMs, ToText(kmboxDebugLog).c_str());
+                kmboxComPort, kmboxAimSensitivity, gameMouseSensitivity, sensReference,
+                ToText(autoSyncSensitivity).c_str(), kmboxInputDelayMs, ToText(kmboxDebugLog).c_str());
             LogConfig(level, "Dump: manual screen width=%d height=%d",
                 manualScreenWidth, manualScreenHeight);
             LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s",
@@ -1504,6 +1515,7 @@ namespace OW { namespace Config {
         WriteFixedFloatValue(path, section, "AutoRMBdistance", AutoRMBdistance);
         WriteFixedFloatValue(path, section, "AutoRMBhealth", AutoRMBhealth);
         WriteBoolValue(path, section, "secondaim", secondaim);
+        WriteBoolValue(path, section, "triggerbot", triggerbot);
         WriteBoolValue(path, section, "triggerbot2", triggerbot2);
         WriteBoolValue(path, section, "Tracking2", Tracking2);
         WriteBoolValue(path, section, "Flick2", Flick2);

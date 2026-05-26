@@ -12,6 +12,7 @@
 #include <cstring>
 #include <cstdio>
 #include <functional>
+#include <string>
 #include <vector>
 
 // =====================================================================
@@ -20,6 +21,28 @@
 namespace {
 
     inline int g_aimbotHero = 0;
+    constexpr size_t kConfigProfileNameBufferSize = 64;
+
+    void CopyConfigProfileName(char (&destination)[kConfigProfileNameBufferSize], const std::string& name)
+    {
+        std::snprintf(destination, kConfigProfileNameBufferSize, "%s", name.c_str());
+    }
+
+    void ReloadConfigProfile()
+    {
+        const std::string savedName = OW::Config::configFileName;
+        const std::string path = OW::Config::ConfigPath();
+        OW::Config::LoadConfig(path);
+        OW::Config::configFileName = savedName;
+        OW::RefreshScreenSizeFromConfig();
+    }
+
+    void SelectConfigProfile(const char* name, char (&profileName)[kConfigProfileNameBufferSize])
+    {
+        CopyConfigProfileName(profileName, name);
+        OW::Config::configFileName = profileName;
+        ReloadConfigProfile();
+    }
 
 } // anonymous namespace
 
@@ -87,10 +110,12 @@ static const char* kHero[] = {
     "Mercy", "Lucio", "Zenyatta", "Ana", "Brigitte", "Moira", "Baptiste", "Kiriko",
     "Lifeweaver", "Illari", "Juno"
 };
-static const char* kAimKey[]       = { "Undefined", "Mouse 4", "Mouse 5", "Left Shift" };
+static const char* kAimActivationKey[] = {
+    "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt", "Key F"
+};
 static const char* kAttack[]       = { "Shoot", "Ability 1", "Ability 2" };
 static const char* kBone[]         = { "Head", "Neck", "Chest" };
-static const char* kAimMode[]      = { "Tracking", "Flick", "HanzoFlick", "Silent" };
+static const char* kAimMode[]      = { "Tracking", "Flick" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPriority[]     = { "Lowest FOV", "Lowest HP", "Distance" };
@@ -668,7 +693,9 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
     const float height = kControlHeight;
 
     ImVec2 pos  = window->DC.CursorPos;
-    float width = ImGui::GetContentRegionAvail().x;
+    float width = ImGui::CalcItemWidth();
+    if (width <= 0.0f)
+        width = ImGui::GetContentRegionAvail().x;
     ImRect bb(pos, ImVec2(pos.x + width, pos.y + height));
 
     ImGui::ItemSize(bb);
@@ -1140,20 +1167,34 @@ void UI::AimbotPage() {
     UIGroupBox("Hero Selection");
     {
         SettingRow("Hero", kAimbotHeroLabelWidth);
-        ImGui::PushItemWidth(-1);
+        constexpr float kHeroAvatarSize = 48.0f;
+        const float avatarSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
+        const float heroRowWidth = ImGui::GetContentRegionAvail().x;
+        const bool hasAvatarSpace = heroRowWidth > kHeroAvatarSize + avatarSpacing + 120.0f;
+        ImGui::PushItemWidth(hasAvatarSpace ? heroRowWidth - kHeroAvatarSize - avatarSpacing : -1.0f);
         if (UISelect("##aimHero", &g_aimbotHero, kHero, IM_ARRAYSIZE(kHero))) {
             g_aimbotHero = ClampHeroSelectionIndex(g_aimbotHero);
             heroSlotSelections[state.heroSegActive] = g_aimbotHero;
             refreshActivePreset();
         }
         ImGui::PopItemWidth();
+        const std::string heroSlug = OW::HeroDisplayNameToSlug(selectedHero->label);
+        ID3D11ShaderResourceView* avatar = nullptr;
+        if (!heroSlug.empty()) {
+            if (IconManager* icons = Render::GetIconManager())
+                avatar = icons->GetIcon(heroSlug);
+        }
+        if (hasAvatarSpace && avatar) {
+            ImGui::SameLine(0.0f, avatarSpacing);
+            ImGui::Image(reinterpret_cast<ImTextureID>(avatar), ImVec2(kHeroAvatarSize, kHeroAvatarSize));
+        }
 
         SettingRow("Preset", kAimbotHeroLabelWidth);
         if (ImGui::Button("Save Preset", ImVec2(96.0f, kControlHeight)))
             savePresetRequested = true;
         ImGui::SameLine();
         if (ImGui::Button("Load Preset", ImVec2(96.0f, kControlHeight))) {
-            OW::Config::LoadHeroPresets(".\\config.ini");
+            OW::Config::LoadHeroPresets(OW::Config::ConfigPath());
             refreshActivePreset();
         }
 
@@ -1227,11 +1268,11 @@ void UI::AimbotPage() {
                 ImGui::PopItemWidth();
             }
 
-            // AimKey  (maps to OW::Config::AimKey, but uses index vs VK)
-            SettingRow("AimKey", kAimbotLeftLabelWidth);
+            // Aim activation key (maps to OW::Config::aim_key).
+            SettingRow("Aim Activation Key", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            static int aimKeyIdx = 0;
-            UISelect("##aimKey", &aimKeyIdx, kAimKey, IM_ARRAYSIZE(kAimKey));
+            UISelect("##aimActivationKey", &OW::Config::aim_key,
+                     kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
             ImGui::PopItemWidth();
 
             // Attack
@@ -1247,6 +1288,22 @@ void UI::AimbotPage() {
             // Keep Firing
             SettingRow("Keep Firing", kAimbotLeftLabelWidth);
             UICheckbox("##aimKeepFire", &OW::Config::aimbotKeepFiring);
+
+            // ---- Triggerbot ----
+            DrawDivider();
+
+            SettingRow("Triggerbot", kAimbotLeftLabelWidth);
+            UICheckbox("##aimTriggerbot", &OW::Config::triggerbot);
+
+            SettingRow("Trigger Delay", kAimbotLeftLabelWidth);
+            ImGui::PushItemWidth(-1);
+            UISlider("##aimTriggerDelay", &OW::Config::aimbotTriggerDelay, 0.0f, 100.0f, "Instant");
+            ImGui::PopItemWidth();
+
+            SettingRow("Trigger Hitbox", kAimbotLeftLabelWidth);
+            ImGui::PushItemWidth(-1);
+            UISlider("##aimTriggerHitbox", &OW::Config::hitbox, 0.0f, 5.0f, "0.13");
+            ImGui::PopItemWidth();
 
             // Bone Preference  (maps to OW::Config::TargetBone)
             SettingRow("Bone Preference", kAimbotLeftLabelWidth);
@@ -1367,7 +1424,7 @@ void UI::AimbotPage() {
         if (presetChanged || savePresetRequested)
             OW::Config::SetHeroPreset(selectedHero->heroId, activePreset);
         if (savePresetRequested)
-            OW::Config::SaveHeroPresets(".\\config.ini");
+            OW::Config::SaveHeroPresets(OW::Config::ConfigPath());
     }
 }
 
@@ -1429,6 +1486,42 @@ void UI::ThemePage() {
 void UI::MiscPage() {
     ImGui::PushID("MiscPage");
 
+    UIGroupBox("Config Profile");
+    {
+        static char profileName[kConfigProfileNameBufferSize] = "";
+        static bool profileNameInitialized = false;
+        if (!profileNameInitialized) {
+            CopyConfigProfileName(profileName, OW::Config::configFileName);
+            profileNameInitialized = true;
+        }
+
+        SettingRow("Active Profile");
+        const float defaultButtonWidth = 60.0f;
+        const float testButtonWidth = 50.0f;
+        const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+        const float inputWidth = MaxFloat(
+            80.0f,
+            ImGui::GetContentRegionAvail().x - defaultButtonWidth - testButtonWidth - spacing * 2.0f);
+
+        ImGui::PushItemWidth(inputWidth);
+        if (ImGui::InputText("##profileName", profileName, sizeof(profileName),
+                             ImGuiInputTextFlags_EnterReturnsTrue)) {
+            OW::Config::configFileName = profileName;
+            ReloadConfigProfile();
+            CopyConfigProfileName(profileName, OW::Config::configFileName);
+        }
+        ImGui::PopItemWidth();
+
+        ImGui::SameLine();
+        if (ImGui::Button("Default", ImVec2(defaultButtonWidth, kControlHeight)))
+            SelectConfigProfile("config.ini", profileName);
+
+        ImGui::SameLine();
+        if (ImGui::Button("Test1", ImVec2(testButtonWidth, kControlHeight)))
+            SelectConfigProfile("config_test1.ini", profileName);
+    }
+    CloseGroupBox();
+
     UIGroupBox("Menu");
     {
         SettingRow("Toggle Key");
@@ -1487,6 +1580,32 @@ void UI::MiscPage() {
                                                  0.1f, 5.0f, "%.2f");
         ImGui::PopItemWidth();
 
+        SettingRow("Game Sens (DMA)");
+        ImGui::PushItemWidth(-1);
+        float displaySens = OW::Config::gameMouseSensitivity;
+        ImGui::InputFloat("##GameSensDisplay", &displaySens, 0.0f, 0.0f, "%.2f",
+                          ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopItemWidth();
+
+        SettingRow("Reference Sens");
+        const float useDmaButtonWidth = 72.0f;
+        const float useDmaSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
+        const float referenceWidth = MaxFloat(
+            80.0f,
+            ImGui::GetContentRegionAvail().x - useDmaButtonWidth - useDmaSpacing);
+        ImGui::PushItemWidth(referenceWidth);
+        kmboxSaveRequested |= ImGui::InputFloat("##ReferenceSens", &OW::Config::sensReference,
+                                                0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        if (ImGui::Button("Use DMA", ImVec2(useDmaButtonWidth, kControlHeight))) {
+            OW::Config::sensReference = OW::Config::gameMouseSensitivity;
+            kmboxSaveRequested = true;
+        }
+
+        SettingRow("Auto Sync");
+        kmboxSaveRequested |= UICheckbox("##AutoSyncSens", &OW::Config::autoSyncSensitivity);
+
         SettingRow("Input Delay (ms)");
         ImGui::PushItemWidth(-1);
         kmboxSaveRequested |= ImGui::SliderInt("##InputDelay", &OW::Config::kmboxInputDelayMs,
@@ -1497,7 +1616,7 @@ void UI::MiscPage() {
         kmboxSaveRequested |= ImGui::Checkbox("##Debug", &OW::Config::kmboxDebugLog);
 
         if (kmboxSaveRequested)
-            OW::Config::SaveConfig(".\\config.ini");
+            OW::Config::SaveConfig(OW::Config::ConfigPath());
 
         ImGui::PopID();
     }
@@ -1527,7 +1646,7 @@ void UI::MiscPage() {
         if (screenChanged)
             OW::RefreshScreenSizeFromConfig();
         if (screenSaveRequested)
-            OW::Config::SaveConfig(".\\config.ini");
+            OW::Config::SaveConfig(OW::Config::ConfigPath());
     }
     CloseGroupBox();
 

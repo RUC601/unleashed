@@ -9,15 +9,18 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cctype>
 #include <cstdio>
 #include <unordered_map>
 #include <windows.h>
 #include <process.h>
 #include <DirectXMath.h>
 
+#include "Game/AbilityIcons.hpp"
 #include "Game/Target.hpp"
 #include "Renderer/IconManager.hpp"
 #include "Renderer/Renderer.hpp"
+#include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
 
 using namespace OW;
@@ -27,6 +30,52 @@ using namespace OW;
 // =========================================================================
 
 namespace OW {
+
+    inline std::string HeroDisplayNameToSlug(const std::string& displayName) {
+        static const std::unordered_map<std::string, std::string> specialCases = {
+            { "Soldier 76", "soldier-76" },
+            { "Soldier76", "soldier-76" },
+            { "D.Va", "dva" },
+            { "DVa", "dva" },
+            { "Dva", "dva" },
+            { "Hana", "dva" },
+            { "Wrecking Ball", "wrecking-ball" },
+            { "WreckingBall", "wrecking-ball" },
+            { "Junker Queen", "junker-queen" },
+            { "JunkerQueen", "junker-queen" },
+            { "LifeWeaver", "lifeweaver" },
+            { "Lifeweaver", "lifeweaver" },
+            { "McCree", "cassidy" },
+        };
+
+        const auto special = specialCases.find(displayName);
+        if (special != specialCases.end())
+            return special->second;
+
+        std::string slug;
+        slug.reserve(displayName.size());
+        bool previousWasHyphen = false;
+        for (const unsigned char value : displayName) {
+            if (value == '.' || value == '\'')
+                continue;
+
+            if (std::isspace(value) || value == '-' || value == '_') {
+                if (!slug.empty() && !previousWasHyphen) {
+                    slug.push_back('-');
+                    previousWasHyphen = true;
+                }
+                continue;
+            }
+
+            slug.push_back(static_cast<char>(std::tolower(value)));
+            previousWasHyphen = false;
+        }
+
+        if (!slug.empty() && slug.back() == '-')
+            slug.pop_back();
+
+        return slug;
+    }
 
     // ---- View matrices (updated by viewmatrix_thread) ----
     inline uint64_t viewMatrixPtr = 0;
@@ -932,8 +981,7 @@ inline void entity_thread() {
 
                 // Sombra stealth: treat as invisible when translocated
                 if (entity.HeroID == OW::eHero::HERO_SOMBRA && entity.Team &&
-                    !OW::Config::Rage && !OW::Config::fov360 &&
-                    !OW::Config::silent && !OW::Config::fakesilent) {
+                    !OW::Config::fov360) {
                     entity.Vis = (entity.Vis && !OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x7C5));
                     slowCache.vis = entity.Vis;
                 }
@@ -1747,8 +1795,14 @@ namespace OverlayRenderDetail {
             return texture;
 
         const std::string compactKey = CompactHeroIconKey(heroName);
-        if (compactKey != heroName)
-            return icons->GetIcon(compactKey);
+        if (compactKey != heroName) {
+            if (ID3D11ShaderResourceView* texture = icons->GetIcon(compactKey))
+                return texture;
+        }
+
+        const std::string slugKey = OW::HeroDisplayNameToSlug(heroName);
+        if (!slugKey.empty() && slugKey != heroName && slugKey != compactKey)
+            return icons->GetIcon(slugKey);
 
         return nullptr;
     }
@@ -1803,7 +1857,7 @@ namespace OverlayRenderDetail {
         return text;
     }
 
-    inline void DrawSkillCooldowns(const OW::c_entity& entity, float x, float y, float opacity) {
+    inline void DrawSkillTextCooldowns(const OW::c_entity& entity, float x, float y, float opacity) {
         int line = 0;
         const ImU32 cooldownColor = ImU32WithAlpha(255, 230, 120, opacity);
         if (IsSkillOnCooldown(entity.skill1act, entity.skillcd1)) {
@@ -1815,6 +1869,111 @@ namespace OverlayRenderDetail {
             const std::string text = FormatCooldownLabel("S2", entity.skillcd2);
             Render::DrawStrokeText(ImVec2(x, y + line * 13.0f), cooldownColor, text.c_str(), 12.0f);
         }
+    }
+
+    inline std::string FormatIconCooldown(float cooldown) {
+        char buffer[16] = {};
+        if (cooldown >= 10.0f)
+            std::snprintf(buffer, sizeof(buffer), "%.0f", cooldown);
+        else
+            std::snprintf(buffer, sizeof(buffer), "%.1f", cooldown);
+        return buffer;
+    }
+
+    inline void EnsureAbilityIconsLoaded(IconManager* iconManager, const OW::HeroAbilityIcons& icons) {
+        static std::unordered_map<std::string, bool> attemptedLoads;
+        if (!iconManager || !attemptedLoads.emplace(icons.heroSlug, true).second)
+            return;
+
+        iconManager->LoadAbilityIcons(icons.heroSlug, {
+            icons.ability1Icon,
+            icons.ability2Icon,
+            icons.ultimateIcon
+        });
+    }
+
+    inline bool DrawAbilityIconSlot(IconManager* iconManager, const OW::HeroAbilityIcons& icons,
+                                    const char* abilityIcon, float& cursorX, float y,
+                                    float iconSize, float gap, float opacity,
+                                    bool onCooldown, float cooldown) {
+        if (!iconManager || !abilityIcon || abilityIcon[0] == '\0')
+            return false;
+
+        const std::string key = std::string(icons.heroSlug) + "/" + abilityIcon;
+        ID3D11ShaderResourceView* texture = iconManager->GetIcon(key);
+        if (!texture)
+            return false;
+
+        const float alpha = std::clamp(opacity, 0.0f, 1.0f);
+        Render::DrawIcon(texture,
+                         ImVec2(cursorX, y),
+                         ImVec2(iconSize, iconSize),
+                         ImU32WithAlpha(255, 255, 255, alpha));
+
+        if (onCooldown) {
+            Render::DrawFilledRect(Vector2(cursorX, y), iconSize, iconSize,
+                                   ImColorWithAlpha(0, 0, 0, alpha * 0.58f));
+            const std::string text = FormatIconCooldown(cooldown);
+            Render::DrawStrokeText(ImVec2(cursorX + 2.0f, y + 3.0f),
+                                   ImU32WithAlpha(255, 230, 120, alpha),
+                                   text.c_str(),
+                                   10.0f);
+        }
+
+        cursorX += iconSize + gap;
+        return true;
+    }
+
+    inline bool DrawUltimateIconSlot(IconManager* iconManager, const OW::HeroAbilityIcons& icons,
+                                     float& cursorX, float y, float iconSize, float gap,
+                                     float opacity, float ultimate) {
+        bool drew = DrawAbilityIconSlot(iconManager, icons, icons.ultimateIcon, cursorX, y,
+                                        iconSize, gap, opacity, false, 0.0f);
+        if (!drew)
+            return false;
+
+        if (std::isfinite(ultimate) && ultimate < 100.0f) {
+            const float iconX = cursorX - iconSize - gap;
+            const float alpha = std::clamp(opacity, 0.0f, 1.0f);
+            Render::DrawFilledRect(Vector2(iconX, y), iconSize, iconSize,
+                                   ImColorWithAlpha(0, 0, 0, alpha * 0.42f));
+
+            char buffer[16] = {};
+            std::snprintf(buffer, sizeof(buffer), "%d%%", static_cast<int>(std::clamp(ultimate, 0.0f, 100.0f) + 0.5f));
+            Render::DrawStrokeText(ImVec2(iconX + 1.5f, y + 3.0f),
+                                   ImU32WithAlpha(255, 225, 60, alpha),
+                                   buffer,
+                                   9.0f);
+        }
+        return true;
+    }
+
+    inline void DrawSkillCooldowns(const OW::c_entity& entity, const std::string& heroName,
+                                   float x, float y, float opacity) {
+        const OW::HeroAbilityIcons* icons = OW::GetAbilityIcons(heroName);
+        IconManager* iconManager = Render::GetIconManager();
+        if (!icons || !iconManager) {
+            DrawSkillTextCooldowns(entity, x, y, opacity);
+            return;
+        }
+
+        EnsureAbilityIconsLoaded(iconManager, *icons);
+
+        constexpr float iconSize = 18.0f;
+        constexpr float gap = 3.0f;
+        float cursorX = x;
+        const bool drewAny =
+            DrawAbilityIconSlot(iconManager, *icons, icons->ability1Icon, cursorX, y,
+                                iconSize, gap, opacity,
+                                IsSkillOnCooldown(entity.skill1act, entity.skillcd1), entity.skillcd1) |
+            DrawAbilityIconSlot(iconManager, *icons, icons->ability2Icon, cursorX, y,
+                                iconSize, gap, opacity,
+                                IsSkillOnCooldown(entity.skill2act, entity.skillcd2), entity.skillcd2) |
+            DrawUltimateIconSlot(iconManager, *icons, cursorX, y,
+                                 iconSize, gap, opacity, entity.ultimate);
+
+        if (!drewAny)
+            DrawSkillTextCooldowns(entity, x, y, opacity);
     }
 
     inline void DrawBoneSegment(const Vector2& from, const Vector2& to, const Render::Color& color, float thickness) {
@@ -2053,7 +2212,7 @@ inline void PlayerInfo() {
         }
 
         if (OW::Config::skillinfo) {
-            OverlayRenderDetail::DrawSkillCooldowns(entity, left + width + 8.0f, top + 20.0f, visualOpacity);
+            OverlayRenderDetail::DrawSkillCooldowns(entity, heroName, left + width + 8.0f, top + 20.0f, visualOpacity);
             drewAny = true;
         }
 
@@ -2175,6 +2334,47 @@ namespace AimbotDetail {
         return OW::TargetingDetail::SnapshotLocalEntity();
     }
 
+    inline bool IsMouseActivationKey(int vk) {
+        switch (vk) {
+        case VK_LBUTTON:
+        case VK_RBUTTON:
+        case VK_MBUTTON:
+        case VK_XBUTTON1:
+        case VK_XBUTTON2:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool IsConfiguredAimKeyPressed(int keySetting) {
+        const int vk = OW::get_bind_id(keySetting);
+        if (vk <= 0)
+            return false;
+
+        const bool useKmBoxMonitor =
+            OW::Config::kmboxEnabled &&
+            OW::Config::kmboxDeviceType == 0 &&
+            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load();
+
+        if (useKmBoxMonitor) {
+            if (IsMouseActivationKey(vk))
+                return kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
+
+            return kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
+        }
+
+        return (GetAsyncKeyState(vk) & 0x8000) != 0;
+    }
+
+    inline bool IsAimKeyPressed() {
+        return IsConfiguredAimKeyPressed(OW::Config::aim_key);
+    }
+
+    inline bool IsSecondAimKeyPressed() {
+        return IsConfiguredAimKeyPressed(OW::Config::aim_key2);
+    }
+
     inline bool HasEntitySnapshot() {
         return !OW::TargetingDetail::SnapshotEntities().empty();
     }
@@ -2183,7 +2383,10 @@ namespace AimbotDetail {
         const uintptr_t sensitive_ptr = OW::GetSenstivePTR();
         if (!sensitive_ptr) return;
         const float current_sens = SDK->RPM<float>(sensitive_ptr);
-        if (current_sens) origin_sens = current_sens;
+        if (std::isfinite(current_sens) && current_sens > 0.0f) {
+            origin_sens = current_sens;
+            OW::Config::gameMouseSensitivity = current_sens;
+        }
     }
 
     inline void SetSensitivityLocked(bool locked, float origin_sens) {
@@ -2248,9 +2451,13 @@ namespace AimbotDetail {
         const auto calc_target = OW::CalcAngle(XMFLOAT3(world_target.X, world_target.Y, world_target.Z),
                                                OW::viewMatrix_xor.get_location());
         data.target_angle = Vector3(calc_target.x, calc_target.y, calc_target.z);
-        data.smoothed_angle = accelerated
-            ? OW::SmoothAccelerate(data.local_angle, data.target_angle, smooth, acceleration)
-            : OW::SmoothLinear(data.local_angle, data.target_angle, smooth);
+        const float dispatchAcceleration = accelerated ? acceleration : 0.0f;
+        data.smoothed_angle = OW::SmoothDispatch(
+            data.local_angle,
+            data.target_angle,
+            smooth,
+            dispatchAcceleration
+        );
         data.local_pos = CameraPosition();
         return data;
     }
@@ -2301,7 +2508,7 @@ namespace AimbotDetail {
 
     inline void ArmDelayedShot(RuntimeState& state) {
         if (!OW::Config::hitboxdelayshoot) return;
-        if (OW::Config::shooted || !GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key))) {
+        if (OW::Config::shooted || !IsAimKeyPressed()) {
             state.dodelay = true;
             state.hitbotdelaytime = 0;
         }
@@ -2397,11 +2604,11 @@ namespace AimbotDetail {
     }
 
     inline bool ShouldYieldToSecondaryAim() {
-        return OW::Config::highPriority && GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2));
+        return OW::Config::highPriority && IsSecondAimKeyPressed();
     }
 
     inline void RunTracking(float origin_sens) {
-        while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) && !OW::Config::reloading) {
+        while (IsAimKeyPressed() && !OW::Config::reloading) {
             const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
             c_entity target{};
             if (!IsZeroVector(vec) && IsPrimaryTargetActionable(target)) {
@@ -2410,8 +2617,7 @@ namespace AimbotDetail {
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     if (!TargetDelayReady(nullptr, false, false)) continue;
-                    MoveAimDelta(aim.local_angle,
-                                 OW::Config::Rage ? aim.target_angle : aim.smoothed_angle);
+                    MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     RunCloseRangeActions(vec);
                 }
 
@@ -2424,47 +2630,10 @@ namespace AimbotDetail {
         }
     }
 
-    inline bool RunPrimaryRageShot(const AimData& aim, float origin_sens) {
-        if (!OW::Config::Rage) return false;
-
-        if (OW::Config::fakesilent) {
-            Vector3 original_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-            MoveAimDelta(original_angle, aim.target_angle);
-            PressWithSensitivity(0x1, origin_sens, 25);
-            OW::Config::shooted = true;
-            MoveAimDelta(aim.target_angle, original_angle);
-        } else {
-            MoveAimDelta(aim.local_angle, aim.target_angle);
-            PressWithSensitivity(0x1, origin_sens, 1);
-            OW::Config::shooted = true;
-        }
-        return true;
-    }
-
-    inline bool RunHanzoRageShot(const AimData& aim, float origin_sens) {
-        if (!OW::Config::Rage) return false;
-
-        if (OW::Config::fakesilent) {
-            Vector3 original_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-            MoveAimDelta(original_angle, aim.target_angle);
-            SetSensitivityLocked(true, origin_sens);
-            FireHanzo();
-            Sleep(25);
-            SetSensitivityLocked(false, origin_sens);
-            OW::Config::shooted = true;
-            MoveAimDelta(aim.target_angle, original_angle);
-        } else {
-            MoveAimDelta(aim.local_angle, aim.target_angle);
-            FireHanzo();
-            OW::Config::shooted = true;
-        }
-        return true;
-    }
-
     inline void RunFlick(RuntimeState& state, float origin_sens) {
         ArmDelayedShot(state);
 
-        while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) &&
+        while (IsAimKeyPressed() &&
                !OW::Config::shooted &&
                !OW::Config::reloading) {
             if (LocalEntity().HeroID == OW::eHero::HERO_WIDOWMAKER && !GetAsyncKeyState(0x2)) {
@@ -2492,8 +2661,6 @@ namespace AimbotDetail {
                         continue;
                     }
 
-                    if (RunPrimaryRageShot(aim, origin_sens)) continue;
-
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox)) {
                         SetSensitivityLocked(true, origin_sens);
@@ -2520,53 +2687,6 @@ namespace AimbotDetail {
             Sleep(1);
             RunAutoScaleFov();
             if (ShouldYieldToSecondaryAim()) break;
-        }
-    }
-
-    inline void RunHanzoFlick(RuntimeState& state, float origin_sens) {
-        ArmDelayedShot(state);
-
-        while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key)) && !OW::Config::shooted) {
-            const Vector3 vec = OW::GetVector3(true);
-            if (IsZeroVector(vec)) break;
-
-            c_entity target{};
-            if (IsPrimaryTargetActionable(target)) {
-                AimData aim = BuildAimData(vec, true, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
-                PrimeDelayedShot(state);
-                ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
-
-                if (!IsZeroVector(aim.smoothed_angle)) {
-                    if (DelayedShotTimedOut(state)) {
-                        FireHanzo();
-                        OW::Config::shooted = true;
-                        continue;
-                    }
-
-                    if (RunHanzoRageShot(aim, origin_sens)) continue;
-                    if (!TargetDelayReady(&state, true, true)) continue;
-
-                    MoveAimDelta(aim.local_angle, aim.smoothed_angle);
-                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox)) {
-                        SetSensitivityLocked(true, origin_sens);
-                        FireHanzo();
-                        Sleep(1);
-                        if (OW::Config::dontshot) OW::Config::shotcount++;
-                        SetSensitivityLocked(false, origin_sens);
-                        OW::Config::shooted = true;
-                    } else if (OW::Config::dontshot &&
-                               OW::Config::shotcount >= OW::Config::shotmanydont &&
-                               OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::missbox)) {
-                        OW::Config::shotcount = 0;
-                        FireHanzo();
-                        OW::Config::shooted = true;
-                        continue;
-                    }
-                }
-            }
-
-            Sleep(1);
-            RunAutoScaleFov();
         }
     }
 
@@ -2600,8 +2720,7 @@ namespace AimbotDetail {
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     const float dist2 = CameraPosition().DistTo(vec);
                     if ((!local.skillcd1 && dist2 < 20.f) || dist2 < 7.f) {
-                        MoveAimDelta(aim.local_angle,
-                                     OW::Config::Rage ? aim.target_angle : aim.smoothed_angle);
+                        MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     }
                     if (!local.skillcd1 && OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 0.8f)) {
                         if (detecttoggle && !first) {
@@ -2737,7 +2856,7 @@ namespace AimbotDetail {
     }
 
     inline void ResetShootStateOnRelease() {
-        if (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key))) return;
+        if (IsAimKeyPressed()) return;
 
         OW::Config::shooted = false;
         OW::Config::lasttime = 0;
@@ -2759,7 +2878,7 @@ namespace AimbotDetail {
     inline void RunSecondAim() {
         if (!OW::Config::secondaim) return;
 
-        while (GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2)) && !OW::Config::shooted2) {
+        while (IsSecondAimKeyPressed() && !OW::Config::shooted2) {
             const Vector3 vec = OW::GetVector3aim2(OW::Config::Prediction2);
             c_entity target{};
             if (!IsZeroVector(vec) && CurrentTarget(target, true) &&
@@ -2772,7 +2891,6 @@ namespace AimbotDetail {
                 else
                     aim = BuildAimData(vec, false, 1.0f, 0.0f);
 
-                if (OW::Config::Rage) aim.smoothed_angle = aim.target_angle;
                 ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
@@ -2796,7 +2914,7 @@ namespace AimbotDetail {
             Sleep(1);
         }
 
-        if (OW::Config::shooted2 && !GetAsyncKeyState(OW::get_bind_id(OW::Config::aim_key2)))
+        if (OW::Config::shooted2 && !IsSecondAimKeyPressed())
             OW::Config::shooted2 = false;
     }
 
@@ -2815,7 +2933,6 @@ namespace AimbotDetail {
 
         if (OW::Config::Tracking) RunTracking(origin_sens);
         else if (OW::Config::Flick) RunFlick(state, origin_sens);
-        else if (OW::Config::hanzo_flick) RunHanzoFlick(state, origin_sens);
 
         RunGenjiBlade();
         RunAutoScaleFov();
@@ -2862,14 +2979,14 @@ inline void configsavenloadthread() {
         const uint64_t currentHeroId = OW::local_entity.HeroID;
         if (!OW::Config::Menu && currentHeroId != 0 && lastHeroId != currentHeroId) {
             if (lastHeroId != 0) {
-                OW::Config::SaveConfigForHero(".\\config.ini", lastHeroId, OW::local_entity.LinkBase);
+                OW::Config::SaveConfigForHero(OW::Config::ConfigPath(), lastHeroId, OW::local_entity.LinkBase);
             }
 
-            OW::Config::LoadConfigForHero(".\\config.ini", currentHeroId, OW::local_entity.LinkBase);
+            OW::Config::LoadConfigForHero(OW::Config::ConfigPath(), currentHeroId, OW::local_entity.LinkBase);
             lastHeroId = currentHeroId;
             OW::Config::nowhero = "Now using: " + OW::GetHeroEngNames(currentHeroId, OW::local_entity.LinkBase);
         } else if (OW::Config::manualsave && lastHeroId != 0) {
-            OW::Config::SaveConfigForHero(".\\config.ini", lastHeroId, OW::local_entity.LinkBase);
+            OW::Config::SaveConfigForHero(OW::Config::ConfigPath(), lastHeroId, OW::local_entity.LinkBase);
             OW::Config::manualsave = false;
         }
         Sleep(2);
@@ -2886,11 +3003,11 @@ inline void configsavenloadthread() {
             if (OW::Config::lastheroid != 0) {
                 auto saveHero = [&](const char* section, const char* key, int value) {
                     sprintf(bufsave, "%d",value);
-                    WritePrivateProfileStringA(section, key, bufsave, ".\\config.ini");
+                    WritePrivateProfileStringA(section, key, bufsave, OW::Config::ConfigPath().c_str());
                 };
                 auto saveHeroFloat = [&](const char* section, const char* key, float value) {
                     sprintf(bufsave, "%d",(int)(value * 10000));
-                    WritePrivateProfileStringA(section, key, bufsave, ".\\config.ini");
+                    WritePrivateProfileStringA(section, key, bufsave, OW::Config::ConfigPath().c_str());
                 };
 
                 std::string heroName = OW::GetHeroEngNames(OW::Config::lastheroid, OW::local_entity.LinkBase);
@@ -2918,7 +3035,7 @@ inline void configsavenloadthread() {
                 saveHero(sec, "AutoSkill",            OW::Config::AutoSkill);
                 saveHero(sec, "AntiAFK",              OW::Config::AntiAFK);
 
-                int dec = OW::Config::Tracking ? 0 : OW::Config::Flick ? 1 : OW::Config::hanzo_flick ? 2 : OW::Config::silent ? 3 : 4;
+                int dec = OW::Config::Flick ? 1 : 0;
                 saveHero(sec, "Aim Mode",    dec);
                 saveHero(sec, "autoshootonoff", OW::Config::AutoShoot ? 1 : 0);
                 saveHero(sec, "predictdec",     OW::Config::Prediction ? 1 : 0);
@@ -3007,13 +3124,13 @@ inline void configsavenloadthread() {
                 // Save colors
                 auto saveColor = [&](const char* section, const char* prefix, const ImVec4& c) {
                     sprintf(bufsave, "%d",(int)(c.x * 10000));
-                    WritePrivateProfileStringA(section, (std::string(prefix) + "x").c_str(), bufsave, ".\\config.ini");
+                    WritePrivateProfileStringA(section, (std::string(prefix) + "x").c_str(), bufsave, OW::Config::ConfigPath().c_str());
                     sprintf(bufsave, "%d",(int)(c.y * 10000));
-                    WritePrivateProfileStringA(section, (std::string(prefix) + "y").c_str(), bufsave, ".\\config.ini");
+                    WritePrivateProfileStringA(section, (std::string(prefix) + "y").c_str(), bufsave, OW::Config::ConfigPath().c_str());
                     sprintf(bufsave, "%d",(int)(c.z * 10000));
-                    WritePrivateProfileStringA(section, (std::string(prefix) + "z").c_str(), bufsave, ".\\config.ini");
+                    WritePrivateProfileStringA(section, (std::string(prefix) + "z").c_str(), bufsave, OW::Config::ConfigPath().c_str());
                     sprintf(bufsave, "%d",(int)(c.w * 10000));
-                    WritePrivateProfileStringA(section, (std::string(prefix) + "w").c_str(), bufsave, ".\\config.ini");
+                    WritePrivateProfileStringA(section, (std::string(prefix) + "w").c_str(), bufsave, OW::Config::ConfigPath().c_str());
                 };
                 saveColor("Global", "EnemyCol",    OW::Config::EnemyCol);
                 saveColor("Global", "fovcol",      OW::Config::fovcol);
@@ -3030,10 +3147,10 @@ inline void configsavenloadthread() {
 
             // Load config for new hero
             auto loadHero = [&](const char* section, const char* key, int def) -> int {
-                return GetPrivateProfileIntA(section, key, def, ".\\config.ini");
+                return GetPrivateProfileIntA(section, key, def, OW::Config::ConfigPath().c_str());
             };
             auto loadHeroFloat = [&](const char* section, const char* key, int def) -> float {
-                return (float)GetPrivateProfileIntA(section, key, def, ".\\config.ini") / 10000.f;
+                return (float)GetPrivateProfileIntA(section, key, def, OW::Config::ConfigPath().c_str()) / 10000.f;
             };
 
             std::string heroName = OW::GetHeroEngNames(OW::local_entity.HeroID, OW::local_entity.LinkBase);
@@ -3149,12 +3266,9 @@ inline void configsavenloadthread() {
             loadColor("Global", "allyargb",    OW::Config::allyargb,    0.4f, 1.f, 1.f, 0.4f);
 
             // Restore aim mode
-            int dec = loadHero(sec, "Aim Mode", 0);
+            int dec = std::clamp(loadHero(sec, "Aim Mode", 0), 0, 1);
             OW::Config::Tracking = (dec == 0);
             OW::Config::Flick = (dec == 1);
-            OW::Config::hanzo_flick = (dec == 2);
-            OW::Config::silent = (dec == 3);
-            OW::Config::triggerbot = (dec == 4);
 
             OW::Config::AutoShoot   = (loadHero(sec, "autoshootonoff", 0) == 1);
             OW::Config::Prediction  = (loadHero(sec, "predictdec", 0) == 1);

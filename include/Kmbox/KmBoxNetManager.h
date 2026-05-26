@@ -48,6 +48,7 @@ public:
     int StartMonitor(WORD Port);
     void EndMonitor();
 public:
+    bool IsMouseButtonPressed(int vkButton);
     bool GetKeyState(WORD vKey);
 };
 

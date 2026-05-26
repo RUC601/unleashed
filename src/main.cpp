@@ -16,6 +16,7 @@
 #include <string>
 
 #include "Memory/Memory.h"        // ::mem   (global DMA instance)
+#include "Game/AbilityIcons.hpp"  // ability icon lookup table
 #include "Game/SDK.hpp"           // OW::SDK
 #include "Game/Decrypt.hpp"       // OW::GetGlobalKey, OW::DecryptComponent
 #include "Game/Overwatch.hpp"     // main threads: viewmatrix, entity, aimbot, ...
@@ -23,6 +24,7 @@
 #include "Kmbox/KmBoxNetManager.h" // kmbox::KmBoxMgr
 #include "Kmbox/KmboxB.h"         // kmbox::kmBoxBMgr
 #include "Utils/Config.hpp"       // OW::Config
+#include "Renderer/IconManager.hpp" // IconManager
 #include "Renderer/Overlay.hpp"   // g_Overlay
 #include "Renderer/Renderer.hpp"  // Render:: drawing primitives
 #include "Features/UI.hpp"        // UI::Render
@@ -92,6 +94,37 @@ namespace {
                 readOk ? 1 : 0,
                 static_cast<unsigned int>(magic));
         }
+    }
+
+    static void PreloadHeroAvatars()
+    {
+        IconManager* icons = Render::GetIconManager();
+        if (!icons)
+            return;
+
+        static constexpr const char* kHeroAvatarNames[] = {
+            "Ana", "Anran", "Ashe", "Baptiste", "Bastion", "Brigitte",
+            "Cassidy", "Domina", "Doomfist", "D.Va", "Echo", "Emre",
+            "Freja", "Genji", "Hanzo", "Hazard", "Illari", "Jetpack Cat",
+            "Junker Queen", "Junkrat", "Juno", "Kiriko", "LifeWeaver",
+            "Lucio", "Mauga", "Mei", "Mercy", "Mizuki", "Moira", "Orisa",
+            "Pharah", "Ramattra", "Reaper", "Reinhardt", "Roadhog",
+            "Sierra", "Sigma", "Sojourn", "Soldier 76", "Sombra",
+            "Symmetra", "Torbjorn", "Tracer", "Vendetta", "Venture",
+            "Widowmaker", "Winston", "Wrecking Ball", "Wuyang", "Zarya",
+            "Zenyatta"
+        };
+
+        int loadedCount = 0;
+        for (const char* heroName : kHeroAvatarNames) {
+            const std::string slug = OW::HeroDisplayNameToSlug(heroName);
+            if (!slug.empty() && icons->LoadHeroAvatar(slug))
+                ++loadedCount;
+        }
+
+        constexpr size_t heroCount = sizeof(kHeroAvatarNames) / sizeof(kHeroAvatarNames[0]);
+        std::printf("[MAIN] Hero avatars loaded: %d/%zu.\n", loadedCount, heroCount);
+        Diagnostics::Info("Hero avatars loaded: %d/%zu.", loadedCount, heroCount);
     }
 
     static void DrawPipelineDiagnostics()
@@ -389,6 +422,33 @@ namespace {
         g_DiagnosticsThreadRunning.store(false, std::memory_order_release);
     }
 
+    static void PreloadAbilityIcons()
+    {
+        IconManager* iconManager = Render::GetIconManager();
+        if (!iconManager) {
+            Diagnostics::Warn("Ability icon preload skipped: icon manager is not ready.");
+            return;
+        }
+
+        int loadedHeroes = 0;
+        for (const OW::HeroAbilityIcons& icons : OW::AllHeroAbilityIcons()) {
+            if (iconManager->LoadAbilityIcons(icons.heroSlug, {
+                    icons.ability1Icon,
+                    icons.ability2Icon,
+                    icons.ultimateIcon
+                })) {
+                ++loadedHeroes;
+            }
+        }
+
+        Diagnostics::Info("Ability icon preload complete. heroes=%d/%zu.",
+            loadedHeroes,
+            OW::HeroAbilityIconCount());
+        std::printf("[MAIN] Ability icons preloaded for %d/%zu hero entries.\n",
+            loadedHeroes,
+            OW::HeroAbilityIconCount());
+    }
+
 } // namespace
 
 void RenderCallback()
@@ -450,6 +510,18 @@ static void InitializeKmBoxFromConfig()
             std::printf("[KMBOX] Network device ready.\n");
             Diagnostics::Info("KMBox network device ready. ip=%s port=%d",
                 OW::Config::kmboxIp, OW::Config::kmboxPort);
+
+            const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxPort + 1);
+            const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
+            if (monitorStatus == success) {
+                std::printf("[KMBOX] Monitor started on port %u.\n", monitorPort);
+                Diagnostics::Info("KMBox monitor started. port=%u", monitorPort);
+            } else {
+                std::printf("[KMBOX] Monitor failed to start on port %u. status=%d\n",
+                    monitorPort, monitorStatus);
+                Diagnostics::Warn("KMBox monitor failed to start. port=%u status=%d",
+                    monitorPort, monitorStatus);
+            }
         } else {
             std::printf("[KMBOX] Network initialisation failed. status=%d\n", status);
             Diagnostics::Error("KMBox network initialisation failed. status=%d", status);
@@ -526,7 +598,7 @@ int main()
     }
     std::printf("[MAIN] DMA subsystem ready.\n\n");
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
-    OW::Config::LoadConfig(".\\config.ini");
+    OW::Config::LoadConfig(OW::Config::ConfigPath());
     OW::RefreshScreenSizeFromConfig();
     std::printf("[MAIN] Screen size: %.0fx%.0f\n", OW::WX, OW::WY);
     InitializeKmBoxFromConfig();
@@ -608,6 +680,8 @@ int main()
     }
     std::printf("[MAIN] Overlay ready.\n\n");
     Diagnostics::Info("Overlay ready.");
+    PreloadHeroAvatars();
+    PreloadAbilityIcons();
 
     // ---------------------------------------------------------------
     // Step 7 -- Main loop (blocks until overlay / game closes)

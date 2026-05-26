@@ -4,6 +4,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 class IconManager {
 public:
@@ -14,6 +15,8 @@ public:
     IconManager& operator=(const IconManager&) = delete;
 
     bool LoadAll();
+    ID3D11ShaderResourceView* LoadHeroAvatar(const std::string& heroSlug);
+    bool LoadAbilityIcons(const std::string& heroSlug, const std::vector<std::string>& abilityNames);
     ID3D11ShaderResourceView* GetIcon(const std::string& name) const;
     void Shutdown();
 
@@ -26,7 +29,9 @@ private:
     };
 
     bool LoadIconFile(const std::wstring& directory, const std::wstring& filename);
+    bool LoadTextureFile(const std::wstring& fullPath, const std::string& key);
     std::wstring FindIconDirectory() const;
+    std::wstring FindAbilityIconDirectory() const;
     void ReleaseResource(IconResource& resource);
 
     ID3D11Device* m_device = nullptr;

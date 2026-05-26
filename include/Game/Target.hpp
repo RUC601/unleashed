@@ -57,13 +57,25 @@ namespace OW {
     inline void SendMouseMove(const Vector3& delta, int moveTimeMs = -1) {
         if (moveTimeMs < 0) moveTimeMs = Config::kmboxInputDelayMs;
         if (Config::kmboxEnabled) {
-            const float sensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 5.0f);
+            const float baseSensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 5.0f);
+            float sensitivity = baseSensitivity;
+            if (Config::autoSyncSensitivity &&
+                std::isfinite(Config::gameMouseSensitivity) &&
+                std::isfinite(Config::sensReference) &&
+                Config::gameMouseSensitivity > 0.0f &&
+                Config::sensReference > 0.0f) {
+                sensitivity = baseSensitivity * (Config::sensReference / Config::gameMouseSensitivity);
+            }
+
+            if (!std::isfinite(sensitivity) || sensitivity <= 0.0f)
+                sensitivity = baseSensitivity;
+
             const int pixelX = static_cast<int>(std::lround(delta.X * sensitivity));
             const int pixelY = static_cast<int>(std::lround(delta.Y * sensitivity));
 
             if (Config::kmboxDebugLog) {
-                std::printf("[KMBOX] mouse.move delta=(%.6f, %.6f, %.6f) pixels=(%d,%d) time=%dms type=%d\n",
-                    delta.X, delta.Y, delta.Z, pixelX, pixelY, moveTimeMs, Config::kmboxDeviceType);
+                std::printf("[KMBOX] mouse.move delta=(%.6f, %.6f, %.6f) pixels=(%d,%d) sens=%.4f time=%dms type=%d\n",
+                    delta.X, delta.Y, delta.Z, pixelX, pixelY, sensitivity, moveTimeMs, Config::kmboxDeviceType);
             }
 
             if (pixelX == 0 && pixelY == 0)
@@ -126,15 +138,15 @@ namespace OW {
     }
 
     inline int get_bind_id(int setting) {
-        int vk;
+        int vk = 0;
         switch (setting) {
-        case 0: break;
+        case 0: vk = VK_RBUTTON; break;
         case 1: vk = VK_LBUTTON; break;
-        case 2: vk = VK_RBUTTON; break;
-        case 3: vk = VK_MBUTTON; break;
-        case 4: vk = VK_XBUTTON1; break;
-        case 5: vk = VK_XBUTTON2; break;
-        case 6: vk = 0x41; break;  case 7: vk = 0x42; break;
+        case 2: vk = VK_XBUTTON1; break;
+        case 3: vk = VK_XBUTTON2; break;
+        case 4: vk = VK_LSHIFT; break;
+        case 5: vk = VK_LMENU; break;
+        case 6: vk = 0x46; break;  case 7: vk = 0x42; break;
         case 8: vk = 0x43; break;  case 9: vk = 0x44; break;
         case 10: vk = 0x45; break; case 11: vk = 0x46; break;
         case 12: vk = 0x47; break; case 13: vk = 0x48; break;
@@ -321,7 +333,7 @@ namespace OW {
             }
         }
         InVecArg->X = (float)(viewMatrix_xor.get_location().x + (H + P * fBestRoot));
-        if (Config::hanzo_flick || local_entity.HeroID == eHero::HERO_HANJO || Config::Gravitypredit) {
+        if (Config::projectile_arc || local_entity.HeroID == eHero::HERO_HANJO || Config::Gravitypredit) {
             InVecArg->Y = (float)(viewMatrix_xor.get_location().y + (K + Q * fBestRoot - L * fBestRoot * fBestRoot));
         } else {
             InVecArg->Y += (float)(fBestRoot * currVelocity.Y);
@@ -1171,16 +1183,245 @@ namespace OW {
         return target;
     }
 
+    namespace AimSmoothingDetail {
+
+        constexpr float kDefaultDeltaTime = 1.0f / 144.0f;
+        constexpr float kMinDeltaTime = 1.0f / 1000.0f;
+        constexpr float kMaxDeltaTime = 0.1f;
+        constexpr float kRetargetAngleThreshold = 2.0f;
+
+        struct PIDState {
+            Vector3 integral{};
+            Vector3 previousError{};
+            Vector3 lastTarget{};
+            bool initialized = false;
+        };
+
+        struct BezierState {
+            std::vector<Vector3> controlPoints{};
+            Vector3 lastTarget{};
+            float t = 0.0f;
+            bool initialized = false;
+        };
+
+        inline PIDState& GetPIDState() {
+            static PIDState state;
+            return state;
+        }
+
+        inline BezierState& GetBezierState() {
+            static BezierState state;
+            return state;
+        }
+
+        inline void ResetPIDState() {
+            GetPIDState() = PIDState{};
+        }
+
+        inline void ResetBezierState() {
+            GetBezierState() = BezierState{};
+        }
+
+        inline float ClampDeltaTime(float deltaTime) {
+            if (!std::isfinite(deltaTime) || deltaTime <= 0.0f)
+                return kDefaultDeltaTime;
+            return std::clamp(deltaTime, kMinDeltaTime, kMaxDeltaTime);
+        }
+
+        inline float ComputeDeltaTime() {
+            static ULONGLONG lastTick = 0;
+
+            const ULONGLONG currentTick = GetTickCount64();
+            if (lastTick == 0) {
+                lastTick = currentTick;
+                return kDefaultDeltaTime;
+            }
+
+            const float deltaTime = static_cast<float>(currentTick - lastTick) / 1000.0f;
+            lastTick = currentTick;
+            return ClampDeltaTime(deltaTime);
+        }
+
+        inline bool IsRetarget(const Vector3& target, const Vector3& lastTarget) {
+            return target.DistTo(lastTarget) > kRetargetAngleThreshold;
+        }
+
+        inline float ClampIntegralComponent(float value, float maxIntegral) {
+            return std::clamp(value, -maxIntegral, maxIntegral);
+        }
+
+        inline Vector3 ClampIntegral(const Vector3& value, float maxIntegral) {
+            return Vector3(
+                ClampIntegralComponent(value.X, maxIntegral),
+                ClampIntegralComponent(value.Y, maxIntegral),
+                ClampIntegralComponent(value.Z, maxIntegral)
+            );
+        }
+
+        inline float ClampStepComponent(float output, float error) {
+            const float maxStep = std::fabs(error);
+            if (maxStep <= 0.0f)
+                return 0.0f;
+            return std::clamp(output, -maxStep, maxStep);
+        }
+
+        inline Vector3 ClampStepToError(const Vector3& output, const Vector3& error) {
+            return Vector3(
+                ClampStepComponent(output.X, error.X),
+                ClampStepComponent(output.Y, error.Y),
+                ClampStepComponent(output.Z, error.Z)
+            );
+        }
+
+        inline Vector3 Lerp(const Vector3& a, const Vector3& b, float t) {
+            return a * (1.0f - t) + b * t;
+        }
+
+        inline Vector3 PerpendicularTo(const Vector3& value) {
+            Vector3 perpendicular(-value.Y, value.X, 0.0f);
+            if (perpendicular.Size() <= 0.0001f)
+                perpendicular = Vector3(0.0f, -value.Z, value.Y);
+
+            const float length = perpendicular.get_length();
+            return perpendicular / length;
+        }
+
+        inline Vector3 EvaluateBezier(const std::vector<Vector3>& controlPoints, float t) {
+            if (controlPoints.empty())
+                return Vector3{};
+
+            std::vector<Vector3> points = controlPoints;
+            t = std::clamp(t, 0.0f, 1.0f);
+
+            for (size_t count = points.size(); count > 1; --count) {
+                for (size_t index = 0; index + 1 < count; ++index)
+                    points[index] = Lerp(points[index], points[index + 1], t);
+            }
+
+            return points.front();
+        }
+
+        inline void GenerateBezierControlPoints(BezierState& state, const Vector3& current, const Vector3& target) {
+            const int intermediateCount = std::clamp(Config::aimBezierControlPoints, 2, 6);
+            const float curvature = std::clamp(Config::aimBezierCurvature, 0.0f, 1.0f);
+            const Vector3 delta = target - current;
+            const float distance = delta.Size();
+
+            state.controlPoints.clear();
+            state.controlPoints.reserve(static_cast<size_t>(intermediateCount) + 2);
+            state.controlPoints.push_back(current);
+
+            if (distance > 0.0001f) {
+                const Vector3 perpendicular = PerpendicularTo(delta);
+                const float offsetScale = distance * curvature * 0.35f;
+
+                for (int index = 1; index <= intermediateCount; ++index) {
+                    const float alpha = static_cast<float>(index) / static_cast<float>(intermediateCount + 1);
+                    const float wave = sinf(alpha * M_PI_F);
+                    const Vector3 base = current + delta * alpha;
+                    state.controlPoints.push_back(base + perpendicular * (offsetScale * wave));
+                }
+            }
+
+            state.controlPoints.push_back(target);
+            state.lastTarget = target;
+            state.t = 0.0f;
+            state.initialized = true;
+        }
+
+    } // namespace AimSmoothingDetail
+
+    inline Vector3 SmoothPID(Vector3 current, Vector3 target, float deltaTime) {
+        AimSmoothingDetail::PIDState& state = AimSmoothingDetail::GetPIDState();
+        deltaTime = AimSmoothingDetail::ClampDeltaTime(deltaTime);
+
+        const Vector3 error = target - current;
+        const float deadzone = std::clamp(Config::aimPidDeadzone, 0.0f, 10.0f);
+
+        if (error.Size() < deadzone) {
+            state.integral = Vector3{};
+            state.previousError = error;
+            state.lastTarget = target;
+            state.initialized = true;
+            return current;
+        }
+
+        const bool resetState = !state.initialized ||
+            AimSmoothingDetail::IsRetarget(target, state.lastTarget);
+
+        if (resetState) {
+            state.integral = Vector3{};
+            state.previousError = error;
+            state.initialized = true;
+        }
+
+        state.lastTarget = target;
+        state.integral += error * deltaTime;
+        state.integral = AimSmoothingDetail::ClampIntegral(
+            state.integral,
+            std::clamp(Config::aimPidMaxIntegral, 1.0f, 50.0f)
+        );
+
+        const Vector3 derivative = resetState
+            ? Vector3{}
+            : (error - state.previousError) / deltaTime;
+        state.previousError = error;
+
+        const Vector3 output =
+            error * std::clamp(Config::aimPidP, 0.0f, 2.0f) +
+            state.integral * std::clamp(Config::aimPidI, 0.0f, 0.5f) +
+            derivative * std::clamp(Config::aimPidD, 0.0f, 1.0f);
+
+        return current + AimSmoothingDetail::ClampStepToError(output, error);
+    }
+
+    inline Vector3 SmoothBezier(Vector3 current, Vector3 target, float deltaTime, float speed) {
+        AimSmoothingDetail::BezierState& state = AimSmoothingDetail::GetBezierState();
+        deltaTime = AimSmoothingDetail::ClampDeltaTime(deltaTime);
+
+        const bool resetState = !state.initialized ||
+            state.controlPoints.empty() ||
+            AimSmoothingDetail::IsRetarget(target, state.lastTarget);
+
+        if (resetState)
+            AimSmoothingDetail::GenerateBezierControlPoints(state, current, target);
+        else {
+            state.lastTarget = target;
+            state.controlPoints.back() = target;
+        }
+
+        state.t = std::clamp(
+            state.t + std::clamp(speed, 1.0f, 200.0f) * deltaTime,
+            0.0f,
+            1.0f
+        );
+
+        if (state.t >= 1.0f)
+            return target;
+
+        return AimSmoothingDetail::EvaluateBezier(state.controlPoints, state.t);
+    }
+
     inline Vector3 SmoothDispatch(Vector3 local, Vector3 target, float speed, float accel) {
         (void)accel;
 
-        switch (Config::aimMethod) {
+        const float deltaTime = AimSmoothingDetail::ComputeDeltaTime();
+        const int method = std::clamp(Config::aimMethod, 0, 2);
+        static int previousMethod = -1;
+
+        if (method != previousMethod) {
+            AimSmoothingDetail::ResetPIDState();
+            AimSmoothingDetail::ResetBezierState();
+            previousMethod = method;
+        }
+
+        switch (method) {
         case 0:
             return SmoothLinear(local, target, speed);
         case 1:
-            return SmoothLinear(local, target, speed);
+            return SmoothPID(local, target, deltaTime);
         case 2:
-            return SmoothLinear(local, target, speed);
+            return SmoothBezier(local, target, deltaTime, Config::aimBezierSpeed);
         default:
             return SmoothLinear(local, target, speed);
         }

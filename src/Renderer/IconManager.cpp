@@ -56,6 +56,21 @@ std::string WideToUtf8(const std::wstring& value) {
     return result;
 }
 
+std::wstring Utf8ToWide(const std::string& value) {
+    if (value.empty())
+        return {};
+
+    const int chars = MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, nullptr, 0);
+    if (chars <= 0)
+        return {};
+
+    std::wstring result(static_cast<size_t>(chars), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, result.data(), chars);
+    if (!result.empty() && result.back() == L'\0')
+        result.pop_back();
+    return result;
+}
+
 } // namespace
 
 IconManager::IconManager(ID3D11Device* device)
@@ -107,6 +122,64 @@ ID3D11ShaderResourceView* IconManager::GetIcon(const std::string& name) const {
     return it != m_icons.end() ? it->second.srv : nullptr;
 }
 
+ID3D11ShaderResourceView* IconManager::LoadHeroAvatar(const std::string& heroSlug) {
+    if (!m_device || heroSlug.empty())
+        return nullptr;
+
+    if (ID3D11ShaderResourceView* existing = GetIcon(heroSlug))
+        return existing;
+
+    const std::wstring directory = FindIconDirectory();
+    if (directory.empty())
+        return nullptr;
+
+    const std::wstring hero_slug_wide = Utf8ToWide(heroSlug);
+    if (hero_slug_wide.empty())
+        return nullptr;
+
+    const std::wstring full_path = directory + L"\\..\\heroes\\" + hero_slug_wide + L"\\avatar.png";
+    return LoadTextureFile(full_path, heroSlug) ? GetIcon(heroSlug) : nullptr;
+}
+
+bool IconManager::LoadAbilityIcons(const std::string& heroSlug, const std::vector<std::string>& abilityNames) {
+    if (!m_device || heroSlug.empty() || abilityNames.empty())
+        return false;
+
+    const std::wstring root_directory = FindAbilityIconDirectory();
+    if (root_directory.empty())
+        return false;
+
+    const std::wstring hero_slug_wide = Utf8ToWide(heroSlug);
+    if (hero_slug_wide.empty())
+        return false;
+
+    const std::wstring hero_directory = root_directory + L"\\" + hero_slug_wide;
+    if (!DirectoryExists(hero_directory))
+        return false;
+
+    bool has_requested_icon = false;
+    for (const std::string& abilityName : abilityNames) {
+        if (abilityName.empty())
+            continue;
+
+        const std::string key = heroSlug + "/" + abilityName;
+        if (GetIcon(key)) {
+            has_requested_icon = true;
+            continue;
+        }
+
+        const std::wstring ability_name_wide = Utf8ToWide(abilityName);
+        if (ability_name_wide.empty())
+            continue;
+
+        const std::wstring full_path = hero_directory + L"\\" + ability_name_wide + L".png";
+        if (LoadTextureFile(full_path, key))
+            has_requested_icon = true;
+    }
+
+    return has_requested_icon;
+}
+
 void IconManager::Shutdown() {
     for (auto& item : m_icons)
         ReleaseResource(item.second);
@@ -114,8 +187,18 @@ void IconManager::Shutdown() {
 }
 
 bool IconManager::LoadIconFile(const std::wstring& directory, const std::wstring& filename) {
-    const std::wstring full_path_wide = directory + L"\\" + filename;
-    const std::string full_path = WideToUtf8(full_path_wide);
+    const std::string key = WideToUtf8(StemFromFilename(filename));
+    if (key.empty())
+        return false;
+
+    return LoadTextureFile(directory + L"\\" + filename, key);
+}
+
+bool IconManager::LoadTextureFile(const std::wstring& fullPath, const std::string& key) {
+    if (!m_device || key.empty())
+        return false;
+
+    const std::string full_path = WideToUtf8(fullPath);
     if (full_path.empty())
         return false;
 
@@ -170,12 +253,6 @@ bool IconManager::LoadIconFile(const std::wstring& directory, const std::wstring
     resource.width = width;
     resource.height = height;
 
-    const std::string key = WideToUtf8(StemFromFilename(filename));
-    if (key.empty()) {
-        ReleaseResource(resource);
-        return false;
-    }
-
     IconResource& slot = m_icons[key];
     ReleaseResource(slot);
     slot = resource;
@@ -193,6 +270,25 @@ std::wstring IconManager::FindIconDirectory() const {
         if (DirectoryExists(executable_assets))
             return executable_assets;
     }
+
+    return {};
+}
+
+std::wstring IconManager::FindAbilityIconDirectory() const {
+    const std::wstring working_directory_assets = L"assets\\ability-icons";
+    if (DirectoryExists(working_directory_assets))
+        return working_directory_assets;
+
+    const std::wstring exe_directory = ExecutableDirectory();
+    if (!exe_directory.empty()) {
+        const std::wstring executable_assets = exe_directory + L"\\assets\\ability-icons";
+        if (DirectoryExists(executable_assets))
+            return executable_assets;
+    }
+
+    const std::wstring local_asset_source = L"D:\\Desktop\\uc\\overwatch-kb\\assets\\ability-icons";
+    if (DirectoryExists(local_asset_source))
+        return local_asset_source;
 
     return {};
 }

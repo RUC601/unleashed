@@ -14,6 +14,9 @@
 
 namespace OW { namespace Config {
 
+    inline std::string configFileName = "config.ini";
+    std::string ConfigPath();
+
     // ---- Synchronisation ----
     inline std::mutex mutex;
 
@@ -25,12 +28,9 @@ namespace OW { namespace Config {
     inline bool Tracking2     = false;
     inline bool Flick         = false;
     inline bool Flick2        = false;
-    inline bool hanzo_flick   = false;
-    inline bool silent        = false;
-    inline bool Rage          = false;
-    inline bool fakesilent    = false;
 
     // ---- Prediction ----
+    inline bool projectile_arc  = false; // Ballistic arc correction for projectiles
     inline bool Prediction      = false;
     inline bool Prediction2     = false;
     inline bool Gravitypredit   = false;
@@ -94,6 +94,7 @@ namespace OW { namespace Config {
     // ---- Aimbot UI options ----
     inline bool  aimbotAutoshot = false;
     inline bool  aimbotKeepFiring = true;
+    inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
     inline float aimbotMaxHead = 100.0f;
     inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier
     inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
@@ -217,6 +218,9 @@ namespace OW { namespace Config {
     inline char kmboxMac[32] = "12525C53";
     inline char kmboxComPort[16] = "COM3";
     inline float kmboxAimSensitivity = 1.0f;
+    inline float gameMouseSensitivity = 15.0f; // DMA-read, updated each tick
+    inline float sensReference = 15.0f;        // game sens used when kmboxAimSensitivity was calibrated
+    inline bool  autoSyncSensitivity = false;
     inline int   kmboxInputDelayMs = 0;
     inline bool kmboxDebugLog = false;
 
@@ -226,7 +230,7 @@ namespace OW { namespace Config {
         float smooth = 5.0f;     // aim smoothing, 0-100
         int bone = 0;            // 0=head, 1=neck, 2=chest
         float hitbox = 0.13f;    // hitbox radius/size
-        int aimMode = 0;         // 0=Tracking, 1=Flick, 2=HanzoFlick, 3=Silent
+        int aimMode = 0;         // 0=Tracking, 1=Flick
         bool prediction = false; // movement prediction
         int priority = 0;        // 0=FOV, 1=HP, 2=Distance
     };

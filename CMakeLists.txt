@@ -24,6 +24,7 @@ set(IMGUI_SOURCES
 
 set(GAME_HEADERS
     include/resource.h
+    include/Game/AbilityIcons.hpp
     include/Game/Decrypt.hpp
     include/Game/Entity.hpp
     include/Game/Offsets.hpp
@@ -144,7 +145,23 @@ add_custom_command(TARGET Unleashed POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets/icons"
         "$<TARGET_FILE_DIR:Unleashed>/assets/icons"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets/heroes"
+        "$<TARGET_FILE_DIR:Unleashed>/assets/heroes"
 )
+
+set(ABILITY_ICON_ASSET_DIR "${CMAKE_SOURCE_DIR}/assets/ability-icons")
+if(NOT EXISTS "${ABILITY_ICON_ASSET_DIR}")
+    set(ABILITY_ICON_ASSET_DIR "D:/Desktop/uc/overwatch-kb/assets/ability-icons")
+endif()
+
+if(EXISTS "${ABILITY_ICON_ASSET_DIR}")
+    add_custom_command(TARGET Unleashed POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${ABILITY_ICON_ASSET_DIR}"
+            "$<TARGET_FILE_DIR:Unleashed>/assets/ability-icons"
+    )
+endif()
 
 # ============================================================================
 # Compiler options
