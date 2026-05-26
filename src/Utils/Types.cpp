@@ -62,20 +62,23 @@ Vector3 Matrix::GetCameraVec() const
 bool Matrix::WorldToScreen(const Vector3& worldPos, Vector2* out, const Vector2& WindowSize, bool ignoreRet) const
 {
     if (!out) return false;
-    DirectX::XMMATRIX xm(
-        m11, m12, m13, m14,
-        m21, m22, m23, m24,
-        m31, m32, m33, m34,
-        m41, m42, m43, m44);
-    float screenX = DirectX::XMVectorGetX(xm.r[0]) * worldPos.X + DirectX::XMVectorGetX(xm.r[1]) * worldPos.Y + DirectX::XMVectorGetX(xm.r[2]) * worldPos.Z + DirectX::XMVectorGetX(xm.r[3]);
-    float screenY = DirectX::XMVectorGetY(xm.r[0]) * worldPos.X + DirectX::XMVectorGetY(xm.r[1]) * worldPos.Y + DirectX::XMVectorGetY(xm.r[2]) * worldPos.Z + DirectX::XMVectorGetY(xm.r[3]);
-    float screenW = DirectX::XMVectorGetW(xm.r[0]) * worldPos.X + DirectX::XMVectorGetW(xm.r[1]) * worldPos.Y + DirectX::XMVectorGetW(xm.r[2]) * worldPos.Z + DirectX::XMVectorGetW(xm.r[3]);
+    if (WindowSize.X <= 0.0f || WindowSize.Y <= 0.0f)
+        return false;
+
+    const float screenX = m11 * worldPos.X + m21 * worldPos.Y + m31 * worldPos.Z + m41;
+    const float screenY = m12 * worldPos.X + m22 * worldPos.Y + m32 * worldPos.Z + m42;
+    const float screenW = m14 * worldPos.X + m24 * worldPos.Y + m34 * worldPos.Z + m44;
 
     if (!ignoreRet && screenW < 0.001f) return false;
-    float camX = WindowSize.X / 2.0f;
-    float camY = WindowSize.Y / 2.0f;
-    float x = camX + (camX * screenX / screenW);
-    float y = camY - (camY * screenY / screenW);
+    if (std::fabs(screenW) < 0.001f) return false;
+
+    const float ndcX = screenX / screenW;
+    const float ndcY = screenY / screenW;
+    if (!std::isfinite(ndcX) || !std::isfinite(ndcY))
+        return false;
+
+    const float x = (ndcX + 1.0f) * 0.5f * WindowSize.X;
+    const float y = (1.0f - ndcY) * 0.5f * WindowSize.Y;
 
     if (x < 0 || y < 0 || x >= WindowSize.X || y >= WindowSize.Y) return false;
     *out = Vector2(x, y);

@@ -68,6 +68,7 @@ namespace Render {
     void DrawFilledCircle(const Vector2& center, float radius, const Color& color, int segments = 32);
 
     void DrawStrokeText(const ImVec2& pos, ImU32 color, const char* text, float fontSize = 15.0f);
+    void DrawText(const ImVec2& pos, ImU32 color, const char* text, float fontSize = 15.0f);
 
     void DrawString(const Vector2& pos, const Color& color, const char* text);
 

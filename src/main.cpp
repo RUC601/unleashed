@@ -110,7 +110,7 @@ namespace {
         const ImU32 textColor = IM_COL32(230, 235, 245, 235);
 
         auto drawLine = [&](ImU32 color, const char* text) {
-            Render::DrawStrokeText(ImVec2(x, y), color, text, fontSize);
+            Render::DrawText(ImVec2(x, y), color, text, fontSize);
             y += 16.0f;
         };
 
@@ -126,6 +126,15 @@ namespace {
 
         drawLine(snapshot.viewMatrixResolved && snapshot.viewMatrixValid ? okColor : badColor,
             snapshot.viewMatrixResolved && snapshot.viewMatrixValid ? "VM: valid" : "VM: zero/invalid");
+
+        const ImGuiIO& io = ImGui::GetIO();
+        std::snprintf(line, sizeof(line), "Scale: src %.0fx%.0f canvas %.0fx%.0f fps %.0f",
+            OW::WX,
+            OW::WY,
+            io.DisplaySize.x,
+            io.DisplaySize.y,
+            io.Framerate);
+        drawLine(textColor, line);
 
         std::snprintf(line, sizeof(line), "Entities: scan %zu proc %zu",
             snapshot.lastScanEntityCount,

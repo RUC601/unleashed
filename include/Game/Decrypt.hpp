@@ -7,6 +7,10 @@
 #include <vector>
 #include <utility>
 #include <type_traits>
+#include <algorithm>
+#include <cstring>
+#include <unordered_map>
+#include <unordered_set>
 #include <emmintrin.h>
 
 // Fallback for modern Windows SDK where HIDWORD/LODWORD are removed
@@ -547,41 +551,77 @@ namespace OW {
             return result;
         }
 
-        // DMA-based: read entity list (64 KB max)
-        Entity raw_list[4096] = {};
-
-        if (!mem.Read(entity_list, raw_list, sizeof(raw_list))) {
-            Diagnostics::Trace("Entity scan failed to read entity list at 0x%llX.",
-                static_cast<unsigned long long>(entity_list));
-            return result;
-        }
-
-        size_t entity_list_size = sizeof(raw_list) / sizeof(Entity);
         std::vector<EntityScanRecord> records{};
-        records.reserve(entity_list_size);
+        std::unordered_map<uint32_t, uint64_t> match_index{};
+        std::unordered_set<uint64_t> seen_entities{};
+        records.reserve(4096);
+        match_index.reserve(4096);
+        seen_entities.reserve(4096);
 
-        for (size_t i = 0; i < entity_list_size; ++i) {
-            const uint64_t possible_common = raw_list[i].entity;
+        auto addRecord = [&](uint64_t possible_common) {
             if (!possible_common)
-                continue;
+                return;
+            if (!seen_entities.insert(possible_common).second)
+                return;
 
             EntityScanRecord record{};
             record.entity = possible_common;
             record.header.Read(possible_common);
 
-            if (!record.header.ReadParentOffset(0x138, record.unique_id))
-                record.unique_id = SDK->RPM<uint32_t>(possible_common + 0x138);
+            if (!record.header.ReadParentOffset(offset::Entity_MatchId, record.unique_id))
+                record.unique_id = SDK->RPM<uint32_t>(possible_common + offset::Entity_MatchId);
 
             uint64_t ptr_value = 0;
-            if (!record.header.ReadParentOffset(0x30, ptr_value))
-                ptr_value = SDK->RPM<uint64_t>(possible_common + 0x30);
+            if (!record.header.ReadParentOffset(offset::Entity_PoolPtr, ptr_value))
+                ptr_value = SDK->RPM<uint64_t>(possible_common + offset::Entity_PoolPtr);
 
             record.ptr = ptr_value & 0xFFFFFFFFFFFFFFC0;
             if (record.ptr && record.ptr < 0xFFFFFFFFFFFFFFEF)
-                record.entity_id = SDK->RPM<uint64_t>(record.ptr + 0x10);
+                record.entity_id = SDK->RPM<uint64_t>(record.ptr + offset::Pool_PoolId);
 
+            if (record.unique_id != 0)
+                match_index.emplace(record.unique_id, record.entity);
             records.push_back(std::move(record));
+        };
+
+        constexpr size_t kEntityListReadSize = 0x10000;
+        constexpr size_t kEntityListChunkSize = 0x1000;
+        std::vector<uint8_t> entity_chunk(kEntityListChunkSize);
+        size_t readable_bytes = 0;
+        size_t readable_chunks = 0;
+
+        for (size_t offset = 0; offset < kEntityListReadSize; offset += kEntityListChunkSize) {
+            const size_t remaining = kEntityListReadSize - offset;
+            const size_t chunk_size =
+                remaining < kEntityListChunkSize ? remaining : kEntityListChunkSize;
+            if (!mem.Read(entity_list + offset, entity_chunk.data(), chunk_size))
+                continue;
+
+            readable_bytes += chunk_size;
+            ++readable_chunks;
+            for (size_t slot_offset = 0; slot_offset + sizeof(Entity) <= chunk_size;
+                 slot_offset += sizeof(Entity)) {
+                uint64_t possible_common = 0;
+                std::memcpy(&possible_common, entity_chunk.data() + slot_offset, sizeof(possible_common));
+                addRecord(possible_common);
+            }
         }
+
+        if (records.empty()) {
+            Diagnostics::Trace("Entity scan skipped: no records from list=0x%llX chunks=%zu bytes=%zu.",
+                static_cast<unsigned long long>(entity_list),
+                readable_chunks,
+                readable_bytes);
+            return result;
+        }
+
+        auto addPair = [&](uint64_t component_parent, uint64_t link_parent) {
+            if (!component_parent || !link_parent)
+                return;
+            const auto pair = std::make_pair(component_parent, link_parent);
+            if (std::find(result.begin(), result.end(), pair) == result.end())
+                result.push_back(pair);
+        };
 
         for (const EntityScanRecord& current : records) {
             uint64_t cur_entity = current.entity;
@@ -596,20 +636,25 @@ namespace OW {
                 continue;
             }
 
-            uint32_t unique_id = SDK->RPM<uint32_t>(common_linker + 0xD4);
+            uint32_t unique_id = SDK->RPM<uint32_t>(common_linker + offset::Link_UniqueId);
+            if (unique_id == 0)
+                continue;
 
-            for (const EntityScanRecord& candidate : records) {
-                uint64_t possible_common = candidate.entity;
-                if (!possible_common) continue;
-
-                if (candidate.unique_id == unique_id) {
-                    result.emplace_back(possible_common, cur_entity);
-                    break;
-                } else if (isDynamicEntityId(candidate.entity_id)) {
-                    result.emplace_back(possible_common, cur_entity);
-                }
-            }
+            const auto match = match_index.find(unique_id);
+            if (match != match_index.end())
+                addPair(match->second, cur_entity);
         }
+
+        for (const EntityScanRecord& current : records) {
+            if (isDynamicEntityId(current.entity_id))
+                addPair(current.entity, current.entity);
+        }
+
+        Diagnostics::Trace("Entity scan list=0x%llX bytes=%zu records=%zu pairs=%zu.",
+            static_cast<unsigned long long>(entity_list),
+            readable_bytes,
+            records.size(),
+            result.size());
         return result;
     }
 
@@ -689,7 +734,7 @@ namespace OW {
             skillList = base + 0x570;
         } else {
             uint32_t count = SDK->RPM<uint32_t>(base + 0x378);
-            if (count <= 0 || count >= 0xFF) return false;
+            if (count == 0 || count >= 0xFF) return false;
             uint64_t entry = SDK->RPM<uint64_t>(base + 0x370);
             if (!entry) return false;
             for (uint32_t i = 0; i < count; i++, entry += 0x10) {
@@ -720,17 +765,20 @@ namespace OW {
     }
 
     inline uintptr_t SkillStructCheck(uint64_t a1, uint16_t a2) {
-        if (SDK->RPM<uint32_t>(a1 + 0x2A8) <= 0) return 0;
-        uint64_t v2 = 0;
-        uint64_t i = SDK->RPM<uint64_t>(a1 + 0x2A0);
-        for (; SDK->RPM<uint16_t>(i + 8) != a2; i += 16) {
-            if (++v2 >= SDK->RPM<uint32_t>(a1 + 0x2A8)) return 0;
+        const uint32_t count = SDK->RPM<uint32_t>(a1 + 0x2A8);
+        if (count == 0 || count >= 0xFF) return 0;
+
+        uint64_t entry = SDK->RPM<uint64_t>(a1 + 0x2A0);
+        if (!entry) return 0;
+
+        for (uint32_t scanned = 0; scanned < count; ++scanned, entry += 16) {
+            if (SDK->RPM<uint16_t>(entry + 8) == a2)
+                return SDK->RPM<uint64_t>(entry);
         }
-        return SDK->RPM<uint64_t>(i);
+        return 0;
     }
 
     inline uint64_t FnSkillStruct(__m128* a1, uint16_t* a2) {
-        uint64_t v2 = 0;
         uint16_t* v3 = a2;
         if (!a2[1]) return 0;
         uint16_t v4 = *a2;
@@ -748,19 +796,22 @@ namespace OW {
     LABEL_6:
         uint16_t v8 = v3[1];
         uint64_t v9 = 32 * ((v3[1] & 0xF) + 1);
-        int32_t v10 = SDK->RPM<uint32_t>(v9 + v6 + 8) - 1;
-        if (v10 < 0) return 0;
-        uint64_t v11 = v10;
-        uint64_t v12 = SDK->RPM<uint64_t>(v9 + v6) + 16 * v10;
-        while (SDK->RPM<uint16_t>(v12) != v8) {
-            if (v11 == 0) return 0;
-            v12 -= 16;
-            --v11;
+        const uint32_t entryCount = SDK->RPM<uint32_t>(v9 + v6 + 8);
+        if (entryCount == 0 || entryCount >= 0xFF) return 0;
+
+        const uint64_t listBase = SDK->RPM<uint64_t>(v9 + v6);
+        if (!listBase) return 0;
+
+        for (uint32_t remaining = entryCount; remaining > 0; --remaining) {
+            const uint64_t entry = listBase + 16ull * (remaining - 1);
+            if (SDK->RPM<uint16_t>(entry) != v8)
+                continue;
+
+            uint64_t v13 = SDK->RPM<uint64_t>(entry + 8);
+            if (!v13) return 0;
+            return v13;
         }
-        uint64_t v13 = SDK->RPM<uint64_t>(v12 + 8);
-        if (!v13) return 0;
-        if (*((uint32_t*)v3 + 4) <= 0) return v13;
-        return v13;
+        return 0;
     }
 
     inline bool IsSkillActivate1(uint64_t base, uint16_t skillIdx, uint16_t skillIdx2) {

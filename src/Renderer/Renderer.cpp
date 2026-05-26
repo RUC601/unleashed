@@ -3,6 +3,11 @@
 
 #include <memory>
 
+namespace OW {
+    extern float WX;
+    extern float WY;
+}
+
 // =====================================================================
 // Render namespace implementation
 // =====================================================================
@@ -47,12 +52,49 @@ namespace Render {
         return ImGui::GetForegroundDrawList();
     }
 
+    static ImVec2 CanvasSize() {
+        const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+        if (displaySize.x > 0.0f && displaySize.y > 0.0f)
+            return displaySize;
+        return ImVec2(OW::WX > 0.0f ? OW::WX : 1.0f, OW::WY > 0.0f ? OW::WY : 1.0f);
+    }
+
+    static float SourceWidth() {
+        return OW::WX > 0.0f ? OW::WX : CanvasSize().x;
+    }
+
+    static float SourceHeight() {
+        return OW::WY > 0.0f ? OW::WY : CanvasSize().y;
+    }
+
+    static float ScaleX() {
+        return CanvasSize().x / SourceWidth();
+    }
+
+    static float ScaleY() {
+        return CanvasSize().y / SourceHeight();
+    }
+
+    static float ScaleUniform() {
+        const float sx = ScaleX();
+        const float sy = ScaleY();
+        return (sx + sy) * 0.5f;
+    }
+
+    static ImVec2 ToCanvas(const Vector2& point) {
+        return ImVec2(point.X * ScaleX(), point.Y * ScaleY());
+    }
+
+    static ImVec2 ToCanvas(const ImVec2& point) {
+        return ImVec2(point.x * ScaleX(), point.y * ScaleY());
+    }
+
     // ---- DrawLine ----
 
     void DrawLine(const Vector2& from, const Vector2& to, const Color& color, float thickness) {
         ImDrawList* d = DL();
         if (!d) return;
-        d->AddLine(ImVec2(from.X, from.Y), ImVec2(to.X, to.Y), color.ToImU32(), thickness);
+        d->AddLine(ToCanvas(from), ToCanvas(to), color.ToImU32(), thickness * ScaleUniform());
     }
 
     // ---- DrawRect ----
@@ -60,7 +102,8 @@ namespace Render {
     void DrawRect(const Vector2& pos, float width, float height, const Color& color, float thickness) {
         ImDrawList* d = DL();
         if (!d) return;
-        d->AddRect(ImVec2(pos.X, pos.Y), ImVec2(pos.X + width, pos.Y + height), color.ToImU32(), 0.0f, 0, thickness);
+        const ImVec2 p = ToCanvas(pos);
+        d->AddRect(p, ImVec2(p.x + width * ScaleX(), p.y + height * ScaleY()), color.ToImU32(), 0.0f, 0, thickness * ScaleUniform());
     }
 
     // ---- DrawFilledRect ----
@@ -68,7 +111,8 @@ namespace Render {
     void DrawFilledRect(const Vector2& pos, float width, float height, const ImColor& color) {
         ImDrawList* d = DL();
         if (!d) return;
-        d->AddRectFilled(ImVec2(pos.X, pos.Y), ImVec2(pos.X + width, pos.Y + height), color);
+        const ImVec2 p = ToCanvas(pos);
+        d->AddRectFilled(p, ImVec2(p.x + width * ScaleX(), p.y + height * ScaleY()), color);
     }
 
     // ---- DrawCorneredBox ----
@@ -77,6 +121,12 @@ namespace Render {
     void DrawCorneredBox(float x, float y, float w, float h, ImU32 color, float thickness) {
         ImDrawList* d = DL();
         if (!d) return;
+
+        x *= ScaleX();
+        y *= ScaleY();
+        w *= ScaleX();
+        h *= ScaleY();
+        thickness *= ScaleUniform();
 
         float lineW = w / 3.0f;
         float lineH = h / 3.0f;
@@ -109,7 +159,7 @@ namespace Render {
     void DrawCircle(const Vector2& center, float radius, const Color& color, int segments, float thickness) {
         ImDrawList* d = DL();
         if (!d) return;
-        d->AddCircle(ImVec2(center.X, center.Y), radius, color.ToImU32(), segments, thickness);
+        d->AddCircle(ToCanvas(center), radius * ScaleUniform(), color.ToImU32(), segments, thickness * ScaleUniform());
     }
 
     // ---- DrawFilledCircle ----
@@ -117,7 +167,7 @@ namespace Render {
     void DrawFilledCircle(const Vector2& center, float radius, const Color& color, int segments) {
         ImDrawList* d = DL();
         if (!d) return;
-        d->AddCircleFilled(ImVec2(center.X, center.Y), radius, color.ToImU32(), segments);
+        d->AddCircleFilled(ToCanvas(center), radius * ScaleUniform(), color.ToImU32(), segments);
     }
 
     // ---- DrawStrokeText ----
@@ -129,11 +179,23 @@ namespace Render {
 
         const float alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
         ImU32 black = ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.0f, 0.0f, alpha));
-        d->AddText(nullptr, fontSize, ImVec2(pos.x, pos.y - 1.0f), black, text);
-        d->AddText(nullptr, fontSize, ImVec2(pos.x, pos.y + 1.0f), black, text);
-        d->AddText(nullptr, fontSize, ImVec2(pos.x - 1.0f, pos.y), black, text);
-        d->AddText(nullptr, fontSize, ImVec2(pos.x + 1.0f, pos.y), black, text);
-        d->AddText(nullptr, fontSize, ImVec2(pos.x, pos.y), color, text);
+        const ImVec2 p = ToCanvas(pos);
+        const float scale = ScaleUniform();
+        const float scaledFontSize = fontSize * scale;
+        d->AddText(nullptr, scaledFontSize, ImVec2(p.x, p.y - scale), black, text);
+        d->AddText(nullptr, scaledFontSize, ImVec2(p.x, p.y + scale), black, text);
+        d->AddText(nullptr, scaledFontSize, ImVec2(p.x - scale, p.y), black, text);
+        d->AddText(nullptr, scaledFontSize, ImVec2(p.x + scale, p.y), black, text);
+        d->AddText(nullptr, scaledFontSize, p, color, text);
+    }
+
+    void DrawText(const ImVec2& pos, ImU32 color, const char* text, float fontSize) {
+        ImDrawList* d = DL();
+        if (!d || !text) return;
+
+        const ImVec2 p = ToCanvas(pos);
+        const float scaledFontSize = fontSize * ScaleUniform();
+        d->AddText(nullptr, scaledFontSize, p, color, text);
     }
 
     // ---- DrawString ----
@@ -142,7 +204,7 @@ namespace Render {
     void DrawString(const Vector2& pos, const Color& color, const char* text) {
         ImDrawList* d = DL();
         if (!d || !text) return;
-        d->AddText(ImVec2(pos.X, pos.Y), color.ToImU32(), text);
+        d->AddText(ToCanvas(pos), color.ToImU32(), text);
     }
 
     // ---- DrawHealthBar ----
@@ -180,14 +242,17 @@ namespace Render {
     static void DrawQuadFilled(ImVec2 p1, ImVec2 p2, ImVec2 p3, ImVec2 p4, ImColor color) {
         ImDrawList* d = DL();
         if (!d) return;
-        d->AddQuadFilled(p1, p2, p3, p4, color);
+        d->AddQuadFilled(ToCanvas(p1), ToCanvas(p2), ToCanvas(p3), ToCanvas(p4), color);
     }
 
     static void DrawHexagonFilled(const ImVec2& p1, const ImVec2& p2, const ImVec2& p3,
                                    const ImVec2& p4, const ImVec2& p5, const ImVec2& p6, ImColor col) {
         ImDrawList* d = DL();
         if (!d) return;
-        ImVec2 pts[6] = { p1, p2, p3, p4, p5, p6 };
+        ImVec2 pts[6] = {
+            ToCanvas(p1), ToCanvas(p2), ToCanvas(p3),
+            ToCanvas(p4), ToCanvas(p5), ToCanvas(p6)
+        };
     d->AddConvexPolyFilled(pts, 6, col);
     }
 
@@ -293,6 +358,11 @@ namespace Render {
 
         ImVec2 textSize = ImGui::CalcTextSize(text);
         float halfW = textSize.x * 0.5f;
+        const ImVec2 p = ToCanvas(pos);
+        const float sx = ScaleX();
+        const float sy = ScaleY();
+        const float scaledFontSize = fontSize * ScaleUniform();
+        const float scaledHalfW = halfW * sx;
         const float alpha = static_cast<float>((tagColor >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
         const ImU32 panelColor = ImGui::GetColorU32(ImVec4(0.2f, 0.2f, 0.6f, 0.3f * alpha));
         const ImU32 textColor = ImGui::GetColorU32(ImVec4(1.0f, 0.6f, 0.6f, alpha));
@@ -300,19 +370,19 @@ namespace Render {
 
         if (dist < 200.0f) {
             // Background panel
-            d->AddRectFilled(ImVec2(pos.x - halfW, pos.y + fontSize * 0.5f),
-                             ImVec2(pos.x + halfW + 35.0f, pos.y - fontSize * 0.5f),
+            d->AddRectFilled(ImVec2(p.x - scaledHalfW, p.y + scaledFontSize * 0.5f),
+                             ImVec2(p.x + scaledHalfW + 35.0f * sx, p.y - scaledFontSize * 0.5f),
                              panelColor);
 
             // Tag colour bar on the left edge
-            d->AddRectFilled(ImVec2(pos.x - halfW, pos.y + fontSize * 0.5f),
-                             ImVec2(pos.x - halfW + 5.0f, pos.y - fontSize * 0.5f),
+            d->AddRectFilled(ImVec2(p.x - scaledHalfW, p.y + scaledFontSize * 0.5f),
+                             ImVec2(p.x - scaledHalfW + 5.0f * sx, p.y - scaledFontSize * 0.5f),
                              tagColor);
 
             // Health bar
             float healthWidth = (maxHp > 0.0f) ? (hp / maxHp) * halfW * 2.0f : 0.0f;
-            d->AddRectFilled(ImVec2(pos.x - halfW + 7.0f, pos.y + fontSize * 0.5f - 6.0f),
-                             ImVec2(pos.x - halfW + 7.0f + healthWidth, pos.y + fontSize * 0.5f - 2.0f),
+            d->AddRectFilled(ImVec2(p.x - scaledHalfW + 7.0f * sx, p.y + scaledFontSize * 0.5f - 6.0f * sy),
+                             ImVec2(p.x - scaledHalfW + (7.0f + healthWidth) * sx, p.y + scaledFontSize * 0.5f - 2.0f * sy),
                              healthColor);
 
             DrawStrokeText(ImVec2(pos.x - halfW + 10.0f, pos.y - fontSize * 0.5f),
@@ -337,8 +407,8 @@ namespace Render {
 
         d->AddImage(
             reinterpret_cast<ImTextureID>(texture),
-            pos,
-            ImVec2(pos.x + size.x, pos.y + size.y),
+            ToCanvas(pos),
+            ToCanvas(ImVec2(pos.x + size.x, pos.y + size.y)),
             ImVec2(0.0f, 0.0f),
             ImVec2(1.0f, 1.0f),
             tint
@@ -357,9 +427,9 @@ namespace Render {
         unsigned int g = (color >> 8) & 0xFF;
         unsigned int b = (color) & 0xFF;
 
-        d->AddLine(ImVec2(from.X, from.Y), ImVec2(to.X, to.Y),
+        d->AddLine(ToCanvas(from), ToCanvas(to),
                    ImGui::GetColorU32(ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f)),
-                   thickness);
+                   thickness * ScaleUniform());
     }
 
 } // namespace Render

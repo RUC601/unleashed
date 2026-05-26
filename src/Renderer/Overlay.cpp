@@ -65,6 +65,39 @@ bool IsMenuTogglePressed() {
     return key > 0 && (GetAsyncKeyState(key) & 0x0001) != 0;
 }
 
+void DrawCanvasBackdrop(UINT width, UINT height) {
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    if (!drawList)
+        return;
+
+    const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    const float w = displaySize.x > 0.0f ? displaySize.x : static_cast<float>(width);
+    const float h = displaySize.y > 0.0f ? displaySize.y : static_cast<float>(height);
+    if (w <= 0.0f || h <= 0.0f)
+        return;
+
+    // The layered window uses RGB(0,0,0) as a transparency key. RGB(1,1,1)
+    // is visually black, but remains a real bottom-layer primitive.
+    drawList->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(w, h), IM_COL32(1, 1, 1, 255));
+}
+
+void ConfigureCanvasFont(ImGuiIO& io) {
+    if (io.Fonts->Locked)
+        return;
+
+    ImFontConfig fontConfig;
+    fontConfig.OversampleH = 2;
+    fontConfig.OversampleV = 1;
+    fontConfig.PixelSnapH = true;
+    fontConfig.RasterizerMultiply = 1.0f;
+
+    ImFont* font = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 13.0f, &fontConfig);
+    if (!font)
+        font = io.Fonts->AddFontDefault();
+    if (font)
+        io.FontDefault = font;
+}
+
 DXGI_SWAP_CHAIN_DESC MakeSwapChainDesc(HWND hWnd, UINT width, UINT height) {
     DXGI_SWAP_CHAIN_DESC desc = {};
     desc.BufferCount = 2;
@@ -260,12 +293,12 @@ bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
     m_canvasWidth = static_cast<UINT>(GetSystemMetrics(SM_CXSCREEN));
     m_canvasHeight = static_cast<UINT>(GetSystemMetrics(SM_CYSCREEN));
     if (m_canvasWidth == 0 || m_canvasHeight == 0) {
-        m_canvasWidth = 1920;
-        m_canvasHeight = 1080;
+        m_canvasWidth = static_cast<UINT>(OW::Config::manualScreenWidth > 0 ? OW::Config::manualScreenWidth : 1);
+        m_canvasHeight = static_cast<UINT>(OW::Config::manualScreenHeight > 0 ? OW::Config::manualScreenHeight : 1);
     }
 
     m_canvasHWnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
         kCanvasClassName,
         overlayTitle,
         WS_POPUP | WS_VISIBLE,
@@ -280,6 +313,10 @@ bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
     );
     if (!m_canvasHWnd)
         return false;
+
+    // The canvas is cleared to black every frame; color-key that clear color so
+    // empty overlay pixels do not cover the target display.
+    SetLayeredWindowAttributes(m_canvasHWnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
 
     ShowWindow(m_canvasHWnd, SW_SHOW);
     SetWindowPos(m_canvasHWnd, HWND_TOPMOST, 0, 0,
@@ -472,6 +509,8 @@ bool Overlay::InitializeImGuiContext(ImGuiContext** context, HWND hWnd) {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.LogFilename = nullptr;
+    if (hWnd == m_canvasHWnd)
+        ConfigureCanvasFont(io);
 
     ImGui::StyleColorsDark();
 
@@ -546,16 +585,18 @@ void Overlay::RenderCanvas(std::function<void()> renderCallback) {
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
+    DrawCanvasBackdrop(m_canvasWidth, m_canvasHeight);
+
     if (renderCallback)
         renderCallback();
 
     ImGui::Render();
 
-    const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     m_pContext->OMSetRenderTargets(1, &m_canvasRenderTargetView, nullptr);
     m_pContext->ClearRenderTargetView(m_canvasRenderTargetView, clearColor);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-    m_canvasSwapChain->Present(1, 0);
+    m_canvasSwapChain->Present(0, 0);
 }
 
 void Overlay::RenderMenu() {

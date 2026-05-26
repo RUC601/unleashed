@@ -59,18 +59,27 @@ namespace OW {
 
         // Entity system — LIVE DMA VERIFIED 2026-05-25
         static constexpr auto Address_entity_base = 0x39298C8; // confirmed: 0x224071A0000
-        static constexpr auto entity_entry_stride = 0x30;       // 48 bytes per entity table entry
+        static constexpr auto entity_entry_stride = 0x10;       // entity list slot: { entity, pad }
+        static constexpr auto Entity_MatchId      = 0x138;      // u32 on component parent
+        static constexpr auto Entity_PoolPtr      = 0x30;       // masked with 0xFFFFFFFFFFFFFFC0
+        static constexpr auto Pool_PoolId         = 0x10;
+        static constexpr auto Link_UniqueId       = 0xD4;       // u32 on decrypted link component
+        static constexpr auto Link_UniqueIdAlt    = 0xD8;
 
-        // ViewMatrix — VM11 (May 2026, UC p323/p329)
+        // ViewMatrix - VM11 (May 2026, UC p321-p329)
         //   Chain: enc = RPM(base+Addr); dec = ((enc - k1) ^ k2) - k3
         //          p1 = RPM(dec + VM_P1); p2 = RPM(p1 + VM_P2)
-        //          view = p2 + VM_ViewMatrix; proj = p2 + VM_ProjMatrix
+        //          primary render VP = RPM(RPM(p2 + 0x6C8) + 0x8) + 0xC0
+        //          camera view candidate = p2 + VM_ViewMatrix; projection candidate = p2 + VM_ProjMatrix
         static constexpr auto Address_viewmatrix_base = 0x38D0220;
         static constexpr auto offset_viewmatrix_xor_key  = 0x59D406B75C2A4377;
         static constexpr auto offset_viewmatrix_xor_key2 = 0xD54D81BA4EED36CE;
         static constexpr auto offset_viewmatrix_xor_key3 = 0x1C840F09D6923D76;
         static constexpr auto VM_P1          = 0x20;
         static constexpr auto VM_P2          = 0x48;
+        static constexpr auto VM_ViewProjectionParent = 0x6C8;
+        static constexpr auto VM_ViewProjectionPtr    = 0x8;
+        static constexpr auto VM_ViewProjectionMatrix = 0xC0;
         static constexpr auto VM_ViewMatrix  = 0x140;
         static constexpr auto VM_ProjMatrix  = 0xB0;
 

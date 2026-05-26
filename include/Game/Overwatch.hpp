@@ -49,24 +49,34 @@ namespace OW {
     inline int abletotread = 0;
     inline int howbigentitysize = 0;
 
+    inline Vector2 ResolveScreenSize()
+    {
+        if (Config::manualScreenWidth > 0 && Config::manualScreenHeight > 0) {
+            return Vector2(
+                static_cast<float>(Config::manualScreenWidth),
+                static_cast<float>(Config::manualScreenHeight));
+        }
+
+        return Vector2(
+            static_cast<float>(GetSystemMetrics(SM_CXSCREEN)),
+            static_cast<float>(GetSystemMetrics(SM_CYSCREEN)));
+    }
+
     inline float ResolveScreenWidth()
     {
-        return Config::manualScreenWidth > 0
-            ? static_cast<float>(Config::manualScreenWidth)
-            : static_cast<float>(GetSystemMetrics(SM_CXSCREEN));
+        return ResolveScreenSize().X;
     }
 
     inline float ResolveScreenHeight()
     {
-        return Config::manualScreenHeight > 0
-            ? static_cast<float>(Config::manualScreenHeight)
-            : static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+        return ResolveScreenSize().Y;
     }
 
     inline void RefreshScreenSizeFromConfig()
     {
-        WX = ResolveScreenWidth();
-        WY = ResolveScreenHeight();
+        const Vector2 screenSize = ResolveScreenSize();
+        WX = screenSize.X;
+        WY = screenSize.Y;
     }
 
     inline bool PipelineDebugEnabled()
@@ -118,8 +128,8 @@ namespace OW {
     }
 
     inline void RecordViewMatrixResolved(
-        uint64_t projMatrixPtr,
-        uint64_t viewMatrixPtr,
+        uint64_t renderViewProjectionPtr,
+        uint64_t cameraViewPtr,
         bool valid,
         bool& hasLastStatus,
         bool& lastValid,
@@ -132,10 +142,10 @@ namespace OW {
         const DWORD now = GetTickCount();
         const bool changed = !hasLastStatus || lastValid != valid;
         if (changed || lastLogTick == 0 || now - lastLogTick >= 1000) {
-            Diagnostics::Info("[PIPELINE] Stage 2 view matrix %s proj=0x%llX view=0x%llX.",
+            Diagnostics::Info("[PIPELINE] Stage 2 view matrix %s renderVP=0x%llX cameraView=0x%llX.",
                 valid ? "valid" : "zero/invalid",
-                static_cast<unsigned long long>(projMatrixPtr),
-                static_cast<unsigned long long>(viewMatrixPtr));
+                static_cast<unsigned long long>(renderViewProjectionPtr),
+                static_cast<unsigned long long>(cameraViewPtr));
             hasLastStatus = true;
             lastValid = valid;
             lastLogTick = now;
@@ -904,10 +914,9 @@ inline void viewmatrix_thread() {
 
     __try {
         while (true) {
-            // VM11 (May 2026): three-key subtract-XOR-subtract chain
-            // enc = RPM(base + Addr); dec = ((enc - k1) ^ k2) - k3
-            // p1 = RPM(dec + 0x20); p2 = RPM(p1 + 0x48)
-            // view = p2 + 0x140; proj = p2 + 0xB0
+            // VM11 (May 2026): three-key subtract-XOR-subtract chain.
+            // UC p321-p323 working snippets use the p2 -> +0x6C8 -> +0x8 -> +0xC0
+            // pre-composed view-projection matrix as the primary WorldToScreen source.
             uint64_t enc = SDK->RPM<uint64_t>(SDK->dwGameBase + OW::offset::Address_viewmatrix_base);
             if (!enc) {
                 OW::RecordViewMatrixUnresolved("encrypted base pointer", enc, lastViewMatrixLogTick);
@@ -938,19 +947,40 @@ inline void viewmatrix_thread() {
 
             OW::RefreshScreenSizeFromConfig();
 
-            // Read matrices: proj at +0xB0, view at +0x140
-            viewMatrixPtr = p2 + OW::offset::VM_ProjMatrix;
-            viewMatrix_xor_ptr = p2 + OW::offset::VM_ViewMatrix;
-            static constexpr size_t viewOffset = static_cast<size_t>(
-                OW::offset::VM_ViewMatrix - OW::offset::VM_ProjMatrix);
-            uint8_t matrixBuffer[viewOffset + sizeof(OW::Matrix)] = {};
-            if (SDK->read_range(viewMatrixPtr, matrixBuffer, sizeof(matrixBuffer))) {
-                memcpy(&OW::viewMatrix, matrixBuffer, sizeof(OW::Matrix));
-                memcpy(&OW::viewMatrix_xor, matrixBuffer + viewOffset, sizeof(OW::Matrix));
-            } else {
-                OW::viewMatrix = SDK->RPM<OW::Matrix>(viewMatrixPtr);
-                OW::viewMatrix_xor = SDK->RPM<OW::Matrix>(viewMatrix_xor_ptr);
+            const uint64_t p3 = SDK->RPM<uint64_t>(p2 + OW::offset::VM_ViewProjectionParent);
+            if (!p3) {
+                OW::RecordViewMatrixUnresolved("view projection p3", p3, lastViewMatrixLogTick);
+                Sleep(5);
+                continue;
             }
+
+            const uint64_t p4 = SDK->RPM<uint64_t>(p3 + OW::offset::VM_ViewProjectionPtr);
+            if (!p4) {
+                OW::RecordViewMatrixUnresolved("view projection p4", p4, lastViewMatrixLogTick);
+                Sleep(5);
+                continue;
+            }
+
+            viewMatrixPtr = p4 + OW::offset::VM_ViewProjectionMatrix;
+            viewMatrix_xor_ptr = p2 + OW::offset::VM_ViewMatrix;
+
+            OW::Matrix renderViewProjection = SDK->RPM<OW::Matrix>(viewMatrixPtr);
+            OW::Matrix cameraViewMatrix = SDK->RPM<OW::Matrix>(viewMatrix_xor_ptr);
+
+            const bool renderViewProjectionValid = OW::IsMatrixNonIdentity(renderViewProjection);
+            const bool cameraViewValid = OW::IsMatrixNonIdentity(cameraViewMatrix);
+            OW::viewMatrix = renderViewProjection;
+            if (cameraViewValid) {
+                OW::viewMatrix_xor = cameraViewMatrix;
+            } else if (renderViewProjectionValid) {
+                // UC p322-p323 samples set viewMatrix_xor_ptr to the same +0xC0 matrix.
+                // Keep that as a last-resort camera source if +0x140 is not populated.
+                viewMatrix_xor_ptr = viewMatrixPtr;
+                OW::viewMatrix_xor = renderViewProjection;
+            } else {
+                OW::viewMatrix_xor = cameraViewMatrix;
+            }
+
             const bool viewMatrixValid =
                 OW::IsMatrixNonIdentity(OW::viewMatrix) &&
                 OW::IsMatrixNonIdentity(OW::viewMatrix_xor);

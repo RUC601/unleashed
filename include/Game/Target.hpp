@@ -28,6 +28,8 @@ namespace OW {
 
     extern Matrix viewMatrix;
     extern Matrix viewMatrix_xor;
+    extern float WX;
+    extern float WY;
     extern std::vector<c_entity> entities;
     extern c_entity local_entity;
     extern std::vector<hpanddy> hp_dy_entities;
@@ -392,9 +394,18 @@ namespace OW {
         }
 
         inline Vector2 CrosshairCenter() {
+            float width = static_cast<float>(GetSystemMetrics(SM_CXSCREEN));
+            float height = static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+            if (WX > 0.0f && WY > 0.0f) {
+                width = WX;
+                height = WY;
+            } else if (Config::manualScreenWidth > 0 && Config::manualScreenHeight > 0) {
+                width = static_cast<float>(Config::manualScreenWidth);
+                height = static_cast<float>(Config::manualScreenHeight);
+            }
             return Vector2(
-                (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
-                (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
+                width * 0.5f,
+                height * 0.5f
             );
         }
 
@@ -645,10 +656,7 @@ namespace OW {
     inline Vector3 GetVector3(bool predit = false) {
         int TarGetIndex = -1;
         Vector3 target{};
-        Vector2 CrossHair = Vector2(
-            (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
-            (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
-        );
+        Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         auto entities = TargetingDetail::SnapshotEntities();
         auto hp_dy_entities = TargetingDetail::SnapshotDynamicEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
@@ -805,10 +813,7 @@ namespace OW {
         int TarGetIndex = -1;
         Vector3 target{};
         if (local_entity.HeroID == eHero::HERO_HANJO) predit = true;
-        Vector2 CrossHair = Vector2(
-            (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
-            (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
-        );
+        Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
@@ -930,10 +935,7 @@ namespace OW {
     inline Vector3 GetVector3forgenji(bool predit = false) {
         int TarGetIndex = -1;
         Vector3 target{};
-        Vector2 CrossHair = Vector2(
-            (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
-            (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
-        );
+        Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
@@ -990,10 +992,7 @@ namespace OW {
     inline Vector3 GetVector3aim2(bool predit = false) {
         int TarGetIndex = -1;
         Vector3 target{};
-        Vector2 CrossHair = Vector2(
-            (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
-            (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
-        );
+        Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
@@ -1126,10 +1125,7 @@ namespace OW {
     inline Vector3 GetVector3forfov(bool predit = false) {
         int TarGetIndex = -1;
         Vector3 target{};
-        Vector2 CrossHair = Vector2(
-            (float)GetSystemMetrics(SM_CXSCREEN) / 2.0f,
-            (float)GetSystemMetrics(SM_CYSCREEN) / 2.0f
-        );
+        Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;

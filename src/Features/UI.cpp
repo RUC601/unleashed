@@ -1,5 +1,6 @@
 #include "Features/UI.hpp"
 #include "Utils/Config.hpp"
+#include "Game/Overwatch.hpp"
 #include "Game/Structs.hpp"
 #include "Renderer/Renderer.hpp"
 #include "resource.h"
@@ -1450,19 +1451,29 @@ void UI::MiscPage() {
 
     UIGroupBox("Primary Screen");
     {
-        SettingRow("Manual Width");
+        bool screenChanged = false;
+        bool screenSaveRequested = false;
+
+        SettingRow("Screen Width");
         ImGui::PushItemWidth(-1);
-        ImGui::InputInt("##manualScreenWidth", &OW::Config::manualScreenWidth, 0, 0);
+        screenChanged |= ImGui::InputInt("##manualScreenWidth", &OW::Config::manualScreenWidth, 0, 0);
+        screenSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         if (OW::Config::manualScreenWidth < 0)
             OW::Config::manualScreenWidth = 0;
         ImGui::PopItemWidth();
 
-        SettingRow("Manual Height");
+        SettingRow("Screen Height");
         ImGui::PushItemWidth(-1);
-        ImGui::InputInt("##manualScreenHeight", &OW::Config::manualScreenHeight, 0, 0);
+        screenChanged |= ImGui::InputInt("##manualScreenHeight", &OW::Config::manualScreenHeight, 0, 0);
+        screenSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         if (OW::Config::manualScreenHeight < 0)
             OW::Config::manualScreenHeight = 0;
         ImGui::PopItemWidth();
+
+        if (screenChanged)
+            OW::RefreshScreenSizeFromConfig();
+        if (screenSaveRequested)
+            OW::Config::SaveConfig(".\\config.ini");
     }
     CloseGroupBox();
 
