@@ -65,6 +65,84 @@ namespace {
         return ToRenderColor(entity.Team ? OW::Config::enargb : OW::Config::allyargb);
     }
 
+    static void RunDmaPeHeaderProbe()
+    {
+        if (!OW::Config::kmboxDebugLog) {
+            Diagnostics::SetDmaProbeResult(false, false);
+            return;
+        }
+
+        const uint64_t baseAddress = OW::SDK->dwGameBase;
+        IMAGE_DOS_HEADER dosHeader{};
+        bool readOk = false;
+        if (baseAddress)
+            readOk = mem.Read(static_cast<uintptr_t>(baseAddress), &dosHeader, sizeof(dosHeader));
+
+        const uint16_t magic = readOk ? static_cast<uint16_t>(dosHeader.e_magic) : 0;
+        const bool mzOk = readOk && dosHeader.e_magic == IMAGE_DOS_SIGNATURE;
+        Diagnostics::SetDmaProbeResult(true, mzOk, baseAddress, magic);
+
+        if (mzOk) {
+            Diagnostics::Info("[PIPELINE] Stage 1 DMA PE header read OK: base=0x%llX magic=0x%04X.",
+                static_cast<unsigned long long>(baseAddress),
+                static_cast<unsigned int>(magic));
+        } else {
+            Diagnostics::Error("[PIPELINE] Stage 1 DMA PE header read failed: base=0x%llX read=%d magic=0x%04X.",
+                static_cast<unsigned long long>(baseAddress),
+                readOk ? 1 : 0,
+                static_cast<unsigned int>(magic));
+        }
+    }
+
+    static void DrawPipelineDiagnostics()
+    {
+        if (!OW::Config::kmboxDebugLog)
+            return;
+
+        const Diagnostics::StatusSnapshot snapshot = Diagnostics::Snapshot();
+        constexpr float x = 10.0f;
+        constexpr float fontSize = 13.0f;
+        float y = 10.0f;
+
+        const ImU32 okColor = IM_COL32(120, 255, 160, 235);
+        const ImU32 warnColor = IM_COL32(255, 215, 90, 235);
+        const ImU32 badColor = IM_COL32(255, 90, 90, 235);
+        const ImU32 textColor = IM_COL32(230, 235, 245, 235);
+
+        auto drawLine = [&](ImU32 color, const char* text) {
+            Render::DrawStrokeText(ImVec2(x, y), color, text, fontSize);
+            y += 16.0f;
+        };
+
+        char line[160] = {};
+        if (snapshot.dmaProbeAttempted) {
+            std::snprintf(line, sizeof(line), "DMA: %s MZ=0x%04X",
+                snapshot.dmaProbeSucceeded ? "MZ ok" : "MZ fail",
+                static_cast<unsigned int>(snapshot.dmaProbeMagic));
+            drawLine(snapshot.dmaProbeSucceeded ? okColor : badColor, line);
+        } else {
+            drawLine(warnColor, "DMA: probe not run");
+        }
+
+        drawLine(snapshot.viewMatrixResolved && snapshot.viewMatrixValid ? okColor : badColor,
+            snapshot.viewMatrixResolved && snapshot.viewMatrixValid ? "VM: valid" : "VM: zero/invalid");
+
+        std::snprintf(line, sizeof(line), "Entities: %zu raw", snapshot.lastScanEntityCount);
+        drawLine(snapshot.lastScanEntityCount > 0 ? okColor : warnColor, line);
+
+        std::snprintf(line, sizeof(line), "Validated: %zu", snapshot.entityCount);
+        drawLine(snapshot.entityCount > 0 ? okColor : warnColor, line);
+
+        std::snprintf(line, sizeof(line), "Render: radar=%d player=%d skill=%d",
+            snapshot.renderDrawRadarCalled ? 1 : 0,
+            snapshot.renderPlayerInfoCalled ? 1 : 0,
+            snapshot.renderSkillInfoCalled ? 1 : 0);
+        drawLine(textColor, line);
+
+        if (snapshot.renderEntityListEmpty)
+            drawLine(badColor, "NO ENTITY DATA \xE2\x80\x94 check pipeline");
+    }
+
     static void DrawFovCircle()
     {
         if (!OW::Config::draw_fov)
@@ -207,16 +285,35 @@ void RenderCallback()
 
     // The menu is rendered by the separate overlay menu window. This callback
     // only draws the transparent full-screen canvas layer.
+    const bool entityListEmpty = OW::entities.empty();
+    bool playerInfoCalled = false;
+    bool skillInfoCalled = false;
     DrawRadar();
 
-    if (OW::entities.size() > 0) {
+    if (!entityListEmpty) {
+        playerInfoCalled = true;
         PlayerInfo();
+        skillInfoCalled = true;
         skillinfo();
     }
 
     DrawHealthPacks();
     DrawFovCircle();
     DrawCrosshair();
+    Diagnostics::SetRenderPipelineStatus(true, playerInfoCalled, skillInfoCalled, entityListEmpty);
+
+    static DWORD lastRenderPipelineLogTick = 0;
+    if (OW::Config::kmboxDebugLog) {
+        const DWORD now = GetTickCount();
+        if (lastRenderPipelineLogTick == 0 || now - lastRenderPipelineLogTick >= 1000) {
+            Diagnostics::Info("[PIPELINE] Stage 5 render callback DrawRadar=1 PlayerInfo=%d skillinfo=%d entities_empty=%d.",
+                playerInfoCalled ? 1 : 0,
+                skillInfoCalled ? 1 : 0,
+                entityListEmpty ? 1 : 0);
+            lastRenderPipelineLogTick = now;
+        }
+    }
+    DrawPipelineDiagnostics();
 }
 
 static void InitializeKmBoxFromConfig()
@@ -358,6 +455,7 @@ int main()
     std::printf("[MAIN] SDK ready.  Game base: 0x%llX\n\n", OW::SDK->dwGameBase);
     Diagnostics::Info("SDK ready. Game base=0x%llX",
         static_cast<unsigned long long>(OW::SDK->dwGameBase));
+    RunDmaPeHeaderProbe();
 
     // ---------------------------------------------------------------
     // Step 4 -- Resolve global encryption keys (SKIP: vestigial)

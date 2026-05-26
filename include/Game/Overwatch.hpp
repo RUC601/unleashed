@@ -68,6 +68,79 @@ namespace OW {
         WX = ResolveScreenWidth();
         WY = ResolveScreenHeight();
     }
+
+    inline bool PipelineDebugEnabled()
+    {
+        return Config::kmboxDebugLog;
+    }
+
+    inline bool IsMatrixNonIdentity(const Matrix& matrix)
+    {
+        const float values[] = {
+            matrix.m11, matrix.m12, matrix.m13, matrix.m14,
+            matrix.m21, matrix.m22, matrix.m23, matrix.m24,
+            matrix.m31, matrix.m32, matrix.m33, matrix.m34,
+            matrix.m41, matrix.m42, matrix.m43, matrix.m44
+        };
+        const float identity[] = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+
+        bool differsFromIdentity = false;
+        bool hasNonZeroValue = false;
+        for (size_t index = 0; index < 16; ++index) {
+            if (!std::isfinite(values[index]))
+                return false;
+            if (std::fabs(values[index]) > 0.0001f)
+                hasNonZeroValue = true;
+            if (std::fabs(values[index] - identity[index]) > 0.001f)
+                differsFromIdentity = true;
+        }
+        return hasNonZeroValue && differsFromIdentity;
+    }
+
+    inline void RecordViewMatrixUnresolved(const char* reason, uint64_t value, DWORD& lastLogTick)
+    {
+        Diagnostics::SetViewMatrixStatus(false, false);
+        if (!PipelineDebugEnabled())
+            return;
+
+        const DWORD now = GetTickCount();
+        if (lastLogTick == 0 || now - lastLogTick >= 1000) {
+            Diagnostics::Info("[PIPELINE] Stage 2 view matrix unresolved: %s value=0x%llX.",
+                reason ? reason : "unknown",
+                static_cast<unsigned long long>(value));
+            lastLogTick = now;
+        }
+    }
+
+    inline void RecordViewMatrixResolved(
+        uint64_t projMatrixPtr,
+        uint64_t viewMatrixPtr,
+        bool valid,
+        bool& hasLastStatus,
+        bool& lastValid,
+        DWORD& lastLogTick)
+    {
+        Diagnostics::SetViewMatrixStatus(true, valid);
+        if (!PipelineDebugEnabled())
+            return;
+
+        const DWORD now = GetTickCount();
+        const bool changed = !hasLastStatus || lastValid != valid;
+        if (changed || lastLogTick == 0 || now - lastLogTick >= 1000) {
+            Diagnostics::Info("[PIPELINE] Stage 2 view matrix %s proj=0x%llX view=0x%llX.",
+                valid ? "valid" : "zero/invalid",
+                static_cast<unsigned long long>(projMatrixPtr),
+                static_cast<unsigned long long>(viewMatrixPtr));
+            hasLastStatus = true;
+            lastValid = valid;
+            lastLogTick = now;
+        }
+    }
 } // namespace OW
 
 inline std::mutex g_mutex;
@@ -89,6 +162,9 @@ inline void entity_scan_thread() {
             std::vector<std::pair<uint64_t, uint64_t>> scanned = OW::get_ow_entities();
             Diagnostics::RecordEntityScanCycle(scanned.size());
             Diagnostics::Trace("Entity scan cycle found %zu raw entities.", scanned.size());
+            if (OW::PipelineDebugEnabled()) {
+                Diagnostics::Info("[PIPELINE] Stage 3 entity scan raw=%zu", scanned.size());
+            }
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 if (OW::abletotread == 0) {
@@ -109,6 +185,9 @@ inline void entity_scan_thread() {
 inline void entity_thread() {
     int entitytime = 0;
     Vector3 lastpos{};
+    size_t lastLoggedRawCount = static_cast<size_t>(-1);
+    size_t lastLoggedValidatedCount = static_cast<size_t>(-1);
+    DWORD lastProcessLogTick = 0;
 
     while (OW::Config::doingentity == 1) {
         SDK->BeginFrame();
@@ -136,6 +215,16 @@ inline void entity_thread() {
                 OW::entities = {};
                 OW::hp_dy_entities = {};
                 Diagnostics::SetEntityCount(0);
+            }
+            if (OW::PipelineDebugEnabled()) {
+                const DWORD now = GetTickCount();
+                const bool changed = lastLoggedRawCount != 0 || lastLoggedValidatedCount != 0;
+                if (changed || now - lastProcessLogTick >= 1000) {
+                    Diagnostics::Info("[PIPELINE] Stage 4 entity processing raw=0 validated=0.");
+                    lastLoggedRawCount = 0;
+                    lastLoggedValidatedCount = 0;
+                    lastProcessLogTick = now;
+                }
             }
             Sleep(1000);
             continue;
@@ -373,6 +462,19 @@ inline void entity_thread() {
         Diagnostics::SetEntityCount(valid_count);
         Diagnostics::Trace("Entity process cycle: valid=%zu hp_dynamic=%zu raw=%zu.",
             valid_count, dynamic_count, raw_entities.size());
+        if (OW::PipelineDebugEnabled()) {
+            const DWORD now = GetTickCount();
+            const bool changed =
+                lastLoggedRawCount != raw_entities.size() ||
+                lastLoggedValidatedCount != valid_count;
+            if (changed || now - lastProcessLogTick >= 1000) {
+                Diagnostics::Info("[PIPELINE] Stage 4 entity processing raw=%zu validated=%zu hp_dynamic=%zu.",
+                    raw_entities.size(), valid_count, dynamic_count);
+                lastLoggedRawCount = raw_entities.size();
+                lastLoggedValidatedCount = valid_count;
+                lastProcessLogTick = now;
+            }
+        }
         Sleep(3);
     }
 }
@@ -382,6 +484,10 @@ inline void entity_thread() {
 // =========================================================================
 
 inline void viewmatrix_thread() {
+    DWORD lastViewMatrixLogTick = 0;
+    bool hasLastViewMatrixStatus = false;
+    bool lastViewMatrixValid = false;
+
     __try {
         while (true) {
             // VM11 (May 2026): three-key subtract-XOR-subtract chain
@@ -389,16 +495,32 @@ inline void viewmatrix_thread() {
             // p1 = RPM(dec + 0x20); p2 = RPM(p1 + 0x48)
             // view = p2 + 0x140; proj = p2 + 0xB0
             uint64_t enc = SDK->RPM<uint64_t>(SDK->dwGameBase + OW::offset::Address_viewmatrix_base);
-            if (!enc) { Sleep(5); continue; }
+            if (!enc) {
+                OW::RecordViewMatrixUnresolved("encrypted base pointer", enc, lastViewMatrixLogTick);
+                Sleep(5);
+                continue;
+            }
             uint64_t dec = ((enc - OW::offset::offset_viewmatrix_xor_key)
                          ^ OW::offset::offset_viewmatrix_xor_key2)
                          - OW::offset::offset_viewmatrix_xor_key3;
-            if (!dec) { Sleep(5); continue; }
+            if (!dec) {
+                OW::RecordViewMatrixUnresolved("decoded base pointer", dec, lastViewMatrixLogTick);
+                Sleep(5);
+                continue;
+            }
 
             uint64_t p1 = SDK->RPM<uint64_t>(dec + OW::offset::VM_P1);
-            if (!p1) { Sleep(5); continue; }
+            if (!p1) {
+                OW::RecordViewMatrixUnresolved("p1", p1, lastViewMatrixLogTick);
+                Sleep(5);
+                continue;
+            }
             uint64_t p2 = SDK->RPM<uint64_t>(p1 + OW::offset::VM_P2);
-            if (!p2) { Sleep(5); continue; }
+            if (!p2) {
+                OW::RecordViewMatrixUnresolved("p2", p2, lastViewMatrixLogTick);
+                Sleep(5);
+                continue;
+            }
 
             OW::RefreshScreenSizeFromConfig();
 
@@ -415,6 +537,16 @@ inline void viewmatrix_thread() {
                 OW::viewMatrix = SDK->RPM<OW::Matrix>(viewMatrixPtr);
                 OW::viewMatrix_xor = SDK->RPM<OW::Matrix>(viewMatrix_xor_ptr);
             }
+            const bool viewMatrixValid =
+                OW::IsMatrixNonIdentity(OW::viewMatrix) &&
+                OW::IsMatrixNonIdentity(OW::viewMatrix_xor);
+            OW::RecordViewMatrixResolved(
+                viewMatrixPtr,
+                viewMatrix_xor_ptr,
+                viewMatrixValid,
+                hasLastViewMatrixStatus,
+                lastViewMatrixValid,
+                lastViewMatrixLogTick);
 
             Sleep(5);
         }

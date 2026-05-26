@@ -49,6 +49,16 @@ struct StatusSnapshot {
     KeyStatus keyStatus = KeyStatus::Unknown;
     uint64_t globalKey1 = 0;
     uint64_t globalKey2 = 0;
+    bool dmaProbeAttempted = false;
+    bool dmaProbeSucceeded = false;
+    uint64_t dmaProbeAddress = 0;
+    uint16_t dmaProbeMagic = 0;
+    bool viewMatrixResolved = false;
+    bool viewMatrixValid = false;
+    bool renderDrawRadarCalled = false;
+    bool renderPlayerInfoCalled = false;
+    bool renderSkillInfoCalled = false;
+    bool renderEntityListEmpty = true;
 };
 
 void Initialize(LogLevel minLevel = LogLevel::Info, const char* logPath = "./unleashed_diag.log");
@@ -76,6 +86,9 @@ void SetEntityCount(size_t entityCount);
 void SetDmaReady(bool ready);
 void SetProcessAttached(bool attached);
 void SetKeyStatus(KeyStatus status, uint64_t key1 = 0, uint64_t key2 = 0);
+void SetDmaProbeResult(bool attempted, bool succeeded, uint64_t address = 0, uint16_t magic = 0);
+void SetViewMatrixStatus(bool resolved, bool valid);
+void SetRenderPipelineStatus(bool drawRadarCalled, bool playerInfoCalled, bool skillInfoCalled, bool entityListEmpty);
 
 StatusSnapshot Snapshot();
 void DumpStatus();

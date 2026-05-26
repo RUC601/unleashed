@@ -40,6 +40,16 @@ std::atomic<bool> g_processAttached{ false };
 std::atomic<int> g_keyStatus{ static_cast<int>(KeyStatus::Unknown) };
 std::atomic<uint64_t> g_globalKey1{ 0 };
 std::atomic<uint64_t> g_globalKey2{ 0 };
+std::atomic<bool> g_dmaProbeAttempted{ false };
+std::atomic<bool> g_dmaProbeSucceeded{ false };
+std::atomic<uint64_t> g_dmaProbeAddress{ 0 };
+std::atomic<uint32_t> g_dmaProbeMagic{ 0 };
+std::atomic<bool> g_viewMatrixResolved{ false };
+std::atomic<bool> g_viewMatrixValid{ false };
+std::atomic<bool> g_renderDrawRadarCalled{ false };
+std::atomic<bool> g_renderPlayerInfoCalled{ false };
+std::atomic<bool> g_renderSkillInfoCalled{ false };
+std::atomic<bool> g_renderEntityListEmpty{ true };
 
 std::mutex g_fpsMutex;
 std::chrono::steady_clock::time_point g_lastFpsTime = std::chrono::steady_clock::now();
@@ -311,6 +321,28 @@ void SetKeyStatus(KeyStatus status, uint64_t key1, uint64_t key2)
     g_globalKey2.store(key2, std::memory_order_relaxed);
 }
 
+void SetDmaProbeResult(bool attempted, bool succeeded, uint64_t address, uint16_t magic)
+{
+    g_dmaProbeAttempted.store(attempted, std::memory_order_relaxed);
+    g_dmaProbeSucceeded.store(succeeded, std::memory_order_relaxed);
+    g_dmaProbeAddress.store(address, std::memory_order_relaxed);
+    g_dmaProbeMagic.store(static_cast<uint32_t>(magic), std::memory_order_relaxed);
+}
+
+void SetViewMatrixStatus(bool resolved, bool valid)
+{
+    g_viewMatrixResolved.store(resolved, std::memory_order_relaxed);
+    g_viewMatrixValid.store(valid, std::memory_order_relaxed);
+}
+
+void SetRenderPipelineStatus(bool drawRadarCalled, bool playerInfoCalled, bool skillInfoCalled, bool entityListEmpty)
+{
+    g_renderDrawRadarCalled.store(drawRadarCalled, std::memory_order_relaxed);
+    g_renderPlayerInfoCalled.store(playerInfoCalled, std::memory_order_relaxed);
+    g_renderSkillInfoCalled.store(skillInfoCalled, std::memory_order_relaxed);
+    g_renderEntityListEmpty.store(entityListEmpty, std::memory_order_relaxed);
+}
+
 StatusSnapshot Snapshot()
 {
     StatusSnapshot snapshot{};
@@ -347,6 +379,16 @@ StatusSnapshot Snapshot()
     snapshot.keyStatus = static_cast<KeyStatus>(g_keyStatus.load(std::memory_order_relaxed));
     snapshot.globalKey1 = g_globalKey1.load(std::memory_order_relaxed);
     snapshot.globalKey2 = g_globalKey2.load(std::memory_order_relaxed);
+    snapshot.dmaProbeAttempted = g_dmaProbeAttempted.load(std::memory_order_relaxed);
+    snapshot.dmaProbeSucceeded = g_dmaProbeSucceeded.load(std::memory_order_relaxed);
+    snapshot.dmaProbeAddress = g_dmaProbeAddress.load(std::memory_order_relaxed);
+    snapshot.dmaProbeMagic = static_cast<uint16_t>(g_dmaProbeMagic.load(std::memory_order_relaxed));
+    snapshot.viewMatrixResolved = g_viewMatrixResolved.load(std::memory_order_relaxed);
+    snapshot.viewMatrixValid = g_viewMatrixValid.load(std::memory_order_relaxed);
+    snapshot.renderDrawRadarCalled = g_renderDrawRadarCalled.load(std::memory_order_relaxed);
+    snapshot.renderPlayerInfoCalled = g_renderPlayerInfoCalled.load(std::memory_order_relaxed);
+    snapshot.renderSkillInfoCalled = g_renderSkillInfoCalled.load(std::memory_order_relaxed);
+    snapshot.renderEntityListEmpty = g_renderEntityListEmpty.load(std::memory_order_relaxed);
     return snapshot;
 }
 
