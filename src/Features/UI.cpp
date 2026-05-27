@@ -346,7 +346,7 @@ namespace {
     {
         std::vector<std::string> profiles;
         WIN32_FIND_DATAA findData{};
-        const std::string searchPath = JoinPath(CurrentDirectoryPath(), "config*.ini");
+        const std::string searchPath = JoinPath(CurrentDirectoryPath(), "*.ini");
         HANDLE findHandle = FindFirstFileA(searchPath.c_str(), &findData);
         if (findHandle != INVALID_HANDLE_VALUE) {
             do {
@@ -358,8 +358,12 @@ namespace {
 
         if (std::find(profiles.begin(), profiles.end(), "config.ini") == profiles.end())
             profiles.emplace_back("config.ini");
+        if (!OW::Config::configFileName.empty() &&
+            std::find(profiles.begin(), profiles.end(), OW::Config::configFileName) == profiles.end())
+            profiles.emplace_back(OW::Config::configFileName);
 
         std::sort(profiles.begin(), profiles.end());
+        profiles.erase(std::unique(profiles.begin(), profiles.end()), profiles.end());
         return profiles;
     }
 
@@ -601,13 +605,14 @@ static constexpr float kMaxShellHeight = 1200.0f;
 static constexpr float kBodyBottomPadding = 10.0f;
 static constexpr float kDefaultLabelWidth = 120.0f;
 static constexpr float kAimbotHeroLabelWidth = 98.0f;
-static constexpr float kAimbotLeftLabelWidth = 112.0f;
+static constexpr float kAimbotLeftLabelWidth = 104.0f;
 static constexpr float kAimbotRightLabelWidth = 138.0f;
 static constexpr float kControlHeight = 22.0f;
 static constexpr float kControlRounding = 0.0f;
 static constexpr float kGroupRounding = 0.0f;
 static constexpr float kGroupContentIndent = 14.0f;
 static constexpr float kGroupBorderClipInset = 2.0f;
+static constexpr float kControlRightPadding = 10.0f;
 
 static const ImU32 kColShell0       = IM_COL32(0x05, 0x06, 0x09, 0xFF);
 static const ImU32 kColShell1       = IM_COL32(0x12, 0x13, 0x17, 0xFF);
@@ -629,6 +634,7 @@ static const ImU32 kColAccentGlow   = IM_COL32(0xe4, 0x11, 0x43, 0x28);
 
 static ImFont* s_regularFont = nullptr;
 static ImFont* s_boldFont = nullptr;
+static ImFont* s_titleFont = nullptr;
 static ImGuiID s_preNewFrameInitHook = 0;
 static ID3D11ShaderResourceView* s_logoTexture = nullptr;
 static constexpr int kLogoTextureSize = 32;
@@ -1494,6 +1500,11 @@ static bool UICheckbox(const char* label, bool* value) {
 // =====================================================================
 // UISlider  --  Custom dark track with accent fill and value text.
 // =====================================================================
+static void PushControlWidth(float rightPaddingPx = kControlRightPadding) {
+    const float width = MaxFloat(1.0f, ImGui::GetContentRegionAvail().x - rightPaddingPx);
+    ImGui::PushItemWidth(width);
+}
+
 static bool UISlider(const char* label, float* value, float v_min, float v_max,
                      const char* formatText) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -1503,9 +1514,11 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
     const float height = kControlHeight;
 
     ImVec2 pos  = window->DC.CursorPos;
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
     float width = ImGui::CalcItemWidth();
-    if (width <= 0.0f)
-        width = ImGui::GetContentRegionAvail().x;
+    if (width <= 0.0f || width > availableWidth)
+        width = availableWidth;
+    width = MaxFloat(1.0f, width);
     ImRect bb(pos, ImVec2(pos.x + width, pos.y + height));
 
     ImGui::ItemSize(bb);
@@ -1533,23 +1546,33 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
     const bool mousePressed = pressed && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     const bool mouseDragging = held && g.ActiveId == id && ImGui::IsMouseDown(ImGuiMouseButton_Left);
 
-    if (mousePressed)
-        ImGui::SetKeyboardFocusHere(-1);
+    if (mousePressed) {
+        ImGui::SetActiveID(id, window);
+        ImGui::SetFocusID(id, window);
+        ImGui::FocusWindow(window);
+    }
 
     if (mousePressed || mouseDragging) {
         const ImVec2 mousePos = ImGui::GetMousePos();
         setFromNorm((mousePos.x - bb.Min.x) / (bb.Max.x - bb.Min.x));
     }
 
-    if (ImGui::IsItemFocused()) {
-        ImGuiIO& io = ImGui::GetIO();
-        float step = io.KeyAlt ? 0.1f : (io.KeyShift ? 5.0f : 1.0f);
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-            *value = ImClamp(*value + step, v_min, v_max);
+    if ((ImGui::IsItemFocused() || hovered) && !ImGui::GetIO().WantTextInput) {
+        auto nudgeValue = [&](float delta) {
+            const float next = ImClamp(*value + delta, v_min, v_max);
+            *value = std::round(next * 100.0f) / 100.0f;
+            *value = ImClamp(*value, v_min, v_max);
             valueChanged = true;
-        } else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-            *value = ImClamp(*value - step, v_min, v_max);
-            valueChanged = true;
+        };
+
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+            nudgeValue(0.01f);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+            nudgeValue(-0.01f);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            nudgeValue(0.10f);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            nudgeValue(-0.10f);
         } else if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
             *value = v_min;
             valueChanged = true;
@@ -1626,7 +1649,11 @@ static bool UISelect(const char* label, int* current, const char* items[], int i
     const char* preview = items[*current];
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     ImVec2 pos = ImGui::GetCursorScreenPos();
-    float width = ImGui::GetContentRegionAvail().x;
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    float width = ImGui::CalcItemWidth();
+    if (width <= 0.0f || width > availableWidth)
+        width = availableWidth;
+    width = MaxFloat(1.0f, width);
     const float height = kControlHeight;
     ImRect bb(pos, ImVec2(pos.x + width, pos.y + height));
 
@@ -1780,7 +1807,7 @@ static bool UIColorEdit(const char* label, ImVec4* value,
                         float labelWidthPx = kDefaultLabelWidth) {
     ImGui::PushID(label);
     SettingRow(label, labelWidthPx);
-    ImGui::PushItemWidth(-1);
+    PushControlWidth();
     ImGui::PushStyleColor(ImGuiCol_FrameBg, kColControl);
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, kColControlHover);
     ImGui::PushStyleColor(ImGuiCol_FrameBgActive, kColControlHot);
@@ -1972,6 +1999,9 @@ void UI::InitStyle() {
         fontConfig.RasterizerMultiply = 1.12f;
         s_regularFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 13.25f, &fontConfig);
         s_boldFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 13.25f, &fontConfig);
+        s_titleFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 15.25f, &fontConfig);
+        if (!s_titleFont)
+            s_titleFont = s_boldFont;
         if (s_regularFont)
             io.FontDefault = s_regularFont;
     } else if (s_regularFont) {
@@ -2074,78 +2104,78 @@ void UI::AimbotPage() {
     // ---- Two columns ----
     UITwoColumns([&]() {
         // LEFT: Aimbot Hero Basic Options
-        UIGroupBox("Aim Hero Basic Options", 560.0f);
+        UIGroupBox("Aim Hero Basic Options");
         {
             // Aim Mode
             SettingRow("Aim Mode", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             presetChanged |= UISelect("##aimMode", &activePreset.aimMode, kAimMode, IM_ARRAYSIZE(kAimMode));
             ImGui::PopItemWidth();
 
             // Aim Method
             SettingRow("Aim Method", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISelect("##aimMethod", &OW::Config::aimMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod));
             ImGui::PopItemWidth();
 
             if (OW::Config::aimMethod == 0) {
                 SettingRow("Smooth Type", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISelect("##aimSmoothType", &OW::Config::aimbotSmoothType,
                          kAimSmoothType, IM_ARRAYSIZE(kAimSmoothType));
                 ImGui::PopItemWidth();
             } else if (OW::Config::aimMethod == 1) {
                 SettingRow("P Gain", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISlider("##aimPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
                 ImGui::PopItemWidth();
 
                 SettingRow("I Gain", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISlider("##aimPidI", &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
                 ImGui::PopItemWidth();
 
                 SettingRow("D Gain", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISlider("##aimPidD", &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
                 ImGui::PopItemWidth();
 
                 SettingRow("Max Integral", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISlider("##aimPidMaxI", &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
                 ImGui::PopItemWidth();
 
                 SettingRow("Deadzone", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISlider("##aimPidDz", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
                 ImGui::PopItemWidth();
             } else if (OW::Config::aimMethod == 2) {
                 SettingRow("Control Points", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISlider("##aimBezCP", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
                 ImGui::PopItemWidth();
 
                 SettingRow("Curvature", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISlider("##aimBezCurve", &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
                 ImGui::PopItemWidth();
 
                 SettingRow("Speed", kAimbotLeftLabelWidth);
-                ImGui::PushItemWidth(-1);
+                PushControlWidth();
                 UISlider("##aimBezSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
                 ImGui::PopItemWidth();
             }
 
             // Aim activation key (maps to OW::Config::aim_key).
             SettingRow("Aim Activation Key", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISelect("##aimActivationKey", &OW::Config::aim_key,
                      kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
             ImGui::PopItemWidth();
 
             // Attack
             SettingRow("Attack", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISelect("##aimAttack", &OW::Config::aimbotAttack, kAttack, IM_ARRAYSIZE(kAttack));
             ImGui::PopItemWidth();
 
@@ -2159,7 +2189,7 @@ void UI::AimbotPage() {
 
             // Bone Preference combines fixed aim bones and the dynamic closest-bone mode.
             SettingRow("Bone Preference", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             activePreset.bone = OW::Config::NormalizeAimBone(activePreset.bone);
             int bonePreferenceIndex = BonePreferenceIndexFromPreset(activePreset);
             if (UISelect("##aimBone", &bonePreferenceIndex, kBonePreference, IM_ARRAYSIZE(kBonePreference))) {
@@ -2174,66 +2204,66 @@ void UI::AimbotPage() {
 
             // Max Head Distance
             SettingRow("Max Head Distance", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISlider("##aimMaxHead", &OW::Config::aimbotMaxHead, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Stickiness
             SettingRow("Stickiness", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISlider("##aimStick", &OW::Config::aimbotStickiness, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Smooth
             SettingRow("Smooth", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             presetChanged |= UISlider("##aimSmooth", &activePreset.smooth, 0.0f, 100.0f, "50.00 %");
             ImGui::PopItemWidth();
 
             // FOV
             SettingRow("FOV", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             presetChanged |= UISlider("##aimFov", &activePreset.fov, 0.0f, 500.0f, "200");
             ImGui::PopItemWidth();
 
             // Target Priority
             SettingRow("Target Priority", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             presetChanged |= UISelect("##aimPriority", &activePreset.priority, kPriority, IM_ARRAYSIZE(kPriority));
             ImGui::PopItemWidth();
 
             // Target Team
             SettingRow("Target Team", kAimbotLeftLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISelect("##aimTeam", &OW::Config::aimbotTeam, kTeam, IM_ARRAYSIZE(kTeam));
             ImGui::PopItemWidth();
         }
         CloseGroupBox();
     }, [&]() {
         // RIGHT: Aimbot Hero Expert Options
-        UIGroupBox("Aim Hero Expert Options", 425.0f);
+        UIGroupBox("Aim Hero Expert Options");
         {
             // Max Aim Time
             SettingRow("Max Aim Time", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISlider("##aimMaxAim", &OW::Config::aimbotMaxAim, 0.0f, 100.0f, "Endless");
             ImGui::PopItemWidth();
 
             // Hitbox Size
             SettingRow("Hitbox Size", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             presetChanged |= UISlider("##aimHitbox", &activePreset.hitbox, 0.0f, 5.0f, "0.13");
             ImGui::PopItemWidth();
 
             // Aim Min Charge
             SettingRow("Aim Min Charge", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISlider("##aimMinChg", &OW::Config::aimbotMinCharge, 0.0f, 100.0f, "5 %");
             ImGui::PopItemWidth();
 
             // Autoshot Max Charge
             SettingRow("Autoshot Max Charge", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISlider("##aimMaxChg", &OW::Config::aimbotMaxCharge, 0.0f, 100.0f, "100 %");
             ImGui::PopItemWidth();
 
@@ -2243,31 +2273,31 @@ void UI::AimbotPage() {
 
             // Trace Condition
             SettingRow("Trace Condition", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISelect("##aimTrace", &OW::Config::aimbotTrace, kTrace, IM_ARRAYSIZE(kTrace));
             ImGui::PopItemWidth();
 
             // Unlock Condition
             SettingRow("Unlock Condition", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISelect("##aimUnlock", &OW::Config::aimbotUnlock, kUnlock, IM_ARRAYSIZE(kUnlock));
             ImGui::PopItemWidth();
 
             // Lock Time
             SettingRow("Lock Time", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISlider("##aimLockTime", &OW::Config::aimbotLockTime, 0.0f, 100.0f, "200 ms");
             ImGui::PopItemWidth();
 
             // Max Distance
             SettingRow("Max Distance", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISlider("##aimMaxDist", &OW::Config::aimbotMaxDist, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Min Distance
             SettingRow("Min Distance", kAimbotRightLabelWidth);
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             UISlider("##aimMinDist", &OW::Config::aimbotMinDist, 0.0f, 100.0f, "0 m");
             ImGui::PopItemWidth();
         }
@@ -2295,28 +2325,28 @@ void UI::TriggerPage() {
         UICheckbox("##triggerEnable", &OW::Config::triggerbot);
 
         SettingRow("Trigger Delay", kDefaultLabelWidth);
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         UISlider("##triggerDelay", &OW::Config::aimbotTriggerDelay, 0.0f, 100.0f, "Instant");
         ImGui::PopItemWidth();
 
         SettingRow("Detection Range", kDefaultLabelWidth);
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         UISlider("##triggerDetectionRange", &OW::Config::hitbox, 0.0f, 5.0f, "0.13");
         ImGui::PopItemWidth();
 
         SettingRow("Activation Key", kDefaultLabelWidth);
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         UISelect("##triggerActivationKey", &OW::Config::aim_key,
                  kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
         ImGui::PopItemWidth();
 
         SettingRow("Target Filter", kDefaultLabelWidth);
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         UISelect("##triggerTargetFilter", &OW::Config::aimbotTeam, kTeam, IM_ARRAYSIZE(kTeam));
         ImGui::PopItemWidth();
 
         SettingRow("Priority", kDefaultLabelWidth);
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         UISelect("##triggerPriority", &OW::Config::targetPriority, kPriority, IM_ARRAYSIZE(kPriority));
         ImGui::PopItemWidth();
     }
@@ -2340,30 +2370,19 @@ void UI::VisualsPage() {
     UIGroupBox("Player Visual Features");
     {
         const char* labels[] = {
-            "Box", "Skeleton", "Healthbar",
-            "Radar", "Lines", "Distance",
-            "Battletag", "Name", "Ultimate",
+            "Box", "Skeleton", "Radar",
+            "Distance", "Name", "Ultimate",
             "Skill Info", "FOV Circle", "Health Packs",
-            "Crosshair", "Radar Lines", "Healthbar Style 2"
+            "Radar Lines", "Healthbar Style 2", nullptr
         };
         bool* values[] = {
-            &OW::Config::draw_info, &OW::Config::draw_skel, &OW::Config::drawhealth,
-            &OW::Config::radar, &OW::Config::drawline, &OW::Config::dist,
-            &OW::Config::drawbattletag, &OW::Config::name, &OW::Config::ult,
+            &OW::Config::draw_info, &OW::Config::draw_skel, &OW::Config::radar,
+            &OW::Config::dist, &OW::Config::name, &OW::Config::ult,
             &OW::Config::skillinfo, &OW::Config::draw_fov, &OW::Config::draw_hp_pack,
-            &OW::Config::crosscircle, &OW::Config::radarline, &OW::Config::healthbar2
+            &OW::Config::radarline, &OW::Config::healthbar2, nullptr
         };
         const float ratios[] = { 1.0f, 1.0f, 1.2f };
-        DrawCheckboxGrid3(labels, values, 5, 26.0f, ratios);
-    }
-    CloseGroupBox();
-
-    UIGroupBox("Healthbar");
-    {
-        SettingRow("Text Size");
-        ImGui::PushItemWidth(-1);
-        UISlider("##healthbarTextSize", &OW::Config::healthbartextsize, 10.0f, 24.0f, "16 px");
-        ImGui::PopItemWidth();
+        DrawCheckboxGrid3(labels, values, 4, 26.0f, ratios);
     }
     CloseGroupBox();
 
@@ -2371,7 +2390,7 @@ void UI::VisualsPage() {
     UIGroupBox("Filters");
     {
         SettingRow("Max Distance");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         UISlider("##visMaxDist", &OW::Config::visualMaxDist, 0.0f, 100.0f, "100 m");
         ImGui::PopItemWidth();
     }
@@ -2390,7 +2409,7 @@ void UI::ThemePage() {
         static const char* kRadarCorner[] = { "Bottom Right", "Bottom Left", "Top Right", "Top Left" };
 
         SettingRow("Radar Corner");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         if (UISelect("##radarCorner", &OW::Config::radarCorner,
                      kRadarCorner, IM_ARRAYSIZE(kRadarCorner))) {
             OW::Config::SaveConfig(OW::Config::ConfigPath());
@@ -2398,7 +2417,7 @@ void UI::ThemePage() {
         ImGui::PopItemWidth();
 
         SettingRow("Ultimate Status");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         if (UISelect("##ultimateDisplayMode", &OW::Config::ultimateDisplayMode,
                      kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition))) {
             OW::Config::SaveConfig(OW::Config::ConfigPath());
@@ -2406,7 +2425,7 @@ void UI::ThemePage() {
         ImGui::PopItemWidth();
 
         SettingRow("Skill Cooldowns");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         if (UISelect("##skillDisplayMode", &OW::Config::skillDisplayMode,
                      kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition))) {
             OW::Config::SaveConfig(OW::Config::ConfigPath());
@@ -2415,25 +2434,10 @@ void UI::ThemePage() {
     }
     CloseGroupBox();
 
-    UIGroupBox("Overlay Visibility");
-    {
-        const char* labels[] = {
-            "Aiming FOV Circle", "Crosshair", "Radar",
-            "Radar Lines", "Health Packs", "Skill Info"
-        };
-        bool* values[] = {
-            &OW::Config::draw_fov, &OW::Config::crosscircle, &OW::Config::radar,
-            &OW::Config::radarline, &OW::Config::draw_hp_pack, &OW::Config::skillinfo
-        };
-        const float ratios[] = { 1.35f, 1.0f, 1.0f };
-        DrawCheckboxGrid3(labels, values, 2, 24.0f, ratios);
-    }
-    CloseGroupBox();
-
     UIGroupBox("Overlay Colors");
     {
         UIColorEdit("Enemy Box", &OW::Config::EnemyCol);
-        UIColorEdit("FOV/Crosshair", &OW::Config::fovcol);
+        UIColorEdit("FOV Circle", &OW::Config::fovcol);
         UIColorEdit("FOV Alt", &OW::Config::fovcol2);
         UIColorEdit("Visible Fill", &OW::Config::enargb);
         UIColorEdit("Hidden Fill", &OW::Config::invisnenargb);
@@ -2477,7 +2481,7 @@ void UI::MiscPage() {
         }
 
         SettingRow("Active Profile");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         int selectedProfileIndex = FindConfigProfileIndex(profiles, OW::Config::configFileName);
         if (UISelect("##configProfile", &selectedProfileIndex,
                      profileItems.data(), static_cast<int>(profileItems.size()))) {
@@ -2493,7 +2497,7 @@ void UI::MiscPage() {
     UIGroupBox("Menu");
     {
         SettingRow("Toggle Key");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         int toggleKeyIndex = FindMenuToggleKeyIndex(OW::Config::MenuToggleKey);
         OW::Config::MenuToggleKey = kMenuToggleVk[toggleKeyIndex];
         if (UISelect("##menuToggleKey", &toggleKeyIndex, kMenuToggleKeys, IM_ARRAYSIZE(kMenuToggleKeys)))
@@ -2505,7 +2509,7 @@ void UI::MiscPage() {
     UIGroupBox("Diagnostics");
     {
         SettingRow("Input Source");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         int inputSourceUiIndex = InputSourceConfigToUiIndex(OW::Config::inputSource);
         if (UISelect("##inputSource", &inputSourceUiIndex,
                      kInputSource, IM_ARRAYSIZE(kInputSource))) {
@@ -2598,52 +2602,52 @@ void UI::MiscPage() {
         }
 
         SettingRow("Device Type");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         kmboxSaveRequested |= ImGui::Combo("##DeviceType", &OW::Config::kmboxDeviceType,
                                            kKmBoxDeviceTypes, IM_ARRAYSIZE(kKmBoxDeviceTypes));
         ImGui::PopItemWidth();
 
         if (OW::Config::kmboxDeviceType == 0) {
             SettingRow("IP");
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             ImGui::InputText("##Ip", OW::Config::kmboxIp, IM_ARRAYSIZE(OW::Config::kmboxIp));
             kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
 
             SettingRow("Port");
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             ImGui::InputInt("##Port", &OW::Config::kmboxPort, 0, 0);
             kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
 
             SettingRow("MAC");
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             ImGui::InputText("##Mac", OW::Config::kmboxMac, IM_ARRAYSIZE(OW::Config::kmboxMac));
             kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
         } else {
             SettingRow("COM Port");
-            ImGui::PushItemWidth(-1);
+            PushControlWidth();
             ImGui::InputText("##ComPort", OW::Config::kmboxComPort, IM_ARRAYSIZE(OW::Config::kmboxComPort));
             kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
         }
 
         SettingRow("Aim Sensitivity");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         kmboxSaveRequested |= ImGui::SliderFloat("##AimSensitivity", &OW::Config::kmboxAimSensitivity,
                                                  0.1f, 5.0f, "%.2f");
         ImGui::PopItemWidth();
 
         SettingRow("Game Sens (DMA)");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         float displaySens = OW::Config::gameMouseSensitivity;
         ImGui::InputFloat("##GameSensDisplay", &displaySens, 0.0f, 0.0f, "%.2f",
                           ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
         SettingRow("Host DPI (DMA)");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         float detectedHostDpi = OW::Config::hostMouseDpiAutoDetected
             ? OW::Config::detectedHostMouseDpi
             : 0.0f;
@@ -2652,7 +2656,7 @@ void UI::MiscPage() {
         ImGui::PopItemWidth();
 
         SettingRow("Mouse DPI");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         kmboxSaveRequested |= ImGui::InputFloat("##MouseDpi", &OW::Config::hostMouseDpi,
                                                 0.0f, 0.0f, "%.0f");
         ImGui::PopItemWidth();
@@ -2677,7 +2681,7 @@ void UI::MiscPage() {
         kmboxSaveRequested |= UICheckbox("##AutoSyncSens", &OW::Config::autoSyncSensitivity);
 
         SettingRow("Input Delay (ms)");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         kmboxSaveRequested |= ImGui::SliderInt("##InputDelay", &OW::Config::kmboxInputDelayMs,
                                                0, 20, "%d ms");
         ImGui::PopItemWidth();
@@ -2778,31 +2782,31 @@ void UI::MiscPage() {
         int detectedHeight = OW::detectedScreenHeight;
 
         SettingRow("Local Width");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         ImGui::InputInt("##localScreenWidth", &localWidth, 0, 0,
                         ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
         SettingRow("Local Height");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         ImGui::InputInt("##localScreenHeight", &localHeight, 0, 0,
                         ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
         SettingRow("DMA Width");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         ImGui::InputInt("##detectedScreenWidth", &detectedWidth, 0, 0,
                         ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
         SettingRow("DMA Height");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         ImGui::InputInt("##detectedScreenHeight", &detectedHeight, 0, 0,
                         ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
         SettingRow("Fallback Width");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         screenChanged |= ImGui::InputInt("##manualScreenWidth", &OW::Config::manualScreenWidth, 0, 0);
         screenSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         if (OW::Config::manualScreenWidth < 0)
@@ -2810,7 +2814,7 @@ void UI::MiscPage() {
         ImGui::PopItemWidth();
 
         SettingRow("Fallback Height");
-        ImGui::PushItemWidth(-1);
+        PushControlWidth();
         screenChanged |= ImGui::InputInt("##manualScreenHeight", &OW::Config::manualScreenHeight, 0, 0);
         screenSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         if (OW::Config::manualScreenHeight < 0)
@@ -2911,14 +2915,15 @@ void UI::Render() {
         const float actionStartX = headerRect.Max.x - actionW - 12.0f;
 
         const char* title = "UNLEASHED";
-        if (s_boldFont)
-            ImGui::PushFont(s_boldFont);
+        ImFont* titleFont = s_titleFont ? s_titleFont : s_boldFont;
+        if (titleFont)
+            ImGui::PushFont(titleFont);
         const ImVec2 titleSize = ImGui::CalcTextSize(title);
-        if (s_boldFont)
+        if (titleFont)
             ImGui::PopFont();
         const float titleX = brandPos.x + kBrandLogoDrawSize + kBrandTitleGap;
         const float titleY = brandPos.y + (kBrandLogoDrawSize - titleSize.y) * 0.5f;
-        DrawText(dl, s_boldFont,
+        DrawText(dl, titleFont,
                  ImVec2(titleX, titleY),
                  kColText, title);
 

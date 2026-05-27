@@ -230,116 +230,69 @@ namespace Render {
     }
 
     // ---- DrawSeerLikeHealth ----
-    // Stylised health + shield bar inspired by Apex Legend's Seer tactical.
-
-    static void DrawQuadFilled(ImVec2 p1, ImVec2 p2, ImVec2 p3, ImVec2 p4, ImColor color) {
-        ImDrawList* d = DL();
-        if (!d) return;
-        d->AddQuadFilled(ToCanvas(p1), ToCanvas(p2), ToCanvas(p3), ToCanvas(p4), color);
-    }
-
-    static void DrawHexagonFilled(const ImVec2& p1, const ImVec2& p2, const ImVec2& p3,
-                                   const ImVec2& p4, const ImVec2& p5, const ImVec2& p6, ImColor col) {
-        ImDrawList* d = DL();
-        if (!d) return;
-        ImVec2 pts[6] = {
-            ToCanvas(p1), ToCanvas(p2), ToCanvas(p3),
-            ToCanvas(p4), ToCanvas(p5), ToCanvas(p6)
-        };
-    d->AddConvexPolyFilled(pts, 6, col);
-    }
+    // Compact health + shield strip used below the hero avatar.
 
     void DrawSeerLikeHealth(float x, float y, int shield, int maxShield, int hp, int maxHp) {
-        // Dimensions and layout derived from original implementation
-        const int   bgOffset    = 3;
-        const int   barWidth    = 158;
-        const float shieldStep  = 25.0f;
-        const int   shield25    = 30;
-        const int   steps       = 5;
+        ImDrawList* d = DL();
+        if (!d) return;
 
-        int armorType = 1;
-        if      (maxShield == 50)  armorType = 1;
-        else if (maxShield == 75)  armorType = 2;
-        else if (maxShield == 100) armorType = 3;
-        else if (maxShield == 125) armorType = 5;
-
-        // Background hexagon
-        ImVec2 bg1(x - barWidth / 2 - bgOffset, y);
-        ImVec2 bg2(bg1.x - 10, bg1.y - 16);
-        ImVec2 bg3(bg2.x + 5, bg2.y - 7);
-        ImVec2 bg4(bg3.x + barWidth + bgOffset, bg3.y);
-        ImVec2 bg5(bg4.x + 11, bg4.y + 18);
-        ImVec2 bg6(x + barWidth / 2 + bgOffset, y);
-        DrawHexagonFilled(bg1, bg2, bg3, bg4, bg5, bg6, ImColor(0, 0, 0, 120));
-
-        // Health bar (white fill)
-        ImVec2 h1(bg1.x + 3, bg1.y - 4);
-        ImVec2 h2(h1.x - 5, h1.y - 8);
-        float healthRatio = (maxHp > 0) ? (float)hp / maxHp : 0.0f;
-        ImVec2 h3(h2.x + healthRatio * barWidth, h2.y);
-        ImVec2 h4(h1.x + healthRatio * barWidth, h1.y);
-        ImVec2 h3m(h2.x + barWidth, h2.y);
-        ImVec2 h4m(h1.x + barWidth, h1.y);
-        DrawQuadFilled(h1, h2, h3m, h4m, ImColor(10, 10, 30, 60));
-        DrawQuadFilled(h1, h2, h3, h4, ImColor(255, 255, 255));
-
-        // Shield colours
-        ImColor shieldCracked(97, 97, 97);
-        ImColor shieldCol;
-        switch (armorType) {
-            case 2: shieldCol = ImColor(39, 178, 255);  break;  // blue
-            case 3: shieldCol = ImColor(206, 59, 255);  break;  // purple
-            case 4: shieldCol = ImColor(255, 255, 79);  break;  // gold
-            case 5: shieldCol = ImColor(219, 2, 2);     break;  // red
-            default:shieldCol = ImColor(247, 247, 247);  break;  // white
-        }
-
-        // Break shield into 25 HP segments
-        int segs[5] = { 0, 0, 0, 0, 0 };
-        int remaining = shield;
-        for (int i = 0; i < 5 && remaining > 0; ++i) {
-            segs[i] = (remaining > 25) ? 25 : remaining;
-            remaining -= segs[i];
-        }
-
-        // Helper lambda to draw a shield segment
-        auto drawSegment = [&](int idx, bool filled) {
-            if (idx < 0 || idx > 4) return;
-            // Predefined vertex offsets per segment
-            struct SegVerts { float h2x, h2y, s1x, s1y; };
-            static const SegVerts verts[5] = {
-                { 0.0f, 0.0f, 0.0f, 0.0f },
-                { 32.0f, 0.0f, 2.0f, 0.0f },
-                { 64.0f, 0.0f, 2.0f, 0.0f },
-                { 96.0f, 0.0f, 2.0f, 0.0f },
-                { 128.0f, 0.0f, 2.0f, 0.0f },
-            };
-
-            float baseX = h2.x + verts[idx].h2x + (idx > 0 ? verts[idx].s1x : 0.0f);
-            float baseY = h2.y + verts[idx].h2y;
-
-            ImVec2 s1(baseX - 1.0f, baseY - 2.0f);
-            ImVec2 s2(s1.x - 3.0f, s1.y - 5.0f);
-            float sw = (segs[idx] / shieldStep) * shield25;
-            ImVec2 s3(s2.x + sw, s2.y);
-            ImVec2 s4(s1.x + sw, s1.y);
-            ImVec2 s3m(s2.x + shield25, s2.y);
-            ImVec2 s4m(s1.x + shield25, s1.y);
-
-            if (filled) {
-                if (segs[idx] > 0)
-                    DrawQuadFilled(s1, s2, s3, s4, shieldCol);
-            } else {
-                if (segs[idx] < 25)
-                    DrawQuadFilled(s1, s2, s3m, s4m, shieldCracked);
-            }
+        auto positive = [](int value) -> float {
+            return value > 0 ? static_cast<float>(value) : 0.0f;
+        };
+        auto clamp01 = [](float value) -> float {
+            if (!std::isfinite(value)) return 0.0f;
+            if (value < 0.0f) return 0.0f;
+            if (value > 1.0f) return 1.0f;
+            return value;
         };
 
-        // Draw all 5 segments
-        for (int i = 0; i < 5; ++i) {
-            drawSegment(i, true);   // filled portion
-            drawSegment(i, false);  // cracked portion
+        const float healthCurrent = positive(hp);
+        const float healthMax = positive(maxHp);
+        const float shieldCurrent = positive(shield);
+        const float shieldMax = positive(maxShield);
+        const float totalMax = healthMax + shieldMax;
+        if (totalMax <= 0.0f)
+            return;
+
+        constexpr float barWidth = 82.0f;
+        constexpr float barHeight = 6.0f;
+        const float left = x - barWidth * 0.5f;
+        const float top = y;
+        const float sx = ScaleX();
+        const float sy = ScaleY();
+        const float rounding = 2.0f * ScaleUniform();
+        const ImVec2 barMin = ToCanvas(ImVec2(left, top));
+        const ImVec2 barMax(barMin.x + barWidth * sx, barMin.y + barHeight * sy);
+
+        d->AddRectFilled(ImVec2(barMin.x - 1.0f * sx, barMin.y - 1.0f * sy),
+                         ImVec2(barMax.x + 1.0f * sx, barMax.y + 1.0f * sy),
+                         IM_COL32(0x00, 0x00, 0x00, 0xB8), rounding);
+        d->AddRectFilled(barMin, barMax, IM_COL32(0x13, 0x16, 0x1C, 0xE8), rounding);
+
+        float cursor = left;
+        auto drawSegment = [&](float current, ImU32 color) {
+            const float width = barWidth * clamp01(current / totalMax);
+            if (width <= 0.0f)
+                return;
+            const ImVec2 segMin = ToCanvas(ImVec2(cursor, top));
+            const ImVec2 segMax(segMin.x + width * sx, segMin.y + barHeight * sy);
+            d->AddRectFilled(segMin, segMax, color, rounding);
+            cursor += width;
+        };
+
+        drawSegment(healthCurrent, IM_COL32(0xF4, 0xF6, 0xF8, 0xF6));
+        drawSegment(shieldCurrent, IM_COL32(0x49, 0xB6, 0xFF, 0xF0));
+
+        const int tickCount = static_cast<int>(totalMax / 25.0f);
+        const int cappedTicks = tickCount < 12 ? tickCount : 12;
+        for (int tick = 1; tick < cappedTicks; ++tick) {
+            const float tickX = left + barWidth * clamp01((tick * 25.0f) / totalMax);
+            const ImVec2 tickTop = ToCanvas(ImVec2(tickX, top + 1.0f));
+            const ImVec2 tickBottom = ToCanvas(ImVec2(tickX, top + barHeight - 1.0f));
+            d->AddLine(tickTop, tickBottom, IM_COL32(0x00, 0x00, 0x00, 0x70), 1.0f * ScaleUniform());
         }
+
+        d->AddRect(barMin, barMax, IM_COL32(0xFF, 0xFF, 0xFF, 0x28), rounding, 0, 1.0f * ScaleUniform());
     }
 
     // ---- DrawInfo ----

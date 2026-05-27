@@ -2260,11 +2260,11 @@ inline void PlayerInfo() {
         bool drewAny = false;
 
         std::string heroName;
-        if (OW::Config::draw_info || OW::Config::skillinfo)
+        if (OW::Config::draw_info || OW::Config::skillinfo || OW::Config::healthbar2)
             heroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
 
         ID3D11ShaderResourceView* heroIcon = nullptr;
-        if (OW::Config::draw_info && !specialEntity && heroName != "Unknown")
+        if ((OW::Config::draw_info || OW::Config::healthbar2) && !specialEntity && heroName != "Unknown")
             heroIcon = OverlayRenderDetail::FindHeroIcon(heroName);
 
         constexpr float iconSize = 24.0f;
@@ -2285,17 +2285,20 @@ inline void PlayerInfo() {
             drewAny = true;
         }
 
-        if (OW::Config::drawhealth && OW::Config::healthbar) {
+        if (OW::Config::healthbar) {
             Render::DrawHealthBar(Vector2(left - 7.0f, top), bottom - top,
                                   entity.PlayerHealth, entity.PlayerHealthMax, visualOpacity);
             OverlayRenderDetail::DrawStackedResourceBar(entity, left - 13.0f, top, bottom - top, visualOpacity);
             drewAny = true;
         }
 
-        if (OW::Config::drawhealth && OW::Config::healthbar2) {
+        if (OW::Config::healthbar2) {
             int shield = static_cast<int>(entity.MinArmorHealth + entity.MinBarrierHealth);
             int maxShield = static_cast<int>(entity.MaxArmorHealth + entity.MaxBarrierHealth);
-            Render::DrawSeerLikeHealth(centerX, bottom + 26.0f, shield, maxShield,
+            const float compactHealthTop = heroIcon
+                ? (ultimateIndicatorCenter.Y + iconSize * 0.5f + 3.0f)
+                : (top - 9.0f);
+            Render::DrawSeerLikeHealth(centerX, compactHealthTop, shield, maxShield,
                                         static_cast<int>(entity.MinHealth),
                                         static_cast<int>(entity.MaxHealth));
             drewAny = true;

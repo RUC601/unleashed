@@ -177,7 +177,7 @@ namespace OW { namespace Config {
     inline bool draw_info       = true;
     inline bool drawbattletag   = false;
     inline bool drawhealth      = true;
-    inline bool healthbar       = true;
+    inline bool healthbar       = false;
     inline bool healthbar2      = false;
     inline float healthbartextsize = 16.f;
     inline bool dist            = true;

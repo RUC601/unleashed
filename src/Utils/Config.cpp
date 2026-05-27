@@ -846,7 +846,7 @@ namespace OW { namespace Config {
             draw_info = true;             // default: true
             drawbattletag = false;        // default: false
             drawhealth = true;            // default: true
-            healthbar = true;             // default: true
+            healthbar = false;            // legacy vertical healthbar is disabled
             healthbar2 = false;           // default: false
             healthbartextsize = 16.0f;    // default: 16
             dist = true;                  // default: true
@@ -1285,12 +1285,12 @@ namespace OW { namespace Config {
             constexpr const char* section = "Global";
 
             draw_hp_pack = ReadBool(ini, section, "draw_hp_pack", draw_hp_pack);
-            crosscircle = ReadBool(ini, section, "crosscircle", crosscircle);
+            crosscircle = false;
             eyeray = ReadBool(ini, section, "eyeray", eyeray);
             draw_info = ReadBool(ini, section, "draw_info", draw_info);
-            drawbattletag = ReadBool(ini, section, "drawbattletag", drawbattletag);
+            drawbattletag = false;
             drawhealth = ReadBool(ini, section, "drawhealth", drawhealth);
-            healthbar = ReadBool(ini, section, "healthbar", healthbar);
+            healthbar = false;
             healthbar2 = ReadBool(ini, section, "healthbar2", healthbar2);
             healthbartextsize = ReadFixedFloat(ini, section, "healthbartextsize", healthbartextsize);
             dist = ReadBool(ini, section, "dist", dist);
@@ -1304,7 +1304,7 @@ namespace OW { namespace Config {
             radarCorner = ReadInt(ini, section, "radarCorner", radarCorner);
             radar = ReadBool(ini, section, "radar", radar);
             radarline = ReadBool(ini, section, "radarline", radarline);
-            drawline = ReadBool(ini, section, "drawline", drawline);
+            drawline = false;
             draw_fov = ReadBool(ini, section, "draw_fov", draw_fov);
             targetPriority = ReadInt(ini, section, "targetPriority", targetPriority);
             MenuToggleKey = ReadInt(ini, section, "MenuToggleKey", MenuToggleKey);
