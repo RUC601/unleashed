@@ -118,19 +118,21 @@ namespace OW {
             static float accumY = 0.0f;
             static int callCount = 0;
 
-            const float scaledX = delta.X * pitchSensitivity;
-            const float scaledY = delta.Y * sensitivity;
+            // delta.X = pitch (vertical), delta.Y = yaw (horizontal)
+            // pixelX = horizontal mouse movement = yaw, pixelY = vertical = pitch
+            const float scaledYaw   = delta.Y * sensitivity;          // yaw → horizontal
+            const float scaledPitch = delta.X * pitchSensitivity;     // pitch → vertical
             const float accumBeforeX = accumX;
             const float accumBeforeY = accumY;
-            accumX += scaledX;
-            accumY += scaledY;
+            accumX += scaledYaw;
+            accumY += scaledPitch;
             int pixelX = static_cast<int>(accumX);
             int pixelY = static_cast<int>(accumY);
             accumX -= static_cast<float>(pixelX);
             accumY -= static_cast<float>(pixelY);
 
             ++callCount;
-            Diagnostics::Aim("mouse.convert call=%d delta_rad=(%.9f,%.9f) baseSensitivity=%.6f effectiveSensitivity=%.6f autoSync=%d syncScale=%.6f scaled_pixels=(%.9f,%.9f) accum_before=(%.9f,%.9f) pixel=(%d,%d) accum_after=(%.9f,%.9f)",
+            Diagnostics::Aim("mouse.convert call=%d delta_rad_pitch=%.9f delta_rad_yaw=%.9f baseSensitivity=%.6f effectiveSensitivity=%.6f autoSync=%d syncScale=%.6f scaled_pixels=(yaw=%.9f,pitch=%.9f) accum_before=(%.9f,%.9f) pixel=(%d,%d) accum_after=(%.9f,%.9f)",
                 callCount,
                 delta.X,
                 delta.Y,
@@ -138,8 +140,8 @@ namespace OW {
                 sensitivity,
                 Config::autoSyncSensitivity ? 1 : 0,
                 syncScale,
-                scaledX,
-                scaledY,
+                scaledYaw,
+                scaledPitch,
                 accumBeforeX,
                 accumBeforeY,
                 pixelX,
@@ -147,15 +149,15 @@ namespace OW {
                 accumX,
                 accumY);
             if (callCount <= 50 || pixelX != 0 || pixelY != 0) {
-                std::printf("[KMBOX] #%d delta=(%.6f,%.6f) yawSens=%.1f pitchSens=%.1f px=(%d,%d) accum=(%.3f,%.3f)\n",
+                std::printf("[KMBOX] #%d pitch=%.6f yaw=%.6f yawSens=%.1f pitchSens=%.1f px=(%d,%d) accum=(%.3f,%.3f)\n",
                     callCount, delta.X, delta.Y, sensitivity, pitchSensitivity,
                     pixelX, pixelY, accumX, accumY);
             }
 
             if (pixelX == 0 && pixelY == 0) {
-                Diagnostics::Aim("mouse.move early_return reason=zero_pixels scaled_pixels=(%.9f,%.9f) accum_after=(%.9f,%.9f) note=integer_truncation_waiting_for_accumulator",
-                    scaledX,
-                    scaledY,
+                Diagnostics::Aim("mouse.move early_return reason=zero_pixels scaled=(yaw_%.9f,pitch_%.9f) accum_after=(%.9f,%.9f) note=integer_truncation_waiting_for_accumulator",
+                    scaledYaw,
+                    scaledPitch,
                     accumX,
                     accumY);
                 return;
@@ -227,9 +229,9 @@ namespace OW {
         Config::calibrationInProgress = true;
 
         // 2. Read initial view angle from remote memory (pitch, yaw, roll in radians)
-        Vector3 angleBefore = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+        Vector3 angleBefore = SDK->RPM<Vector3>(SDK->g_player_controller);
         Sleep(Config::calibrationStabilityWaitMs);
-        angleBefore = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170); // re-read for stability
+        angleBefore = SDK->RPM<Vector3>(SDK->g_player_controller); // re-read for stability
 
         // 3. Send a known horizontal mouse move (only yaw matters)
         int moveX = Config::calibrationMovePixels;
@@ -243,7 +245,7 @@ namespace OW {
         Sleep(Config::calibrationStabilityWaitMs);
 
         // 5. Read new view angle
-        Vector3 angleAfter = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+        Vector3 angleAfter = SDK->RPM<Vector3>(SDK->g_player_controller);
 
         // 6. Calculate delta in radians (only yaw for horizontal calibration)
         constexpr float kPi = 3.14159265358979323846f;
@@ -264,9 +266,9 @@ namespace OW {
         if (calibrateBothAxes) {
             Sleep(Config::calibrationStabilityWaitMs);
 
-            Vector3 pitchBefore = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+            Vector3 pitchBefore = SDK->RPM<Vector3>(SDK->g_player_controller);
             Sleep(Config::calibrationStabilityWaitMs);
-            pitchBefore = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+            pitchBefore = SDK->RPM<Vector3>(SDK->g_player_controller);
 
             int pitchMoveX = 0;
             int pitchMoveY = Config::calibrationMovePixels;
@@ -277,7 +279,7 @@ namespace OW {
 
             Sleep(Config::calibrationStabilityWaitMs);
 
-            Vector3 pitchAfter = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+            Vector3 pitchAfter = SDK->RPM<Vector3>(SDK->g_player_controller);
 
             float pitchDelta = fabsf(pitchAfter.X - pitchBefore.X);
             if (pitchDelta > kPi) pitchDelta = 2.0f * kPi - pitchDelta;
@@ -696,13 +698,20 @@ namespace OW {
             return IsRuntimeTargetValid(entity, requireVisible);
         }
 
-        inline bool CandidateTeamMatches(const c_entity& entity, bool switchTeam, const c_entity& local) {
-            if (!switchTeam) return entity.Team;
-            return !entity.Team && entity.address != local.address;
+        inline bool TargetTeamMatches(const c_entity& entity, int teamMode, const c_entity& local) {
+            if (entity.address == local.address)
+                return false;
+
+            switch (teamMode) {
+            case 0:  return entity.Team;  // Enemies
+            case 1:  return !entity.Team; // Allies
+            case 2:  return true;         // All
+            default: return entity.Team;
+            }
         }
 
-        inline bool IsSelectableCandidate(const c_entity& entity, bool switchTeam, const c_entity& local) {
-            return IsRuntimeTargetValid(entity, true) && CandidateTeamMatches(entity, switchTeam, local);
+        inline bool IsSelectableCandidate(const c_entity& entity, int teamMode, const c_entity& local) {
+            return IsRuntimeTargetValid(entity, true) && TargetTeamMatches(entity, teamMode, local);
         }
 
         inline Vector3 ConfiguredBonePosition(c_entity& entity, int boneSetting) {
@@ -767,7 +776,7 @@ namespace OW {
                                                         const c_entity& local,
                                                         bool predit,
                                                         bool secondary,
-                                                        bool switchTeam,
+                                                        int teamMode,
                                                         int boneSetting,
                                                         float fov,
                                                         bool useFov360) {
@@ -776,7 +785,7 @@ namespace OW {
 
             for (size_t i = 0; i < snapshot.size(); ++i) {
                 c_entity entity = snapshot[i];
-                if (!IsSelectableCandidate(entity, switchTeam, local)) continue;
+                if (!IsSelectableCandidate(entity, teamMode, local)) continue;
 
                 Vector3 rootPosition = ConfiguredBonePosition(entity, boneSetting);
                 if (IsZeroVector(rootPosition)) continue;
@@ -923,14 +932,8 @@ namespace OW {
             }
             Vector3 Vel, PreditPos, RootPos;
             for (size_t i = 0; i < entities.size(); i++) {
-                bool teamPass = false;
-                if (Config::aimbotTeam == 0) {
-                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
-                } else if (Config::aimbotTeam == 1) {
-                    teamPass = entities[i].Team;
-                } else if (Config::aimbotTeam == 2) {
-                    teamPass = true;
-                }
+                const bool teamPass = TargetingDetail::TargetTeamMatches(
+                    entities[i], Config::aimbotTeam, local_entity);
                 if (entities[i].Alive && teamPass && entities[i].Vis) {
                     ++selectableCandidates;
                     if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
@@ -1092,14 +1095,8 @@ namespace OW {
         if (entities.size() > 0) {
             Vector3 PreditPos, RootPos, Vel;
             for (size_t i = 0; i < entities.size(); i++) {
-                bool teamPass = false;
-                if (Config::aimbotTeam == 0) {
-                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
-                } else if (Config::aimbotTeam == 1) {
-                    teamPass = entities[i].Team;
-                } else if (Config::aimbotTeam == 2) {
-                    teamPass = true;
-                }
+                const bool teamPass = TargetingDetail::TargetTeamMatches(
+                    entities[i], Config::aimbotTeam, local_entity);
                 if (entities[i].Alive && teamPass && entities[i].Vis) {
                     if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                     else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
@@ -1208,14 +1205,8 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 if (entities[i].HeroID == 0x16dd || entities[i].HeroID == 0x16ee) continue;
                 if (entities[i].HeroID == eHero::HERO_GENJI && entities[i].skill2act) continue;
-                bool teamPass = false;
-                if (Config::aimbotTeam == 0) {
-                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
-                } else if (Config::aimbotTeam == 1) {
-                    teamPass = entities[i].Team;
-                } else if (Config::aimbotTeam == 2) {
-                    teamPass = true;
-                }
+                const bool teamPass = TargetingDetail::TargetTeamMatches(
+                    entities[i], Config::aimbotTeam, local_entity);
                 if (entities[i].Alive && teamPass && entities[i].Vis) {
                     Vector3 PreditPos;
                     if (!local_entity.skillcd1)
@@ -1272,14 +1263,8 @@ namespace OW {
         Vector3 PreditPos, RootPos, Vel;
         if (entities.size() > 0) {
             for (size_t i = 0; i < entities.size(); i++) {
-                bool teamPass = false;
-                if (Config::aimbotTeam == 0) {
-                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
-                } else if (Config::aimbotTeam == 1) {
-                    teamPass = entities[i].Team;
-                } else if (Config::aimbotTeam == 2) {
-                    teamPass = true;
-                }
+                const bool teamPass = TargetingDetail::TargetTeamMatches(
+                    entities[i], Config::aimbotTeam, local_entity);
                 if (entities[i].Alive && teamPass && entities[i].Vis) {
                     if (entities[i].Team) {
                         if (Config::Bone2 == 1)      { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
@@ -1396,14 +1381,8 @@ namespace OW {
         if (entities.size() > 0) {
             Vector3 Vel, PreditPos, RootPos;
             for (size_t i = 0; i < entities.size(); i++) {
-                bool teamPass = false;
-                if (Config::aimbotTeam == 0) {
-                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
-                } else if (Config::aimbotTeam == 1) {
-                    teamPass = entities[i].Team;
-                } else if (Config::aimbotTeam == 2) {
-                    teamPass = true;
-                }
+                const bool teamPass = TargetingDetail::TargetTeamMatches(
+                    entities[i], Config::aimbotTeam, local_entity);
                 if (entities[i].Alive && teamPass && entities[i].Vis) {
                     PreditPos = entities[i].head_pos;
                     RootPos = entities[i].head_pos;

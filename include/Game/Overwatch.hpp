@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <unordered_map>
 #include <windows.h>
+#include "Utils/Diagnostics.hpp"
 #include <process.h>
 #include <DirectXMath.h>
 
@@ -83,6 +84,19 @@ namespace OW {
     inline uint64_t viewMatrix_xor_ptr = 0;
     inline Matrix viewMatrix{};
     inline Matrix viewMatrix_xor{};
+    inline std::mutex g_viewMatrixMutex;
+
+    inline void SetViewMatrices(const Matrix& vm, const Matrix& vmx) {
+        std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
+        viewMatrix = vm;
+        viewMatrix_xor = vmx;
+    }
+
+    inline void GetViewMatricesSnapshot(Matrix& vm, Matrix& vmx) {
+        std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
+        vm = viewMatrix;
+        vmx = viewMatrix_xor;
+    }
 
     // ---- Entity containers ----
     inline std::vector<c_entity> entities{};
@@ -233,6 +247,7 @@ inline std::mutex g_mutex;
 // =========================================================================
 
 inline void entity_scan_thread() {
+    Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::EntityScan);
     Diagnostics::Info("Entity scan thread started.");
     size_t lastLoggedScanCount = static_cast<size_t>(-1);
     DWORD lastScanLogTick = 0;
@@ -274,6 +289,7 @@ inline void entity_scan_thread() {
 // =========================================================================
 
 inline void entity_thread() {
+    Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::EntityDecrypt);
     constexpr DWORD kEntityExchangeIntervalMs = 16;
     DWORD entitytime = 0;
     Vector3 lastpos{};
@@ -614,7 +630,7 @@ inline void entity_thread() {
                 cache.rotation   = OW::DecryptComponent(ComponentParent, OW::TYPE_ROTATION, componentSnapshot);
                 cache.skill      = OW::DecryptComponent(ComponentParent, OW::TYPE_SKILL, componentSnapshot);
                 cache.visibility = OW::DecryptComponent(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
-                cache.angle      = OW::DecryptComponent(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
+                cache.angle      = OW::DecryptComponent(LinkParent, OW::TYPE_VIEWANGLE, linkSnapshot);
                 cache.enemyAngle = OW::DecryptComponent(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
                 cacheIt = componentBaseCache.insert_or_assign(ComponentParent, cache).first;
             }
@@ -1264,6 +1280,7 @@ inline void entity_thread() {
 // =========================================================================
 
 inline void viewmatrix_thread() {
+    Diagnostics::ScopedDmaCallsite::Push(Diagnostics::DmaCallsite::ViewMatrix);
     DWORD lastViewMatrixLogTick = 0;
     bool hasLastViewMatrixStatus = false;
     bool lastViewMatrixValid = false;
@@ -1324,16 +1341,19 @@ inline void viewmatrix_thread() {
 
             const bool renderViewProjectionValid = OW::IsMatrixNonIdentity(renderViewProjection);
             const bool cameraViewValid = OW::IsMatrixNonIdentity(cameraViewMatrix);
-            OW::viewMatrix = renderViewProjection;
-            if (cameraViewValid) {
-                OW::viewMatrix_xor = cameraViewMatrix;
-            } else if (renderViewProjectionValid) {
-                // UC p322-p323 samples set viewMatrix_xor_ptr to the same +0xC0 matrix.
-                // Keep that as a last-resort camera source if +0x140 is not populated.
-                viewMatrix_xor_ptr = viewMatrixPtr;
-                OW::viewMatrix_xor = renderViewProjection;
-            } else {
-                OW::viewMatrix_xor = cameraViewMatrix;
+            {
+                OW::g_viewMatrixMutex.lock();
+                OW::viewMatrix = renderViewProjection;
+                if (cameraViewValid) {
+                    OW::viewMatrix_xor = cameraViewMatrix;
+                } else if (renderViewProjectionValid) {
+                    if (!OW::IsMatrixNonIdentity(OW::viewMatrix_xor)) {
+                        OW::viewMatrix_xor = cameraViewMatrix;
+                    }
+                } else {
+                    OW::viewMatrix_xor = cameraViewMatrix;
+                }
+                OW::g_viewMatrixMutex.unlock();
             }
 
             const bool viewMatrixValid =
@@ -1350,6 +1370,7 @@ inline void viewmatrix_thread() {
             Sleep(5);
         }
     } __except (1) {}
+    Diagnostics::ScopedDmaCallsite::Pop();
 }
 
 // =========================================================================
@@ -1530,20 +1551,21 @@ namespace OverlayRenderDetail {
         DWORD tick = 0;
     };
 
-    inline bool TryProjectPoint(const Vector3& world, Vector2& screen) {
+    inline bool TryProjectPoint(const Vector3& world, Vector2& screen, const OW::Matrix* vm = nullptr) {
         if (!IsFiniteVector(world) || !IsNonZeroVector(world))
             return false;
-        if (!OW::viewMatrix.WorldToScreen(world, &screen, Vector2(OW::WX, OW::WY)))
+        const OW::Matrix& proj = vm ? *vm : OW::viewMatrix;
+        if (!proj.WorldToScreen(world, &screen, Vector2(OW::WX, OW::WY)))
             return false;
         return IsReasonableProjectedPoint(screen);
     }
 
-    inline bool TryBuildHeadOffsetBounds(const OW::c_entity& entity, ProjectedEntityBounds& bounds) {
+    inline bool TryBuildHeadOffsetBounds(const OW::c_entity& entity, ProjectedEntityBounds& bounds, const OW::Matrix* vm = nullptr) {
         Vector2 low{}, high{};
         const Vector3 head = entity.head_pos;
-        if (!TryProjectPoint(Vector3(head.X, head.Y - 1.5f, head.Z), low))
+        if (!TryProjectPoint(Vector3(head.X, head.Y - 1.5f, head.Z), low, vm))
             return false;
-        if (!TryProjectPoint(Vector3(head.X, head.Y + 1.0f, head.Z), high))
+        if (!TryProjectPoint(Vector3(head.X, head.Y + 1.0f, head.Z), high, vm))
             return false;
 
         const float height = std::fabs(low.Y - high.Y);
@@ -1560,7 +1582,7 @@ namespace OverlayRenderDetail {
         return true;
     }
 
-    inline bool TryBuildProjectedBounds(const OW::c_entity& entity, ProjectedEntityBounds& bounds) {
+    inline bool TryBuildProjectedBounds(const OW::c_entity& entity, ProjectedEntityBounds& bounds, const OW::Matrix* vm = nullptr) {
         float minX = 0.0f;
         float maxX = 0.0f;
         float minY = 0.0f;
@@ -1582,7 +1604,7 @@ namespace OverlayRenderDetail {
 
         auto includeWorldPoint = [&](const Vector3& world) {
             Vector2 screen{};
-            if (TryProjectPoint(world, screen))
+            if (TryProjectPoint(world, screen, vm))
                 includeScreenPoint(screen);
         };
 
@@ -1598,16 +1620,16 @@ namespace OverlayRenderDetail {
             includeWorldPoint(entity.cached_bot_chest_bone);
 
         if (projectedCount < 3)
-            return TryBuildHeadOffsetBounds(entity, bounds);
+            return TryBuildHeadOffsetBounds(entity, bounds, vm);
 
         float height = maxY - minY;
         if (height <= 8.0f || !std::isfinite(height))
-            return TryBuildHeadOffsetBounds(entity, bounds);
+            return TryBuildHeadOffsetBounds(entity, bounds, vm);
 
         Vector2 headScreen{};
         Vector2 posScreen{};
-        const bool hasHead = TryProjectPoint(entity.head_pos, headScreen);
-        const bool hasPos = TryProjectPoint(entity.pos, posScreen);
+        const bool hasHead = TryProjectPoint(entity.head_pos, headScreen, vm);
+        const bool hasPos = TryProjectPoint(entity.pos, posScreen, vm);
         float centerX = (minX + maxX) * 0.5f;
         if (hasHead && hasPos)
             centerX = (headScreen.X + posScreen.X) * 0.5f;
@@ -1686,9 +1708,13 @@ namespace OverlayRenderDetail {
         return entity.HeroID == 0x16dd || entity.HeroID == 0x16ee || entity.HeroID == 0x16bb;
     }
 
+    inline bool IsSelectedEnemyTarget(const OW::c_entity& entity, size_t index) {
+        return entity.Team && OW::Config::Targetenemyi >= 0 &&
+               index == static_cast<size_t>(OW::Config::Targetenemyi);
+    }
+
     inline ImVec4 EntityBaseColor(const OW::c_entity& entity, size_t index) {
-        if (entity.Team && OW::Config::Targetenemyi >= 0 &&
-            index == static_cast<size_t>(OW::Config::Targetenemyi)) {
+        if (IsSelectedEnemyTarget(entity, index)) {
             return OW::Config::targetargb;
         }
         if (entity.Team && !entity.Vis)
@@ -1727,6 +1753,8 @@ namespace OverlayRenderDetail {
     }
 
     inline ImU32 EntityBoxColor(const OW::c_entity& entity, size_t index, float opacity) {
+        if (IsSelectedEnemyTarget(entity, index))
+            return EntityColor(entity, index, opacity);
         if (OW::Config::drawhealth)
             return ToImU32(ApplyVisualState(HealthGradientColor(entity), entity, opacity));
         return EntityColor(entity, index, opacity);
@@ -2134,6 +2162,9 @@ inline void PlayerInfo() {
     static std::unordered_map<uint64_t, OverlayRenderDetail::ProjectedBoundsState> projectedBoundsStates;
     const DWORD renderTick = GetTickCount();
 
+    OW::Matrix renderViewMatrix{}, renderViewMatrixXor{};
+    OW::GetViewMatricesSnapshot(renderViewMatrix, renderViewMatrixXor);
+
     auto publishStats = [&]() {
         Diagnostics::SetPlayerInfoStats(renderStats);
         if (!OW::PipelineDebugEnabled())
@@ -2186,9 +2217,8 @@ inline void PlayerInfo() {
         }
 
         Vector3 Vec3 = entity.head_pos;
-        float dist = Vector3(OW::viewMatrix_xor.get_location().x,
-                             OW::viewMatrix_xor.get_location().y,
-                             OW::viewMatrix_xor.get_location().z).DistTo(Vec3);
+        const auto camLoc = renderViewMatrixXor.get_location();
+        float dist = Vector3(camLoc.x, camLoc.y, camLoc.z).DistTo(Vec3);
         if (!OverlayRenderDetail::ShouldRenderAtDistance(dist)) {
             renderStats.skippedDistance++;
             continue;
@@ -2201,7 +2231,7 @@ inline void PlayerInfo() {
         }
 
         OverlayRenderDetail::ProjectedEntityBounds bounds{};
-        if (!OverlayRenderDetail::TryBuildProjectedBounds(entity, bounds)) {
+        if (!OverlayRenderDetail::TryBuildProjectedBounds(entity, bounds, &renderViewMatrix)) {
             renderStats.skippedWorldToScreen++;
             continue;
         }
@@ -2811,6 +2841,89 @@ namespace AimbotDetail {
         }
     }
 
+    inline bool IsKmBoxMonitorAvailable() {
+        return OW::Config::kmboxEnabled &&
+            OW::Config::kmboxDeviceType == 0 &&
+            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load();
+    }
+
+    inline bool ReadKmBoxMonitorVk(int vk, int keySetting) {
+        bool pressed = false;
+        if (IsMouseActivationKey(vk))
+            pressed = kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
+        else
+            pressed = kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
+
+        LogAimKeyState(keySetting, vk, 1, pressed);
+        return pressed;
+    }
+
+    inline bool ReadDmaKeyStateVk(int vk, int keySetting, bool strictDmaOnly) {
+        const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
+        if (!KeyState::initialized.load() || keyStateAddress == 0) {
+            LogAimKeyState(keySetting, vk, 2, false);
+            if (strictDmaOnly) {
+                static DWORD lastDmaUnavailableWarnTick = 0;
+                const DWORD now = GetTickCount();
+                if (lastDmaUnavailableWarnTick == 0 || now - lastDmaUnavailableWarnTick >= 1000) {
+                    Diagnostics::Aim("hotkey early_return reason=dma_keystate_unavailable keySetting=%d vk=0x%X gafAsyncKeyStateOffset=0x%llX resolvedAddress=0x%llX size=%zu build=%lu session=%lu readPid=%d",
+                        keySetting,
+                        vk,
+                        static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset),
+                        static_cast<unsigned long long>(keyStateAddress),
+                        KeyState::keyStateByteCount.load(),
+                        static_cast<unsigned long>(KeyState::detectedBuild.load()),
+                        static_cast<unsigned long>(KeyState::resolvedSessionId.load()),
+                        KeyState::keyStateReadPid.load());
+                    lastDmaUnavailableWarnTick = now;
+                }
+            }
+            return false;
+        }
+
+        const bool pressed = KeyState::IsKeyDown(static_cast<uint32_t>(vk));
+        LogAimKeyState(keySetting, vk, 2, pressed);
+        return pressed;
+    }
+
+    inline bool ReadLocalAsyncKeyStateVk(int vk, int keySetting) {
+        const bool pressed = (GetAsyncKeyState(vk) & 0x8000) != 0;
+        LogAimKeyState(keySetting, vk, 0, pressed);
+        return pressed;
+    }
+
+    inline bool IsInputVkDown(int vk, int keySetting = -1) {
+        if (vk <= 0) {
+            LogAimKeyState(keySetting, vk, 0, false);
+            return false;
+        }
+
+        if (OW::Config::inputSource == 1) {
+            if (!IsKmBoxMonitorAvailable()) {
+                LogAimKeyState(keySetting, vk, 1, false);
+                return false;
+            }
+            return ReadKmBoxMonitorVk(vk, keySetting);
+        }
+
+        if (OW::Config::inputSource == 3)
+            return ReadDmaKeyStateVk(vk, keySetting, true);
+
+        if (OW::Config::inputSource == 2)
+            return ReadLocalAsyncKeyStateVk(vk, keySetting);
+
+        // Auto is only a fallback mode. If KMBox monitor is running, trust it
+        // exclusively so a released KMBox key cannot be overridden by local/DMA.
+        if (IsKmBoxMonitorAvailable())
+            return ReadKmBoxMonitorVk(vk, keySetting);
+
+        const bool dmaPressed = ReadDmaKeyStateVk(vk, keySetting, false);
+        if (dmaPressed)
+            return true;
+
+        return ReadLocalAsyncKeyStateVk(vk, keySetting);
+    }
+
     inline bool IsConfiguredAimKeyPressed(int keySetting) {
         const int vk = OW::get_bind_id(keySetting);
         if (vk <= 0) {
@@ -2824,96 +2937,7 @@ namespace AimbotDetail {
             return false;
         }
 
-        auto readDmaKeyState = [&](bool strictDmaOnly) {
-            const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
-            if (!KeyState::initialized.load() || keyStateAddress == 0) {
-                LogAimKeyState(keySetting, vk, 2, false);
-                if (strictDmaOnly) {
-                    static DWORD lastDmaUnavailableWarnTick = 0;
-                    const DWORD now = GetTickCount();
-                    if (lastDmaUnavailableWarnTick == 0 || now - lastDmaUnavailableWarnTick >= 1000) {
-                        Diagnostics::Aim("hotkey early_return reason=dma_keystate_unavailable keySetting=%d vk=0x%X gafAsyncKeyStateOffset=0x%llX resolvedAddress=0x%llX size=%zu build=%lu session=%lu readPid=%d",
-                            keySetting,
-                            vk,
-                            static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset),
-                            static_cast<unsigned long long>(keyStateAddress),
-                            KeyState::keyStateByteCount.load(),
-                            static_cast<unsigned long>(KeyState::detectedBuild.load()),
-                            static_cast<unsigned long>(KeyState::resolvedSessionId.load()),
-                            KeyState::keyStateReadPid.load());
-                        lastDmaUnavailableWarnTick = now;
-                    }
-                }
-                return false;
-            }
-
-            if (IsMouseActivationKey(vk)) {
-                LogAimKeyState(keySetting, vk, 2, false);
-                if (strictDmaOnly) {
-                    static DWORD lastDmaMouseWarnTick = 0;
-                    const DWORD now = GetTickCount();
-                    if (lastDmaMouseWarnTick == 0 || now - lastDmaMouseWarnTick >= 1000) {
-                        Diagnostics::Aim("hotkey early_return reason=mouse_button_not_supported_via_dma_keystate keySetting=%d vk=0x%X", keySetting, vk);
-                        lastDmaMouseWarnTick = now;
-                    }
-                }
-                return false;
-            }
-
-            bool pressed = KeyState::IsKeyDown(static_cast<uint32_t>(vk));
-            LogAimKeyState(keySetting, vk, 2, pressed);
-            return pressed;
-        };
-
-        const bool kmBoxMonitorAvailable =
-            OW::Config::kmboxEnabled &&
-            OW::Config::kmboxDeviceType == 0 &&
-            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load();
-
-        auto readKmBoxMonitor = [&]() {
-            bool pressed = false;
-            if (IsMouseActivationKey(vk))
-                pressed = kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
-            else
-                pressed = kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
-
-            LogAimKeyState(keySetting, vk, 1, pressed);
-            return pressed;
-        };
-
-        auto readLocalAsyncKeyState = [&]() {
-            const bool pressed = (GetAsyncKeyState(vk) & 0x8000) != 0;
-            LogAimKeyState(keySetting, vk, 0, pressed);
-            return pressed;
-        };
-
-        if (OW::Config::inputSource == 3)
-            return readDmaKeyState(true);
-
-        if (OW::Config::inputSource == 1) {
-            if (!kmBoxMonitorAvailable) {
-                LogAimKeyState(keySetting, vk, 1, false);
-                return false;
-            }
-            return readKmBoxMonitor();
-        }
-
-        if (OW::Config::inputSource == 2)
-            return readLocalAsyncKeyState();
-
-        if (!IsMouseActivationKey(vk)) {
-            const bool dmaPressed = readDmaKeyState(false);
-            if (dmaPressed)
-                return true;
-        }
-
-        if (kmBoxMonitorAvailable) {
-            const bool pressed = readKmBoxMonitor();
-            if (pressed)
-                return true;
-        }
-
-        return readLocalAsyncKeyState();
+        return IsInputVkDown(vk, keySetting);
     }
 
     inline bool IsAimKeyPressed() {
@@ -3009,9 +3033,50 @@ namespace AimbotDetail {
 
     inline AimData BuildAimData(const Vector3& world_target, bool accelerated, float smooth, float acceleration) {
         AimData data{};
-        data.local_angle = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
-        const XMFLOAT3 cameraPos = OW::viewMatrix_xor.get_location();
-        const XMFLOAT3 cameraForward = OW::viewMatrix_xor.get_rotation();
+        const uint64_t viewAngleBase = SDK->g_player_controller;
+        if (!viewAngleBase) {
+            Diagnostics::Aim("angle.missing viewAngleBase");
+            return data;
+        }
+
+        data.local_angle = SDK->RPM<Vector3>(viewAngleBase);
+
+        uint8_t rawData[32]{};
+        if (SDK->read_range(viewAngleBase, rawData, sizeof(rawData))) {
+            char hexBuf[96]{};
+            int off = 0;
+            for (int i = 0; i < 32 && off < static_cast<int>(sizeof(hexBuf)) - 4; i++) {
+                off += std::snprintf(hexBuf + off, sizeof(hexBuf) - off, "%02X ", rawData[i]);
+            }
+            Diagnostics::Aim("angle.raw viewAngleBase=0x%llX hex_32=%s",
+                static_cast<unsigned long long>(viewAngleBase), hexBuf);
+        }
+
+        Diagnostics::Aim("angle.read viewAngleBase=0x%llX raw_rad=(%.6f,%.6f,%.6f) deg=(%.2f,%.2f,%.2f)",
+            static_cast<unsigned long long>(viewAngleBase),
+            data.local_angle.X,
+            data.local_angle.Y,
+            data.local_angle.Z,
+            RAD2DEG(data.local_angle.X),
+            RAD2DEG(data.local_angle.Y),
+            RAD2DEG(data.local_angle.Z));
+        OW::Matrix aimViewMatrix{}, aimViewMatrixXor{};
+        OW::GetViewMatricesSnapshot(aimViewMatrix, aimViewMatrixXor);
+        const XMFLOAT3 cameraPos = aimViewMatrixXor.get_location();
+        const XMFLOAT3 cameraForward = aimViewMatrixXor.get_rotation();
+
+        // Guard: camera not yet resolved (identity or zero translation).
+        // Computing angles from a zero camera produces bogus aim direction.
+        {
+            const float camLen = sqrtf(cameraPos.x * cameraPos.x +
+                                       cameraPos.y * cameraPos.y +
+                                       cameraPos.z * cameraPos.z);
+            if (camLen < 1.0f) {
+                Diagnostics::Aim("angle.early_return reason=camera_position_zero_or_near_origin cam=(%.3f,%.3f,%.3f) len=%.3f",
+                    cameraPos.x, cameraPos.y, cameraPos.z, camLen);
+                return data;
+            }
+        }
         float dx = world_target.X - cameraPos.x;
         float dy = world_target.Y - cameraPos.y;
         float dz = world_target.Z - cameraPos.z;
@@ -3020,6 +3085,33 @@ namespace AimbotDetail {
         float pitch = -atan2f(dy, horizontalDist);
         float yaw = atan2f(dx, dz);
         data.target_angle = Vector3(pitch, yaw, 0.0f);
+
+        // Yaw wrapping: crosshair delta must take the shortest arc across  PI.
+        {
+            float yawDelta = data.target_angle.Y - data.local_angle.Y;
+            const float rawYawDelta = yawDelta;
+            while (yawDelta >  M_PI_F) yawDelta -= 2.0f * M_PI_F;
+            while (yawDelta < -M_PI_F) yawDelta += 2.0f * M_PI_F;
+            data.target_angle.Y = data.local_angle.Y + yawDelta;
+            Diagnostics::Aim("angle.wrap raw_yaw_delta=%.9f wrapped_yaw_delta=%.9f local_yaw=%.9f raw_target_yaw=%.9f wrapped_target_yaw=%.9f",
+                rawYawDelta,
+                yawDelta,
+                data.local_angle.Y,
+                yaw,
+                data.target_angle.Y);
+        }
+
+        // Diagnostic: check if local_angle is a direction vector (|v|  1.0) or Euler rad
+        {
+            const float localMag = sqrtf(data.local_angle.X * data.local_angle.X +
+                                         data.local_angle.Y * data.local_angle.Y +
+                                         data.local_angle.Z * data.local_angle.Z);
+            Diagnostics::Aim("angle.format_check local_magnitude=%.6f (expected ~1.0=dir_vec, other=euler_rad) local_raw=(%.6f,%.6f,%.6f)",
+                localMag,
+                data.local_angle.X,
+                data.local_angle.Y,
+                data.local_angle.Z);
+        }
         Diagnostics::Aim("angle.compute world_target=(%.9f,%.9f,%.9f) camera=(%.9f,%.9f,%.9f) direction=(%.9f,%.9f,%.9f) distance=%.9f horizontal=%.9f camera_forward=(%.9f,%.9f,%.9f) local_angle=(%.9f,%.9f,%.9f) target_angle_rad=(%.9f,%.9f,%.9f) local_angle_deg=(%.6f,%.6f,%.6f) target_angle_deg=(%.6f,%.6f,%.6f)",
             world_target.X,
             world_target.Y,
@@ -3187,7 +3279,7 @@ namespace AimbotDetail {
 
         if ((local.HeroID == OW::eHero::HERO_ANA ||
              local.HeroID == OW::eHero::HERO_WIDOWMAKER ||
-             local.HeroID == OW::eHero::HERO_ASHE) && GetAsyncKeyState(0x2)) {
+             local.HeroID == OW::eHero::HERO_ASHE) && IsInputVkDown(VK_RBUTTON)) {
             OW::SetKeyscopeHold(0x1, 30);
         } else {
             ClickMouseButton(0);
@@ -3388,7 +3480,7 @@ namespace AimbotDetail {
         while (IsAimKeyPressed() &&
                !OW::Config::shooted &&
                !OW::Config::reloading) {
-            if (LocalEntity().HeroID == OW::eHero::HERO_WIDOWMAKER && !GetAsyncKeyState(0x2)) {
+            if (LocalEntity().HeroID == OW::eHero::HERO_WIDOWMAKER && !IsInputVkDown(VK_RBUTTON)) {
                 Diagnostics::Aim("flick no_move reason=widow_scope_not_held");
                 Sleep(1);
                 continue;
@@ -3482,7 +3574,7 @@ namespace AimbotDetail {
 
     inline void RunGenjiBlade() {
         c_entity local = LocalEntity();
-        if (!OW::Config::GenjiBlade || !GetAsyncKeyState(0x51) ||
+        if (!OW::Config::GenjiBlade || !IsInputVkDown('Q') ||
             local.HeroID != OW::eHero::HERO_GENJI ||
             local.ultimate != 100.f) {
             return;
@@ -3753,6 +3845,7 @@ namespace AimbotDetail {
 }
 
 inline void aimbot_thread() {
+    Diagnostics::ScopedDmaCallsite::Push(Diagnostics::DmaCallsite::Aimbot);
     __try {
         AimbotDetail::RuntimeState state{};
         static float origin_sens = 0.f;
@@ -3780,6 +3873,7 @@ inline void aimbot_thread() {
             Sleep(2);
         }
     } __except (1) {}
+    Diagnostics::ScopedDmaCallsite::Pop();
 }
 
 // =========================================================================
@@ -4125,6 +4219,7 @@ inline void configsavenloadthread() {
 // =========================================================================
 
 inline void looprpmthread() {
+    Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::Unknown);
     while (1) {
         Sleep(10);
     }

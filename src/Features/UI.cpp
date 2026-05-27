@@ -4,6 +4,10 @@
 
 #include "Features/UI.hpp"
 #include "Kmbox/KmBoxConfig.h"
+#include "Kmbox/KmBoxNetManager.h"
+#include "Kmbox/KmboxB.h"
+#include "Kmbox/KmboxMoveTest.h"
+#include "Kmbox/KmboxTimerResolution.h"
 #include "Utils/Config.hpp"
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
@@ -261,6 +265,60 @@ namespace {
             : TestSerialKmboxConnection();
     }
 
+    KmboxConnectionTestResult InitializeKmboxFromCurrentConfig()
+    {
+        if (!OW::Config::kmboxEnabled)
+            return { false, "Disabled" };
+
+        kmbox::EnsureTimerResolution();
+
+        if (OW::Config::kmboxDeviceType == 0) {
+            if (OW::Config::kmboxPort <= 0 || OW::Config::kmboxPort > 65535)
+                return { false, "Invalid port" };
+
+            const int status = kmbox::KmBoxMgr.InitDevice(
+                OW::Config::kmboxIp,
+                static_cast<WORD>(OW::Config::kmboxPort),
+                OW::Config::kmboxMac);
+            if (status != success || !kmbox::KmBoxMgr.IsConnected()) {
+                char message[96] = {};
+                std::snprintf(message, sizeof(message), "Init failed: %d", status);
+                Diagnostics::Error("KMBox UI enable network init failed. status=%d state=%s",
+                    status, ToString(kmbox::KmBoxMgr.GetConnectionState()));
+                return { false, message };
+            }
+
+            const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxPort + 1);
+            const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
+            if (monitorStatus != success) {
+                char message[96] = {};
+                std::snprintf(message, sizeof(message), "Init OK, monitor failed: %d", monitorStatus);
+                Diagnostics::Warn("KMBox UI enable network init succeeded, monitor failed. port=%u status=%d",
+                    monitorPort, monitorStatus);
+                return { true, message };
+            }
+
+            Diagnostics::Info("KMBox UI enable network init succeeded. ip=%s port=%d monitor=%u",
+                OW::Config::kmboxIp, OW::Config::kmboxPort, monitorPort);
+            Diagnostics::Aim("kmbox.ui_enable network success ip=%s port=%d monitor=%u",
+                OW::Config::kmboxIp, OW::Config::kmboxPort, monitorPort);
+            return { true, "Init OK" };
+        }
+
+        const int status = kmbox::kmBoxBMgr.init(OW::Config::kmboxComPort);
+        if (status != success || !kmbox::kmBoxBMgr.IsConnected()) {
+            char message[96] = {};
+            std::snprintf(message, sizeof(message), "Init failed: %d", status);
+            Diagnostics::Error("KMBox UI enable serial init failed. status=%d state=%s",
+                status, ToString(kmbox::kmBoxBMgr.GetConnectionState()));
+            return { false, message };
+        }
+
+        Diagnostics::Info("KMBox UI enable serial init succeeded. port=%s", OW::Config::kmboxComPort);
+        Diagnostics::Aim("kmbox.ui_enable serial success port=%s", OW::Config::kmboxComPort);
+        return { true, "Init OK" };
+    }
+
     void CopyConfigProfileName(char (&destination)[kConfigProfileNameBufferSize], const std::string& name)
     {
         std::snprintf(destination, kConfigProfileNameBufferSize, "%s", name.c_str());
@@ -381,17 +439,25 @@ static const HeroOption kHeroOptions[] = {
     { "Illari", OW::eHero::HERO_ILLARI, "Support" },
     { "Juno", OW::eHero::HERO_JUNO, "Support" },
     { "Wuyang", OW::eHero::HERO_WUYANG, "Support" },
+    { "JetpackCat", OW::eHero::HERO_JETPACKCAT, "Support" },
 };
 static const char* kAimActivationKey[] = {
     "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt",
     "V Key", "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock"
 };
 static const char* kInputSource[] = {
-    "Auto (DMA > KMBox > Local)", "DMA KeyState", "KMBox Monitor", "Local GetAsyncKeyState"
+    "KMBox Monitor (Primary)", "Auto (KMBox > DMA > Local)",
+    "DMA KeyState (Diagnostic)", "Local GetAsyncKeyState (Diagnostic)"
 };
-static constexpr int kInputSourceConfigOrder[] = { 0, 3, 1, 2 };
+static constexpr int kInputSourceConfigOrder[] = { 1, 0, 3, 2 };
 static const char* kAttack[]       = { "Shoot", "Ability 1", "Ability 2" };
-static const char* kBone[]         = { "Head", "Neck", "Chest" };
+static const char* kBonePreference[] = { "Head", "Neck", "Chest", "Closest" };
+static constexpr int kBonePreferenceAimBones[] = {
+    OW::Config::kAimBoneHead,
+    OW::Config::kAimBoneNeck,
+    OW::Config::kAimBoneChest
+};
+static constexpr int kBonePreferenceClosestIndex = 3;
 static const char* kAimMode[]      = { "Tracking", "Flick" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
@@ -455,11 +521,11 @@ static void DrawAimHotkeyProbe() {
 
     ImGui::Text("Hotkey Probe: %s  vk=0x%02X", keyLabel, vk > 0 ? vk : 0);
     if (vk <= 0) {
+        DrawProbeState("KMBox Monitor", false, false);
+        ImGui::SameLine();
+        DrawProbeState("DMA KeyState", false, false);
+        ImGui::SameLine();
         DrawProbeState("Local", false, false);
-        ImGui::SameLine();
-        DrawProbeState("KMBox", false, false);
-        ImGui::SameLine();
-        DrawProbeState("DMA", false, false);
         return;
     }
 
@@ -480,11 +546,11 @@ static void DrawAimHotkeyProbe() {
         KeyState::gafAsyncKeyStateAddr.load() != 0;
     const bool dmaDown = dmaAvailable && KeyState::IsKeyDown(vk);
 
+    DrawProbeState("KMBox Monitor", kmboxAvailable, kmboxDown);
+    ImGui::SameLine();
+    DrawProbeState("DMA KeyState", dmaAvailable, dmaDown);
+    ImGui::SameLine();
     DrawProbeState("Local", true, localDown);
-    ImGui::SameLine();
-    DrawProbeState("KMBox", kmboxAvailable, kmboxDown);
-    ImGui::SameLine();
-    DrawProbeState("DMA", dmaAvailable, dmaDown);
 }
 
 static int ClampHeroPresetSlotIndex(int slotIndex) {
@@ -789,9 +855,32 @@ static bool LoadSelectedTypePreset() {
     return true;
 }
 
-static const char* PresetBoneName(int bone) {
-    bone = ImClamp(bone, 0, IM_ARRAYSIZE(kBone) - 1);
-    return kBone[bone];
+static int BonePreferenceIndexFromPreset(const OW::Config::HeroPreset& preset) {
+    if (preset.autoBone)
+        return kBonePreferenceClosestIndex;
+
+    const int normalizedAimBone = OW::Config::NormalizeAimBone(preset.bone);
+    for (int i = 0; i < IM_ARRAYSIZE(kBonePreferenceAimBones); ++i) {
+        if (kBonePreferenceAimBones[i] == normalizedAimBone)
+            return i;
+    }
+    return 0;
+}
+
+static void ApplyBonePreferenceToPreset(int preferenceIndex, OW::Config::HeroPreset& preset) {
+    if (preferenceIndex == kBonePreferenceClosestIndex) {
+        preset.autoBone = true;
+        preset.bone = OW::Config::NormalizeAimBone(preset.bone);
+        return;
+    }
+
+    preferenceIndex = ImClamp(preferenceIndex, 0, IM_ARRAYSIZE(kBonePreferenceAimBones) - 1);
+    preset.autoBone = false;
+    preset.bone = kBonePreferenceAimBones[preferenceIndex];
+}
+
+static const char* PresetBoneName(const OW::Config::HeroPreset& preset) {
+    return preset.autoBone ? "Closest" : OW::Config::AimBoneName(preset.bone);
 }
 
 static const char* PresetAimModeName(int mode) {
@@ -815,7 +904,7 @@ static void DrawPresetSummary(const HeroOption& hero,
                   "%s - %s | Method %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f | %s",
                   hero.label, scope, PresetAimMethodName(OW::Config::aimMethod),
                   preset.fov, preset.smooth,
-                  PresetBoneName(preset.bone), preset.hitbox,
+                  PresetBoneName(preset), preset.hitbox,
                   PresetAimModeName(preset.aimMode));
     ImGui::TextUnformatted(summary);
 }
@@ -2068,10 +2157,15 @@ void UI::AimbotPage() {
             SettingRow("Keep Firing", kAimbotLeftLabelWidth);
             UICheckbox("##aimKeepFire", &OW::Config::aimbotKeepFiring);
 
-            // Bone Preference  (maps to OW::Config::TargetBone)
+            // Bone Preference combines fixed aim bones and the dynamic closest-bone mode.
             SettingRow("Bone Preference", kAimbotLeftLabelWidth);
             ImGui::PushItemWidth(-1);
-            presetChanged |= UISelect("##aimBone", &activePreset.bone, kBone, IM_ARRAYSIZE(kBone));
+            activePreset.bone = OW::Config::NormalizeAimBone(activePreset.bone);
+            int bonePreferenceIndex = BonePreferenceIndexFromPreset(activePreset);
+            if (UISelect("##aimBone", &bonePreferenceIndex, kBonePreference, IM_ARRAYSIZE(kBonePreference))) {
+                ApplyBonePreferenceToPreset(bonePreferenceIndex, activePreset);
+                presetChanged = true;
+            }
             ImGui::PopItemWidth();
 
             // Prediction
@@ -2420,8 +2514,8 @@ void UI::MiscPage() {
         ImGui::PopItemWidth();
 
         if (OW::Config::inputSource == 3) {
-            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
-                "DMA KeyState requires keyboard aim key (not mouse button)");
+            ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1),
+                "DMA KeyState reads host Windows VK state (keyboard and mouse)");
             const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
             if (KeyState::initialized.load() && keyStateAddress != 0) {
                 ImGui::TextColored(ImVec4(0.25f, 1.0f, 0.45f, 1),
@@ -2480,7 +2574,28 @@ void UI::MiscPage() {
         ImGui::PushID("KMBoxSettings");
 
         SettingRow("Enable KMBox");
-        kmboxSaveRequested |= ImGui::Checkbox("##Enable", &OW::Config::kmboxEnabled);
+        const bool wasKmboxEnabled = OW::Config::kmboxEnabled;
+        if (ImGui::Checkbox("##Enable", &OW::Config::kmboxEnabled)) {
+            kmboxSaveRequested = true;
+            kmboxNetworkRestartMessage.clear();
+            if (OW::Config::kmboxEnabled && !wasKmboxEnabled) {
+                const KmboxConnectionTestResult initResult = InitializeKmboxFromCurrentConfig();
+                kmboxConnectionTestOk = initResult.ok;
+                kmboxConnectionTestMessage = initResult.message;
+            } else if (!OW::Config::kmboxEnabled && wasKmboxEnabled) {
+                kmboxConnectionTestOk = true;
+                kmboxConnectionTestMessage = "Disabled";
+                kmbox::ReleaseTimerResolution();
+            }
+        }
+        if (!kmboxConnectionTestMessage.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(
+                kmboxConnectionTestOk ? ImVec4(0.30f, 0.90f, 0.45f, 1.0f)
+                                      : ImVec4(1.00f, 0.28f, 0.28f, 1.0f),
+                "%s",
+                kmboxConnectionTestMessage.c_str());
+        }
 
         SettingRow("Device Type");
         ImGui::PushItemWidth(-1);
@@ -2596,6 +2711,15 @@ void UI::MiscPage() {
                 ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "Not calibrated");
             }
         }
+
+        SettingRow("KMBox Move Stress");
+        if (ImGui::Button("Run", ImVec2(72.0f, kControlHeight))) {
+            RunKmboxMoveTest();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Sends a rapid square mouse-movement sequence through the current KMBox device.\nNo sleep is added between move commands; results are printed to the console and aim diagnostics log.");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "Console + aim log");
 
         SettingRow("Connection Test");
         if (ImGui::Button("Test", ImVec2(72.0f, kControlHeight))) {

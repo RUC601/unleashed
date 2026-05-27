@@ -109,6 +109,8 @@ private:
 public:
     KmBoxNetManager();
     ~KmBoxNetManager();
+    KmBoxConnectionState GetConnectionState() const;
+    bool IsConnected() const;
     // Initialize device connection
     int InitDevice(const std::string& IP, WORD Port, const std::string& Mac);
     // Reboot the device

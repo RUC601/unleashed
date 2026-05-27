@@ -211,6 +211,7 @@ static const char* GetHeroName(uint64_t heroID) {
         case 0x02E000000000031C: return "Illari";
         case 0x02E000000000030A: return "Mauga";
         case 0x2E000000000032B:  return "Venture";
+        case 0x02E0000000000516: return "Jetpack Cat";
         case 0x2E000000000033C:  return "Training Bot (Standard)";
         case 0x2E0000000000337:  return "Training Bot (Tank)";
         case 0x2E000000000035A:  return "Training Bot (Sniper)";

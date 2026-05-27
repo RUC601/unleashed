@@ -255,7 +255,7 @@ namespace OW {
 
     inline void sub_E8D1A0(uint64_t* bit_mask, uint64_t* lower_mask,
                            uint32_t* shift, uint32_t* bucket,
-                           uint8_t componentid) {
+                           uint32_t componentid) {
         *shift = componentid & 0x3F;
         *bit_mask = 1ull << *shift;
         *lower_mask = *bit_mask - 1;
@@ -303,7 +303,7 @@ namespace OW {
      *     SUB fixed constant, ROR60, then ROR57.
      *  6. Mask the decoded pointer with the presence bit and return it.
      */
-    inline uintptr_t DecryptComponent(uintptr_t parent, uint8_t idx,
+    inline uintptr_t DecryptComponent(uintptr_t parent, uint32_t idx,
                                       const EntityHeaderSnapshot* parent_snapshot) {
         if (!parent)
             return 0;
@@ -400,7 +400,7 @@ namespace OW {
         return decoded;
     }
 
-    inline uintptr_t DecryptComponent(uintptr_t parent, uint8_t idx) {
+    inline uintptr_t DecryptComponent(uintptr_t parent, uint32_t idx) {
         EntityHeaderSnapshot snapshot{};
         const EntityHeaderSnapshot* active_snapshot =
             snapshot.Read(parent) ? &snapshot : nullptr;

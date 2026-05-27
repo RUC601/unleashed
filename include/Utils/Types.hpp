@@ -71,6 +71,20 @@ public:
     }
 };
 
+struct FRotator {
+    double Pitch;  // radians, vertical (-PI/2..PI/2)
+    double Yaw;    // radians, horizontal (-PI..PI)
+    double Roll;   // radians, roll (-PI..PI)
+};
+
+inline Vector3 FrRotatorToVector3(const FRotator& rot) {
+    return Vector3(
+        static_cast<float>(rot.Pitch),
+        static_cast<float>(rot.Yaw),
+        static_cast<float>(rot.Roll)
+    );
+}
+
 class Rect {
 public:
     float x = 0, y = 0, width = 0, height = 0;

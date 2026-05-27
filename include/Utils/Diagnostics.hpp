@@ -24,6 +24,63 @@ enum class KeyStatus {
     Failed
 };
 
+// ---- DMA callsite tagging ----
+
+enum class DmaCallsite : uint8_t {
+    Unknown = 0,
+    EntityScan,
+    EntityDecrypt,
+    ViewMatrix,
+    BoneChain,
+    KeyState,
+    Aimbot,
+    RenderCanvas,
+    Count
+};
+
+const char* ToString(DmaCallsite cs);
+
+// RAII guard — pushes a callsite onto the thread-local stack on construction,
+// restores the previous one on destruction.  No heap allocation.
+class ScopedDmaCallsite {
+public:
+    explicit ScopedDmaCallsite(DmaCallsite cs);
+    ~ScopedDmaCallsite();
+    ScopedDmaCallsite(const ScopedDmaCallsite&) = delete;
+    ScopedDmaCallsite& operator=(const ScopedDmaCallsite&) = delete;
+
+    static DmaCallsite Current();
+    static void Push(DmaCallsite cs);
+    static void Pop();
+
+private:
+    DmaCallsite m_previous;
+};
+
+// ---- Per-frame timing ----
+
+struct FrameTiming {
+    double totalMs = 0.0;
+    double renderCallbackMs = 0.0;
+    double presentMs = 0.0;
+    uint64_t renderThreadDmaReads = 0;
+    uint64_t renderThreadDmaFailures = 0;
+    uint64_t renderThreadDmaTotalUs = 0;
+    uint64_t renderThreadDmaMaxUs = 0;
+};
+
+// ---- Ring-buffer DMA window stats (lightweight) ----
+
+struct DmaWindowStats {
+    uint64_t totalReads = 0;
+    uint64_t failedReads = 0;
+    uint64_t maxLatencyUs = 0;
+    uint64_t perCallsiteReads[static_cast<int>(DmaCallsite::Count)]{};
+    uint64_t perCallsiteMaxUs[static_cast<int>(DmaCallsite::Count)]{};
+};
+
+// ---- Existing structures ----
+
 struct DmaReadStats {
     uint64_t total = 0;
     uint64_t succeeded = 0;
@@ -206,8 +263,21 @@ void Trace(const char* fmt, ...);
 void RecordFrame();
 void RecordDmaRead(bool success, std::chrono::steady_clock::duration latency);
 void RecordDmaRead(bool success, uint64_t latencyUs);
+void RecordDmaRead(bool success, uint64_t latencyUs, DmaCallsite callsite);
 void RecordDecryptFailure();
 void RecordInvalidEntity();
+
+// Frame timing — call once per frame from the render thread after Present().
+// Emits a SLOW_FRAME diagnostic line when total time exceeds the threshold.
+void RecordFrameTiming(const FrameTiming& timing, double slowThresholdMs = 16.6);
+
+// Called once at startup to tag the render thread for per-thread DMA tracking.
+void SetRenderThread();
+
+// Returns aggregate DMA stats for reads completed in the last `windowMs`
+// milliseconds.  Scans a lock-free ring buffer — O(capacity) but intended
+// for diagnostic sampling, not per-frame use.
+DmaWindowStats GetDmaWindowStats(uint64_t windowMs);
 void RecordEntityScanCycle(size_t entityCount);
 void RecordEntityProcessCycle(double measuredHz);
 

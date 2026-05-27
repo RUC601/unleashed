@@ -62,6 +62,8 @@ namespace
         case VK_SPACE:    return KEY_SPACEBAR;
         case VK_RETURN:   return KEY_ENTER;
         case VK_ESCAPE:   return KEY_ESCAPE;
+        case VK_TAB:      return KEY_TAB;
+        case VK_CAPITAL:  return 0x39; // HID keyboard Caps Lock
         default:          return 0;
         }
     }
@@ -76,6 +78,7 @@ namespace
         constexpr ButtonMap buttons[] = {
             { 0x01, "VK_LBUTTON" },
             { 0x02, "VK_RBUTTON" },
+            { 0x04, "VK_MBUTTON" },
             { 0x08, "VK_XBUTTON1" },
             { 0x10, "VK_XBUTTON2" },
         };
@@ -160,6 +163,16 @@ KmBoxNetManager::~KmBoxNetManager()
         WSACleanup();
         wsaStarted = false;
     }
+}
+
+KmBoxConnectionState KmBoxNetManager::GetConnectionState() const
+{
+    return connectionState.load(std::memory_order_acquire);
+}
+
+bool KmBoxNetManager::IsConnected() const
+{
+    return GetConnectionState() == KmBoxConnectionState::Connected;
 }
 
 void KmBoxNetManager::SetConnectionState(KmBoxConnectionState State)

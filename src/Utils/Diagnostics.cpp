@@ -1,5 +1,7 @@
 #include "Utils/Diagnostics.hpp"
 
+#define NOMINMAX
+#include <Windows.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -15,6 +17,116 @@
 
 namespace Diagnostics {
 namespace {
+
+} // anonymous namespace
+
+// ---- Callsite tag stack (RAII, thread-local) ----
+
+thread_local DmaCallsite tls_dmaCallsite{ DmaCallsite::Unknown };
+
+ScopedDmaCallsite::ScopedDmaCallsite(DmaCallsite cs) {
+    m_previous = tls_dmaCallsite;
+    tls_dmaCallsite = cs;
+}
+
+ScopedDmaCallsite::~ScopedDmaCallsite() {
+    tls_dmaCallsite = m_previous;
+}
+
+DmaCallsite ScopedDmaCallsite::Current() {
+    return tls_dmaCallsite;
+}
+
+namespace {
+    thread_local DmaCallsite tls_manualStack[8]{};
+    thread_local int tls_manualDepth = 0;
+}
+
+void ScopedDmaCallsite::Push(DmaCallsite cs) {
+    if (tls_manualDepth < 8) {
+        tls_manualStack[tls_manualDepth++] = tls_dmaCallsite;
+        tls_dmaCallsite = cs;
+    }
+}
+
+void ScopedDmaCallsite::Pop() {
+    if (tls_manualDepth > 0) {
+        tls_dmaCallsite = tls_manualStack[--tls_manualDepth];
+    }
+}
+
+// ---- Lightweight ring buffer for DMA read samples ----
+
+namespace {
+
+struct DmaSample {
+    uint64_t timestampMs;
+    uint64_t latencyUs;
+    DmaCallsite callsite;
+    bool success;
+};
+
+constexpr size_t kDmaRingCapacity = 8192;
+std::atomic<size_t> g_dmaRingWrite{ 0 };
+DmaSample g_dmaRing[kDmaRingCapacity]{};
+
+std::atomic<uint64_t> g_renderThreadId{ 0 };
+std::atomic<uint64_t> g_frameDmaReads{ 0 };
+std::atomic<uint64_t> g_frameDmaFailures{ 0 };
+std::atomic<uint64_t> g_frameDmaTotalUs{ 0 };
+std::atomic<uint64_t> g_frameDmaMaxUs{ 0 };
+
+} // anonymous namespace
+
+// ---- Atomic helpers ----
+
+void UpdateAtomicMin(std::atomic<uint64_t>& target, uint64_t value)
+{
+    uint64_t current = target.load(std::memory_order_relaxed);
+    while (value < current &&
+           !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
+    }
+}
+
+void UpdateAtomicMax(std::atomic<uint64_t>& target, uint64_t value)
+{
+    uint64_t current = target.load(std::memory_order_relaxed);
+    while (value > current &&
+           !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
+    }
+}
+
+namespace {
+
+void RecordDmaSample(DmaCallsite callsite, bool success, uint64_t latencyUs) {
+    const size_t idx = g_dmaRingWrite.fetch_add(1, std::memory_order_relaxed) % kDmaRingCapacity;
+    g_dmaRing[idx].timestampMs = GetTickCount64();
+    g_dmaRing[idx].latencyUs = latencyUs;
+    g_dmaRing[idx].callsite = callsite;
+    g_dmaRing[idx].success = success;
+
+    const uint64_t renderTid = g_renderThreadId.load(std::memory_order_relaxed);
+    if (renderTid != 0) {
+        if (GetCurrentThreadId() == static_cast<DWORD>(renderTid)) {
+            g_frameDmaReads.fetch_add(1, std::memory_order_relaxed);
+            if (!success)
+                g_frameDmaFailures.fetch_add(1, std::memory_order_relaxed);
+            g_frameDmaTotalUs.fetch_add(latencyUs, std::memory_order_relaxed);
+            UpdateAtomicMax(g_frameDmaMaxUs, latencyUs);
+        }
+    }
+}
+
+} // anonymous namespace
+
+namespace {
+
+void ResetFrameDmaCounters() {
+    g_frameDmaReads.store(0, std::memory_order_relaxed);
+    g_frameDmaFailures.store(0, std::memory_order_relaxed);
+    g_frameDmaTotalUs.store(0, std::memory_order_relaxed);
+    g_frameDmaMaxUs.store(0, std::memory_order_relaxed);
+}
 
 std::atomic<bool> g_initialized{ false };
 std::atomic<int> g_minLevel{ static_cast<int>(LogLevel::Info) };
@@ -36,7 +148,7 @@ std::atomic<bool> g_logOverlayVisible{ false };
 std::atomic<uint64_t> g_dmaReadSucceeded{ 0 };
 std::atomic<uint64_t> g_dmaReadFailed{ 0 };
 std::atomic<uint64_t> g_dmaReadLatencyTotalUs{ 0 };
-std::atomic<uint64_t> g_dmaReadLatencyMinUs{ std::numeric_limits<uint64_t>::max() };
+std::atomic<uint64_t> g_dmaReadLatencyMinUs{ (std::numeric_limits<uint64_t>::max)() };
 std::atomic<uint64_t> g_dmaReadLatencyMaxUs{ 0 };
 
 std::atomic<uint64_t> g_decryptFailures{ 0 };
@@ -154,22 +266,6 @@ bool ShouldLog(LogLevel level)
     return static_cast<int>(level) <= g_minLevel.load(std::memory_order_relaxed);
 }
 
-void UpdateAtomicMin(std::atomic<uint64_t>& target, uint64_t value)
-{
-    uint64_t current = target.load(std::memory_order_relaxed);
-    while (value < current &&
-           !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
-    }
-}
-
-void UpdateAtomicMax(std::atomic<uint64_t>& target, uint64_t value)
-{
-    uint64_t current = target.load(std::memory_order_relaxed);
-    while (value > current &&
-           !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
-    }
-}
-
 std::string BuildTimestamp()
 {
     const auto now = std::chrono::system_clock::now();
@@ -274,6 +370,20 @@ const char* ToString(LogLevel level)
     case LogLevel::Debug: return "DEBUG";
     case LogLevel::Trace: return "TRACE";
     default:              return "UNKNOWN";
+    }
+}
+
+const char* ToString(DmaCallsite cs)
+{
+    switch (cs) {
+    case DmaCallsite::EntityScan:   return "EntityScan";
+    case DmaCallsite::EntityDecrypt:return "EntityDecrypt";
+    case DmaCallsite::ViewMatrix:   return "ViewMatrix";
+    case DmaCallsite::BoneChain:    return "BoneChain";
+    case DmaCallsite::KeyState:     return "KeyState";
+    case DmaCallsite::Aimbot:       return "Aimbot";
+    case DmaCallsite::RenderCanvas: return "RenderCanvas";
+    default:                        return "Unknown";
     }
 }
 
@@ -474,10 +584,15 @@ void RecordFrame()
 void RecordDmaRead(bool success, std::chrono::steady_clock::duration latency)
 {
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(latency).count();
-    RecordDmaRead(success, us > 0 ? static_cast<uint64_t>(us) : 0);
+    RecordDmaRead(success, us > 0 ? static_cast<uint64_t>(us) : 0, ScopedDmaCallsite::Current());
 }
 
 void RecordDmaRead(bool success, uint64_t latencyUs)
+{
+    RecordDmaRead(success, latencyUs, ScopedDmaCallsite::Current());
+}
+
+void RecordDmaRead(bool success, uint64_t latencyUs, DmaCallsite callsite)
 {
     if (success)
         g_dmaReadSucceeded.fetch_add(1, std::memory_order_relaxed);
@@ -487,6 +602,8 @@ void RecordDmaRead(bool success, uint64_t latencyUs)
     g_dmaReadLatencyTotalUs.fetch_add(latencyUs, std::memory_order_relaxed);
     UpdateAtomicMin(g_dmaReadLatencyMinUs, latencyUs);
     UpdateAtomicMax(g_dmaReadLatencyMaxUs, latencyUs);
+
+    RecordDmaSample(callsite, success, latencyUs);
 }
 
 void RecordDecryptFailure()
@@ -672,7 +789,7 @@ StatusSnapshot Snapshot()
 
     const uint64_t minLatency = g_dmaReadLatencyMinUs.load(std::memory_order_relaxed);
     snapshot.dmaReads.minLatencyUs =
-        snapshot.dmaReads.total == 0 || minLatency == std::numeric_limits<uint64_t>::max()
+        snapshot.dmaReads.total == 0 || minLatency == (std::numeric_limits<uint64_t>::max)()
             ? 0
             : minLatency;
     snapshot.dmaReads.avgLatencyUs =
@@ -807,6 +924,92 @@ void DumpStatus()
         static_cast<unsigned long long>(snapshot.globalKey2),
         snapshot.dmaReady ? "ready" : "not-ready",
         snapshot.processAttached ? "attached" : "not-attached");
+}
+
+void SetRenderThread()
+{
+    g_renderThreadId.store(static_cast<uint64_t>(GetCurrentThreadId()), std::memory_order_relaxed);
+    Info("Render thread registered. tid=%lu", GetCurrentThreadId());
+}
+
+void RecordFrameTiming(const FrameTiming& timing, double slowThresholdMs)
+{
+    // Collect render-thread DMA counters before resetting
+    const uint64_t frameDmaReads = g_frameDmaReads.load(std::memory_order_relaxed);
+    const uint64_t frameDmaFailures = g_frameDmaFailures.load(std::memory_order_relaxed);
+    const uint64_t frameDmaTotalUs = g_frameDmaTotalUs.load(std::memory_order_relaxed);
+    const uint64_t frameDmaMaxUs = g_frameDmaMaxUs.load(std::memory_order_relaxed);
+    ResetFrameDmaCounters();
+
+    if (timing.totalMs <= slowThresholdMs)
+        return;
+
+    // Slow frame — grab a recent DMA window for correlation
+    const DmaWindowStats dmaWindow = GetDmaWindowStats(100);
+
+    // Build per-callsite breakdown string
+    char callsiteDetail[512] = {};
+    int off = 0;
+    for (int i = 0; i < static_cast<int>(DmaCallsite::Count); ++i) {
+        if (dmaWindow.perCallsiteReads[i] == 0 && dmaWindow.perCallsiteMaxUs[i] == 0)
+            continue;
+        off += std::snprintf(callsiteDetail + off, sizeof(callsiteDetail) - off,
+            "%s[rd=%llu mx=%lluus] ",
+            ToString(static_cast<DmaCallsite>(i)),
+            static_cast<unsigned long long>(dmaWindow.perCallsiteReads[i]),
+            static_cast<unsigned long long>(dmaWindow.perCallsiteMaxUs[i]));
+    }
+    if (off == 0) {
+        std::snprintf(callsiteDetail, sizeof(callsiteDetail), "(no DMA in window)");
+    }
+
+    Warn("SLOW_FRAME total=%.1fms render=%.1fms present=%.1fms "
+         "rtDma[reads=%llu fail=%llu total=%lluus max=%lluus] "
+         "dma100ms[reads=%llu fail=%llu max=%lluus] %s",
+         timing.totalMs,
+         timing.renderCallbackMs,
+         timing.presentMs,
+         static_cast<unsigned long long>(frameDmaReads),
+         static_cast<unsigned long long>(frameDmaFailures),
+         static_cast<unsigned long long>(frameDmaTotalUs),
+         static_cast<unsigned long long>(frameDmaMaxUs),
+         static_cast<unsigned long long>(dmaWindow.totalReads),
+         static_cast<unsigned long long>(dmaWindow.failedReads),
+         static_cast<unsigned long long>(dmaWindow.maxLatencyUs),
+         callsiteDetail);
+}
+
+DmaWindowStats GetDmaWindowStats(uint64_t windowMs)
+{
+    DmaWindowStats stats{};
+    const uint64_t now = GetTickCount64();
+    const uint64_t cutoff = (now > windowMs) ? (now - windowMs) : 0;
+
+    const size_t writeIdx = g_dmaRingWrite.load(std::memory_order_acquire);
+    const size_t start = (writeIdx >= kDmaRingCapacity) ? (writeIdx - kDmaRingCapacity) : 0;
+    const size_t count = (writeIdx >= kDmaRingCapacity) ? kDmaRingCapacity : writeIdx;
+
+    for (size_t i = 0; i < count; ++i) {
+        const size_t idx = (start + i) % kDmaRingCapacity;
+        const DmaSample& s = g_dmaRing[idx];
+        if (s.timestampMs < cutoff)
+            continue;
+
+        stats.totalReads++;
+        if (!s.success)
+            stats.failedReads++;
+        if (s.latencyUs > stats.maxLatencyUs)
+            stats.maxLatencyUs = s.latencyUs;
+
+        const int ci = static_cast<int>(s.callsite);
+        if (ci >= 0 && ci < static_cast<int>(DmaCallsite::Count)) {
+            stats.perCallsiteReads[ci]++;
+            if (s.latencyUs > stats.perCallsiteMaxUs[ci])
+                stats.perCallsiteMaxUs[ci] = s.latencyUs;
+        }
+    }
+
+    return stats;
 }
 
 } // namespace Diagnostics

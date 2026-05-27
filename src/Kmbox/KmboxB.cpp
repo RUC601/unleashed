@@ -112,6 +112,16 @@ KmBoxBManager::~KmBoxBManager()
     ClosePort();
 }
 
+KmBoxConnectionState KmBoxBManager::GetConnectionState() const
+{
+    return connectionState.load(std::memory_order_acquire);
+}
+
+bool KmBoxBManager::IsConnected() const
+{
+    return GetConnectionState() == KmBoxConnectionState::Connected;
+}
+
 void KmBoxBManager::SetConnectionState(KmBoxConnectionState state)
 {
     const KmBoxConnectionState previous = connectionState.exchange(state, std::memory_order_acq_rel);

@@ -4,6 +4,7 @@
 #include "Game/SDK.hpp"
 #include "Game/Overwatch.hpp"
 #include "Utils/Config.hpp"
+#include "Utils/Diagnostics.hpp"
 #include "resource.h"
 
 #include <windowsx.h>
@@ -226,6 +227,26 @@ bool IsMenuTogglePressed() {
     return key > 0 && (GetAsyncKeyState(key) & 0x0001) != 0;
 }
 
+bool IsCurrentProcessWindow(HWND hWnd) {
+    if (!hWnd)
+        return false;
+
+    DWORD processId = 0;
+    GetWindowThreadProcessId(hWnd, &processId);
+    return processId == GetCurrentProcessId();
+}
+
+bool ShouldMinimizeForExternalActivation(HWND activatedWindow) {
+    if (!activatedWindow)
+        return true;
+
+    return !IsCurrentProcessWindow(activatedWindow);
+}
+
+bool IsWindowVisibleAndRestored(HWND hWnd) {
+    return hWnd && IsWindow(hWnd) && IsWindowVisible(hWnd) && !IsIconic(hWnd);
+}
+
 void DrawCanvasBackdrop(UINT width, UINT height) {
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList)
@@ -331,6 +352,14 @@ LRESULT WINAPI MenuWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     switch (msg) {
+        case WM_ACTIVATE:
+            if (LOWORD(wParam) != WA_INACTIVE) {
+                g_Overlay.RestoreFromTaskbar();
+            } else if (LOWORD(wParam) == WA_INACTIVE &&
+                ShouldMinimizeForExternalActivation(reinterpret_cast<HWND>(lParam))) {
+                g_Overlay.MinimizeToTaskbar();
+            }
+            break;
         case WM_GETMINMAXINFO:
             ApplyMinimumMenuTrackSize(lParam);
             return 0;
@@ -339,7 +368,13 @@ LRESULT WINAPI MenuWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_SYSCOMMAND:
             if ((wParam & 0xFFF0) == SC_KEYMENU)
                 return 0;
+            if ((wParam & 0xFFF0) == SC_RESTORE)
+                g_Overlay.RestoreFromTaskbar();
             break;
+        case WM_SIZE:
+            if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED)
+                g_Overlay.RestoreFromTaskbar();
+            return 0;
         case WM_CLOSE:
             OW::Config::Menu = false;
             ShowWindow(hWnd, SW_HIDE);
@@ -404,8 +439,15 @@ void Overlay::Run(std::function<void()> renderCallback) {
         if (!IsWindow(m_canvasHWnd))
             break;
 
-        if (IsMenuTogglePressed())
+        if (IsMenuTogglePressed() && !m_minimizedToTaskbar)
             OW::Config::Menu = !OW::Config::Menu;
+
+        UpdateExternalActivationMinimize();
+
+        if (m_minimizedToTaskbar) {
+            Sleep(16);
+            continue;
+        }
 
         UpdateWindowVisibility();
         UpdateCanvasBounds();
@@ -417,6 +459,39 @@ void Overlay::Run(std::function<void()> renderCallback) {
     }
 
     Shutdown();
+}
+
+void Overlay::MinimizeToTaskbar() {
+    if (m_minimizedToTaskbar || !IsWindowVisibleAndRestored(m_menuHWnd))
+        return;
+
+    m_minimizedToTaskbar = true;
+    OW::Config::Menu = false;
+
+    if (m_canvasHWnd && IsWindow(m_canvasHWnd))
+        ShowWindow(m_canvasHWnd, SW_HIDE);
+    if (m_menuHWnd && IsWindow(m_menuHWnd))
+        ShowWindow(m_menuHWnd, SW_MINIMIZE);
+}
+
+void Overlay::RestoreFromTaskbar() {
+    if (!m_minimizedToTaskbar)
+        return;
+
+    m_minimizedToTaskbar = false;
+
+    if (m_canvasHWnd && IsWindow(m_canvasHWnd)) {
+        ShowWindow(m_canvasHWnd, SW_SHOWNA);
+        UpdateCanvasBounds(true);
+    }
+
+    OW::Config::Menu = true;
+
+    if (m_menuHWnd && IsWindow(m_menuHWnd)) {
+        ShowWindow(m_menuHWnd, SW_RESTORE);
+        SetWindowPos(m_menuHWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    }
 }
 
 void Overlay::RequestExit() {
@@ -505,8 +580,8 @@ bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
                  static_cast<int>(m_canvasWidth), static_cast<int>(m_canvasHeight),
                  SWP_SHOWWINDOW);
 
-    const DWORD menuStyle = WS_POPUP | WS_THICKFRAME;
-    const DWORD menuExStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+    const DWORD menuStyle = WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX;
+    const DWORD menuExStyle = WS_EX_TOPMOST | WS_EX_APPWINDOW;
     const int menuW = kDefaultMenuClientWidth;
     const int menuH = kDefaultMenuClientHeight;
 
@@ -723,6 +798,9 @@ void Overlay::UpdateWindowVisibility() {
     if (!m_menuHWnd)
         return;
 
+    if (m_minimizedToTaskbar)
+        return;
+
     const bool shouldShowMenu = OW::Config::Menu;
     const bool isVisible = IsWindowVisible(m_menuHWnd) != FALSE;
 
@@ -733,6 +811,15 @@ void Overlay::UpdateWindowVisibility() {
     } else if (!shouldShowMenu && isVisible) {
         ShowWindow(m_menuHWnd, SW_HIDE);
     }
+}
+
+void Overlay::UpdateExternalActivationMinimize() {
+    if (m_minimizedToTaskbar || !OW::Config::Menu || !IsWindowVisibleAndRestored(m_menuHWnd))
+        return;
+
+    const HWND foregroundWindow = GetForegroundWindow();
+    if (foregroundWindow && !IsCurrentProcessWindow(foregroundWindow))
+        MinimizeToTaskbar();
 }
 
 void Overlay::UpdateCanvasBounds(bool force) {
@@ -850,6 +937,8 @@ void Overlay::RenderCanvas(std::function<void()> renderCallback) {
     if (!m_canvasContext || !m_canvasRenderTargetView || !m_canvasSwapChain)
         return;
 
+    const auto t0 = std::chrono::steady_clock::now();
+
     ImGui::SetCurrentContext(m_canvasContext);
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -857,16 +946,29 @@ void Overlay::RenderCanvas(std::function<void()> renderCallback) {
 
     DrawCanvasBackdrop(m_canvasWidth, m_canvasHeight);
 
-    if (renderCallback)
-        renderCallback();
+    {
+        Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::RenderCanvas);
+        if (renderCallback)
+            renderCallback();
+    }
 
     ImGui::Render();
+
+    const auto t1 = std::chrono::steady_clock::now();
 
     const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     m_pContext->OMSetRenderTargets(1, &m_canvasRenderTargetView, nullptr);
     m_pContext->ClearRenderTargetView(m_canvasRenderTargetView, clearColor);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     m_canvasSwapChain->Present(0, 0);
+
+    const auto t2 = std::chrono::steady_clock::now();
+
+    Diagnostics::FrameTiming timing{};
+    timing.renderCallbackMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    timing.presentMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    timing.totalMs = std::chrono::duration<double, std::milli>(t2 - t0).count();
+    Diagnostics::RecordFrameTiming(timing);
 }
 
 void Overlay::RenderMenu() {

@@ -224,26 +224,26 @@ namespace OW {
                 if (debugHead)
                     debugHeadBonePtr = bonePtr;
                 if (!bonePtr)
-                    return 0;
+                    return -1;
 
                 uint64_t boneIdTable = SDK->RPM<uint64_t>(bonePtr + 0x38);
                 if (debugHead)
                     debugHeadBoneIdTable = boneIdTable;
                 if (!boneIdTable)
-                    return 0;
+                    return -1;
 
                 uint16_t count = SDK->RPM<uint16_t>(bonePtr + 0x64);
                 if (debugHead)
                     debugHeadBoneCount = count;
                 if (count == 0 || count > kMaxBoneIdCount)
-                    return 0;
+                    return -1;
 
                 if (debugHead)
                     debugHeadLookupResolved = true;
 
                 std::array<uint32_t, kMaxBoneIdCount> boneIds{};
                 if (!SDK->read_range(boneIdTable, boneIds.data(), sizeof(uint32_t) * count))
-                    return 0;
+                    return -1;
 
                 for (uint16_t i = 0; i < count; i++) {
                     if (static_cast<uint16_t>(boneIds[i]) == bone_id) {
@@ -258,7 +258,7 @@ namespace OW {
                 if (debugHead)
                     debugHeadLookupException = true;
             }
-            return 0;
+            return -1;
         }
 
         bool ResolveBoneDataCandidate(uint64_t pBoneData, BoneResolveInfo& info) {
@@ -414,6 +414,8 @@ namespace OW {
                     if (pBoneData) {
                         if (bonesBase) {
                             const int mappedBoneIndex = get_bone_id(pBoneData, index);
+                            if (mappedBoneIndex < 0)
+                                return Vector3{};
                             const uint64_t boneAddress = bonesBase + (0x30 * static_cast<uint64_t>(mappedBoneIndex)) + 0x20;
                             XMFLOAT3 currentBone = SDK->RPM<XMFLOAT3>(
                                 boneAddress
@@ -485,6 +487,7 @@ namespace OW {
                 case eHero::HERO_TRAININGBOT4:
                 case eHero::HERO_TRAININGBOT5:
                 case eHero::HERO_TRAININGBOT6:
+                case eHero::HERO_JETPACKCAT:
                 case eHero::HERO_TRAININGBOT7:
                     return {BONE_HEAD, BONE_NECK, BONE_BODY, BONE_BODY_BOT,
                             BONE_L_SHOULDER, BONE_R_SHOULDER,
@@ -820,8 +823,11 @@ namespace OW {
                     uint64_t pBoneData = ResolveBoneData(bonesBase);
                     if (pBoneData) {
                         if (bonesBase) {
+                            const int boneIdx17 = get_bone_id(pBoneData, 17);
+                            if (boneIdx17 < 0)
+                                return;
                             XMFLOAT3 currentBone = SDK->RPM<XMFLOAT3>(
-                                bonesBase + (0x30 * get_bone_id(pBoneData, 17)) + 0x20
+                                bonesBase + (0x30 * boneIdx17) + 0x20
                             );
                             currentBone.y += 0.3f;
                             XMFLOAT3 a = {currentBone.x - 0.5f, currentBone.y, currentBone.z - 0.5f};
@@ -871,8 +877,11 @@ namespace OW {
                     uint64_t pBoneData = ResolveBoneData(bonesBase);
                     if (pBoneData) {
                         if (bonesBase) {
+                            const int boneIdx17 = get_bone_id(pBoneData, 17);
+                            if (boneIdx17 < 0)
+                                return;
                             XMFLOAT3 b = SDK->RPM<XMFLOAT3>(
-                                bonesBase + (0x30 * get_bone_id(pBoneData, 17)) + 0x20
+                                bonesBase + (0x30 * boneIdx17) + 0x20
                             );
                             b = XMFLOAT3(b.x, b.y, b.z + 0.8f);
                             XMFLOAT3 b1 = {b.x + 0.2f, b.y,     b.z - 0.3f};

@@ -101,6 +101,7 @@ namespace OW {
         HERO_HAZARD        = GameData::MakeHeroId(0x362),
         HERO_JUNO          = GameData::MakeHeroId(0x365),
         HERO_WUYANG        = GameData::MakeHeroId(0x3C3),
+        HERO_JETPACKCAT    = GameData::MakeHeroId(0x516),
         HERO_TRAININGBOT1  = GameData::MakeHeroId(0x33C),
         HERO_TRAININGBOT2  = GameData::MakeHeroId(0x337),
         HERO_TRAININGBOT3  = GameData::MakeHeroId(0x35A),
@@ -124,8 +125,9 @@ namespace OW {
         TYPE_SKILL            = 0x37,
         TYPE_ANGLE            = 0x39,
         TYPE_HEALTH           = 0x3B,
-        TYPE_PLAYERCONTROLLER = 0x44,  // updated per UC p330 (was 0x43)
+        TYPE_PLAYERCONTROLLER = 0x43,  // corrected per plexies p332 (was 0x44)
         TYPE_P_HEROID         = 0x54,
+        TYPE_VIEWANGLE        = 0x1260, // new per plexies p332
         // TYPE_OUTLINE = 0x5B  — REMOVED: DMA external cannot render outlines
         TYPE_STAT             = 0x25,
     };

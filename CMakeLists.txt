@@ -33,6 +33,8 @@ set(GAME_HEADERS
     include/Game/Structs.hpp
     include/Game/Target.hpp
     include/Kmbox/KmboxB.h
+    include/Kmbox/KmboxMoveTest.h
+    include/Kmbox/KmboxTimerResolution.h
     include/Kmbox/KmBoxConfig.h
     include/Kmbox/KmBoxData.h
     include/Kmbox/KmBoxNetManager.h
@@ -61,6 +63,8 @@ set(UNLEASHED_SOURCES
     src/Features/UI.cpp
     src/Game/Offsets.cpp
     src/Kmbox/KmboxB.cpp
+    src/Kmbox/KmboxMoveTest.cpp
+    src/Kmbox/KmboxTimerResolution.cpp
     src/Kmbox/KmBoxNetManager.cpp
     vendor/stb/stb_image.cpp
 )
@@ -98,6 +102,7 @@ target_link_libraries(Unleashed PRIVATE
     windowscodecs
     ole32
     ws2_32
+    winmm
     shell32
     dwmapi
     setupapi
@@ -254,6 +259,17 @@ target_compile_options(HeroProbe PRIVATE /W3 /wd4244 /wd4267)
 target_compile_definitions(HeroProbe PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 # ============================================================================
+# Perk Probe — scan Hero component + unknown component IDs for perk data
+# ============================================================================
+
+add_executable(PerkProbe src/perk_probe.cpp)
+target_include_directories(PerkProbe PRIVATE include vendor/leechcore)
+target_link_libraries(PerkProbe PRIVATE "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib" "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib" ws2_32)
+copy_leechcore_runtime(PerkProbe)
+target_compile_options(PerkProbe PRIVATE /W3 /wd4244 /wd4267)
+target_compile_definitions(PerkProbe PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+# ============================================================================
 # KeyScan — complete GetGlobalKey emulation + key resolution
 # ============================================================================
 
@@ -267,6 +283,24 @@ target_link_libraries(KeyScan PRIVATE
 copy_leechcore_runtime(KeyScan)
 target_compile_options(KeyScan PRIVATE /W3 /wd4244 /wd4267)
 target_compile_definitions(KeyScan PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+# ============================================================================
+# HostMouseHold - host-side synthetic mouse side-button hold tester
+# ============================================================================
+
+add_executable(HostMouseHold src/host_mouse_hold.cpp)
+target_compile_features(HostMouseHold PRIVATE cxx_std_20)
+target_compile_options(HostMouseHold PRIVATE /W3)
+target_compile_definitions(HostMouseHold PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+# ============================================================================
+# AngleMathTest - standalone pitch/yaw math chain verification
+# ============================================================================
+
+add_executable(AngleMathTest src/Kmbox/AngleMathTest.cpp)
+target_compile_features(AngleMathTest PRIVATE cxx_std_20)
+target_compile_options(AngleMathTest PRIVATE /W3)
+target_compile_definitions(AngleMathTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 # ============================================================================
 # DecryptDump2 — find DecryptComponent + test Key2 candidates (v2, MSVC-safe)

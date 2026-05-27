@@ -39,6 +39,9 @@ private:
 public:
     ~KmBoxBManager();
 
+    KmBoxConnectionState GetConnectionState() const;
+    bool IsConnected() const;
+
     int init();
     int init(const std::string& portName);
 

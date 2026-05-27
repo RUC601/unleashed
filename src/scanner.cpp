@@ -466,7 +466,7 @@ static constexpr uint8_t kComponentTypeVelocity = 0x04;
 static constexpr uint8_t kComponentTypeTeam = 0x21;
 static constexpr uint8_t kComponentTypeLink = 0x34;
 static constexpr uint8_t kComponentTypeHealth = 0x3B;
-static constexpr uint8_t kComponentTypePlayerController = 0x44;
+static constexpr uint8_t kComponentTypePlayerController = 0x43;
 static constexpr uint8_t kComponentTypeHeroId = 0x54;
 
 struct ComponentDecryptTrace {

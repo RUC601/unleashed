@@ -67,6 +67,7 @@ inline constexpr NamedU64 kHeroIds[] = {
     { "Hazard", MakeHeroId(0x362) },
     { "Juno", MakeHeroId(0x365) },
     { "Wuyang", MakeHeroId(0x3C3) },
+    { "Jetpack Cat", MakeHeroId(0x516) },
     { "Standard Bot", MakeHeroId(0x33C) },
     { "Tank Bot", MakeHeroId(0x337) },
     { "Sniper Bot", MakeHeroId(0x35A) },

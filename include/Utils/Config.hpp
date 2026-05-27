@@ -15,6 +15,13 @@
 
 namespace OW { namespace Config {
 
+    inline constexpr int kAimBoneChest = 0;
+    inline constexpr int kAimBoneHead  = 1;
+    inline constexpr int kAimBoneNeck  = 2;
+
+    int NormalizeAimBone(int aimBone);
+    const char* AimBoneName(int aimBone);
+
     inline std::string configFileName = "config.ini";
     inline std::string lastConfigProfile = "config.ini";
     std::string ConfigPath();
@@ -71,9 +78,9 @@ namespace OW { namespace Config {
     inline float accvalue2  = 0.1f;
     inline float bladespeed = 0.1f;
 
-    inline int  TargetBone  = 0;   // 0=head, 1=neck, 2=chest
-    inline int  Bone        = 1;
-    inline int  Bone2       = 1;
+    inline int  TargetBone  = kAimBoneHead; // aim-bone choice mirror: 0=chest, 1=head, 2=neck
+    inline int  Bone        = kAimBoneHead;
+    inline int  Bone2       = kAimBoneHead;
     inline bool autobone    = false;
     inline bool autobone2   = false;
     inline bool switch_team  = false;
@@ -223,7 +230,7 @@ namespace OW { namespace Config {
 
     // ---- KMBox input output ----
     inline bool kmboxEnabled = false;
-    inline int inputSource = 2; // 0=Auto (DMA>KMBox>Local), 1=KMBox, 2=Local, 3=DMA
+    inline int inputSource = 1; // 0=Auto (KMBox>DMA>Local), 1=KMBox, 2=Local, 3=DMA
     inline int  kmboxDeviceType = 0; // 0=Network/UDP, 1=Serial/COM
     inline char kmboxIp[32] = "192.168.2.188";
     inline int  kmboxPort = 8808;
@@ -261,7 +268,8 @@ namespace OW { namespace Config {
     struct HeroPreset {
         float fov = 200.f;       // FOV circle size
         float smooth = 5.0f;     // aim smoothing, 0-100
-        int bone = 0;            // 0=head, 1=neck, 2=chest
+        int bone = kAimBoneHead;  // aim-bone choice: 0=chest, 1=head, 2=neck
+        bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         float hitbox = 0.13f;    // hitbox radius/size
         int aimMode = 0;         // 0=Tracking, 1=Flick
         bool prediction = false; // movement prediction

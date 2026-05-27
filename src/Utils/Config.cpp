@@ -29,7 +29,7 @@
 
 namespace OW { namespace Config {
 
-    int config_version = 2;
+    int config_version = 3;
     bool draw_edge = false;
     bool drawbox3d = false;
     bool manualsave = false;
@@ -39,9 +39,32 @@ namespace OW { namespace Config {
         return ".\\" + configFileName;
     }
 
+    int NormalizeAimBone(int aimBone)
+    {
+        switch (aimBone) {
+        case kAimBoneChest:
+        case kAimBoneHead:
+        case kAimBoneNeck:
+            return aimBone;
+        default:
+            return kAimBoneHead;
+        }
+    }
+
+    const char* AimBoneName(int aimBone)
+    {
+        switch (NormalizeAimBone(aimBone)) {
+        case kAimBoneChest: return "Chest";
+        case kAimBoneNeck:  return "Neck";
+        case kAimBoneHead:
+        default:           return "Head";
+        }
+    }
+
     namespace {
 
-        constexpr int kCurrentConfigVersion = 2;
+        constexpr int kCurrentConfigVersion = 3;
+        constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -107,6 +130,7 @@ namespace OW { namespace Config {
             { OW::eHero::HERO_ILLARI,       "Illari",       "Illari",         nullptr },
             { OW::eHero::HERO_JUNO,         "Juno",         nullptr,          nullptr },
             { OW::eHero::HERO_WUYANG,       "Wuyang",       nullptr,          nullptr },
+            { OW::eHero::HERO_JETPACKCAT,  "JetpackCat",   "Jetpack Cat",    nullptr },
         };
 
         void ApplyAimMode(int mode);
@@ -638,18 +662,11 @@ namespace OW { namespace Config {
                 std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
         }
 
-        int RuntimeBoneToPresetBone(int runtimeBone)
+        int LegacyPresetBoneToAimBone(int presetBone)
         {
-            if (runtimeBone == 1) return 0; // head
-            if (runtimeBone == 2) return 1; // neck
-            return 2;                       // chest
-        }
-
-        int PresetBoneToRuntimeBone(int presetBone)
-        {
-            if (presetBone == 0) return 1; // head
-            if (presetBone == 1) return 2; // neck
-            return 0;                      // chest
+            if (presetBone == 0) return kAimBoneHead;
+            if (presetBone == 1) return kAimBoneNeck;
+            return kAimBoneChest;
         }
 
         HeroPreset ValidateHeroPresetValue(HeroPreset preset)
@@ -660,7 +677,7 @@ namespace OW { namespace Config {
 
             preset.fov = std::clamp(preset.fov, 0.0f, 500.0f);
             preset.smooth = std::clamp(preset.smooth, 0.0f, 100.0f);
-            preset.bone = std::clamp(preset.bone, 0, 2);
+            preset.bone = NormalizeAimBone(preset.bone);
             preset.hitbox = std::clamp(preset.hitbox, 0.0f, 5.0f);
             preset.aimMode = std::clamp(preset.aimMode, 0, 1);
             preset.priority = std::clamp(preset.priority, 0, 2);
@@ -721,9 +738,9 @@ namespace OW { namespace Config {
             accvalue2 = 0.1f;             // default: 0.1
             bladespeed = 0.1f;            // default: 0.1
 
-            TargetBone = 0;               // default: head
-            Bone = 1;                     // default: 1
-            Bone2 = 1;                    // default: 1
+            TargetBone = kAimBoneHead;    // default: head
+            Bone = kAimBoneHead;          // default: head
+            Bone2 = kAimBoneHead;         // default: head
             autobone = false;             // default: false
             autobone2 = false;            // default: false
             switch_team = false;          // default: false
@@ -804,7 +821,7 @@ namespace OW { namespace Config {
             aimbotAttack = 0;
             aimbotTeam = 0;
             aimbotPriority = 0;
-            inputSource = 2;
+            inputSource = 1;
             aimDryRun = false;
             aimVerboseLog = false;
             aimDryRunLogIntervalMs = 100;
@@ -915,7 +932,8 @@ namespace OW { namespace Config {
             preset.smooth = Smooth;
             if (preset.smooth <= 0.0f)
                 preset.smooth = Tracking_smooth > 0.0f ? Tracking_smooth : Flick_smooth;
-            preset.bone = RuntimeBoneToPresetBone(Bone);
+            preset.bone = NormalizeAimBone(Bone);
+            preset.autoBone = autobone;
             preset.hitbox = hitbox;
             preset.aimMode = CurrentAimMode();
             if (preset.aimMode < 0 || preset.aimMode > 1)
@@ -933,8 +951,10 @@ namespace OW { namespace Config {
             Smooth = preset.smooth;
             Tracking_smooth = preset.smooth;
             Flick_smooth = preset.smooth;
-            Bone = PresetBoneToRuntimeBone(preset.bone);
-            TargetBone = preset.bone;
+            Bone = NormalizeAimBone(preset.bone);
+            TargetBone = Bone;
+            BoneName = AimBoneName(Bone);
+            autobone = preset.autoBone;
             hitbox = preset.hitbox;
             Prediction = preset.prediction;
             aimbotPriority = preset.priority;
@@ -942,7 +962,8 @@ namespace OW { namespace Config {
         }
 
         HeroSlotPreset ReadHeroPresetSectionUnlocked(const IniFile& ini, const char* section,
-                                                     HeroSlotPreset defaults, int slotIndex)
+                                                     HeroSlotPreset defaults, int slotIndex,
+                                                     bool storedBoneUsesLegacyPresetIndex)
         {
             HeroSlotPreset slot = defaults;
             slot.name = NormalizeHeroSlotName(
@@ -951,6 +972,9 @@ namespace OW { namespace Config {
             slot.preset.fov = ReadFov2Compat(ini, section, "fov", slot.preset.fov);
             slot.preset.smooth = ReadFov2Compat(ini, section, "smooth", slot.preset.smooth);
             slot.preset.bone = ReadInt(ini, section, "bone", slot.preset.bone);
+            if (storedBoneUsesLegacyPresetIndex)
+                slot.preset.bone = LegacyPresetBoneToAimBone(slot.preset.bone);
+            slot.preset.autoBone = ReadBool(ini, section, "autoBone", slot.preset.autoBone);
             slot.preset.hitbox = ReadFixedFloat(ini, section, "hitbox", slot.preset.hitbox);
             slot.preset.aimMode = ReadInt(ini, section, "aimMode", slot.preset.aimMode);
             slot.preset.prediction = ReadBool(ini, section, "prediction", slot.preset.prediction);
@@ -967,7 +991,8 @@ namespace OW { namespace Config {
             const float trackingSmooth = ReadFixedFloat(ini, section, "Tracking_smooth", preset.smooth);
             const float flickSmooth = ReadFixedFloat(ini, section, "Flick_smooth", trackingSmooth);
             preset.smooth = aimMode == 1 ? flickSmooth : trackingSmooth;
-            preset.bone = RuntimeBoneToPresetBone(ReadInt(ini, section, "Bone", PresetBoneToRuntimeBone(preset.bone)));
+            preset.bone = NormalizeAimBone(ReadInt(ini, section, "Bone", preset.bone));
+            preset.autoBone = ReadBool(ini, section, "autobone", preset.autoBone);
             preset.hitbox = ReadFixedFloat(ini, section, "hitbox", preset.hitbox);
             preset.aimMode = aimMode;
             preset.prediction = ReadBool(ini, section, "predictdec", preset.prediction);
@@ -983,6 +1008,7 @@ namespace OW { namespace Config {
             WritePlainFloatValue(path, section, "fov", preset.fov);
             WritePlainFloatValue(path, section, "smooth", preset.smooth);
             WriteIntValue(path, section, "bone", preset.bone);
+            WriteBoolValue(path, section, "autoBone", preset.autoBone);
             WritePlainFloatValue(path, section, "hitbox", preset.hitbox);
             WriteIntValue(path, section, "aimMode", preset.aimMode);
             const std::string prediction = ToText(preset.prediction);
@@ -1021,11 +1047,22 @@ namespace OW { namespace Config {
         {
             heroPresets.clear();
             const HeroPreset presetDefaults{};
+            const int fileVersion = ReadInt(ini, kMetaSection, kVersionKey, 0);
+            const bool storedBoneUsesLegacyPresetIndex =
+                fileVersion < kPresetBonesStoredAsAimBonesVersion;
 
             for (const HeroPresetDefinition& def : kHeroPresetDefinitions) {
                 std::array<HeroSlotPreset, kHeroPresetSlotCount> slots{};
-                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex)
+                bool legacyAutoBone = false;
+                if (def.legacyName && SectionExists(ini, def.legacyName))
+                    legacyAutoBone = ReadBool(ini, def.legacyName, "autobone", false);
+                else if (def.legacyAlias && SectionExists(ini, def.legacyAlias))
+                    legacyAutoBone = ReadBool(ini, def.legacyAlias, "autobone", false);
+
+                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
                     slots[static_cast<size_t>(slotIndex)].name = DefaultHeroSlotName(slotIndex);
+                    slots[static_cast<size_t>(slotIndex)].preset.autoBone = legacyAutoBone;
+                }
 
                 bool loadedAnySlot = false;
                 for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
@@ -1035,7 +1072,8 @@ namespace OW { namespace Config {
                             ini,
                             presetSection.c_str(),
                             slots[static_cast<size_t>(slotIndex)],
-                            slotIndex);
+                            slotIndex,
+                            storedBoneUsesLegacyPresetIndex);
                         loadedAnySlot = true;
                     }
                 }
@@ -1043,7 +1081,9 @@ namespace OW { namespace Config {
                 if (!loadedAnySlot) {
                     const std::string legacyPresetSection = HeroPresetSectionName(def.presetName);
                     if (SectionExists(ini, legacyPresetSection.c_str())) {
-                        slots[0] = ReadHeroPresetSectionUnlocked(ini, legacyPresetSection.c_str(), slots[0], 0);
+                        slots[0] = ReadHeroPresetSectionUnlocked(
+                            ini, legacyPresetSection.c_str(), slots[0], 0,
+                            storedBoneUsesLegacyPresetIndex);
                         loadedAnySlot = true;
                     } else {
                         HeroPreset legacyPreset{};
@@ -1344,6 +1384,17 @@ namespace OW { namespace Config {
             (void)fallback;
         }
 
+        void NormalizeBoneSetting(const char* name, int& value)
+        {
+            const int normalized = NormalizeAimBone(value);
+            if (normalized != value) {
+                LogConfig(Diagnostics::LogLevel::Warn,
+                    "%s invalid aim-bone choice (%d); using %d (%s).",
+                    name, value, normalized, AimBoneName(normalized));
+            }
+            value = normalized;
+        }
+
         void ClampFloatSetting(const char* name, float& value, float minValue, float maxValue, float fallback)
         {
             if (!std::isfinite(value)) {
@@ -1395,7 +1446,7 @@ namespace OW { namespace Config {
             ClampSetting("aim_key2", aim_key2, 0, 12, 1);
             ClampSetting("togglekey", togglekey, 0, 54, 0);
             ClampSetting("MenuToggleKey", MenuToggleKey, 1, 255, VK_HOME);
-            ClampSetting("inputSource", inputSource, 0, 3, 2);
+            ClampSetting("inputSource", inputSource, 0, 3, 1);
             ClampSetting("aimDryRunLogIntervalMs", aimDryRunLogIntervalMs, 50, 1000, 100);
             ClampSetting("ultimateDisplayMode", ultimateDisplayMode, 0, 2, 0);
             ClampSetting("skillDisplayMode", skillDisplayMode, 0, 2, 0);
@@ -1454,9 +1505,12 @@ namespace OW { namespace Config {
             ClampFloatSetting("lasthealth", lasthealth, 0.0f, 1000.0f, 0.0f);
             ClampFloatSetting("health", health, 0.0f, 1000.0f, 0.0f);
 
-            ClampSetting("TargetBone", TargetBone, 0, 2, 0);
-            ClampSetting("Bone", Bone, 0, 2, 1);
-            ClampSetting("Bone2", Bone2, 0, 2, 1);
+            NormalizeBoneSetting("TargetBone", TargetBone);
+            NormalizeBoneSetting("Bone", Bone);
+            NormalizeBoneSetting("Bone2", Bone2);
+            TargetBone = Bone;
+            BoneName = AimBoneName(Bone);
+            BoneName2 = AimBoneName(Bone2);
             ClampSetting("targetdelaytime", targetdelaytime, 0, 10000, 200);
             ClampSetting("hiboxdelaytime", hiboxdelaytime, 0, 10000, 200);
             ClampSetting("shotcount", shotcount, 0, 1000, 0);
@@ -1911,11 +1965,11 @@ namespace OW { namespace Config {
             return;
         }
 
-        if (fileVersion < kCurrentConfigVersion) {
+        const bool needsMigration = fileVersion < kCurrentConfigVersion;
+        if (needsMigration) {
             LogConfig(Diagnostics::LogLevel::Warn,
                 "Migrating config version %d to %d.",
                 fileVersion, kCurrentConfigVersion);
-            WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
         }
         config_version = kCurrentConfigVersion;
 
@@ -1926,6 +1980,8 @@ namespace OW { namespace Config {
         LoadKmboxSettingsUnlocked(ini);
         LoadHeroPresetsUnlocked(ini);
         ValidateUnlocked();
+        if (needsMigration)
+            SaveHeroPresetsUnlocked(path);
         DumpUnlocked(Diagnostics::LogLevel::Debug);
 
         LogConfig(Diagnostics::LogLevel::Info,

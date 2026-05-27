@@ -24,6 +24,7 @@
 #include "Game/Offsets.hpp"       // offset constants
 #include "Kmbox/KmBoxNetManager.h" // kmbox::KmBoxMgr
 #include "Kmbox/KmboxB.h"         // kmbox::kmBoxBMgr
+#include "Kmbox/KmboxTimerResolution.h" // kmbox::EnsureTimerResolution
 #include "Utils/Config.hpp"       // OW::Config
 #include "Utils/HostMouseDpi.hpp" // OW::RefreshHostMouseDpi
 #include "Renderer/IconManager.hpp" // IconManager
@@ -577,6 +578,8 @@ static void InitializeKmBoxFromConfig()
         return;
     }
 
+    kmbox::EnsureTimerResolution();
+
     if (OW::Config::kmboxDeviceType == 0) {
         std::printf("[KMBOX] Initialising network device %s:%d...\n",
             OW::Config::kmboxIp, OW::Config::kmboxPort);
@@ -649,6 +652,7 @@ static void StartBackgroundThreads()
     std::printf("  [+] entity_thread\n");
 
     std::thread(aimbot_thread).detach();
+    // TEST: RunKmboxMoveTest();
     std::printf("  [+] aimbot_thread\n");
 
     std::thread(configsavenloadthread).detach();
@@ -746,6 +750,7 @@ int main()
         mem.CloseDma();
         Diagnostics::SetDmaReady(false);
         Diagnostics::SetProcessAttached(false);
+        kmbox::ReleaseTimerResolution();
         Diagnostics::ShutdownAimLog();
         Diagnostics::Shutdown();
         std::printf("[INFO] Press Enter to exit.\n");
@@ -787,6 +792,7 @@ int main()
         mem.CloseDma();
         Diagnostics::SetDmaReady(false);
         Diagnostics::SetProcessAttached(false);
+        kmbox::ReleaseTimerResolution();
         Diagnostics::ShutdownAimLog();
         Diagnostics::Shutdown();
         std::printf("[INFO] Press Enter to exit.\n");
@@ -804,6 +810,7 @@ int main()
     std::printf("[MAIN] Entering message loop.  Press HOME to toggle menu.\n");
     std::printf("[MAIN] Close the canvas process/window to exit.\n\n");
     Diagnostics::Info("Entering overlay message loop.");
+    Diagnostics::SetRenderThread();
 
     g_Overlay.Run(RenderCallback);
 
@@ -822,6 +829,7 @@ int main()
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
     Diagnostics::Info("DMA subsystem closed.");
+    kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
 
