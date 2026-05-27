@@ -584,14 +584,14 @@ static uint64_t ScannerDecryptComponent(uint64_t parent, uint8_t idx, ComponentD
     }
 
     uint64_t component = t.encrypted_component;
-    component += OW::offset::Component_Add1;
     component ^= t.key_material;
-    component += OW::offset::Component_Add2;
-    component ^= static_cast<uint64_t>(t.key_byte);
     component ^= OW::offset::Component_Xor1;
-    component ^= OW::offset::Component_Xor2;
-    component = ROL64(component, 0x2A);
-    component = ROR64(component, 0x2D);
+    component = ROR64(component, OW::offset::Component_Ror1);
+    component += OW::offset::Component_Add1;
+    component ^= static_cast<uint64_t>(t.key_byte);
+    component -= OW::offset::Component_Sub1;
+    component = ROR64(component, OW::offset::Component_Ror2);
+    component = ROR64(component, OW::offset::Component_Ror3);
 
     const uint64_t present_mask =
         static_cast<uint64_t>(static_cast<int64_t>(
@@ -1369,44 +1369,43 @@ void ScanViewMatrix()
 }
 
 // ---------------------------------------------------------------------------
-// Scan #4b: ViewMatrix VM11 chain verification
+// Scan #4b: ViewMatrix VM12 chain verification
 // ---------------------------------------------------------------------------
 
-void ScanViewMatrixVM11Chain()
+void ScanViewMatrixVM12Chain()
 {
-    Log("\n=== SCAN 4b: ViewMatrix VM11 Chain Verification ===\n\n");
+    Log("\n=== SCAN 4b: ViewMatrix VM12 Chain Verification ===\n\n");
     LogResultHeader("STEP", "VALUE", "DETAIL");
 
     const uint64_t enc_addr = g_base + OW::offset::Address_viewmatrix_base;
     uint64_t enc = 0;
     const bool enc_ok = ReadExact(enc_addr, enc) && enc != 0;
     LogResultRow(
-        "VM11 encrypted root",
+        "VM12 encrypted root",
         enc_ok,
         FormatString("0x%llX", (unsigned long long)enc).c_str(),
         FormatString("RVA 0x%llX", (unsigned long long)OW::offset::Address_viewmatrix_base).c_str());
 
-    const uint64_t after_sub1 = enc - OW::offset::offset_viewmatrix_xor_key;
+    const uint64_t after_add1 = enc + OW::offset::offset_viewmatrix_xor_key;
     LogResultRow(
-        "VM11 - key1",
+        "VM12 + key1",
         enc_ok,
-        FormatString("0x%llX", (unsigned long long)after_sub1).c_str(),
+        FormatString("0x%llX", (unsigned long long)after_add1).c_str(),
         FormatString("key1=0x%llX", (unsigned long long)OW::offset::offset_viewmatrix_xor_key).c_str());
 
-    const uint64_t after_xor2 = after_sub1 ^ OW::offset::offset_viewmatrix_xor_key2;
+    const uint64_t dec = after_add1 ^ OW::offset::offset_viewmatrix_xor_key2;
     LogResultRow(
-        "VM11 ^ key2",
+        "VM12 ^ key2",
         enc_ok,
-        FormatString("0x%llX", (unsigned long long)after_xor2).c_str(),
+        FormatString("0x%llX", (unsigned long long)dec).c_str(),
         FormatString("key2=0x%llX", (unsigned long long)OW::offset::offset_viewmatrix_xor_key2).c_str());
 
-    const uint64_t dec = after_xor2 - OW::offset::offset_viewmatrix_xor_key3;
     const bool dec_ok = enc_ok && LooksLikeReadablePointer(dec, OW::offset::VM_P1 + sizeof(uint64_t));
     LogResultRow(
-        "VM11 decoded root",
+        "VM12 decoded root",
         dec_ok,
         FormatString("0x%llX", (unsigned long long)dec).c_str(),
-        FormatString("key3=0x%llX", (unsigned long long)OW::offset::offset_viewmatrix_xor_key3).c_str());
+        "(enc+key1)^key2");
 
     uint64_t p1 = 0;
     const bool p1_ok =
@@ -1414,7 +1413,7 @@ void ScanViewMatrixVM11Chain()
         ReadExact(dec + OW::offset::VM_P1, p1) &&
         LooksLikeReadablePointer(p1, OW::offset::VM_P2 + sizeof(uint64_t));
     LogResultRow(
-        "VM11 p1",
+        "VM12 p1",
         p1_ok,
         FormatString("0x%llX", (unsigned long long)p1).c_str(),
         FormatString("[decoded+0x%llX]", (unsigned long long)OW::offset::VM_P1).c_str());
@@ -1425,7 +1424,7 @@ void ScanViewMatrixVM11Chain()
         ReadExact(p1 + OW::offset::VM_P2, p2) &&
         LooksLikeReadablePointer(p2, OW::offset::VM_ViewMatrix + sizeof(float) * 16);
     LogResultRow(
-        "VM11 p2",
+        "VM12 p2",
         p2_ok,
         FormatString("0x%llX", (unsigned long long)p2).c_str(),
         FormatString("[p1+0x%llX]", (unsigned long long)OW::offset::VM_P2).c_str());
@@ -1439,7 +1438,7 @@ void ScanViewMatrixVM11Chain()
         ReadExact(proj_addr, proj_matrix) &&
         IsSaneMatrix(proj_matrix);
     LogResultRow(
-        "VM11 proj matrix",
+        "VM12 proj matrix",
         proj_ok,
         FormatString("0x%llX", (unsigned long long)proj_addr).c_str(),
         FormatString("first4=[%.3f %.3f %.3f %.3f]",
@@ -1451,14 +1450,14 @@ void ScanViewMatrixVM11Chain()
         ReadExact(view_addr, view_matrix) &&
         IsSaneMatrix(view_matrix);
     LogResultRow(
-        "VM11 view matrix",
+        "VM12 view matrix",
         view_ok,
         FormatString("0x%llX", (unsigned long long)view_addr).c_str(),
         FormatString("first4=[%.3f %.3f %.3f %.3f]",
             view_matrix[0], view_matrix[1], view_matrix[2], view_matrix[3]).c_str());
 
     RecordCheckFmt(
-        "ViewMatrix VM11 Chain",
+        "ViewMatrix VM12 Chain",
         enc_ok && dec_ok && p1_ok && p2_ok && proj_ok && view_ok,
         "enc=0x%llX dec=0x%llX p1=0x%llX p2=0x%llX",
         (unsigned long long)enc,
@@ -1498,10 +1497,11 @@ void ScanGameAdminRoot()
         FormatString("0x%llX", (unsigned long long)enc).c_str(),
         FormatString("[root+0x%llX]", (unsigned long long)OW::offset::GameAdmin_RootPtr).c_str());
 
-    const uint64_t slot_table = ROR64(
-        ((enc + OW::offset::GameAdmin_Add1) ^ OW::offset::GameAdmin_Xor1) +
-            OW::offset::GameAdmin_Add2,
-        OW::offset::GameAdmin_Ror);
+    uint64_t slot_table = enc + OW::offset::GameAdmin_Add1;
+    slot_table ^= OW::offset::GameAdmin_Xor1;
+    slot_table = ROR64(slot_table, OW::offset::GameAdmin_Ror1);
+    slot_table += OW::offset::GameAdmin_Add2;
+    slot_table = ROR64(slot_table, OW::offset::GameAdmin_Ror2);
     const bool slot_table_ok =
         enc_ok &&
         LooksLikeReadablePointer(
@@ -1511,7 +1511,7 @@ void ScanGameAdminRoot()
         "resolved slot table",
         slot_table_ok,
         FormatString("0x%llX", (unsigned long long)slot_table).c_str(),
-        "ROR(((enc+add1)^xor1)+add2, 48)");
+        "ROR34(ROR17((enc+add1)^xor1)+add2)");
 
     uint64_t input_system = 0;
     const uint64_t input_slot =
@@ -1921,7 +1921,7 @@ void ScanDataSection()
 
     OffsetTest tests[] = {
         { "entity_base (current)",          OW::offset::Address_entity_base },
-        { "viewmatrix VM11 (current)",      OW::offset::Address_viewmatrix_base },
+        { "viewmatrix VM12 (current)",      OW::offset::Address_viewmatrix_base },
         { "GameAdmin root (current)",       OW::offset::Address_game_admin_root },
         { "ComponentXorQword (current)",    OW::offset::ComponentXorQword_RVA },
         { "ComponentXorByte (current)",     OW::offset::ComponentXorByte_RVA },
@@ -2044,8 +2044,8 @@ int main(int argc, char** argv)
     // ---- Scan 4: ViewMatrix ----
     ScanViewMatrix();
 
-    // ---- Scan 4b: VM11 chain verification ----
-    ScanViewMatrixVM11Chain();
+    // ---- Scan 4b: VM12 chain verification ----
+    ScanViewMatrixVM12Chain();
 
     // ---- Scan 5: GameAdmin root pointer ----
     ScanGameAdminRoot();
