@@ -296,13 +296,47 @@ int main() {
         heroes.push_back(h);
     }
 
-    printf("[SCAN] %d entity slots, %zu heroes found\n\n", total_slots, heroes.size());
+    printf("[SCAN] %d entity slots\n", total_slots);
+
+    // DIAGNOSTIC: dump first few valid entities' component headers
+    int diag_count = 0;
+    for (int i = 0; i < 4096 && diag_count < 3; i++) {
+        uint64_t cur = raw_list[i].entity;
+        if (!cur) continue;
+        diag_count++;
+
+        printf("\n  [DIAG] Entity slot %d @ 0x%016llX:\n", i, cur);
+        uint64_t bm0 = Read<uint64_t>(cur + 0x110);
+        uint64_t bm1 = Read<uint64_t>(cur + 0x118);
+        printf("    +0x110 bitmap[0] = 0x%016llX\n", bm0);
+        printf("    +0x118 bitmap[1] = 0x%016llX\n", bm1);
+
+        uint8_t ib0 = Read<uint8_t>(cur + 0x130);
+        uint8_t ib1 = Read<uint8_t>(cur + 0x131);
+        printf("    +0x130 idxbytes  = %u %u\n", ib0, ib1);
+
+        uint64_t ct = Read<uint64_t>(cur + 0x80);
+        printf("    +0x080 comptable = 0x%016llX\n", ct);
+
+        // Test components that ARE in the bitmap (0x01 TRANSFORM, 0x03, 0x0B)
+        uint64_t t01 = DecryptComponent(cur, 0x01);
+        printf("    DecryptComponent(+0x01 in bitmap) = 0x%016llX\n", t01);
+        uint64_t t03 = DecryptComponent(cur, 0x03);
+        printf("    DecryptComponent(+0x03 in bitmap) = 0x%016llX\n", t03);
+        uint64_t t0b = DecryptComponent(cur, 0x0B);
+        printf("    DecryptComponent(+0x0B in bitmap) = 0x%016llX\n", t0b);
+
+        // Try components not in bitmap — should return 0
+        uint64_t link = DecryptComponent(cur, TYPE_LINK);
+        printf("    DecryptComponent(+0x34 LINK)    = 0x%016llX\n", link);
+        uint64_t hero = DecryptComponent(cur, TYPE_P_HEROID);
+        printf("    DecryptComponent(+0x54 HERO)    = 0x%016llX\n", hero);
+    }
+    printf("\n");
 
     if (heroes.empty()) {
         printf("[FAIL] No heroes — check DecryptComponent\n");
-        VMMDLL_Close(g_vmm);
-        std::getchar();
-        return 1;
+        // still continue to show phase 2 brute force on a raw entity
     }
 
     // Pick local player for detailed analysis

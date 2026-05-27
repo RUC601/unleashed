@@ -630,7 +630,7 @@ inline void entity_thread() {
                 cache.rotation   = OW::DecryptComponent(ComponentParent, OW::TYPE_ROTATION, componentSnapshot);
                 cache.skill      = OW::DecryptComponent(ComponentParent, OW::TYPE_SKILL, componentSnapshot);
                 cache.visibility = OW::DecryptComponent(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
-                cache.angle      = OW::DecryptComponent(LinkParent, OW::TYPE_VIEWANGLE, linkSnapshot);
+                cache.angle      = OW::DecryptComponent(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
                 cache.enemyAngle = OW::DecryptComponent(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
                 cacheIt = componentBaseCache.insert_or_assign(ComponentParent, cache).first;
             }
@@ -3033,37 +3033,96 @@ namespace AimbotDetail {
 
     inline AimData BuildAimData(const Vector3& world_target, bool accelerated, float smooth, float acceleration) {
         AimData data{};
-        const uint64_t viewAngleBase = SDK->g_player_controller;
-        if (!viewAngleBase) {
-            Diagnostics::Aim("angle.missing viewAngleBase");
+        const uint64_t playerControllerBase = SDK->g_player_controller;
+        if (!playerControllerBase) {
+            Diagnostics::Aim("angle.missing playerControllerBase");
             return data;
         }
 
-        data.local_angle = SDK->RPM<Vector3>(viewAngleBase);
+        OW::Matrix aimViewMatrix{}, aimViewMatrixXor{};
+        OW::GetViewMatricesSnapshot(aimViewMatrix, aimViewMatrixXor);
+        const XMFLOAT3 cameraPos = aimViewMatrixXor.get_location();
+        const XMFLOAT3 cameraForward = aimViewMatrixXor.get_rotation();
+
+        // PlayerController + 0x1260 stores a normalized camera forward direction vector (fx, fy, fz).
+        const uint64_t viewDirAddress = playerControllerBase + OW::kPlayerControllerViewDirectionOffset;
+        Vector3 viewDir = OW::ReadPlayerControllerViewDirection(playerControllerBase);
+        float dirLen = sqrtf(viewDir.X * viewDir.X + viewDir.Y * viewDir.Y + viewDir.Z * viewDir.Z);
+        const float matrixForwardLen = sqrtf(cameraForward.x * cameraForward.x +
+                                             cameraForward.y * cameraForward.y +
+                                             cameraForward.z * cameraForward.z);
+        const bool memoryViewDirValid =
+            std::isfinite(viewDir.X) &&
+            std::isfinite(viewDir.Y) &&
+            std::isfinite(viewDir.Z) &&
+            dirLen > 0.5f &&
+            dirLen < 1.5f;
+        const bool matrixForwardValid =
+            std::isfinite(cameraForward.x) &&
+            std::isfinite(cameraForward.y) &&
+            std::isfinite(cameraForward.z) &&
+            matrixForwardLen > 0.5f &&
+            matrixForwardLen < 1.5f;
+        const char* viewDirSource = "player_controller+0x1260";
+        if (!memoryViewDirValid && matrixForwardValid) {
+            viewDir = Vector3(cameraForward.x, cameraForward.y, cameraForward.z);
+            dirLen = matrixForwardLen;
+            viewDirSource = "view_matrix_forward_fallback";
+        }
+        if (!memoryViewDirValid && !matrixForwardValid) {
+            Diagnostics::Aim("angle.missing_valid_viewdir playerControllerBase=0x%llX viewDirAddress=0x%llX mem=(%.6f,%.6f,%.6f) mem_len=%.4f matrix=(%.6f,%.6f,%.6f) matrix_len=%.4f",
+                static_cast<unsigned long long>(playerControllerBase),
+                static_cast<unsigned long long>(viewDirAddress),
+                viewDir.X,
+                viewDir.Y,
+                viewDir.Z,
+                dirLen,
+                cameraForward.x,
+                cameraForward.y,
+                cameraForward.z,
+                matrixForwardLen);
+            return data;
+        }
+
+        // Convert direction vector to pitch/yaw Euler angles (radians).
+        // forward=(fx, fy, fz), same yaw convention as GetViewMatricesSnapshot().get_rotation().
+        const Vector3 localEuler = OW::DirectionToAimEuler(viewDir);
+        const float localPitch = localEuler.X;
+        const float localYaw = localEuler.Y;
+        data.local_angle = Vector3(localPitch, localYaw, 0.0f);
 
         uint8_t rawData[32]{};
-        if (SDK->read_range(viewAngleBase, rawData, sizeof(rawData))) {
+        if (SDK->read_range(viewDirAddress, rawData, sizeof(rawData))) {
             char hexBuf[96]{};
             int off = 0;
             for (int i = 0; i < 32 && off < static_cast<int>(sizeof(hexBuf)) - 4; i++) {
                 off += std::snprintf(hexBuf + off, sizeof(hexBuf) - off, "%02X ", rawData[i]);
             }
-            Diagnostics::Aim("angle.raw viewAngleBase=0x%llX hex_32=%s",
-                static_cast<unsigned long long>(viewAngleBase), hexBuf);
+            Diagnostics::Aim("angle.raw playerControllerBase=0x%llX viewDirAddress=0x%llX hex_32=%s",
+                static_cast<unsigned long long>(playerControllerBase),
+                static_cast<unsigned long long>(viewDirAddress),
+                hexBuf);
         }
 
-        Diagnostics::Aim("angle.read viewAngleBase=0x%llX raw_rad=(%.6f,%.6f,%.6f) deg=(%.2f,%.2f,%.2f)",
-            static_cast<unsigned long long>(viewAngleBase),
-            data.local_angle.X,
-            data.local_angle.Y,
-            data.local_angle.Z,
-            RAD2DEG(data.local_angle.X),
-            RAD2DEG(data.local_angle.Y),
-            RAD2DEG(data.local_angle.Z));
-        OW::Matrix aimViewMatrix{}, aimViewMatrixXor{};
-        OW::GetViewMatricesSnapshot(aimViewMatrix, aimViewMatrixXor);
-        const XMFLOAT3 cameraPos = aimViewMatrixXor.get_location();
-        const XMFLOAT3 cameraForward = aimViewMatrixXor.get_rotation();
+        Diagnostics::Aim("angle.viewdir source=%s playerControllerBase=0x%llX viewDirAddress=0x%llX fx=%.6f fy=%.6f fz=%.6f len=%.4f mem_valid=%d matrix_forward=(%.6f,%.6f,%.6f) matrix_len=%.4f",
+            viewDirSource,
+            static_cast<unsigned long long>(playerControllerBase),
+            static_cast<unsigned long long>(viewDirAddress),
+            viewDir.X,
+            viewDir.Y,
+            viewDir.Z,
+            dirLen,
+            memoryViewDirValid ? 1 : 0,
+            cameraForward.x,
+            cameraForward.y,
+            cameraForward.z,
+            matrixForwardLen);
+        Diagnostics::Aim("angle.local_converted pitch_rad=%.6f yaw_rad=%.6f pitch_deg=%.2f yaw_deg=%.2f dir_len=%.4f",
+            localPitch,
+            localYaw,
+            RAD2DEG(localPitch),
+            RAD2DEG(localYaw),
+            dirLen);
 
         // Guard: camera not yet resolved (identity or zero translation).
         // Computing angles from a zero camera produces bogus aim direction.
@@ -3101,17 +3160,6 @@ namespace AimbotDetail {
                 data.target_angle.Y);
         }
 
-        // Diagnostic: check if local_angle is a direction vector (|v|  1.0) or Euler rad
-        {
-            const float localMag = sqrtf(data.local_angle.X * data.local_angle.X +
-                                         data.local_angle.Y * data.local_angle.Y +
-                                         data.local_angle.Z * data.local_angle.Z);
-            Diagnostics::Aim("angle.format_check local_magnitude=%.6f (expected ~1.0=dir_vec, other=euler_rad) local_raw=(%.6f,%.6f,%.6f)",
-                localMag,
-                data.local_angle.X,
-                data.local_angle.Y,
-                data.local_angle.Z);
-        }
         Diagnostics::Aim("angle.compute world_target=(%.9f,%.9f,%.9f) camera=(%.9f,%.9f,%.9f) direction=(%.9f,%.9f,%.9f) distance=%.9f horizontal=%.9f camera_forward=(%.9f,%.9f,%.9f) local_angle=(%.9f,%.9f,%.9f) target_angle_rad=(%.9f,%.9f,%.9f) local_angle_deg=(%.6f,%.6f,%.6f) target_angle_deg=(%.6f,%.6f,%.6f)",
             world_target.X,
             world_target.Y,
@@ -3370,12 +3418,12 @@ namespace AimbotDetail {
                 if (!IsZeroVector(vec)) {
                     AimData aim = BuildAimData(vec, false, OW::Config::Tracking_smooth / 10.f, 0.0f);
                     Diagnostics::Aim("dryrun.tracking local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) "
-                        "delta_pixels_est=(%.1f,%.1f) sensitivity=%.1f would_move=%d target_pos=(%.1f,%.1f,%.1f)",
+                        "delta_pixels_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) sensitivity=%.1f would_move=%d target_pos=(%.1f,%.1f,%.1f)",
                         RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
                         RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
                         RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
+                        -(aim.target_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
                         (aim.target_angle.X - aim.local_angle.X) * OW::Config::kmboxAimSensitivity,
-                        (aim.target_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
                         OW::Config::kmboxAimSensitivity,
                         1, vec.X, vec.Y, vec.Z);
                 } else {
@@ -3410,9 +3458,9 @@ namespace AimbotDetail {
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     g_trackingMoves++;
                     if (OW::Config::aimVerboseLog) {
-                        Diagnostics::Aim("tracking.tick moved=1 delta_px_est=(%.1f,%.1f) target_dist=%.1f",
+                        Diagnostics::Aim("tracking.tick moved=1 delta_px_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) target_dist=%.1f",
+                            -(aim.smoothed_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
                             (aim.smoothed_angle.X - aim.local_angle.X) * OW::Config::kmboxAimSensitivity,
-                            (aim.smoothed_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
                             CameraPosition().DistTo(vec));
                     }
                     RunCloseRangeActions(vec);

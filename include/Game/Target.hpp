@@ -25,6 +25,22 @@ extern std::mutex g_mutex;
 
 namespace OW {
 
+    inline constexpr uint64_t kPlayerControllerViewDirectionOffset = 0x1260;
+
+    inline Vector3 DirectionToAimEuler(const Vector3& direction) {
+        return Vector3(
+            -asinf(direction.Y),
+            atan2f(direction.X, direction.Z),
+            0.0f
+        );
+    }
+
+    inline Vector3 ReadPlayerControllerViewDirection(uint64_t playerControllerBase) {
+        if (!playerControllerBase)
+            return Vector3{};
+        return SDK->RPM<Vector3>(playerControllerBase + kPlayerControllerViewDirectionOffset);
+    }
+
     // =========================================================================
     // Global extern declarations (defined in Overwatch.hpp)
     // =========================================================================
@@ -118,10 +134,10 @@ namespace OW {
             static float accumY = 0.0f;
             static int callCount = 0;
 
-            // delta.X = pitch (vertical), delta.Y = yaw (horizontal)
-            // pixelX = horizontal mouse movement = yaw, pixelY = vertical = pitch
-            const float scaledYaw   = delta.Y * sensitivity;          // yaw → horizontal
-            const float scaledPitch = delta.X * pitchSensitivity;     // pitch → vertical
+            // delta.X = pitch (vertical), delta.Y = yaw (horizontal).
+            // Positive KMBox X drives the measured yaw negative, so yaw correction is inverted here.
+            const float scaledYaw   = -delta.Y * sensitivity;         // yaw -> horizontal X
+            const float scaledPitch = delta.X * pitchSensitivity;     // pitch -> vertical Y
             const float accumBeforeX = accumX;
             const float accumBeforeY = accumY;
             accumX += scaledYaw;
@@ -228,10 +244,10 @@ namespace OW {
         // 1. Set calibration flag
         Config::calibrationInProgress = true;
 
-        // 2. Read initial view angle from remote memory (pitch, yaw, roll in radians)
-        Vector3 angleBefore = SDK->RPM<Vector3>(SDK->g_player_controller);
+        // 2. Read initial view direction from remote memory and convert to Euler radians.
+        Vector3 angleBefore = DirectionToAimEuler(ReadPlayerControllerViewDirection(SDK->g_player_controller));
         Sleep(Config::calibrationStabilityWaitMs);
-        angleBefore = SDK->RPM<Vector3>(SDK->g_player_controller); // re-read for stability
+        angleBefore = DirectionToAimEuler(ReadPlayerControllerViewDirection(SDK->g_player_controller)); // re-read for stability
 
         // 3. Send a known horizontal mouse move (only yaw matters)
         int moveX = Config::calibrationMovePixels;
@@ -244,8 +260,8 @@ namespace OW {
         // 4. Wait for movement to register
         Sleep(Config::calibrationStabilityWaitMs);
 
-        // 5. Read new view angle
-        Vector3 angleAfter = SDK->RPM<Vector3>(SDK->g_player_controller);
+        // 5. Read new view direction and convert to Euler radians.
+        Vector3 angleAfter = DirectionToAimEuler(ReadPlayerControllerViewDirection(SDK->g_player_controller));
 
         // 6. Calculate delta in radians (only yaw for horizontal calibration)
         constexpr float kPi = 3.14159265358979323846f;
@@ -266,9 +282,9 @@ namespace OW {
         if (calibrateBothAxes) {
             Sleep(Config::calibrationStabilityWaitMs);
 
-            Vector3 pitchBefore = SDK->RPM<Vector3>(SDK->g_player_controller);
+            Vector3 pitchBefore = DirectionToAimEuler(ReadPlayerControllerViewDirection(SDK->g_player_controller));
             Sleep(Config::calibrationStabilityWaitMs);
-            pitchBefore = SDK->RPM<Vector3>(SDK->g_player_controller);
+            pitchBefore = DirectionToAimEuler(ReadPlayerControllerViewDirection(SDK->g_player_controller));
 
             int pitchMoveX = 0;
             int pitchMoveY = Config::calibrationMovePixels;
@@ -279,7 +295,7 @@ namespace OW {
 
             Sleep(Config::calibrationStabilityWaitMs);
 
-            Vector3 pitchAfter = SDK->RPM<Vector3>(SDK->g_player_controller);
+            Vector3 pitchAfter = DirectionToAimEuler(ReadPlayerControllerViewDirection(SDK->g_player_controller));
 
             float pitchDelta = fabsf(pitchAfter.X - pitchBefore.X);
             if (pitchDelta > kPi) pitchDelta = 2.0f * kPi - pitchDelta;
@@ -432,15 +448,16 @@ namespace OW {
     // =========================================================================
 
     inline Vector3 SmoothLinear(Vector3 LocalAngle, Vector3 TargetAngle, float speed) {
+        const float factor = std::isfinite(speed) ? std::clamp(speed, 0.0f, 1.0f) : 0.0f;
         float dist = LocalAngle.DistTo(TargetAngle);
         static float lastx = 0;
         static float lasty = 0;
         static float lastz = 0;
 
         Vector3 Result;
-        float deltax = (TargetAngle.X - LocalAngle.X) * speed;
-        float deltay = (TargetAngle.Y - LocalAngle.Y) * speed;
-        float deltaz = (TargetAngle.Z - LocalAngle.Z) * speed;
+        float deltax = (TargetAngle.X - LocalAngle.X) * factor;
+        float deltay = (TargetAngle.Y - LocalAngle.Y) * factor;
+        float deltaz = (TargetAngle.Z - LocalAngle.Z) * factor;
 
         Result.X = LocalAngle.X + deltax;
         Result.Y = LocalAngle.Y + deltay;
