@@ -20,6 +20,7 @@ class Overlay {
 public:
     bool Initialize(const wchar_t* overlayTitle);
     void Run(std::function<void()> renderCallback);
+    void RequestExit();
     void Shutdown();
 
     HWND GetOverlayWindow() const { return m_canvasHWnd; }
@@ -36,12 +37,15 @@ private:
     ID3D11RenderTargetView* m_menuRenderTargetView = nullptr;
     ImGuiContext*           m_canvasContext = nullptr;
     ImGuiContext*           m_menuContext = nullptr;
+    int                     m_canvasX = 0;
+    int                     m_canvasY = 0;
     UINT                    m_canvasWidth = 0;
     UINT                    m_canvasHeight = 0;
     UINT                    m_menuWidth = 0;
     UINT                    m_menuHeight = 0;
     int                     m_menuAnchorX = 0;
     int                     m_menuAnchorY = 0;
+    unsigned long long      m_lastCanvasBoundsRefreshMs = 0;
     bool                    m_menuAnchorValid = false;
 
     bool RegisterWindowClasses(HINSTANCE instance);
@@ -56,6 +60,7 @@ private:
     bool InitializeImGuiContext(ImGuiContext** context, HWND hWnd);
     void ShutdownImGuiContext(ImGuiContext*& context);
     void UpdateWindowVisibility();
+    void UpdateCanvasBounds(bool force = false);
     void ApplyDesiredMenuClientSize();
     void UpdateSwapChainSizes();
     void RenderCanvas(std::function<void()> renderCallback);

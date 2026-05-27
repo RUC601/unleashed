@@ -178,6 +178,12 @@ namespace OW { namespace Config {
     inline bool ult             = true;
     inline bool draw_skel       = true;
     inline bool skillinfo       = false;
+    // Ultimate / Skill display position
+    // 0 = Above head (per-entity in PlayerInfo), 1 = Left side panel, 2 = Right side panel
+    inline int ultimateDisplayMode = 0;
+    inline int skillDisplayMode = 0;
+    // Radar corner: 0=BottomRight, 1=BottomLeft, 2=TopRight, 3=TopLeft
+    inline int radarCorner = 0;
     inline bool radar           = false;
     inline bool radarline       = false;
     inline bool drawline        = false;
@@ -221,7 +227,7 @@ namespace OW { namespace Config {
     inline int  kmboxPort = 8808;
     inline char kmboxMac[32] = "12525C53";
     inline char kmboxComPort[16] = "COM3";
-    inline float kmboxAimSensitivity = 1.0f;
+    inline float kmboxAimSensitivity = 100.0f;
     inline float gameMouseSensitivity = 15.0f; // DMA-read, updated each tick
     inline float sensReference = 15.0f;        // game sens used when kmboxAimSensitivity was calibrated
     inline bool  autoSyncSensitivity = false;

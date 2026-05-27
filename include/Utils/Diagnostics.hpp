@@ -179,6 +179,10 @@ void Initialize(LogLevel minLevel = LogLevel::Info, const char* logPath = "./unl
 void Shutdown();
 bool IsInitialized();
 
+void InitializeAimLog(const char* logPath = "./unleashed_aim_diag.log");
+void ShutdownAimLog();
+void Aim(const char* fmt, ...);
+
 void SetLogLevel(LogLevel minLevel);
 LogLevel GetLogLevel();
 

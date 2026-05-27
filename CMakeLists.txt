@@ -98,6 +98,7 @@ target_link_libraries(Unleashed PRIVATE
     windowscodecs
     ole32
     ws2_32
+    shell32
     dwmapi
     setupapi
 )

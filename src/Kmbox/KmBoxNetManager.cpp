@@ -228,11 +228,31 @@ void KmBoxNetManager::StampPacketForSend(client_data& Packet)
 int KmBoxNetManager::SendPacketOnce(client_data& packet, int DataLength, KmBoxCommandType Type)
 {
     std::lock_guard<std::mutex> lock(sendMutex);
-    if (!IsValidSocket(s_Client))
+    if (!IsValidSocket(s_Client)) {
+        if (IsOutputCommand(Type)) {
+            Diagnostics::Aim("udp.send early_return reason=invalid_socket type=%s cmd=0x%08X len=%d x=%d y=%d button=%d",
+                ToString(Type),
+                packet.head.cmd,
+                DataLength,
+                packet.cmd_mouse.x,
+                packet.cmd_mouse.y,
+                packet.cmd_mouse.button);
+        }
         return err_creat_socket;
+    }
 
     Diagnostics::Trace("[KMBOX-NET] send %s cmd=0x%08X pts=%u len=%d",
         ToString(Type), packet.head.cmd, packet.head.indexpts, DataLength);
+    if (IsOutputCommand(Type)) {
+        Diagnostics::Aim("udp.send fire type=%s cmd=0x%08X pts=%u len=%d x=%d y=%d button=%d",
+            ToString(Type),
+            packet.head.cmd,
+            packet.head.indexpts,
+            DataLength,
+            packet.cmd_mouse.x,
+            packet.cmd_mouse.y,
+            packet.cmd_mouse.button);
+    }
 
     const int sent = sendto(s_Client, reinterpret_cast<const char*>(&packet), DataLength, 0,
         reinterpret_cast<sockaddr*>(&AddrServer), sizeof(AddrServer));
@@ -240,7 +260,20 @@ int KmBoxNetManager::SendPacketOnce(client_data& packet, int DataLength, KmBoxCo
     if (sent == SOCKET_ERROR || sent != DataLength) {
         Diagnostics::Error("[KMBOX-NET] sendto failed for %s. sent=%d expected=%d WSA=%d",
             ToString(Type), sent, DataLength, WSAGetLastError());
+        if (IsOutputCommand(Type)) {
+            Diagnostics::Aim("udp.send failure type=%s sent=%d expected=%d wsa=%d",
+                ToString(Type),
+                sent,
+                DataLength,
+                WSAGetLastError());
+        }
         return err_net_tx;
+    }
+    if (IsOutputCommand(Type)) {
+        Diagnostics::Aim("udp.send sent_bytes type=%s sent=%d expected=%d",
+            ToString(Type),
+            sent,
+            DataLength);
     }
 
     client_data receiveData{};
@@ -252,6 +285,12 @@ int KmBoxNetManager::SendPacketOnce(client_data& packet, int DataLength, KmBoxCo
     if (received < 0) {
         Diagnostics::Error("[KMBOX-NET] recvfrom timeout/failure for %s. WSA=%d",
             ToString(Type), WSAGetLastError());
+        if (IsOutputCommand(Type)) {
+            Diagnostics::Aim("udp.recv failure type=%s received=%d wsa=%d",
+                ToString(Type),
+                received,
+                WSAGetLastError());
+        }
         return err_net_rx_timeout;
     }
 
@@ -264,15 +303,34 @@ int KmBoxNetManager::SendPacketOnce(client_data& packet, int DataLength, KmBoxCo
     if (receiveData.head.cmd != packet.head.cmd) {
         Diagnostics::Error("[KMBOX-NET] command echo mismatch for %s. sent=0x%08X recv=0x%08X",
             ToString(Type), packet.head.cmd, receiveData.head.cmd);
+        if (IsOutputCommand(Type)) {
+            Diagnostics::Aim("udp.recv mismatch type=%s reason=cmd sent=0x%08X recv=0x%08X",
+                ToString(Type),
+                packet.head.cmd,
+                receiveData.head.cmd);
+        }
         return err_net_cmd;
     }
 
     if (receiveData.head.indexpts != packet.head.indexpts) {
         Diagnostics::Error("[KMBOX-NET] packet sequence mismatch for %s. sent=%u recv=%u",
             ToString(Type), packet.head.indexpts, receiveData.head.indexpts);
+        if (IsOutputCommand(Type)) {
+            Diagnostics::Aim("udp.recv mismatch type=%s reason=pts sent=%u recv=%u",
+                ToString(Type),
+                packet.head.indexpts,
+                receiveData.head.indexpts);
+        }
         return err_net_pts;
     }
 
+    if (IsOutputCommand(Type)) {
+        Diagnostics::Aim("udp.recv ack type=%s received=%d cmd=0x%08X pts=%u",
+            ToString(Type),
+            received,
+            receiveData.head.cmd,
+            receiveData.head.indexpts);
+    }
     return success;
 }
 
@@ -375,11 +433,28 @@ void KmBoxNetManager::StopWorkers()
 
 int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
 {
-    if (configuredIp.empty())
+    if (configuredIp.empty()) {
+        if (IsOutputCommand(Command.type)) {
+            Diagnostics::Aim("udp.enqueue early_return reason=missing_configured_ip type=%s x=%d y=%d button=%d",
+                ToString(Command.type),
+                Command.data.cmd_mouse.x,
+                Command.data.cmd_mouse.y,
+                Command.data.cmd_mouse.button);
+        }
         return err_creat_socket;
+    }
 
     {
         std::lock_guard<std::mutex> lock(queueMutex);
+        if (IsOutputCommand(Command.type)) {
+            Diagnostics::Aim("udp.enqueue request type=%s queue_size_before=%zu x=%d y=%d button=%d len=%d",
+                ToString(Command.type),
+                commandQueue.size(),
+                Command.data.cmd_mouse.x,
+                Command.data.cmd_mouse.y,
+                Command.data.cmd_mouse.button,
+                Command.length);
+        }
 
         if (Command.type == KmBoxCommandType::MouseMove && !commandQueue.empty()) {
             KmBoxQueuedNetCommand& back = commandQueue.back();
@@ -388,16 +463,34 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
                 back.data.cmd_mouse.y += Command.data.cmd_mouse.y;
                 Diagnostics::Trace("[KMBOX-NET] coalesced mouse_move dx=%d dy=%d",
                     back.data.cmd_mouse.x, back.data.cmd_mouse.y);
+                Diagnostics::Aim("udp.enqueue coalesced type=mouse_move merged_x=%d merged_y=%d queue_size=%zu",
+                    back.data.cmd_mouse.x,
+                    back.data.cmd_mouse.y,
+                    commandQueue.size());
                 return success;
             }
         }
 
         if (commandQueue.size() >= KmBoxRuntimeConfig::CommandQueueMaxSize) {
             Diagnostics::Error("[KMBOX-NET] Command queue full; dropping oldest command.");
+            if (!commandQueue.empty()) {
+                const KmBoxQueuedNetCommand& dropped = commandQueue.front();
+                Diagnostics::Aim("udp.enqueue drop_oldest reason=queue_full dropped_type=%s dropped_x=%d dropped_y=%d dropped_button=%d queue_size=%zu",
+                    ToString(dropped.type),
+                    dropped.data.cmd_mouse.x,
+                    dropped.data.cmd_mouse.y,
+                    dropped.data.cmd_mouse.button,
+                    commandQueue.size());
+            }
             commandQueue.pop_front();
         }
 
         commandQueue.push_back(Command);
+        if (IsOutputCommand(Command.type)) {
+            Diagnostics::Aim("udp.enqueue pushed type=%s queue_size_after=%zu",
+                ToString(Command.type),
+                commandQueue.size());
+        }
     }
 
     queueCv.notify_one();
@@ -424,6 +517,14 @@ void KmBoxNetManager::QueueWorkerLoop()
 
             command = commandQueue.front();
             commandQueue.pop_front();
+            if (IsOutputCommand(command.type)) {
+                Diagnostics::Aim("udp.queue pop type=%s queue_size_after_pop=%zu x=%d y=%d button=%d",
+                    ToString(command.type),
+                    commandQueue.size(),
+                    command.data.cmd_mouse.x,
+                    command.data.cmd_mouse.y,
+                    command.data.cmd_mouse.button);
+            }
         }
 
         const auto flushInterval = std::chrono::milliseconds(KmBoxRuntimeConfig::CommandFlushIntervalMs);
@@ -434,14 +535,35 @@ void KmBoxNetManager::QueueWorkerLoop()
         if (!EnsureConnected()) {
             Diagnostics::Error("[KMBOX-NET] Dropping %s command; device is not connected.",
                 ToString(command.type));
+            if (IsOutputCommand(command.type)) {
+                Diagnostics::Aim("udp.queue drop reason=not_connected type=%s x=%d y=%d button=%d",
+                    ToString(command.type),
+                    command.data.cmd_mouse.x,
+                    command.data.cmd_mouse.y,
+                    command.data.cmd_mouse.button);
+            }
             continue;
         }
 
         StampPacketForSend(command.data);
+        if (IsOutputCommand(command.type)) {
+            Diagnostics::Aim("udp.queue send_start type=%s pts=%u len=%d x=%d y=%d button=%d",
+                ToString(command.type),
+                command.data.head.indexpts,
+                command.length,
+                command.data.cmd_mouse.x,
+                command.data.cmd_mouse.y,
+                command.data.cmd_mouse.button);
+        }
         const int status = SendPacketWithRetry(command.data, command.length, command.type);
         if (status != success) {
             Diagnostics::Error("[KMBOX-NET] Dropped %s command after retries. status=%d",
                 ToString(command.type), status);
+            if (IsOutputCommand(command.type)) {
+                Diagnostics::Aim("udp.queue drop reason=send_failed type=%s status=%d",
+                    ToString(command.type),
+                    status);
+            }
             CloseSocket();
             EnsureConnected();
         } else if (IsOutputCommand(command.type)) {
@@ -449,6 +571,9 @@ void KmBoxNetManager::QueueWorkerLoop()
                 outputSendCount.fetch_add(1, std::memory_order_acq_rel) + 1;
             Diagnostics::Info("[KMBOX-NET] output send count=%llu type=%s",
                 count, ToString(command.type));
+            Diagnostics::Aim("udp.queue send_success count=%llu type=%s",
+                count,
+                ToString(command.type));
         }
 
         lastFlush = std::chrono::steady_clock::now();
@@ -584,6 +709,7 @@ int KmBoxNetManager::NetHandler()
 
 int KmBoxMouse::Move(int x, int y)
 {
+    Diagnostics::Aim("udp.mouse.move build x=%d y=%d", x, y);
     client_data packet = kmbox::KmBoxMgr.BuildPacket(cmd_mouse_move, kmbox::KmBoxMgr.NextRandom());
     soft_mouse_t payload{};
     {
@@ -600,7 +726,9 @@ int KmBoxMouse::Move(int x, int y)
     command.length = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
     command.type = KmBoxCommandType::MouseMove;
     command.enqueuedAt = std::chrono::steady_clock::now();
-    return kmbox::KmBoxMgr.EnqueueCommand(command);
+    const int status = kmbox::KmBoxMgr.EnqueueCommand(command);
+    Diagnostics::Aim("udp.mouse.move enqueue_result x=%d y=%d status=%d", x, y, status);
+    return status;
 }
 
 int KmBoxMouse::Move_Auto(int x, int y, int Runtime)

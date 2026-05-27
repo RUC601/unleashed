@@ -340,7 +340,25 @@ namespace {
 
         const float radius = 88.0f;
         const float padding = 24.0f;
-        const OW::Vector2 center(width - radius - padding, height - radius - padding);
+        float centerX = width - radius - padding;
+        float centerY = height - radius - padding;
+        switch (OW::Config::radarCorner) {
+            case 1: // Bottom Left
+                centerX = radius + padding;
+                centerY = height - radius - padding;
+                break;
+            case 2: // Top Right
+                centerX = width - radius - padding;
+                centerY = radius + padding;
+                break;
+            case 3: // Top Left
+                centerX = radius + padding;
+                centerY = radius + padding;
+                break;
+            default: // Bottom Right
+                break;
+        }
+        const OW::Vector2 center(centerX, centerY);
         const Render::Color border(255, 255, 255, 170);
         const Render::Color background(10, 12, 16, 95);
 
@@ -466,8 +484,10 @@ void RenderCallback()
     if (!entityListEmpty) {
         playerInfoCalled = true;
         PlayerInfo();
-        skillInfoCalled = true;
-        skillinfo();
+        if (OW::Config::skillDisplayMode != 0 || OW::Config::ultimateDisplayMode != 0) {
+            skillInfoCalled = true;
+            skillinfo();
+        }
     } else {
         Diagnostics::PlayerInfoStats emptyPlayerInfoStats{};
         Diagnostics::SetPlayerInfoStats(emptyPlayerInfoStats);
@@ -497,12 +517,17 @@ static void InitializeKmBoxFromConfig()
     if (!OW::Config::kmboxEnabled) {
         std::printf("[KMBOX] Disabled by config; output is disabled.\n");
         Diagnostics::Info("KMBox disabled by config.");
+        Diagnostics::Aim("kmbox.init early_return disabled_by_config");
         return;
     }
 
     if (OW::Config::kmboxDeviceType == 0) {
         std::printf("[KMBOX] Initialising network device %s:%d...\n",
             OW::Config::kmboxIp, OW::Config::kmboxPort);
+        Diagnostics::Aim("kmbox.init network start ip=%s port=%d mac=%s",
+            OW::Config::kmboxIp,
+            OW::Config::kmboxPort,
+            OW::Config::kmboxMac);
         const int status = kmbox::KmBoxMgr.InitDevice(
             OW::Config::kmboxIp,
             static_cast<WORD>(OW::Config::kmboxPort),
@@ -511,31 +536,40 @@ static void InitializeKmBoxFromConfig()
             std::printf("[KMBOX] Network device ready.\n");
             Diagnostics::Info("KMBox network device ready. ip=%s port=%d",
                 OW::Config::kmboxIp, OW::Config::kmboxPort);
+            Diagnostics::Aim("kmbox.init network success ip=%s port=%d",
+                OW::Config::kmboxIp,
+                OW::Config::kmboxPort);
 
             const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxPort + 1);
             const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
             if (monitorStatus == success) {
                 std::printf("[KMBOX] Monitor started on port %u.\n", monitorPort);
                 Diagnostics::Info("KMBox monitor started. port=%u", monitorPort);
+                Diagnostics::Aim("kmbox.monitor success port=%u", monitorPort);
             } else {
                 std::printf("[KMBOX] Monitor failed to start on port %u. status=%d\n",
                     monitorPort, monitorStatus);
                 Diagnostics::Warn("KMBox monitor failed to start. port=%u status=%d",
                     monitorPort, monitorStatus);
+                Diagnostics::Aim("kmbox.monitor failure port=%u status=%d", monitorPort, monitorStatus);
             }
         } else {
             std::printf("[KMBOX] Network initialisation failed. status=%d\n", status);
             Diagnostics::Error("KMBox network initialisation failed. status=%d", status);
+            Diagnostics::Aim("kmbox.init network failure status=%d", status);
         }
     } else {
         std::printf("[KMBOX] Initialising serial device on %s...\n", OW::Config::kmboxComPort);
+        Diagnostics::Aim("kmbox.init serial start port=%s", OW::Config::kmboxComPort);
         const int status = kmbox::kmBoxBMgr.init(OW::Config::kmboxComPort);
         if (status == success) {
             std::printf("[KMBOX] Serial device ready.\n");
             Diagnostics::Info("KMBox serial device ready. port=%s", OW::Config::kmboxComPort);
+            Diagnostics::Aim("kmbox.init serial success port=%s", OW::Config::kmboxComPort);
         } else {
             std::printf("[KMBOX] Serial initialisation failed. status=%d\n", status);
             Diagnostics::Error("KMBox serial initialisation failed. status=%d", status);
+            Diagnostics::Aim("kmbox.init serial failure status=%d", status);
         }
     }
 }
@@ -605,8 +639,20 @@ int main()
     }
     std::printf("[MAIN] DMA subsystem ready.\n\n");
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
+    Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
     OW::Config::LoadConfig(OW::Config::ConfigPath());
     OW::RefreshScreenSizeFromConfig();
+    Diagnostics::Aim("main.config_loaded screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d",
+        OW::WX,
+        OW::WY,
+        OW::Config::kmboxEnabled ? 1 : 0,
+        OW::Config::kmboxDeviceType,
+        OW::Config::kmboxIp,
+        OW::Config::kmboxPort,
+        OW::Config::kmboxAimSensitivity,
+        OW::Config::gameMouseSensitivity,
+        OW::Config::sensReference,
+        OW::Config::autoSyncSensitivity ? 1 : 0);
     std::printf("[MAIN] Screen size: %.0fx%.0f\n", OW::WX, OW::WY);
     InitializeKmBoxFromConfig();
     Diagnostics::SetDmaReady(true);
@@ -641,6 +687,7 @@ int main()
         mem.CloseDma();
         Diagnostics::SetDmaReady(false);
         Diagnostics::SetProcessAttached(false);
+        Diagnostics::ShutdownAimLog();
         Diagnostics::Shutdown();
         std::printf("[INFO] Press Enter to exit.\n");
         std::getchar();
@@ -681,6 +728,7 @@ int main()
         mem.CloseDma();
         Diagnostics::SetDmaReady(false);
         Diagnostics::SetProcessAttached(false);
+        Diagnostics::ShutdownAimLog();
         Diagnostics::Shutdown();
         std::printf("[INFO] Press Enter to exit.\n");
         std::getchar();
@@ -715,6 +763,7 @@ int main()
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
     Diagnostics::Info("DMA subsystem closed.");
+    Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
 
     std::printf("[MAIN] Goodbye.\n");

@@ -1,5 +1,7 @@
 #include "Renderer/Overlay.hpp"
 #include "Features/UI.hpp"
+#include "Game/Overwatch.hpp"
+#include "Memory/Memory.h"
 #include "Utils/Config.hpp"
 #include "resource.h"
 
@@ -16,11 +18,29 @@ constexpr int kDefaultMenuClientWidth = 650;
 constexpr int kDefaultMenuClientHeight = 550;
 constexpr int kMinimumMenuClientHeight = 140;
 constexpr int kMenuResizeGrip = 8;
-constexpr int kMenuDragHeight = 38;
+constexpr int kMenuDragHeight = 41;
+constexpr int kHeaderActionWidth = 364;
 constexpr wchar_t kCanvasClassName[] = L"UnleashedOverlayCanvasDX11";
 constexpr wchar_t kMenuClassName[] = L"UnleashedOverlayMenuDX11";
+constexpr char kTargetProcessName[] = "Overwatch.exe";
+constexpr ULONGLONG kCanvasBoundsRefreshMs = 500;
 
 ImGuiContext* g_menuContext = nullptr;
+
+struct CanvasBounds {
+    int x = 0;
+    int y = 0;
+    UINT width = 1;
+    UINT height = 1;
+    bool detectedTarget = false;
+};
+
+struct TargetWindowSearch {
+    DWORD pid = 0;
+    HWND hwnd = nullptr;
+    RECT clientRect = {};
+    long long bestArea = 0;
+};
 
 int AbsInt(int value) {
     return value < 0 ? -value : value;
@@ -38,6 +58,147 @@ int RoundClientSize(float value) {
     return static_cast<int>(value + 0.5f);
 }
 
+bool TryMakeCanvasBounds(const RECT& rect, bool detectedTarget, CanvasBounds& bounds) {
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    if (width <= 0 || height <= 0)
+        return false;
+
+    bounds.x = rect.left;
+    bounds.y = rect.top;
+    bounds.width = static_cast<UINT>(width);
+    bounds.height = static_cast<UINT>(height);
+    bounds.detectedTarget = detectedTarget;
+    return true;
+}
+
+BOOL CALLBACK EnumWindowsForTargetProcess(HWND hWnd, LPARAM lParam) {
+    TargetWindowSearch* search = reinterpret_cast<TargetWindowSearch*>(lParam);
+    if (!search)
+        return TRUE;
+    if (!IsWindowVisible(hWnd) || IsIconic(hWnd))
+        return TRUE;
+    if (GetWindow(hWnd, GW_OWNER) != nullptr)
+        return TRUE;
+
+    DWORD windowPid = 0;
+    GetWindowThreadProcessId(hWnd, &windowPid);
+    if (windowPid != search->pid)
+        return TRUE;
+
+    RECT clientRect = {};
+    if (!GetClientRect(hWnd, &clientRect))
+        return TRUE;
+
+    POINT origin = { clientRect.left, clientRect.top };
+    if (!ClientToScreen(hWnd, &origin))
+        return TRUE;
+
+    clientRect.right += origin.x;
+    clientRect.bottom += origin.y;
+    clientRect.left = origin.x;
+    clientRect.top = origin.y;
+
+    const int width = clientRect.right - clientRect.left;
+    const int height = clientRect.bottom - clientRect.top;
+    const long long area = static_cast<long long>(width) * static_cast<long long>(height);
+    if (width <= 0 || height <= 0 || area <= 0)
+        return TRUE;
+
+    if (!search->hwnd || area > search->bestArea) {
+        search->hwnd = hWnd;
+        search->clientRect = clientRect;
+        search->bestArea = area;
+    }
+
+    return TRUE;
+}
+
+bool TryFindTargetClientRect(RECT& clientRect) {
+    const DWORD targetPid = mem.GetPidFromName(kTargetProcessName);
+    if (!targetPid)
+        return false;
+
+    TargetWindowSearch search = {};
+    search.pid = targetPid;
+    EnumWindows(EnumWindowsForTargetProcess, reinterpret_cast<LPARAM>(&search));
+    if (!search.hwnd)
+        return false;
+
+    clientRect = search.clientRect;
+    return true;
+}
+
+bool TryGetMonitorRectFromTarget(CanvasBounds& bounds) {
+    RECT targetRect = {};
+    if (!TryFindTargetClientRect(targetRect))
+        return false;
+
+    HMONITOR monitor = MonitorFromRect(&targetRect, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo))
+        return false;
+
+    return TryMakeCanvasBounds(monitorInfo.rcMonitor, true, bounds);
+}
+
+bool TryGetPrimaryMonitorRect(RECT& monitorRect) {
+    const POINT origin = { 0, 0 };
+    HMONITOR monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo))
+        return false;
+
+    monitorRect = monitorInfo.rcMonitor;
+    return true;
+}
+
+bool TryGetManualCanvasBounds(CanvasBounds& bounds) {
+    if (OW::Config::manualScreenWidth <= 0 || OW::Config::manualScreenHeight <= 0)
+        return false;
+
+    RECT primaryRect = {};
+    int x = 0;
+    int y = 0;
+    if (TryGetPrimaryMonitorRect(primaryRect)) {
+        x = primaryRect.left;
+        y = primaryRect.top;
+    }
+
+    bounds.x = x;
+    bounds.y = y;
+    bounds.width = static_cast<UINT>(OW::Config::manualScreenWidth);
+    bounds.height = static_cast<UINT>(OW::Config::manualScreenHeight);
+    bounds.detectedTarget = false;
+    return true;
+}
+
+CanvasBounds ResolveCanvasBounds() {
+    CanvasBounds bounds = {};
+    if (TryGetMonitorRectFromTarget(bounds))
+        return bounds;
+    if (TryGetManualCanvasBounds(bounds))
+        return bounds;
+
+    RECT primaryRect = {};
+    if (TryGetPrimaryMonitorRect(primaryRect) && TryMakeCanvasBounds(primaryRect, false, bounds))
+        return bounds;
+
+    bounds.width = static_cast<UINT>(MaxInt(1, GetSystemMetrics(SM_CXSCREEN)));
+    bounds.height = static_cast<UINT>(MaxInt(1, GetSystemMetrics(SM_CYSCREEN)));
+    return bounds;
+}
+
+void ApplyCanvasScreenSize(const CanvasBounds& bounds) {
+    if (bounds.detectedTarget)
+        OW::SetDetectedScreenSize(static_cast<int>(bounds.width), static_cast<int>(bounds.height));
+    else
+        OW::ClearDetectedScreenSize();
+}
+
 void ApplyMinimumMenuTrackSize(LPARAM lParam) {
     MINMAXINFO* minMax = reinterpret_cast<MINMAXINFO*>(lParam);
     if (!minMax)
@@ -45,6 +206,22 @@ void ApplyMinimumMenuTrackSize(LPARAM lParam) {
 
     minMax->ptMinTrackSize.x = kDefaultMenuClientWidth;
     minMax->ptMinTrackSize.y = kMinimumMenuClientHeight;
+}
+
+bool IsInMenuDragZone(HWND hWnd, POINT cursor) {
+    RECT rect = {};
+    GetClientRect(hWnd, &rect);
+
+    if (cursor.x < 0 || cursor.y < 0 || cursor.x >= rect.right || cursor.y >= rect.bottom)
+        return false;
+
+    if (cursor.y >= kMenuDragHeight)
+        return false;
+
+    if (cursor.x >= rect.right - kHeaderActionWidth)
+        return false;
+
+    return true;
 }
 
 LRESULT HitTestBorderlessMenu(HWND hWnd, LPARAM lParam) {
@@ -71,7 +248,7 @@ LRESULT HitTestBorderlessMenu(HWND hWnd, LPARAM lParam) {
     if (top) return HTTOP;
     if (bottom) return HTBOTTOM;
 
-    if (cursor.y < kMenuDragHeight && cursor.x < rect.right - 72)
+    if (IsInMenuDragZone(hWnd, cursor))
         return HTCAPTION;
 
     return HTCLIENT;
@@ -164,6 +341,17 @@ LRESULT WINAPI MenuWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return HitTestBorderlessMenu(hWnd, lParam);
     if (msg == WM_NCCALCSIZE && wParam)
         return 0;
+    if (msg == WM_LBUTTONDOWN) {
+        POINT cursor = {
+            GET_X_LPARAM(lParam),
+            GET_Y_LPARAM(lParam)
+        };
+        if (IsInMenuDragZone(hWnd, cursor)) {
+            ReleaseCapture();
+            SendMessageW(hWnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            return 0;
+        }
+    }
 
     ImGuiContext* previousContext = ImGui::GetCurrentContext();
     if (g_menuContext) {
@@ -253,6 +441,7 @@ void Overlay::Run(std::function<void()> renderCallback) {
             OW::Config::Menu = !OW::Config::Menu;
 
         UpdateWindowVisibility();
+        UpdateCanvasBounds();
         UpdateSwapChainSizes();
 
         RenderCanvas(renderCallback);
@@ -261,6 +450,15 @@ void Overlay::Run(std::function<void()> renderCallback) {
     }
 
     Shutdown();
+}
+
+void Overlay::RequestExit() {
+    if (m_canvasHWnd && IsWindow(m_canvasHWnd)) {
+        PostMessageW(m_canvasHWnd, WM_CLOSE, 0, 0);
+        return;
+    }
+
+    PostQuitMessage(0);
 }
 
 void Overlay::Shutdown() {
@@ -307,20 +505,20 @@ bool Overlay::RegisterWindowClasses(HINSTANCE instance) {
 }
 
 bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
-    m_canvasWidth = static_cast<UINT>(GetSystemMetrics(SM_CXSCREEN));
-    m_canvasHeight = static_cast<UINT>(GetSystemMetrics(SM_CYSCREEN));
-    if (m_canvasWidth == 0 || m_canvasHeight == 0) {
-        m_canvasWidth = static_cast<UINT>(OW::Config::manualScreenWidth > 0 ? OW::Config::manualScreenWidth : 1);
-        m_canvasHeight = static_cast<UINT>(OW::Config::manualScreenHeight > 0 ? OW::Config::manualScreenHeight : 1);
-    }
+    const CanvasBounds initialBounds = ResolveCanvasBounds();
+    m_canvasX = initialBounds.x;
+    m_canvasY = initialBounds.y;
+    m_canvasWidth = initialBounds.width;
+    m_canvasHeight = initialBounds.height;
+    ApplyCanvasScreenSize(initialBounds);
 
     m_canvasHWnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
         kCanvasClassName,
         overlayTitle,
         WS_POPUP | WS_VISIBLE,
-        0,
-        0,
+        m_canvasX,
+        m_canvasY,
         static_cast<int>(m_canvasWidth),
         static_cast<int>(m_canvasHeight),
         nullptr,
@@ -336,7 +534,7 @@ bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
     SetLayeredWindowAttributes(m_canvasHWnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
 
     ShowWindow(m_canvasHWnd, SW_SHOW);
-    SetWindowPos(m_canvasHWnd, HWND_TOPMOST, 0, 0,
+    SetWindowPos(m_canvasHWnd, HWND_TOPMOST, m_canvasX, m_canvasY,
                  static_cast<int>(m_canvasWidth), static_cast<int>(m_canvasHeight),
                  SWP_SHOWWINDOW);
 
@@ -567,6 +765,43 @@ void Overlay::UpdateWindowVisibility() {
     }
 }
 
+void Overlay::UpdateCanvasBounds(bool force) {
+    if (!m_canvasHWnd)
+        return;
+
+    const ULONGLONG now = GetTickCount64();
+    if (!force && m_lastCanvasBoundsRefreshMs != 0 &&
+        now - m_lastCanvasBoundsRefreshMs < kCanvasBoundsRefreshMs) {
+        return;
+    }
+    m_lastCanvasBoundsRefreshMs = now;
+
+    const CanvasBounds bounds = ResolveCanvasBounds();
+    ApplyCanvasScreenSize(bounds);
+
+    RECT currentRect = {};
+    if (!GetWindowRect(m_canvasHWnd, &currentRect))
+        return;
+
+    const int currentWidth = currentRect.right - currentRect.left;
+    const int currentHeight = currentRect.bottom - currentRect.top;
+    const bool boundsChanged =
+        currentRect.left != bounds.x ||
+        currentRect.top != bounds.y ||
+        currentWidth != static_cast<int>(bounds.width) ||
+        currentHeight != static_cast<int>(bounds.height);
+
+    m_canvasX = bounds.x;
+    m_canvasY = bounds.y;
+
+    if (!boundsChanged)
+        return;
+
+    SetWindowPos(m_canvasHWnd, HWND_TOPMOST, bounds.x, bounds.y,
+                 static_cast<int>(bounds.width), static_cast<int>(bounds.height),
+                 SWP_NOOWNERZORDER | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+}
+
 void Overlay::ApplyDesiredMenuClientSize() {
     if (!m_menuHWnd || !IsWindowVisible(m_menuHWnd))
         return;
@@ -589,11 +824,9 @@ void Overlay::ApplyDesiredMenuClientSize() {
     const int windowH = windowRect.bottom - windowRect.top;
     const int nonClientW = windowW - currentClientW;
     const int nonClientH = windowH - currentClientH;
-    if (!m_menuAnchorValid) {
-        m_menuAnchorX = windowRect.left;
-        m_menuAnchorY = windowRect.top;
-        m_menuAnchorValid = true;
-    }
+    m_menuAnchorX = windowRect.left;
+    m_menuAnchorY = windowRect.top;
+    m_menuAnchorValid = true;
 
     RECT workArea = {};
     if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0)) {

@@ -1,10 +1,13 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <shellapi.h>
 
 #include "Features/UI.hpp"
+#include "Kmbox/KmBoxConfig.h"
 #include "Utils/Config.hpp"
 #include "Game/Overwatch.hpp"
 #include "Game/Structs.hpp"
+#include "Renderer/Overlay.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Utils/Diagnostics.hpp"
 #include "resource.h"
@@ -12,6 +15,7 @@
 #include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cfloat>
 #include <cstdint>
 #include <cstring>
@@ -76,10 +80,76 @@ namespace {
         return buffer;
     }
 
+    bool TryParseHexU32(const char* text, unsigned int& value)
+    {
+        if (text == nullptr || *text == '\0')
+            return false;
+
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(text, &end, 16);
+        if (end == text || (end != nullptr && *end != '\0'))
+            return false;
+
+        value = static_cast<unsigned int>(parsed);
+        return true;
+    }
+
+    std::wstring PowerShellSingleQuoted(const char* text)
+    {
+        std::wstring quoted = L"'";
+        if (text != nullptr) {
+            for (const char* current = text; *current != '\0'; ++current) {
+                if (*current == '\'')
+                    quoted += L"''";
+                else
+                    quoted += static_cast<unsigned char>(*current);
+            }
+        }
+        quoted += L"'";
+        return quoted;
+    }
+
+    KmboxConnectionTestResult RestartKmboxNetworkAdapter()
+    {
+        const std::wstring targetIp = PowerShellSingleQuoted(OW::Config::kmboxIp);
+        const std::wstring command =
+            L"-NoProfile -ExecutionPolicy Bypass -Command "
+            L"\"$target = " + targetIp + L"; "
+            L"$adapter = $null; "
+            L"try { "
+            L"$route = Find-NetRoute -RemoteIPAddress $target -ErrorAction Stop | "
+            L"Sort-Object RouteMetric,InterfaceMetric | Select-Object -First 1; "
+            L"if ($route) { $adapter = Get-NetAdapter -InterfaceIndex $route.InterfaceIndex -ErrorAction Stop; } "
+            L"} catch {} "
+            L"if (-not $adapter) { "
+            L"$adapter = Get-NetAdapter -InterfaceDescription 'USB 2.0 Ethernet Adapter' -ErrorAction Stop | "
+            L"Select-Object -First 1; "
+            L"} "
+            L"Restart-NetAdapter -Name $adapter.Name -Confirm:$false\"";
+
+        HINSTANCE result = ShellExecuteW(
+            nullptr,
+            L"runas",
+            L"powershell.exe",
+            command.c_str(),
+            nullptr,
+            SW_HIDE);
+
+        const auto resultCode = reinterpret_cast<intptr_t>(result);
+        if (resultCode <= 32)
+            return { false, Win32ErrorMessage("Restart launch failed", static_cast<DWORD>(resultCode)) };
+
+        return { true, "NIC restart requested" };
+    }
+
     KmboxConnectionTestResult TestNetworkKmboxConnection()
     {
         if (OW::Config::kmboxPort <= 0 || OW::Config::kmboxPort > 65535)
             return { false, "Invalid port" };
+
+        unsigned int deviceMac = 0;
+        if (!TryParseHexU32(OW::Config::kmboxMac, deviceMac))
+            return { false, "Invalid MAC" };
 
         WSADATA wsaData{};
         const int startupStatus = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -108,20 +178,26 @@ namespace {
             return { false, "Invalid IP" };
         }
 
-        const char testByte = 0x01;
-        const int sent = sendto(socketHandle, &testByte, sizeof(testByte), 0,
+        cmd_head_t testPacket{};
+        testPacket.mac = deviceMac;
+        testPacket.rand = GetTickCount();
+        testPacket.indexpts = 0;
+        testPacket.cmd = cmd_connect;
+
+        const int sent = sendto(socketHandle, reinterpret_cast<const char*>(&testPacket),
+                                sizeof(testPacket), 0,
                                 reinterpret_cast<const sockaddr*>(&address), sizeof(address));
-        if (sent == SOCKET_ERROR) {
+        if (sent == SOCKET_ERROR || sent != static_cast<int>(sizeof(testPacket))) {
             const int error = WSAGetLastError();
             closesocket(socketHandle);
             WSACleanup();
             return { false, SocketErrorMessage("Send failed", error) };
         }
 
-        char response[32]{};
+        client_data response{};
         sockaddr_in from{};
         int fromLength = sizeof(from);
-        const int received = recvfrom(socketHandle, response, sizeof(response), 0,
+        const int received = recvfrom(socketHandle, reinterpret_cast<char*>(&response), sizeof(response), 0,
                                       reinterpret_cast<sockaddr*>(&from), &fromLength);
         if (received == SOCKET_ERROR) {
             const int error = WSAGetLastError();
@@ -132,9 +208,27 @@ namespace {
             return { false, SocketErrorMessage("Receive failed", error) };
         }
 
+        if (received < static_cast<int>(sizeof(cmd_head_t))) {
+            closesocket(socketHandle);
+            WSACleanup();
+            return { false, "Short response" };
+        }
+
+        if (response.head.cmd != testPacket.cmd) {
+            closesocket(socketHandle);
+            WSACleanup();
+            return { false, "Command mismatch" };
+        }
+
+        if (response.head.indexpts != testPacket.indexpts) {
+            closesocket(socketHandle);
+            WSACleanup();
+            return { false, "Sequence mismatch" };
+        }
+
         closesocket(socketHandle);
         WSACleanup();
-        return { true, "OK: response" };
+        return { true, "OK: connect" };
     }
 
     std::string NormalizeComPortPath(const char* comPort)
@@ -238,7 +332,7 @@ struct HeroOption {
 };
 
 static const HeroOption kHeroOptions[] = {
-    { "All", 0, "Preset" },
+    { "All", 0, "Global" },
     { "Tracer", OW::eHero::HERO_TRACER, "Damage" },
     { "Widowmaker", OW::eHero::HERO_WIDOWMAKER, "Damage" },
     { "Soldier76", OW::eHero::HERO_SOLDIER76, "Damage" },
@@ -317,6 +411,7 @@ static ImVec2   g_gbStartPos(0, 0);
 static float    g_gbWidth     = 0.0f;
 static float    g_gbMinHeight = 0.0f;
 static ImDrawListSplitter g_gbDrawSplitter;
+static uint64_t s_lastSyncedDetectedHeroId = 0;
 
 static constexpr float kShellWidth = 650.0f;
 static constexpr float kShellBorder = 2.0f;
@@ -507,6 +602,22 @@ static bool SelectTypeIndex(int index) {
     return true;
 }
 
+static void SyncSelectedTypeWithDetectedHero() {
+    const uint64_t detectedHeroId = DetectedLocalHeroId();
+    if (detectedHeroId == 0) {
+        s_lastSyncedDetectedHeroId = 0;
+        return;
+    }
+
+    if (detectedHeroId == s_lastSyncedDetectedHeroId)
+        return;
+
+    s_lastSyncedDetectedHeroId = detectedHeroId;
+    const int detectedIndex = FindHeroOptionIndexById(detectedHeroId);
+    if (detectedIndex > 0)
+        SelectTypeIndex(detectedIndex);
+}
+
 static void SaveSelectedTypePreset() {
     const HeroOption& hero = CurrentHeroOption();
     if (hero.heroId == 0)
@@ -629,15 +740,17 @@ static void DrawDetectedTypeReadout() {
                        "%s", displayName.c_str());
 }
 
-static void TypePickerPanel() {
+static bool TypePickerPanel() {
     ImGui::SetNextWindowSize(ImVec2(520.0f, 430.0f), ImGuiCond_Appearing);
     if (!ImGui::BeginPopup("TypePickerPopup"))
-        return;
+        return false;
+
+    bool changed = false;
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, kColPanelSoft);
 
-    const char* categories[] = { "Preset", "Damage", "Tank", "Support" };
+    const char* categories[] = { "Global", "Damage", "Tank", "Support" };
     constexpr float itemW = 76.0f;
     constexpr float itemH = 76.0f;
     constexpr float iconSize = 42.0f;
@@ -664,7 +777,7 @@ static void TypePickerPanel() {
                 ImGui::InvisibleButton("##typeTile", ImVec2(itemW, itemH));
                 const bool hovered = ImGui::IsItemHovered();
                 if (ImGui::IsItemClicked()) {
-                    SelectTypeIndex(i);
+                    changed |= SelectTypeIndex(i);
                     ImGui::CloseCurrentPopup();
                 }
 
@@ -715,6 +828,19 @@ static void TypePickerPanel() {
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
     ImGui::EndPopup();
+    return changed;
+}
+
+static bool DrawSelectedTypeSelector(float labelWidth, const char* id) {
+    SettingRow("Selected", labelWidth);
+
+    ImGui::PushID(id);
+    bool changed = false;
+    if (TypeSelectorButton(CurrentHeroOption(), ImVec2(220.0f, 28.0f)))
+        ImGui::OpenPopup("TypePickerPopup");
+    changed |= TypePickerPanel();
+    ImGui::PopID();
+    return changed;
 }
 
 static bool CreateTextureFromIconResource(ID3D11Device* device, int resourceId, int size,
@@ -1405,6 +1531,33 @@ static void SettingRow(const char* label, float labelWidthPx) {
     ImGui::SetCursorPosY(startY);
 }
 
+static bool UIColorEdit(const char* label, ImVec4* value,
+                        float labelWidthPx = kDefaultLabelWidth) {
+    ImGui::PushID(label);
+    SettingRow(label, labelWidthPx);
+    ImGui::PushItemWidth(-1);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, kColControl);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, kColControlHover);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, kColControlHot);
+    ImGui::PushStyleColor(ImGuiCol_Border, kColStroke);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kControlRounding);
+
+    const bool changed = ImGui::ColorEdit4(
+        "##color",
+        &value->x,
+        ImGuiColorEditFlags_NoLabel |
+        ImGuiColorEditFlags_AlphaBar |
+        ImGuiColorEditFlags_DisplayRGB |
+        ImGuiColorEditFlags_InputRGB
+    );
+
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(4);
+    ImGui::PopItemWidth();
+    ImGui::PopID();
+    return changed;
+}
+
 // =====================================================================
 // DrawDivider  --  Thin separator line matching React .divider
 // =====================================================================
@@ -1661,15 +1814,8 @@ void UI::AimbotPage() {
         SettingRow("Detected", kAimbotHeroLabelWidth);
         DrawDetectedTypeReadout();
 
-        SettingRow("Selected", kAimbotHeroLabelWidth);
-        if (ID3D11ShaderResourceView* avatar = HeroAvatarForOption(*selectedHero)) {
-            constexpr float kSelectedAvatarSize = 28.0f;
-            ImGui::Image(reinterpret_cast<ImTextureID>(avatar),
-                         ImVec2(kSelectedAvatarSize, kSelectedAvatarSize));
-            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-        }
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(selectedHero->label);
+        if (DrawSelectedTypeSelector(kAimbotHeroLabelWidth, "AimbotSelectedType"))
+            refreshActivePreset();
 
         SettingRow("Slot", kAimbotHeroLabelWidth);
         ImGui::AlignTextToFramePadding();
@@ -1929,16 +2075,7 @@ void UI::TriggerPage() {
         SettingRow("Detected", kDefaultLabelWidth);
         DrawDetectedTypeReadout();
 
-        const HeroOption& selectedHero = CurrentHeroOption();
-        SettingRow("Selected", kDefaultLabelWidth);
-        if (ID3D11ShaderResourceView* avatar = HeroAvatarForOption(selectedHero)) {
-            constexpr float kSelectedAvatarSize = 28.0f;
-            ImGui::Image(reinterpret_cast<ImTextureID>(avatar),
-                         ImVec2(kSelectedAvatarSize, kSelectedAvatarSize));
-            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-        }
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(selectedHero.label);
+        DrawSelectedTypeSelector(kDefaultLabelWidth, "TriggerSelectedType");
     }
     CloseGroupBox();
 }
@@ -1990,9 +2127,71 @@ void UI::VisualsPage() {
 }
 
 // =====================================================================
-// UI::ThemePage  --  No controls in the React prototype.
+// UI::ThemePage
 // =====================================================================
 void UI::ThemePage() {
+    ImGui::PushID("ThemePage");
+
+    UIGroupBox("ESP Display Position");
+    {
+        static const char* kDisplayPosition[] = { "Above Head", "Left Side", "Right Side" };
+        static const char* kRadarCorner[] = { "Bottom Right", "Bottom Left", "Top Right", "Top Left" };
+
+        SettingRow("Radar Corner");
+        ImGui::PushItemWidth(-1);
+        if (UISelect("##radarCorner", &OW::Config::radarCorner,
+                     kRadarCorner, IM_ARRAYSIZE(kRadarCorner))) {
+            OW::Config::SaveConfig(OW::Config::ConfigPath());
+        }
+        ImGui::PopItemWidth();
+
+        SettingRow("Ultimate Status");
+        ImGui::PushItemWidth(-1);
+        if (UISelect("##ultimateDisplayMode", &OW::Config::ultimateDisplayMode,
+                     kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition))) {
+            OW::Config::SaveConfig(OW::Config::ConfigPath());
+        }
+        ImGui::PopItemWidth();
+
+        SettingRow("Skill Cooldowns");
+        ImGui::PushItemWidth(-1);
+        if (UISelect("##skillDisplayMode", &OW::Config::skillDisplayMode,
+                     kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition))) {
+            OW::Config::SaveConfig(OW::Config::ConfigPath());
+        }
+        ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Overlay Visibility");
+    {
+        const char* labels[] = {
+            "Aiming FOV Circle", "Crosshair", "Radar",
+            "Radar Lines", "Health Packs", "Skill Info"
+        };
+        bool* values[] = {
+            &OW::Config::draw_fov, &OW::Config::crosscircle, &OW::Config::radar,
+            &OW::Config::radarline, &OW::Config::draw_hp_pack, &OW::Config::skillinfo
+        };
+        const float ratios[] = { 1.35f, 1.0f, 1.0f };
+        DrawCheckboxGrid3(labels, values, 2, 24.0f, ratios);
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Overlay Colors");
+    {
+        UIColorEdit("Enemy Box", &OW::Config::EnemyCol);
+        UIColorEdit("FOV/Crosshair", &OW::Config::fovcol);
+        UIColorEdit("FOV Alt", &OW::Config::fovcol2);
+        UIColorEdit("Visible Fill", &OW::Config::enargb);
+        UIColorEdit("Hidden Fill", &OW::Config::invisnenargb);
+        UIColorEdit("Target Fill", &OW::Config::targetargb);
+        UIColorEdit("Target Alt", &OW::Config::targetargb2);
+        UIColorEdit("Ally Fill", &OW::Config::allyargb);
+    }
+    CloseGroupBox();
+
+    ImGui::PopID();
 }
 
 // =====================================================================
@@ -2051,11 +2250,21 @@ void UI::MiscPage() {
     }
     CloseGroupBox();
 
+    UIGroupBox("Application");
+    {
+        SettingRow("Unleashed");
+        if (ImGui::Button("Close UN", ImVec2(96.0f, kControlHeight)))
+            g_Overlay.RequestExit();
+    }
+    CloseGroupBox();
+
     UIGroupBox("KMBox Settings");
     {
         bool kmboxSaveRequested = false;
         static bool kmboxConnectionTestOk = false;
         static std::string kmboxConnectionTestMessage;
+        static bool kmboxNetworkRestartOk = false;
+        static std::string kmboxNetworkRestartMessage;
         ImGui::PushID("KMBoxSettings");
 
         SettingRow("Enable KMBox");
@@ -2140,6 +2349,14 @@ void UI::MiscPage() {
             kmboxConnectionTestOk = testResult.ok;
             kmboxConnectionTestMessage = testResult.message;
         }
+        if (OW::Config::kmboxDeviceType == 0) {
+            ImGui::SameLine();
+            if (ImGui::Button("Restart NIC", ImVec2(104.0f, kControlHeight))) {
+                const KmboxConnectionTestResult restartResult = RestartKmboxNetworkAdapter();
+                kmboxNetworkRestartOk = restartResult.ok;
+                kmboxNetworkRestartMessage = restartResult.message;
+            }
+        }
         if (!kmboxConnectionTestMessage.empty()) {
             ImGui::SameLine();
             ImGui::TextColored(
@@ -2147,6 +2364,13 @@ void UI::MiscPage() {
                                       : ImVec4(1.00f, 0.28f, 0.28f, 1.0f),
                 "%s",
                 kmboxConnectionTestMessage.c_str());
+        }
+        if (!kmboxNetworkRestartMessage.empty()) {
+            ImGui::TextColored(
+                kmboxNetworkRestartOk ? ImVec4(0.30f, 0.90f, 0.45f, 1.0f)
+                                      : ImVec4(1.00f, 0.28f, 0.28f, 1.0f),
+                "%s",
+                kmboxNetworkRestartMessage.c_str());
         }
 
         if (kmboxSaveRequested)
@@ -2195,6 +2419,8 @@ void UI::Render() {
     EnsurePreNewFrameInitHook();
     if (!state.initialized)
         InitStyle();
+
+    SyncSelectedTypeWithDetectedHero();
 
     if (!OW::Config::Menu)
         return;

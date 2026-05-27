@@ -17,6 +17,7 @@
 #include "Kmbox/KmBoxNetManager.h"
 #include "Kmbox/KmboxB.h"
 #include "Utils/Config.hpp"
+#include "Utils/Diagnostics.hpp"
 
 extern std::mutex g_mutex;
 
@@ -56,35 +57,104 @@ namespace OW {
 
     inline void SendMouseMove(const Vector3& delta, int moveTimeMs = -1) {
         if (moveTimeMs < 0) moveTimeMs = Config::kmboxInputDelayMs;
-        if (Config::kmboxEnabled) {
-            const float baseSensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 5.0f);
+        Diagnostics::Aim("mouse.move request delta_rad=(%.9f,%.9f,%.9f) moveTimeMs=%d enabled=%d deviceType=%d",
+            delta.X,
+            delta.Y,
+            delta.Z,
+            moveTimeMs,
+            Config::kmboxEnabled ? 1 : 0,
+            Config::kmboxDeviceType);
+        if (!Config::kmboxEnabled) {
+            static bool once = false;
+            if (!once) {
+                std::printf("[KMBOX] SendMouseMove called but kmboxEnabled is false!\n");
+                once = true;
+            }
+            Diagnostics::Aim("mouse.move early_return reason=kmbox_disabled");
+            return;
+        }
+
+        {
+            const float baseSensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 2000.0f);
             float sensitivity = baseSensitivity;
+            float syncScale = 1.0f;
             if (Config::autoSyncSensitivity &&
                 std::isfinite(Config::gameMouseSensitivity) &&
                 std::isfinite(Config::sensReference) &&
                 Config::gameMouseSensitivity > 0.0f &&
                 Config::sensReference > 0.0f) {
-                sensitivity = baseSensitivity * (Config::sensReference / Config::gameMouseSensitivity);
+                syncScale = Config::sensReference / Config::gameMouseSensitivity;
+                sensitivity = baseSensitivity * syncScale;
             }
 
-            if (!std::isfinite(sensitivity) || sensitivity <= 0.0f)
+            if (!std::isfinite(sensitivity) || sensitivity <= 0.0f) {
+                Diagnostics::Aim("mouse.convert warning invalid_effective_sensitivity computed=%.9f fallback=%.9f autoSync=%d gameSens=%.9f refSens=%.9f",
+                    sensitivity,
+                    baseSensitivity,
+                    Config::autoSyncSensitivity ? 1 : 0,
+                    Config::gameMouseSensitivity,
+                    Config::sensReference);
                 sensitivity = baseSensitivity;
-
-            const int pixelX = static_cast<int>(std::lround(delta.X * sensitivity));
-            const int pixelY = static_cast<int>(std::lround(delta.Y * sensitivity));
-
-            if (Config::kmboxDebugLog) {
-                std::printf("[KMBOX] mouse.move delta=(%.6f, %.6f, %.6f) pixels=(%d,%d) sens=%.4f time=%dms type=%d\n",
-                    delta.X, delta.Y, delta.Z, pixelX, pixelY, sensitivity, moveTimeMs, Config::kmboxDeviceType);
+                syncScale = 1.0f;
             }
 
-            if (pixelX == 0 && pixelY == 0)
-                return;
+            static float accumX = 0.0f;
+            static float accumY = 0.0f;
+            static int callCount = 0;
 
-            if (Config::kmboxDeviceType == 0)
-                kmbox::KmBoxMgr.Mouse.Move(pixelX, pixelY);
-            else
+            const float scaledX = delta.X * sensitivity;
+            const float scaledY = delta.Y * sensitivity;
+            const float accumBeforeX = accumX;
+            const float accumBeforeY = accumY;
+            accumX += scaledX;
+            accumY += scaledY;
+            int pixelX = static_cast<int>(accumX);
+            int pixelY = static_cast<int>(accumY);
+            accumX -= static_cast<float>(pixelX);
+            accumY -= static_cast<float>(pixelY);
+
+            ++callCount;
+            Diagnostics::Aim("mouse.convert call=%d delta_rad=(%.9f,%.9f) baseSensitivity=%.6f effectiveSensitivity=%.6f autoSync=%d syncScale=%.6f scaled_pixels=(%.9f,%.9f) accum_before=(%.9f,%.9f) pixel=(%d,%d) accum_after=(%.9f,%.9f)",
+                callCount,
+                delta.X,
+                delta.Y,
+                baseSensitivity,
+                sensitivity,
+                Config::autoSyncSensitivity ? 1 : 0,
+                syncScale,
+                scaledX,
+                scaledY,
+                accumBeforeX,
+                accumBeforeY,
+                pixelX,
+                pixelY,
+                accumX,
+                accumY);
+            if (callCount <= 50 || pixelX != 0 || pixelY != 0) {
+                std::printf("[KMBOX] #%d delta=(%.6f,%.6f) sens=%.1f px=(%d,%d) accum=(%.3f,%.3f)\n",
+                    callCount, delta.X, delta.Y, sensitivity,
+                    pixelX, pixelY, accumX, accumY);
+            }
+
+            if (pixelX == 0 && pixelY == 0) {
+                Diagnostics::Aim("mouse.move early_return reason=zero_pixels scaled_pixels=(%.9f,%.9f) accum_after=(%.9f,%.9f) note=integer_truncation_waiting_for_accumulator",
+                    scaledX,
+                    scaledY,
+                    accumX,
+                    accumY);
+                return;
+            }
+
+            if (Config::kmboxDeviceType == 0) {
+                const int status = kmbox::KmBoxMgr.Mouse.Move(pixelX, pixelY);
+                Diagnostics::Aim("mouse.enqueue network pixel=(%d,%d) status=%d",
+                    pixelX,
+                    pixelY,
+                    status);
+            } else {
                 kmbox::kmBoxBMgr.km_move(pixelX, pixelY);
+                Diagnostics::Aim("mouse.enqueue serial pixel=(%d,%d)", pixelX, pixelY);
+            }
             return;
         }
     }
@@ -650,6 +720,22 @@ namespace OW {
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
 
         float origin = 100000.f;
+        size_t selectableCandidates = 0;
+        float selectedCrossDist = 0.0f;
+        bool targetFromBob = false;
+        Diagnostics::Aim("target.primary start prediction=%d entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fov=%.6f fov360=%d bone=%d autobone=%d teamMode=%d crosshair=(%.3f,%.3f)",
+            predit ? 1 : 0,
+            entities.size(),
+            hp_dy_entities.size(),
+            static_cast<unsigned long long>(local_entity.address),
+            static_cast<unsigned long long>(local_entity.HeroID),
+            Config::Fov,
+            Config::fov360 ? 1 : 0,
+            Config::Bone,
+            Config::autobone ? 1 : 0,
+            Config::aimbotTeam,
+            CrossHair.X,
+            CrossHair.Y);
         if (entities.size() > 0) {
             if (Config::hanzoautospeed) {
                 if (local_entity.HeroID == eHero::HERO_HANJO) {
@@ -659,58 +745,52 @@ namespace OW {
             }
             Vector3 Vel, PreditPos, RootPos;
             for (size_t i = 0; i < entities.size(); i++) {
-                if (!Config::switch_team) {
-                    if (entities[i].Alive && entities[i].Team && entities[i].Vis) {
-                        if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
-                        else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
-                        else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
+                bool teamPass = false;
+                if (Config::aimbotTeam == 0) {
+                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
+                } else if (Config::aimbotTeam == 1) {
+                    teamPass = entities[i].Team;
+                } else if (Config::aimbotTeam == 2) {
+                    teamPass = true;
+                }
+                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                    ++selectableCandidates;
+                    if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
+                    else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
+                    else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
 
-                        Vel = entities[i].velocity;
-                        if (predit) {
-                            float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
-                            AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
-                        }
-                        Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
-                        float CrossDist = CrossHair.Distance(Vec2);
-                        if (CrossDist < origin && CrossDist <= Config::Fov && !Config::fov360) {
-                            target = predit ? PreditPos : RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        } else if (Config::fov360) {
-                            CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            if (CrossDist < origin) {
-                                target = predit ? PreditPos : RootPos;
-                                origin = CrossDist;
-                                TarGetIndex = i;
-                            }
-                        }
+                    Vel = entities[i].velocity;
+                    if (predit) {
+                        float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
+                        AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                     }
-                } else if (Config::switch_team) {
-                    if (entities[i].Alive && !entities[i].Team && entities[i].Vis && entities[i].address != local_entity.address) {
-                        if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
-                        else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
-                        else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
-
-                        Vel = entities[i].velocity;
-                        if (predit) {
-                            float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
-                            AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
-                        }
-                        Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
-                        float CrossDist = CrossHair.Distance(Vec2);
-                        if (CrossDist < origin && CrossDist <= Config::Fov && !Config::fov360) {
-                            target = predit ? PreditPos : RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        } else if (Config::fov360) {
-                            CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            if (CrossDist < origin) {
+                    Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
+                    float CrossDist = CrossHair.Distance(Vec2);
+                    if (!Config::fov360) {
+                        if (CrossDist <= Config::Fov) {
+                            float score;
+                            if (Config::aimbotPriority == 0) {
+                                score = CrossDist;
+                            } else if (Config::aimbotPriority == 1) {
+                                score = entities[i].PlayerHealth;
+                            } else {
+                                score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            }
+                            if (score < origin) {
                                 target = predit ? PreditPos : RootPos;
-                                origin = CrossDist;
+                                origin = score;
+                                selectedCrossDist = CrossDist;
                                 TarGetIndex = i;
                             }
+                        }
+                    } else {
+                        float worldDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        if (worldDist < origin) {
+                            target = predit ? PreditPos : RootPos;
+                            origin = worldDist;
+                            selectedCrossDist = CrossDist;
+                            TarGetIndex = i;
                         }
                     }
                 }
@@ -784,12 +864,44 @@ namespace OW {
                     float CrossDist = CrossHair.Distance(Vec2);
                     if (CrossDist < origin && CrossDist <= Config::Fov) {
                         target = Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z);
+                        origin = CrossDist;
+                        selectedCrossDist = CrossDist;
+                        targetFromBob = true;
                     } else if (Config::fov360) {
                         target = Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z);
+                        targetFromBob = true;
                     }
                     break;
                 }
             }
+        }
+        if (target == Vector3(0, 0, 0)) {
+            Diagnostics::Aim("target.primary result none reason=no_selectable_target entities=%zu candidates=%zu fov=%.6f targetIndex=%d",
+                entities.size(),
+                selectableCandidates,
+                Config::Fov,
+                TarGetIndex);
+        } else if (targetFromBob) {
+            Diagnostics::Aim("target.primary result source=ashe_bob target=(%.9f,%.9f,%.9f) score=%.9f crossDist=%.9f",
+                target.X,
+                target.Y,
+                target.Z,
+                origin,
+                selectedCrossDist);
+        } else if (TarGetIndex >= 0 && static_cast<size_t>(TarGetIndex) < entities.size()) {
+            const c_entity& selected = entities[static_cast<size_t>(TarGetIndex)];
+            Diagnostics::Aim("target.primary result index=%d target=(%.9f,%.9f,%.9f) score=%.9f crossDist=%.9f health=%.3f hero=0x%llX address=0x%llX vis=%d team=%d",
+                TarGetIndex,
+                target.X,
+                target.Y,
+                target.Z,
+                origin,
+                selectedCrossDist,
+                selected.PlayerHealth,
+                static_cast<unsigned long long>(selected.HeroID),
+                static_cast<unsigned long long>(selected.address),
+                selected.Vis ? 1 : 0,
+                selected.Team ? 1 : 0);
         }
         return target;
     }
@@ -809,49 +921,48 @@ namespace OW {
         if (entities.size() > 0) {
             Vector3 PreditPos, RootPos, Vel;
             for (size_t i = 0; i < entities.size(); i++) {
-                if (!Config::switch_team) {
-                    if (entities[i].Alive && entities[i].Team && entities[i].Vis) {
-                        if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
-                        else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
-                        else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
-                        Vel = entities[i].velocity;
-                        if (predit) {
-                            float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
-                            AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
-                        }
-                        Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
-                        float CrossDist = CrossHair.Distance(Vec2);
-                        if (CrossDist < origin && CrossDist <= Config::Fov) {
-                            target = predit ? PreditPos : RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        }
+                bool teamPass = false;
+                if (Config::aimbotTeam == 0) {
+                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
+                } else if (Config::aimbotTeam == 1) {
+                    teamPass = entities[i].Team;
+                } else if (Config::aimbotTeam == 2) {
+                    teamPass = true;
+                }
+                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                    if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
+                    else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
+                    else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
+                    Vel = entities[i].velocity;
+                    if (predit) {
+                        float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
+                        AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                     }
-                } else if (Config::switch_team) {
-                    if (entities[i].Alive && !entities[i].Team && entities[i].Vis && entities[i].address != local_entity.address) {
-                        if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
-                        else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
-                        else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
-                        Vel = entities[i].velocity;
-                        if (predit) {
-                            float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
-                            AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
-                        }
-                        Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
-                        float CrossDist = CrossHair.Distance(Vec2);
-                        if (CrossDist < origin && CrossDist <= Config::Fov && !Config::fov360) {
-                            target = predit ? PreditPos : RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        } else if (Config::fov360) {
-                            CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            if (CrossDist < origin) {
+                    Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
+                    float CrossDist = CrossHair.Distance(Vec2);
+                    if (!Config::fov360) {
+                        if (CrossDist <= Config::Fov) {
+                            float score;
+                            if (Config::aimbotPriority == 0) {
+                                score = CrossDist;
+                            } else if (Config::aimbotPriority == 1) {
+                                score = entities[i].PlayerHealth;
+                            } else {
+                                score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            }
+                            if (score < origin) {
                                 target = predit ? PreditPos : RootPos;
-                                origin = CrossDist;
+                                origin = score;
                                 TarGetIndex = i;
                             }
+                        }
+                    } else {
+                        float worldDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        if (worldDist < origin) {
+                            target = predit ? PreditPos : RootPos;
+                            origin = worldDist;
+                            TarGetIndex = i;
                         }
                     }
                 }
@@ -933,38 +1044,51 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 if (entities[i].HeroID == 0x16dd || entities[i].HeroID == 0x16ee) continue;
                 if (entities[i].HeroID == eHero::HERO_GENJI && entities[i].skill2act) continue;
-                if (!Config::switch_team) {
-                    if (entities[i].Alive && entities[i].Team && entities[i].Vis) {
-                        Vector3 PreditPos;
-                        if (!local_entity.skillcd1)
-                            PreditPos = entities[i].GetBonePos(entities[i].GetSkel()[16]);
-                        else
-                            PreditPos = entities[i].GetBonePos(entities[i].GetSkel()[2]);
-                        bool isBot = (entities[i].HeroID == eHero::HERO_TRAININGBOT1 ||
-                                      entities[i].HeroID == eHero::HERO_TRAININGBOT2 ||
-                                      entities[i].HeroID == eHero::HERO_TRAININGBOT3 ||
-                                      entities[i].HeroID == eHero::HERO_TRAININGBOT4 ||
-                                      entities[i].HeroID == eHero::HERO_TRAININGBOT8 ||
-                                      entities[i].HeroID == eHero::HERO_TRAININGBOT5 ||
-                                      entities[i].HeroID == eHero::HERO_TRAININGBOT6 ||
-                                      entities[i].HeroID == eHero::HERO_TRAININGBOT7);
-                        if (isBot) {
-                            PreditPos = entities[i].GetBonePos(3);
-                            if (!local_entity.skillcd1) PreditPos.Y -= 0.4f;
-                        }
-                        Vector3 RootPos = PreditPos;
-                        if (entities[i].HeroID == eHero::HERO_WRECKINGBALL) {
-                            PreditPos.Y -= 0.7f;
-                            RootPos.Y -= 0.7f;
-                        }
-                        float CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                        if (entities[i].PlayerHealth > 200.f) CrossDist = entities[i].PlayerHealth;
-                        if (entities[i].HeroID == eHero::HERO_ZENYATTA && entities[i].ultimate == 0.f) CrossDist = 1000.f;
-                        if (CrossDist < origin && CrossDist <= 6000.f) {
-                            target = RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        }
+                bool teamPass = false;
+                if (Config::aimbotTeam == 0) {
+                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
+                } else if (Config::aimbotTeam == 1) {
+                    teamPass = entities[i].Team;
+                } else if (Config::aimbotTeam == 2) {
+                    teamPass = true;
+                }
+                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                    Vector3 PreditPos;
+                    if (!local_entity.skillcd1)
+                        PreditPos = entities[i].GetBonePos(entities[i].GetSkel()[16]);
+                    else
+                        PreditPos = entities[i].GetBonePos(entities[i].GetSkel()[2]);
+                    bool isBot = (entities[i].HeroID == eHero::HERO_TRAININGBOT1 ||
+                                  entities[i].HeroID == eHero::HERO_TRAININGBOT2 ||
+                                  entities[i].HeroID == eHero::HERO_TRAININGBOT3 ||
+                                  entities[i].HeroID == eHero::HERO_TRAININGBOT4 ||
+                                  entities[i].HeroID == eHero::HERO_TRAININGBOT8 ||
+                                  entities[i].HeroID == eHero::HERO_TRAININGBOT5 ||
+                                  entities[i].HeroID == eHero::HERO_TRAININGBOT6 ||
+                                  entities[i].HeroID == eHero::HERO_TRAININGBOT7);
+                    if (isBot) {
+                        PreditPos = entities[i].GetBonePos(3);
+                        if (!local_entity.skillcd1) PreditPos.Y -= 0.4f;
+                    }
+                    Vector3 RootPos = PreditPos;
+                    if (entities[i].HeroID == eHero::HERO_WRECKINGBALL) {
+                        PreditPos.Y -= 0.7f;
+                        RootPos.Y -= 0.7f;
+                    }
+                    float score;
+                    if (Config::aimbotPriority == 0) {
+                        score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        if (entities[i].PlayerHealth > 200.f) score = entities[i].PlayerHealth;
+                        if (entities[i].HeroID == eHero::HERO_ZENYATTA && entities[i].ultimate == 0.f) score = 1000.f;
+                    } else if (Config::aimbotPriority == 1) {
+                        score = entities[i].PlayerHealth;
+                    } else {
+                        score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                    }
+                    if (score < origin && score <= 6000.f) {
+                        target = RootPos;
+                        origin = score;
+                        TarGetIndex = i;
                     }
                 }
             }
@@ -991,58 +1115,56 @@ namespace OW {
         Vector3 PreditPos, RootPos, Vel;
         if (entities.size() > 0) {
             for (size_t i = 0; i < entities.size(); i++) {
-                if (!Config::switch_team2) {
-                    if (entities[i].Alive && entities[i].Team && entities[i].Vis) {
+                bool teamPass = false;
+                if (Config::aimbotTeam == 0) {
+                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
+                } else if (Config::aimbotTeam == 1) {
+                    teamPass = entities[i].Team;
+                } else if (Config::aimbotTeam == 2) {
+                    teamPass = true;
+                }
+                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                    if (entities[i].Team) {
                         if (Config::Bone2 == 1)      { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                         else if (Config::Bone2 == 2) { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
                         else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
-                        Vel = entities[i].velocity;
-                        if (predit) {
-                            dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level2);
-                            AimCorrection22(&PreditPos, Vel, dist, Config::predit_level2);
-                        }
-                        Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
-                        float CrossDist = CrossHair.Distance(Vec2);
-                        if (Config::fov360)
-                            CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                        if (CrossDist < origin && CrossDist <= Config::Fov && !Config::fov360) {
-                            target = predit ? PreditPos : RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        } else if (Config::fov360) {
-                            CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            if (CrossDist < origin) {
-                                target = predit ? PreditPos : RootPos;
-                                origin = CrossDist;
-                                TarGetIndex = i;
-                            }
-                        }
-                    }
-                } else if (Config::switch_team2) {
-                    if (entities[i].Alive && !entities[i].Team && entities[i].Vis && entities[i].address != local_entity.address) {
+                    } else {
                         if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                         else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
                         else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
-                        Vel = entities[i].velocity;
-                        if (predit) {
-                            float dist2 = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist2, Config::predit_level2);
-                            AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
-                        }
-                        Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
-                        float CrossDist = CrossHair.Distance(Vec2);
-                        if (CrossDist < origin && CrossDist <= Config::Fov && !Config::fov360) {
-                            target = predit ? PreditPos : RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        } else if (Config::fov360) {
-                            CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            if (CrossDist < origin) {
+                    }
+                    Vel = entities[i].velocity;
+                    if (predit) {
+                        float dist2 = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist2, Config::predit_level2);
+                        AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
+                    }
+                    Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
+                    float CrossDist = CrossHair.Distance(Vec2);
+                    if (Config::fov360)
+                        CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                    if (!Config::fov360) {
+                        if (CrossDist <= Config::Fov) {
+                            float score;
+                            if (Config::aimbotPriority == 0) {
+                                score = CrossDist;
+                            } else if (Config::aimbotPriority == 1) {
+                                score = entities[i].PlayerHealth;
+                            } else {
+                                score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            }
+                            if (score < origin) {
                                 target = predit ? PreditPos : RootPos;
-                                origin = CrossDist;
+                                origin = score;
                                 TarGetIndex = i;
                             }
+                        }
+                    } else {
+                        float worldDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        if (worldDist < origin) {
+                            target = predit ? PreditPos : RootPos;
+                            origin = worldDist;
+                            TarGetIndex = i;
                         }
                     }
                 }
@@ -1124,29 +1246,31 @@ namespace OW {
         if (entities.size() > 0) {
             Vector3 Vel, PreditPos, RootPos;
             for (size_t i = 0; i < entities.size(); i++) {
-                if (!Config::switch_team) {
-                    if (entities[i].Alive && entities[i].Team && entities[i].Vis) {
-                        PreditPos = entities[i].head_pos;
-                        RootPos = entities[i].head_pos;
-                        Vector2 Vec2 = viewMatrix.WorldToScreen(RootPos);
-                        float CrossDist = CrossHair.Distance(Vec2);
-                        if (CrossDist < origin) {
-                            target = RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        }
+                bool teamPass = false;
+                if (Config::aimbotTeam == 0) {
+                    teamPass = !entities[i].Team && entities[i].address != local_entity.address;
+                } else if (Config::aimbotTeam == 1) {
+                    teamPass = entities[i].Team;
+                } else if (Config::aimbotTeam == 2) {
+                    teamPass = true;
+                }
+                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                    PreditPos = entities[i].head_pos;
+                    RootPos = entities[i].head_pos;
+                    Vector2 Vec2 = viewMatrix.WorldToScreen(RootPos);
+                    float CrossDist = CrossHair.Distance(Vec2);
+                    float score;
+                    if (Config::aimbotPriority == 0) {
+                        score = CrossDist;
+                    } else if (Config::aimbotPriority == 1) {
+                        score = entities[i].PlayerHealth;
+                    } else {
+                        score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                     }
-                } else if (Config::switch_team) {
-                    if (entities[i].Alive && !entities[i].Team && entities[i].Vis && entities[i].address != local_entity.address) {
-                        PreditPos = entities[i].head_pos;
-                        RootPos = entities[i].head_pos;
-                        Vector2 Vec2 = viewMatrix.WorldToScreen(RootPos);
-                        float CrossDist = CrossHair.Distance(Vec2);
-                        if (CrossDist < origin) {
-                            target = RootPos;
-                            origin = CrossDist;
-                            TarGetIndex = i;
-                        }
+                    if (score < origin) {
+                        target = RootPos;
+                        origin = score;
+                        TarGetIndex = i;
                     }
                 }
             }
@@ -1312,8 +1436,21 @@ namespace OW {
 
         const Vector3 error = target - current;
         const float deadzone = std::clamp(Config::aimPidDeadzone, 0.0f, 10.0f);
+        const float errorLength = error.Size();
 
-        if (error.Size() < deadzone) {
+        if (errorLength < deadzone) {
+            Diagnostics::Aim("smooth.pid early_return reason=deadzone current=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f deadzone=%.9f",
+                current.X,
+                current.Y,
+                current.Z,
+                target.X,
+                target.Y,
+                target.Z,
+                error.X,
+                error.Y,
+                error.Z,
+                errorLength,
+                deadzone);
             state.integral = Vector3{};
             state.previousError = error;
             state.lastTarget = target;
@@ -1390,16 +1527,50 @@ namespace OW {
             previousMethod = method;
         }
 
+        const Vector3 error = target - local;
+        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f accel=%.9f dt=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
+            method,
+            speed,
+            accel,
+            deltaTime,
+            local.X,
+            local.Y,
+            local.Z,
+            target.X,
+            target.Y,
+            target.Z,
+            error.X,
+            error.Y,
+            error.Z,
+            error.Size());
+
+        Vector3 result{};
         switch (method) {
         case 0:
-            return SmoothLinear(local, target, speed);
+            result = SmoothLinear(local, target, speed);
+            break;
         case 1:
-            return SmoothPID(local, target, deltaTime);
+            result = SmoothPID(local, target, deltaTime);
+            break;
         case 2:
-            return SmoothBezier(local, target, deltaTime, Config::aimBezierSpeed);
+            result = SmoothBezier(local, target, deltaTime, Config::aimBezierSpeed);
+            break;
         default:
-            return SmoothLinear(local, target, speed);
+            result = SmoothLinear(local, target, speed);
+            break;
         }
+
+        const Vector3 outputDelta = result - local;
+        Diagnostics::Aim("smooth.result method=%d result=(%.9f,%.9f,%.9f) output_delta=(%.9f,%.9f,%.9f) output_len=%.9f",
+            method,
+            result.X,
+            result.Y,
+            result.Z,
+            outputDelta.X,
+            outputDelta.Y,
+            outputDelta.Z,
+            outputDelta.Size());
+        return result;
     }
 
 } // namespace OW

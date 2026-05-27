@@ -21,6 +21,11 @@ std::mutex g_logMutex;
 std::ofstream g_logFile;
 std::string g_logPath = "./unleashed_diag.log";
 
+std::atomic<bool> g_aimLogInitialized{ false };
+std::mutex g_aimLogMutex;
+std::ofstream g_aimLogFile;
+std::string g_aimLogPath = "./unleashed_aim_diag.log";
+
 std::atomic<uint64_t> g_dmaReadSucceeded{ 0 };
 std::atomic<uint64_t> g_dmaReadFailed{ 0 };
 std::atomic<uint64_t> g_dmaReadLatencyTotalUs{ 0 };
@@ -199,6 +204,27 @@ void LogV(LogLevel level, const char* fmt, va_list args)
     }
 }
 
+void AimLogV(const char* fmt, va_list args)
+{
+    std::array<char, 2048> message{};
+    std::vsnprintf(message.data(), message.size(), fmt, args);
+
+    char line[2300] = {};
+    std::snprintf(line, sizeof(line), "[%s] [AIM] %s",
+        BuildTimestamp().c_str(), message.data());
+
+    std::lock_guard<std::mutex> lock(g_aimLogMutex);
+    if (!g_aimLogInitialized.load(std::memory_order_acquire)) {
+        g_aimLogFile.open(g_aimLogPath, std::ios::out | std::ios::app);
+        g_aimLogInitialized.store(true, std::memory_order_release);
+    }
+
+    if (g_aimLogFile.is_open()) {
+        g_aimLogFile << line << '\n';
+        g_aimLogFile.flush();
+    }
+}
+
 double UpdateFps()
 {
     const auto now = std::chrono::steady_clock::now();
@@ -281,6 +307,44 @@ void Shutdown()
 bool IsInitialized()
 {
     return g_initialized.load(std::memory_order_acquire);
+}
+
+void InitializeAimLog(const char* logPath)
+{
+    std::lock_guard<std::mutex> lock(g_aimLogMutex);
+    if (logPath && *logPath)
+        g_aimLogPath = logPath;
+
+    if (g_aimLogFile.is_open())
+        g_aimLogFile.close();
+
+    g_aimLogFile.open(g_aimLogPath, std::ios::out | std::ios::trunc);
+    g_aimLogInitialized.store(true, std::memory_order_release);
+
+    if (g_aimLogFile.is_open()) {
+        g_aimLogFile << "[" << BuildTimestamp() << "] [AIM] Aim diagnostics initialized. log="
+            << g_aimLogPath << '\n';
+        g_aimLogFile.flush();
+    }
+}
+
+void ShutdownAimLog()
+{
+    std::lock_guard<std::mutex> lock(g_aimLogMutex);
+    if (g_aimLogFile.is_open()) {
+        g_aimLogFile << "[" << BuildTimestamp() << "] [AIM] Aim diagnostics shutting down.\n";
+        g_aimLogFile.flush();
+        g_aimLogFile.close();
+    }
+    g_aimLogInitialized.store(false, std::memory_order_release);
+}
+
+void Aim(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    AimLogV(fmt, args);
+    va_end(args);
 }
 
 void SetLogLevel(LogLevel minLevel)

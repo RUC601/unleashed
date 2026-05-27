@@ -368,6 +368,27 @@ namespace OW { namespace Config {
             return buffer;
         }
 
+        bool IsAimDiagnosticSetting(const char* name)
+        {
+            const std::string setting = name ? name : "";
+            return setting == "Tracking_smooth" ||
+                   setting == "Tracking_smooth2" ||
+                   setting == "Flick_smooth" ||
+                   setting == "Flick_smooth2" ||
+                   setting == "accvalue" ||
+                   setting == "accvalue2" ||
+                   setting == "aimPidDeadzone" ||
+                   setting == "aimBezierSpeed" ||
+                   setting == "aim_key" ||
+                   setting == "aim_key2" ||
+                   setting == "kmboxDeviceType" ||
+                   setting == "kmboxPort" ||
+                   setting == "kmboxInputDelayMs" ||
+                   setting == "kmboxAimSensitivity" ||
+                   setting == "gameMouseSensitivity" ||
+                   setting == "sensReference";
+        }
+
         std::string ToText(const char* value)
         {
             return value ? std::string(value) : std::string();
@@ -810,6 +831,9 @@ namespace OW { namespace Config {
             ult = true;                   // default: true
             draw_skel = true;             // default: true
             skillinfo = false;            // default: false
+            ultimateDisplayMode = 0;      // default: Above head
+            skillDisplayMode = 0;         // default: Above head
+            radarCorner = 0;              // default: Bottom Right
             radar = false;                // default: false
             radarline = false;            // default: false
             drawline = false;             // default: false
@@ -1216,6 +1240,9 @@ namespace OW { namespace Config {
             ult = ReadBool(ini, section, "ult", ult);
             draw_skel = ReadBool(ini, section, "draw_skel", draw_skel);
             skillinfo = ReadBool(ini, section, "skillinfo", skillinfo);
+            ultimateDisplayMode = ReadInt(ini, section, "ultimateDisplayMode", ultimateDisplayMode);
+            skillDisplayMode = ReadInt(ini, section, "skillDisplayMode", skillDisplayMode);
+            radarCorner = ReadInt(ini, section, "radarCorner", radarCorner);
             radar = ReadBool(ini, section, "radar", radar);
             radarline = ReadBool(ini, section, "radarline", radarline);
             drawline = ReadBool(ini, section, "drawline", drawline);
@@ -1281,6 +1308,14 @@ namespace OW { namespace Config {
                 LogConfig(Diagnostics::LogLevel::Warn,
                     "%s out of range (%s); clamped to %s.",
                     name, ToText(oldValue).c_str(), ToText(value).c_str());
+                if (IsAimDiagnosticSetting(name)) {
+                    Diagnostics::Aim("config.clamp name=%s old=%s new=%s min=%s max=%s",
+                        name,
+                        ToText(oldValue).c_str(),
+                        ToText(value).c_str(),
+                        ToText(minValue).c_str(),
+                        ToText(maxValue).c_str());
+                }
             }
             (void)fallback;
         }
@@ -1291,6 +1326,10 @@ namespace OW { namespace Config {
                 LogConfig(Diagnostics::LogLevel::Warn,
                     "%s is not finite; using default %s.",
                     name, ToText(fallback).c_str());
+                if (IsAimDiagnosticSetting(name)) {
+                    Diagnostics::Aim("config.clamp name=%s old=non_finite new=%s reason=non_finite",
+                        name, ToText(fallback).c_str());
+                }
                 value = fallback;
             }
             if (value < minValue || value > maxValue) {
@@ -1299,6 +1338,14 @@ namespace OW { namespace Config {
                 LogConfig(Diagnostics::LogLevel::Warn,
                     "%s out of range (%s); clamped to %s.",
                     name, ToText(oldValue).c_str(), ToText(value).c_str());
+                if (IsAimDiagnosticSetting(name)) {
+                    Diagnostics::Aim("config.clamp name=%s old=%s new=%s min=%.4f max=%.4f",
+                        name,
+                        ToText(oldValue).c_str(),
+                        ToText(value).c_str(),
+                        minValue,
+                        maxValue);
+                }
             }
         }
 
@@ -1324,6 +1371,9 @@ namespace OW { namespace Config {
             ClampSetting("aim_key2", aim_key2, 0, 5, 1);
             ClampSetting("togglekey", togglekey, 0, 54, 0);
             ClampSetting("MenuToggleKey", MenuToggleKey, 1, 255, VK_HOME);
+            ClampSetting("ultimateDisplayMode", ultimateDisplayMode, 0, 2, 0);
+            ClampSetting("skillDisplayMode", skillDisplayMode, 0, 2, 0);
+            ClampSetting("radarCorner", radarCorner, 0, 3, 0);
             if (gafAsyncKeyStateSize != 64 && gafAsyncKeyStateSize != 256) {
                 LogConfig(Diagnostics::LogLevel::Warn,
                     "gafAsyncKeyStateSize out of range (%d); using default 256.",
@@ -1409,9 +1459,35 @@ namespace OW { namespace Config {
             ClampSetting("kmboxInputDelayMs", kmboxInputDelayMs, 0, 20, kDefaultKmboxInputDelayMs);
             ClampSetting("manualScreenWidth", manualScreenWidth, 0, 16384, 1920);
             ClampSetting("manualScreenHeight", manualScreenHeight, 0, 16384, 1080);
-            ClampFloatSetting("kmboxAimSensitivity", kmboxAimSensitivity, 0.1f, 5.0f, 1.0f);
+            ClampFloatSetting("kmboxAimSensitivity", kmboxAimSensitivity, 0.1f, 2000.0f, 1.0f);
             ClampFloatSetting("gameMouseSensitivity", gameMouseSensitivity, 0.01f, 100.0f, 15.0f);
             ClampFloatSetting("sensReference", sensReference, 0.01f, 100.0f, 15.0f);
+            const float effectiveSensitivity =
+                autoSyncSensitivity && gameMouseSensitivity > 0.0f && sensReference > 0.0f
+                    ? kmboxAimSensitivity * (sensReference / gameMouseSensitivity)
+                    : kmboxAimSensitivity;
+            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d effectiveSensitivity=%.6f inputDelayMs=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
+                kmboxEnabled ? 1 : 0,
+                kmboxDeviceType,
+                kmboxIp,
+                kmboxPort,
+                kmboxAimSensitivity,
+                gameMouseSensitivity,
+                sensReference,
+                autoSyncSensitivity ? 1 : 0,
+                effectiveSensitivity,
+                kmboxInputDelayMs,
+                aim_key,
+                aim_key2,
+                Tracking_smooth,
+                Flick_smooth,
+                aimMethod,
+                aimPidDeadzone,
+                aimBezierSpeed);
+            if (effectiveSensitivity <= 1.0f) {
+                Diagnostics::Aim("config.warning effectiveSensitivity=%.6f is very low; small angle deltas may remain sub-pixel for many frames",
+                    effectiveSensitivity);
+            }
             ClampSetting("locx", locx, 0, 100000, 0);
             ClampSetting("locy", locy, 0, 100000, 0);
             ClampSetting("therad", therad, 0, 10000, 0);
@@ -1636,6 +1712,9 @@ namespace OW { namespace Config {
             SaveKmboxSettingsUnlocked(path);
             WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
             WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
+            WriteIntValue(path, "Global", "ultimateDisplayMode", ultimateDisplayMode);
+            WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
+            WriteIntValue(path, "Global", "radarCorner", radarCorner);
             WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
             LogConfig(Diagnostics::LogLevel::Info,
                 "Saved global config to %s without a current hero.", path.c_str());
@@ -1731,6 +1810,9 @@ namespace OW { namespace Config {
         WriteBoolValue(path, "Global", "ult", ult);
         WriteBoolValue(path, "Global", "draw_skel", draw_skel);
         WriteBoolValue(path, "Global", "skillinfo", skillinfo);
+        WriteIntValue(path, "Global", "ultimateDisplayMode", ultimateDisplayMode);
+        WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
+        WriteIntValue(path, "Global", "radarCorner", radarCorner);
         WriteBoolValue(path, "Global", "radar", radar);
         WriteBoolValue(path, "Global", "radarline", radarline);
         WriteBoolValue(path, "Global", "drawline", drawline);
