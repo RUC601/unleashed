@@ -96,6 +96,13 @@ namespace OW {
         static constexpr auto VM_ViewMatrix  = 0x140;
         static constexpr auto VM_ProjMatrix  = 0xB0;
 
+        // Viewport dimensions (2026-05-27, dump_SCY.exe).
+        // IDA: FullScreenWidth/FullScreenHeight option objects at
+        // 0x7FF7C1137C00 / 0x7FF7C1137C70; current uint32 value is at +0x38.
+        // sub_7FF7BEBA3330 returns these as the resolved output width/height.
+        static constexpr auto ViewportWidth_RVA  = 0x4037C38;
+        static constexpr auto ViewportHeight_RVA = 0x4037CA8;
+
         // GameAdmin / input globals (forum p330 correction, IDA RVA 0x56B120).
         // OLD (0521): static constexpr auto Address_game_admin_root = 0x3A8CCB0;
         static constexpr auto Address_game_admin_root = 0x3A92F80; // verified 0527: root xrefs + corrected forum post

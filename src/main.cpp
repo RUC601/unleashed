@@ -25,6 +25,7 @@
 #include "Kmbox/KmBoxNetManager.h" // kmbox::KmBoxMgr
 #include "Kmbox/KmboxB.h"         // kmbox::kmBoxBMgr
 #include "Utils/Config.hpp"       // OW::Config
+#include "Utils/HostMouseDpi.hpp" // OW::RefreshHostMouseDpi
 #include "Renderer/IconManager.hpp" // IconManager
 #include "Renderer/Overlay.hpp"   // g_Overlay
 #include "Renderer/Renderer.hpp"  // Render:: drawing primitives
@@ -641,8 +642,9 @@ int main()
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
     Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
     OW::Config::LoadConfig(OW::Config::ConfigPath());
+    OW::RefreshHostMouseDpi();
     OW::RefreshScreenSizeFromConfig();
-    Diagnostics::Aim("main.config_loaded screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d",
+    Diagnostics::Aim("main.config_loaded screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d hostMouseDpi=%.6f hostDpiDetected=%d",
         OW::WX,
         OW::WY,
         OW::Config::kmboxEnabled ? 1 : 0,
@@ -652,7 +654,9 @@ int main()
         OW::Config::kmboxAimSensitivity,
         OW::Config::gameMouseSensitivity,
         OW::Config::sensReference,
-        OW::Config::autoSyncSensitivity ? 1 : 0);
+        OW::Config::autoSyncSensitivity ? 1 : 0,
+        OW::Config::hostMouseDpi,
+        OW::Config::hostMouseDpiAutoDetected ? 1 : 0);
     std::printf("[MAIN] Screen size: %.0fx%.0f\n", OW::WX, OW::WY);
     InitializeKmBoxFromConfig();
     Diagnostics::SetDmaReady(true);

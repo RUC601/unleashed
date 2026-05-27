@@ -51,6 +51,7 @@ namespace OW { namespace Config {
         constexpr const char* kDefaultKmboxMac = "12525C53";
         constexpr const char* kDefaultKmboxComPort = "COM3";
         constexpr int kDefaultKmboxInputDelayMs = 0;
+        constexpr float kDefaultHostMouseDpi = 1600.0f;
 
         using SectionValues = std::unordered_map<std::string, std::string>;
 
@@ -386,6 +387,7 @@ namespace OW { namespace Config {
                    setting == "kmboxInputDelayMs" ||
                    setting == "kmboxAimSensitivity" ||
                    setting == "gameMouseSensitivity" ||
+                   setting == "hostMouseDpi" ||
                    setting == "sensReference";
         }
 
@@ -865,6 +867,9 @@ namespace OW { namespace Config {
             gameMouseSensitivity = 15.0f; // default: OW baseline until DMA updates it
             sensReference = 15.0f;        // default: OW baseline calibration point
             autoSyncSensitivity = false;  // default: manual scalar only
+            hostMouseDpi = kDefaultHostMouseDpi;
+            detectedHostMouseDpi = 0.0f;
+            hostMouseDpiAutoDetected = false;
             kmboxInputDelayMs = kDefaultKmboxInputDelayMs;
             kmboxDebugLog = false;        // default: off
 
@@ -910,7 +915,7 @@ namespace OW { namespace Config {
             if (preset.aimMode < 0 || preset.aimMode > 1)
                 preset.aimMode = 0;
             preset.prediction = Prediction;
-            preset.priority = targetPriority;
+            preset.priority = aimbotPriority;
             return ValidateHeroPresetValue(preset);
         }
 
@@ -926,7 +931,7 @@ namespace OW { namespace Config {
             TargetBone = preset.bone;
             hitbox = preset.hitbox;
             Prediction = preset.prediction;
-            targetPriority = preset.priority;
+            aimbotPriority = preset.priority;
             ApplyAimMode(preset.aimMode);
         }
 
@@ -1279,6 +1284,9 @@ namespace OW { namespace Config {
             gameMouseSensitivity = ReadFixedFloat(ini, section, "gameMouseSensitivity", gameMouseSensitivity);
             sensReference = ReadFixedFloat(ini, section, "sensReference", sensReference);
             autoSyncSensitivity = ReadBool(ini, section, "autoSyncSensitivity", autoSyncSensitivity);
+            hostMouseDpi = ReadFixedFloat(ini, section, "hostMouseDpi", hostMouseDpi);
+            detectedHostMouseDpi = 0.0f;
+            hostMouseDpiAutoDetected = false;
             kmboxInputDelayMs = ReadInt(ini, section, "kmboxInputDelayMs", kmboxInputDelayMs);
             kmboxDebugLog = ReadBool(ini, section, "kmboxDebugLog", kmboxDebugLog);
         }
@@ -1295,6 +1303,7 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, "KMBox", "gameMouseSensitivity", gameMouseSensitivity);
             WriteFixedFloatValue(path, "KMBox", "sensReference", sensReference);
             WriteBoolValue(path, "KMBox", "autoSyncSensitivity", autoSyncSensitivity);
+            WriteFixedFloatValue(path, "KMBox", "hostMouseDpi", hostMouseDpi);
             WriteIntValue(path, "KMBox", "kmboxInputDelayMs", kmboxInputDelayMs);
             WriteBoolValue(path, "KMBox", "kmboxDebugLog", kmboxDebugLog);
         }
@@ -1462,11 +1471,12 @@ namespace OW { namespace Config {
             ClampFloatSetting("kmboxAimSensitivity", kmboxAimSensitivity, 0.1f, 2000.0f, 1.0f);
             ClampFloatSetting("gameMouseSensitivity", gameMouseSensitivity, 0.01f, 100.0f, 15.0f);
             ClampFloatSetting("sensReference", sensReference, 0.01f, 100.0f, 15.0f);
+            ClampFloatSetting("hostMouseDpi", hostMouseDpi, 100.0f, 64000.0f, kDefaultHostMouseDpi);
             const float effectiveSensitivity =
                 autoSyncSensitivity && gameMouseSensitivity > 0.0f && sensReference > 0.0f
                     ? kmboxAimSensitivity * (sensReference / gameMouseSensitivity)
                     : kmboxAimSensitivity;
-            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d effectiveSensitivity=%.6f inputDelayMs=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
+            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d hostMouseDpi=%.6f effectiveSensitivity=%.6f inputDelayMs=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
                 kmboxEnabled ? 1 : 0,
                 kmboxDeviceType,
                 kmboxIp,
@@ -1475,6 +1485,7 @@ namespace OW { namespace Config {
                 gameMouseSensitivity,
                 sensReference,
                 autoSyncSensitivity ? 1 : 0,
+                hostMouseDpi,
                 effectiveSensitivity,
                 kmboxInputDelayMs,
                 aim_key,
@@ -1559,10 +1570,12 @@ namespace OW { namespace Config {
                 AutoRMBdistance, ToText(AutoSkill).c_str(), SkillHealth, ToText(AntiAFK).c_str());
             LogConfig(level, "Dump: secondary secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
-            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f gameMouseSensitivity=%.3f sensReference=%.3f autoSyncSensitivity=%s inputDelayMs=%d debugLog=%s",
+            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d mac=%s comPort=%s aimSensitivity=%.3f gameMouseSensitivity=%.3f sensReference=%.3f autoSyncSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMac,
                 kmboxComPort, kmboxAimSensitivity, gameMouseSensitivity, sensReference,
-                ToText(autoSyncSensitivity).c_str(), kmboxInputDelayMs, ToText(kmboxDebugLog).c_str());
+                ToText(autoSyncSensitivity).c_str(), hostMouseDpi, detectedHostMouseDpi,
+                ToText(hostMouseDpiAutoDetected).c_str(), kmboxInputDelayMs,
+                ToText(kmboxDebugLog).c_str());
             LogConfig(level, "Dump: keystate offset=%s size=%d",
                 ToText(gafAsyncKeyStateOffset).c_str(), gafAsyncKeyStateSize);
             LogConfig(level, "Dump: manual screen width=%d height=%d",
@@ -1716,6 +1729,8 @@ namespace OW { namespace Config {
             WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
             WriteIntValue(path, "Global", "radarCorner", radarCorner);
             WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
+            WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
+            WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);
             LogConfig(Diagnostics::LogLevel::Info,
                 "Saved global config to %s without a current hero.", path.c_str());
             return;

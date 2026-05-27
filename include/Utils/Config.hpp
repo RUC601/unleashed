@@ -222,6 +222,7 @@ namespace OW { namespace Config {
 
     // ---- KMBox input output ----
     inline bool kmboxEnabled = false;
+    inline int inputSource = 0; // 0=Auto, 1=KMBox, 2=GetAsyncKeyState, 3=DMA KeyState
     inline int  kmboxDeviceType = 0; // 0=Network/UDP, 1=Serial/COM
     inline char kmboxIp[32] = "192.168.2.188";
     inline int  kmboxPort = 8808;
@@ -231,8 +232,29 @@ namespace OW { namespace Config {
     inline float gameMouseSensitivity = 15.0f; // DMA-read, updated each tick
     inline float sensReference = 15.0f;        // game sens used when kmboxAimSensitivity was calibrated
     inline bool  autoSyncSensitivity = false;
+    inline float hostMouseDpi = 1600.0f;       // manual/effective host mouse DPI fallback
+    inline float detectedHostMouseDpi = 0.0f;  // runtime-only automatic detection result
+    inline bool  hostMouseDpiAutoDetected = false;
     inline int   kmboxInputDelayMs = 0;
     inline bool kmboxDebugLog = false;
+
+    // ---- Diagnostics / Dry-run ----
+    inline bool aimDryRun = false;              // Dry-run mode: log everything, don't move cursor
+    inline bool aimVerboseLog = false;          // Extra verbose per-tick logging
+    inline int aimDryRunLogIntervalMs = 100;    // Min interval between dry-run log lines (avoid spam)
+
+    // ---- Sensitivity auto-calibration ----
+    inline bool calibrationInProgress = false;
+    inline float calibratedPixelsPerRadian = 0.0f;  // 0 = not calibrated, use manual kmboxAimSensitivity
+    inline float calibratedPixelsPerRadianPitch = 0.0f; // Separate pitch calibration if >5% different from yaw
+    inline int calibrationMovePixels = 200;          // How many pixels to move for calibration
+    inline int calibrationStabilityWaitMs = 50;      // Wait time before/after move for stable read
+    inline int calibrationSampleCount = 3;           // Number of calibration samples to average
+
+    // ---- Mouse movement splitting ----
+    inline bool moveSplitEnabled = true;       // Enable micro-splitting of mouse moves
+    inline int moveSplitMaxPixels = 4;         // Max pixels per micro-move chunk (1-20)
+    inline int moveSplitDelayUs = 800;         // Microsecond delay between chunks (100-5000)
 
     // ---- Per-hero aimbot presets ----
     struct HeroPreset {
@@ -258,7 +280,8 @@ namespace OW { namespace Config {
     inline constexpr uint64_t HERO_PRESET_HAZARD = 0xFFFFFFFFFFFF0002ull;
     inline constexpr uint64_t HERO_PRESET_JUNO   = 0xFFFFFFFFFFFF0003ull;
 
-    // ---- Primary-machine display ----
+    // ---- Target-machine display fallback ----
+    // Used only when the target viewport cannot be read through DMA.
     inline int manualScreenWidth = 1920;
     inline int manualScreenHeight = 1080;
 

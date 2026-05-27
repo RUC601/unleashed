@@ -22,6 +22,7 @@
 #include "Renderer/Renderer.hpp"
 #include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
+#include "Memory/KeyState.hpp"
 
 using namespace OW;
 
@@ -92,7 +93,7 @@ namespace OW {
     inline std::vector<std::pair<uint64_t, uint64_t>> ow_entities{};
     inline std::vector<std::pair<uint64_t, uint64_t>> ow_entities_scan{};
 
-    // ---- Screen / window ----
+    // ---- Target/source screen used for projection ----
     inline float WX = 0.f, WY = 0.f;
     inline int detectedScreenWidth = 0;
     inline int detectedScreenHeight = 0;
@@ -2380,69 +2381,264 @@ inline void skillinfo() {
     auto renderEntitySkillRow = [&](const OW::c_entity& entity, float x, float y, float opacity,
                                     bool includeUltimate, bool includeCooldowns) -> float {
         const std::string heroname = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
-        constexpr float rowHeight = 22.0f;
-        constexpr float iconSize = 18.0f;
-        constexpr float gap = 3.0f;
+        constexpr float rowHeight = 54.0f;
+        constexpr float cardWidth = 232.0f;
+        constexpr float avatarSize = 42.0f;
+        constexpr float barWidth = 4.0f;
+        constexpr float barHeight = 40.0f;
+        constexpr float gap = 7.0f;
+        constexpr float skillSlotSize = 28.0f;
+        constexpr float skillSlotGap = 6.0f;
+        constexpr float ultBarWidth = 62.0f;
+        constexpr float ultBarHeight = 14.0f;
+        constexpr float statusStackGap = 4.0f;
 
-        Render::DrawStrokeText(ImVec2(x, y), OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, opacity),
-                               heroname.c_str(), 13.0f);
+        const float alpha = std::clamp(opacity, 0.0f, 1.0f);
+        const bool isEnemy = entity.Team;
+        Render::DrawFilledRect(Vector2(x, y + 1.0f), cardWidth, rowHeight - 2.0f,
+                               OverlayRenderDetail::ImColorWithAlpha(8, 11, 15, alpha * 0.70f));
+        Render::DrawFilledRect(Vector2(x, y + 4.0f), 3.0f, rowHeight - 8.0f,
+                               isEnemy
+                                   ? OverlayRenderDetail::ImColorWithAlpha(255, 82, 92, alpha * 0.86f)
+                                   : OverlayRenderDetail::ImColorWithAlpha(72, 190, 255, alpha * 0.86f));
+        Render::DrawRect(Vector2(x, y + 1.0f), cardWidth, rowHeight - 2.0f,
+                         Render::Color(255, 255, 255, OverlayRenderDetail::ToByte(alpha * 0.14f)), 1.0f);
 
-        if (!includeUltimate && !includeCooldowns)
-            return y + rowHeight;
-
-        const OW::HeroAbilityIcons* icons = OW::GetAbilityIcons(heroname);
-        if (icons && iconManager)
-            OverlayRenderDetail::EnsureAbilityIconsLoaded(iconManager, *icons);
-
-        float cursorX = x + 100.0f;
-        auto reserveFallbackSlot = [&]() {
-            OverlayRenderDetail::AdvanceIconSlot(cursorX, iconSize, gap);
-        };
-        auto drawSkillSlot = [&](const char* abilityIcon, const char* label,
-                                 bool active, float cooldown) {
-            const float slotX = cursorX;
-            const bool drew = icons && iconManager &&
-                OverlayRenderDetail::DrawAbilityIconSlot(iconManager, *icons, abilityIcon,
-                    cursorX, y, iconSize, gap, opacity,
-                    OverlayRenderDetail::IsSkillOnCooldown(active, cooldown), cooldown);
-            if (!drew) {
-                if (!icons || !iconManager)
-                    reserveFallbackSlot();
-                OverlayRenderDetail::DrawSkillFallbackSlot(slotX, y, iconSize, opacity,
-                                                           label, active, cooldown);
+        auto scaledTextSize = [](const std::string& text, float fontSize) {
+            ImVec2 textSize = ImGui::CalcTextSize(text.c_str());
+            const float baseFontSize = ImGui::GetFontSize();
+            if (baseFontSize > 0.0f) {
+                const float scale = fontSize / baseFontSize;
+                textSize.x *= scale;
+                textSize.y *= scale;
             }
+            return textSize;
         };
-        auto drawUltimateSlot = [&]() {
-            const float slotX = cursorX;
-            const bool drew = icons && iconManager &&
-                OverlayRenderDetail::DrawUltimateIconSlot(iconManager, *icons, cursorX, y,
-                    iconSize, gap, opacity, entity.ultimate);
-            if (!drew) {
-                if (!icons || !iconManager)
-                    reserveFallbackSlot();
-                OverlayRenderDetail::DrawUltimateFallbackSlot(slotX, y, iconSize,
-                                                              opacity, entity.ultimate);
+
+        auto drawCenteredText = [&](float centerX, float centerY, const std::string& text,
+                                    float fontSize, ImU32 color) {
+            const ImVec2 textSize = scaledTextSize(text, fontSize);
+            Render::DrawText(ImVec2(centerX - textSize.x * 0.5f,
+                                    centerY - textSize.y * 0.5f),
+                             color, text.c_str(), fontSize);
+        };
+
+        auto heroInitials = [&]() {
+            std::string initials;
+            for (unsigned char ch : heroname) {
+                if (std::isalnum(ch)) {
+                    initials.push_back(static_cast<char>(std::toupper(ch)));
+                    if (initials.size() == 2)
+                        break;
+                }
             }
+            return initials.empty() ? std::string("?") : initials;
         };
+
+        auto findHeroAvatar = [&]() -> ID3D11ShaderResourceView* {
+            if (!iconManager)
+                return nullptr;
+            const std::string slug = OW::HeroDisplayNameToSlug(heroname);
+            if (slug.empty() || slug == "all")
+                return nullptr;
+            if (ID3D11ShaderResourceView* avatar = iconManager->GetIcon(slug))
+                return avatar;
+            return iconManager->LoadHeroAvatar(slug);
+        };
+
+        const float avatarX = x + 6.0f;
+        const float avatarY = y + (rowHeight - avatarSize) * 0.5f;
+        if (ID3D11ShaderResourceView* avatar = findHeroAvatar()) {
+            Render::DrawIcon(avatar, ImVec2(avatarX, avatarY), ImVec2(avatarSize, avatarSize),
+                             OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
+        } else {
+            const Render::Color fallbackColor = isEnemy
+                ? Render::Color(136, 42, 48, OverlayRenderDetail::ToByte(alpha * 0.88f))
+                : Render::Color(40, 85, 130, OverlayRenderDetail::ToByte(alpha * 0.88f));
+            Render::DrawFilledCircle(Vector2(avatarX + avatarSize * 0.5f,
+                                             avatarY + avatarSize * 0.5f),
+                                     avatarSize * 0.5f, fallbackColor, 40);
+            drawCenteredText(avatarX + avatarSize * 0.5f, avatarY + avatarSize * 0.5f,
+                             heroInitials(), 13.0f,
+                             OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
+        }
+
+        const float baseHealth = OverlayRenderDetail::PositiveFinite(entity.MinHealth);
+        const float armorHealth = OverlayRenderDetail::PositiveFinite(entity.MinArmorHealth);
+        const float shieldHealth = OverlayRenderDetail::PositiveFinite(entity.MinBarrierHealth);
+        const float currentHealth = OverlayRenderDetail::PositiveFinite(entity.PlayerHealth) > 0.0f
+            ? OverlayRenderDetail::PositiveFinite(entity.PlayerHealth)
+            : baseHealth + armorHealth + shieldHealth;
+        float maxHealth = OverlayRenderDetail::PositiveFinite(entity.PlayerHealthMax);
+        if (maxHealth <= 0.0f) {
+            maxHealth = OverlayRenderDetail::PositiveFinite(entity.MaxHealth) +
+                        OverlayRenderDetail::PositiveFinite(entity.MaxArmorHealth) +
+                        OverlayRenderDetail::PositiveFinite(entity.MaxBarrierHealth);
+        }
+        const float healthRatio = maxHealth > 0.0f ? OverlayRenderDetail::Clamp01(currentHealth / maxHealth) : 0.0f;
+        const ImColor healthColor = healthRatio > 0.60f
+            ? OverlayRenderDetail::ImColorWithAlpha(55, 230, 95, alpha)
+            : (healthRatio >= 0.30f
+                ? OverlayRenderDetail::ImColorWithAlpha(245, 210, 72, alpha)
+                : OverlayRenderDetail::ImColorWithAlpha(245, 76, 72, alpha));
+
+        auto drawVerticalBar = [&](float barX, float barY, float ratio, const ImColor& fillColor) {
+            Render::DrawFilledRect(Vector2(barX, barY), barWidth, barHeight,
+                                   OverlayRenderDetail::ImColorWithAlpha(0, 0, 0, alpha * 0.48f));
+            const float fillHeight = barHeight * OverlayRenderDetail::Clamp01(ratio);
+            if (fillHeight > 0.0f) {
+                Render::DrawFilledRect(Vector2(barX, barY + barHeight - fillHeight),
+                                       barWidth, fillHeight, fillColor);
+            }
+            Render::DrawRect(Vector2(barX, barY), barWidth, barHeight,
+                             Render::Color(255, 255, 255, OverlayRenderDetail::ToByte(alpha * 0.18f)), 1.0f);
+        };
+
+        float cursorX = avatarX + avatarSize + 4.0f;
+        const float barY = y + (rowHeight - barHeight) * 0.5f;
+        drawVerticalBar(cursorX, barY, healthRatio, healthColor);
+        cursorX += barWidth + 3.0f;
+
+        const float resourceX = cursorX;
+        const float armorMax = OverlayRenderDetail::PositiveFinite(entity.MaxArmorHealth);
+        const float shieldMax = OverlayRenderDetail::PositiveFinite(entity.MaxBarrierHealth);
+        const float resourceCurrent = armorHealth + shieldHealth;
+        float resourceMax = armorMax + shieldMax;
+        if (resourceMax <= 0.0f)
+            resourceMax = resourceCurrent;
+        if (resourceMax > 0.0f || resourceCurrent > 0.0f) {
+            Render::DrawFilledRect(Vector2(resourceX, barY), barWidth, barHeight,
+                                   OverlayRenderDetail::ImColorWithAlpha(0, 0, 0, alpha * 0.48f));
+            float fillBottom = barY + barHeight;
+            const float clampedArmor = armorMax > 0.0f && armorHealth > armorMax ? armorMax : armorHealth;
+            const float clampedShield = shieldMax > 0.0f && shieldHealth > shieldMax ? shieldMax : shieldHealth;
+            const float armorHeight = barHeight * OverlayRenderDetail::Clamp01(clampedArmor / resourceMax);
+            const float shieldHeight = barHeight * OverlayRenderDetail::Clamp01(clampedShield / resourceMax);
+            if (armorHeight > 0.0f) {
+                fillBottom -= armorHeight;
+                Render::DrawFilledRect(Vector2(resourceX, fillBottom), barWidth, armorHeight,
+                                       OverlayRenderDetail::ImColorWithAlpha(255, 194, 58, alpha));
+            }
+            if (shieldHeight > 0.0f && fillBottom > barY) {
+                const float segmentHeight = (shieldHeight < fillBottom - barY) ? shieldHeight : (fillBottom - barY);
+                fillBottom -= segmentHeight;
+                Render::DrawFilledRect(Vector2(resourceX, fillBottom), barWidth, segmentHeight,
+                                       OverlayRenderDetail::ImColorWithAlpha(68, 220, 255, alpha));
+            }
+            Render::DrawRect(Vector2(resourceX, barY), barWidth, barHeight,
+                             Render::Color(255, 255, 255, OverlayRenderDetail::ToByte(alpha * 0.18f)), 1.0f);
+        }
+        cursorX += barWidth + gap;
+
+        const std::string hpText = std::to_string(static_cast<int>(currentHealth + 0.5f));
+        Render::DrawText(ImVec2(cursorX, y + 17.0f),
+                         OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha),
+                         hpText.c_str(), 20.0f);
+        cursorX += 48.0f + gap;
+
+        const float statusBlockX = x + cardWidth - 7.0f - ultBarWidth;
+        const float statusBlockTop = y + (rowHeight - (includeCooldowns && includeUltimate
+            ? skillSlotSize + statusStackGap + ultBarHeight
+            : (includeCooldowns ? skillSlotSize : ultBarHeight))) * 0.5f;
+        const float skillRowY = statusBlockTop;
+        const float ultRowY = statusBlockTop + (includeCooldowns ? skillSlotSize + statusStackGap : 0.0f);
+
+        if (includeUltimate) {
+            const float ultimate = std::isfinite(entity.ultimate)
+                ? std::clamp(entity.ultimate, 0.0f, 100.0f)
+                : 0.0f;
+            const bool ultimateReady = ultimate >= 100.0f;
+            const float ultY = ultRowY;
+            Render::DrawFilledRect(Vector2(statusBlockX, ultY), ultBarWidth, ultBarHeight,
+                                   ultimateReady
+                                       ? OverlayRenderDetail::ImColorWithAlpha(116, 82, 16, alpha * 0.92f)
+                                       : OverlayRenderDetail::ImColorWithAlpha(56, 60, 68, alpha * 0.86f));
+            if (ultimate > 0.0f) {
+                Render::DrawFilledRect(Vector2(statusBlockX, ultY), ultBarWidth * (ultimate / 100.0f), ultBarHeight,
+                                       ultimateReady
+                                           ? OverlayRenderDetail::ImColorWithAlpha(255, 202, 42, alpha)
+                                           : OverlayRenderDetail::ImColorWithAlpha(66, 214, 255, alpha));
+            }
+            Render::DrawRect(Vector2(statusBlockX, ultY), ultBarWidth, ultBarHeight,
+                             ultimateReady
+                                 ? Render::Color(255, 238, 112, OverlayRenderDetail::ToByte(alpha))
+                                 : Render::Color(255, 255, 255, OverlayRenderDetail::ToByte(alpha * 0.24f)),
+                             1.0f);
+            drawCenteredText(statusBlockX + ultBarWidth * 0.5f, ultY + ultBarHeight * 0.5f,
+                             "Ult " + OverlayRenderDetail::FormatUltimatePercent(entity.ultimate),
+                             12.5f,
+                             ultimateReady
+                                 ? OverlayRenderDetail::ImU32WithAlpha(34, 21, 0, alpha)
+                                 : OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
+        }
 
         if (includeCooldowns) {
-            drawSkillSlot(icons ? icons->ability1Icon : nullptr, "S1",
-                          entity.skill1act, entity.skillcd1);
-            drawSkillSlot(icons ? icons->ability2Icon : nullptr, "S2",
-                          entity.skill2act, entity.skillcd2);
+            const OW::HeroAbilityIcons* icons = OW::GetAbilityIcons(heroname);
+            if (icons && iconManager)
+                OverlayRenderDetail::EnsureAbilityIconsLoaded(iconManager, *icons);
+
+            auto skillTexture = [&](const char* abilityIcon) -> ID3D11ShaderResourceView* {
+                if (!icons || !iconManager || !abilityIcon || abilityIcon[0] == '\0')
+                    return nullptr;
+                return iconManager->GetIcon(std::string(icons->heroSlug) + "/" + abilityIcon);
+            };
+
+            auto drawSkillCooldownSlot = [&](const char* abilityIcon, const char* label,
+                                             bool active, float cooldown) {
+                const float slotX = cursorX;
+                const float slotY = skillRowY;
+                const bool onCooldown = OverlayRenderDetail::IsSkillOnCooldown(active, cooldown);
+                const bool ready = active && !onCooldown;
+
+                Render::DrawFilledRect(Vector2(slotX, slotY), skillSlotSize, skillSlotSize,
+                                       ready
+                                           ? OverlayRenderDetail::ImColorWithAlpha(18, 58, 48, alpha * 0.94f)
+                                           : OverlayRenderDetail::ImColorWithAlpha(12, 16, 22, alpha * 0.82f));
+                if (ID3D11ShaderResourceView* texture = skillTexture(abilityIcon)) {
+                    Render::DrawIcon(texture, ImVec2(slotX + 1.0f, slotY + 1.0f),
+                                     ImVec2(skillSlotSize - 2.0f, skillSlotSize - 2.0f),
+                                     OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, ready ? alpha : alpha * 0.64f));
+                } else {
+                    drawCenteredText(slotX + skillSlotSize * 0.5f, slotY + skillSlotSize * 0.5f,
+                                     label, 13.0f,
+                                     OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, ready ? alpha : alpha * 0.66f));
+                }
+
+                if (onCooldown) {
+                    Render::DrawFilledRect(Vector2(slotX, slotY), skillSlotSize, skillSlotSize,
+                                           OverlayRenderDetail::ImColorWithAlpha(0, 0, 0, alpha * 0.66f));
+                    drawCenteredText(slotX + skillSlotSize * 0.5f, slotY + skillSlotSize * 0.5f,
+                                     OverlayRenderDetail::FormatIconCooldown(cooldown), 13.0f,
+                                     OverlayRenderDetail::ImU32WithAlpha(255, 244, 128, alpha));
+                } else if (!ready) {
+                    Render::DrawFilledRect(Vector2(slotX, slotY), skillSlotSize, skillSlotSize,
+                                           OverlayRenderDetail::ImColorWithAlpha(0, 0, 0, alpha * 0.34f));
+                }
+
+                Render::DrawRect(Vector2(slotX, slotY), skillSlotSize, skillSlotSize,
+                                 ready
+                                     ? Render::Color(172, 255, 226, OverlayRenderDetail::ToByte(alpha))
+                                     : Render::Color(255, 255, 255, OverlayRenderDetail::ToByte(alpha * 0.28f)),
+                                 ready ? 1.6f : 1.0f);
+                cursorX += skillSlotSize + skillSlotGap;
+            };
+
+            cursorX = statusBlockX + (ultBarWidth - (skillSlotSize * 2.0f + skillSlotGap)) * 0.5f;
+            drawSkillCooldownSlot(icons ? icons->ability1Icon : nullptr, "S1",
+                                  entity.skill1act, entity.skillcd1);
+            drawSkillCooldownSlot(icons ? icons->ability2Icon : nullptr, "S2",
+                                  entity.skill2act, entity.skillcd2);
         }
-        if (includeUltimate)
-            drawUltimateSlot();
 
         return y + rowHeight;
     };
 
     auto renderSidePanel = [&](bool isRight, bool includeUltimate, bool includeCooldowns) {
-        constexpr float panelWidth = 200.0f;
+        constexpr float panelWidth = 236.0f;
         const float panelX = isRight ? OW::WX - panelWidth - 10.0f : 10.0f;
-        constexpr float rowHeight = 22.0f;
-        constexpr float sectionGap = 30.0f;
-        constexpr float headerHeight = 18.0f;
+        constexpr float rowHeight = 54.0f;
+        constexpr float sectionGap = 34.0f;
+        constexpr float headerHeight = 26.0f;
         constexpr float opacity = 1.0f;
 
         const int enemyCount = static_cast<int>(enemies.size());
@@ -2463,9 +2659,9 @@ inline void skillinfo() {
         auto renderRoster = [&](float startY, bool rowUltimate, bool rowCooldowns) {
             float rowY = startY;
             if (enemyCount > 0) {
-                Render::DrawStrokeText(ImVec2(panelX, rowY),
-                                       OverlayRenderDetail::ImU32WithAlpha(255, 80, 80, opacity),
-                                       "ENEMIES", 12.0f);
+                Render::DrawText(ImVec2(panelX, rowY),
+                                 OverlayRenderDetail::ImU32WithAlpha(255, 106, 116, opacity),
+                                 "ENEMIES", 16.5f);
                 rowY += headerHeight;
                 for (const OW::c_entity& entity : enemies)
                     rowY = renderEntitySkillRow(entity, panelX, rowY, opacity, rowUltimate, rowCooldowns);
@@ -2474,9 +2670,9 @@ inline void skillinfo() {
             if (allyCount > 0) {
                 if (enemyCount > 0)
                     rowY += sectionGap;
-                Render::DrawStrokeText(ImVec2(panelX, rowY),
-                                       OverlayRenderDetail::ImU32WithAlpha(80, 180, 255, opacity),
-                                       "ALLIES", 12.0f);
+                Render::DrawText(ImVec2(panelX, rowY),
+                                 OverlayRenderDetail::ImU32WithAlpha(102, 204, 255, opacity),
+                                 "ALLIES", 16.5f);
                 rowY += headerHeight;
                 for (const OW::c_entity& entity : allies)
                     rowY = renderEntitySkillRow(entity, panelX, rowY, opacity, rowUltimate, rowCooldowns);
@@ -2496,6 +2692,12 @@ inline void skillinfo() {
 // =========================================================================
 // Main aimbot thread
 // =========================================================================
+
+// ---- Aim diagnostic counters ----
+inline uint64_t g_trackingAttempts = 0;
+inline uint64_t g_trackingMoves = 0;
+inline uint64_t g_flickAttempts = 0;
+inline uint64_t g_flickFires = 0;
 
 namespace AimbotDetail {
 
@@ -2564,11 +2766,11 @@ namespace AimbotDetail {
         }
     }
 
-    inline void LogAimKeyState(int keySetting, int vk, bool useKmBoxMonitor, bool pressed) {
+    inline void LogAimKeyState(int keySetting, int vk, int sourceType, bool pressed) {
         static bool initialized = false;
         static int lastKeySetting = -1;
         static int lastVk = -1;
-        static bool lastUseKmBoxMonitor = false;
+        static int lastSourceType = -1;
         static bool lastPressed = false;
         static DWORD lastLogTick = 0;
 
@@ -2576,20 +2778,26 @@ namespace AimbotDetail {
         const bool changed = !initialized ||
             lastKeySetting != keySetting ||
             lastVk != vk ||
-            lastUseKmBoxMonitor != useKmBoxMonitor ||
+            lastSourceType != sourceType ||
             lastPressed != pressed;
 
         if (changed || (pressed && (lastLogTick == 0 || now - lastLogTick >= 1000))) {
+            const char* sourceLabel = "GetAsyncKeyState";
+            if (sourceType == 1)
+                sourceLabel = "kmbox_monitor";
+            else if (sourceType == 2)
+                sourceLabel = "dma_keystate";
+
             Diagnostics::Aim("hotkey state keySetting=%d vk=0x%X source=%s monitorRunning=%d pressed=%d",
                 keySetting,
                 vk,
-                useKmBoxMonitor ? "kmbox_monitor" : "GetAsyncKeyState",
+                sourceLabel,
                 kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0,
                 pressed ? 1 : 0);
             initialized = true;
             lastKeySetting = keySetting;
             lastVk = vk;
-            lastUseKmBoxMonitor = useKmBoxMonitor;
+            lastSourceType = sourceType;
             lastPressed = pressed;
             lastLogTick = now;
         }
@@ -2598,7 +2806,7 @@ namespace AimbotDetail {
     inline bool IsConfiguredAimKeyPressed(int keySetting) {
         const int vk = OW::get_bind_id(keySetting);
         if (vk <= 0) {
-            LogAimKeyState(keySetting, vk, false, false);
+            LogAimKeyState(keySetting, vk, 0, false);
             static DWORD lastInvalidBindingLogTick = 0;
             const DWORD now = GetTickCount();
             if (lastInvalidBindingLogTick == 0 || now - lastInvalidBindingLogTick >= 1000) {
@@ -2606,6 +2814,24 @@ namespace AimbotDetail {
                 lastInvalidBindingLogTick = now;
             }
             return false;
+        }
+
+        // === DMA KeyState path (inputSource=3): read remote keyboard state via DMA ===
+        if (OW::Config::inputSource == 3) {
+            if (IsMouseActivationKey(vk)) {
+                LogAimKeyState(keySetting, vk, 2, false);
+                static DWORD lastDmaMouseWarnTick = 0;
+                const DWORD now = GetTickCount();
+                if (lastDmaMouseWarnTick == 0 || now - lastDmaMouseWarnTick >= 1000) {
+                    Diagnostics::Aim("hotkey early_return reason=mouse_button_not_supported_via_dma_keystate keySetting=%d vk=0x%X", keySetting, vk);
+                    lastDmaMouseWarnTick = now;
+                }
+                return false;
+            }
+
+            bool pressed = KeyState::IsKeyDown(static_cast<uint32_t>(vk));
+            LogAimKeyState(keySetting, vk, 2, pressed);
+            return pressed;
         }
 
         const bool useKmBoxMonitor =
@@ -2620,12 +2846,12 @@ namespace AimbotDetail {
             else
                 pressed = kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
 
-            LogAimKeyState(keySetting, vk, true, pressed);
+            LogAimKeyState(keySetting, vk, 1, pressed);
             return pressed;
         }
 
         pressed = (GetAsyncKeyState(vk) & 0x8000) != 0;
-        LogAimKeyState(keySetting, vk, false, pressed);
+        LogAimKeyState(keySetting, vk, 0, pressed);
         return pressed;
     }
 
@@ -2972,6 +3198,7 @@ namespace AimbotDetail {
     inline void RunTracking(float origin_sens) {
         if (!IsAimKeyPressed() || OW::Config::reloading)
             return;
+        g_trackingAttempts++;
 
         Diagnostics::Aim("tracking.enter originSens=%.6f reloading=%d trackingSmooth=%.6f prediction=%d targetDelay=%d",
             origin_sens,
@@ -2979,6 +3206,35 @@ namespace AimbotDetail {
             OW::Config::Tracking_smooth,
             OW::Config::Prediction ? 1 : 0,
             OW::Config::targetdelay ? 1 : 0);
+
+        // ---- Dry-run mode: log diagnostic info, don't move cursor ----
+        if (OW::Config::aimDryRun) {
+            static DWORD lastDryRunLog = 0;
+            DWORD now = GetTickCount();
+            if (now - lastDryRunLog >= (DWORD)OW::Config::aimDryRunLogIntervalMs) {
+                lastDryRunLog = now;
+                const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
+                if (!IsZeroVector(vec)) {
+                    AimData aim = BuildAimData(vec, false, OW::Config::Tracking_smooth / 10.f, 0.0f);
+                    Diagnostics::Aim("dryrun.tracking local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) "
+                        "delta_pixels_est=(%.1f,%.1f) sensitivity=%.1f would_move=%d target_pos=(%.1f,%.1f,%.1f)",
+                        RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
+                        RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
+                        RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
+                        (aim.target_angle.X - aim.local_angle.X) * OW::Config::kmboxAimSensitivity,
+                        (aim.target_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
+                        OW::Config::kmboxAimSensitivity,
+                        1, vec.X, vec.Y, vec.Z);
+                } else {
+                    Diagnostics::Aim("dryrun.tracking no_target_vector targetIndex=%d entities=%zu",
+                        OW::Config::Targetenemyi,
+                        OW::TargetingDetail::SnapshotEntities().size());
+                }
+            }
+            Sleep(1);
+            return; // Don't actually move cursor
+        }
+
         while (IsAimKeyPressed() && !OW::Config::reloading) {
             const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
             c_entity target{};
@@ -2999,6 +3255,13 @@ namespace AimbotDetail {
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     if (!TargetDelayReady(nullptr, false, false)) continue;
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
+                    g_trackingMoves++;
+                    if (OW::Config::aimVerboseLog) {
+                        Diagnostics::Aim("tracking.tick moved=1 delta_px_est=(%.1f,%.1f) target_dist=%.1f",
+                            (aim.smoothed_angle.X - aim.local_angle.X) * OW::Config::kmboxAimSensitivity,
+                            (aim.smoothed_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
+                            CameraPosition().DistTo(vec));
+                    }
                     RunCloseRangeActions(vec);
                 } else {
                     Diagnostics::Aim("tracking no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
@@ -3022,6 +3285,7 @@ namespace AimbotDetail {
     inline void RunFlick(RuntimeState& state, float origin_sens) {
         if (!IsAimKeyPressed() || OW::Config::shooted || OW::Config::reloading)
             return;
+        g_flickAttempts++;
 
         Diagnostics::Aim("flick.enter originSens=%.6f shooted=%d reloading=%d flickSmooth=%.6f acceleration=%.6f prediction=%d",
             origin_sens,
@@ -3030,6 +3294,34 @@ namespace AimbotDetail {
             OW::Config::Flick_smooth,
             OW::Config::accvalue,
             OW::Config::Prediction ? 1 : 0);
+
+        // ---- Dry-run mode: log diagnostic info, don't move cursor ----
+        if (OW::Config::aimDryRun) {
+            static DWORD lastDryRunLog = 0;
+            DWORD now = GetTickCount();
+            if (now - lastDryRunLog >= (DWORD)OW::Config::aimDryRunLogIntervalMs) {
+                lastDryRunLog = now;
+                const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
+                if (!IsZeroVector(vec)) {
+                    AimData aim = BuildAimData(vec, true, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
+                    const bool wouldHit = OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox);
+                    Diagnostics::Aim("dryrun.flick local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) "
+                        "delta_deg=(%.4f,%.4f) hitbox=%.4f would_hit=%d target_pos=(%.1f,%.1f,%.1f)",
+                        RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
+                        RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
+                        RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
+                        OW::Config::hitbox, wouldHit ? 1 : 0,
+                        vec.X, vec.Y, vec.Z);
+                } else {
+                    Diagnostics::Aim("dryrun.flick no_target_vector targetIndex=%d entities=%zu",
+                        OW::Config::Targetenemyi,
+                        OW::TargetingDetail::SnapshotEntities().size());
+                }
+            }
+            Sleep(1);
+            return; // Don't actually move cursor
+        }
+
         ArmDelayedShot(state);
 
         while (IsAimKeyPressed() &&
@@ -3070,9 +3362,19 @@ namespace AimbotDetail {
                     }
 
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
+                    if (OW::Config::aimVerboseLog) {
+                        const float deltaDegX = RAD2DEG(aim.target_angle.X - aim.local_angle.X);
+                        const float deltaDegY = RAD2DEG(aim.target_angle.Y - aim.local_angle.Y);
+                        Diagnostics::Aim("flick.tick delta_deg=(%.4f,%.4f) hitbox=%.4f missbox=%.4f",
+                            deltaDegX, deltaDegY, OW::Config::hitbox, OW::Config::missbox);
+                    }
                     if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox)) {
+                        if (OW::Config::aimVerboseLog) {
+                            Diagnostics::Aim("flick.fire hitbox_check=passed");
+                        }
                         SetSensitivityLocked(true, origin_sens);
                         FirePrimaryNormal();
+                        g_flickFires++;
                         SetSensitivityLocked(false, origin_sens);
                         OW::Config::shooted = true;
                         if (OW::Config::dontshot) OW::Config::shotcount++;
@@ -3393,8 +3695,26 @@ inline void aimbot_thread() {
     __try {
         AimbotDetail::RuntimeState state{};
         static float origin_sens = 0.f;
+        static uint64_t totalTicks = 0;
+        static DWORD lastSummaryTick = 0;
 
         while (true) {
+            totalTicks++;
+
+            // Periodic diagnostic summary every 5 seconds
+            DWORD now = GetTickCount();
+            if (lastSummaryTick == 0 || now - lastSummaryTick >= 5000) {
+                Diagnostics::Aim("aimbot.summary totalTicks=%llu trackingAttempts=%llu trackingMoves=%llu "
+                    "flickAttempts=%llu flickFires=%llu dryRun=%d",
+                    (unsigned long long)totalTicks,
+                    (unsigned long long)g_trackingAttempts,
+                    (unsigned long long)g_trackingMoves,
+                    (unsigned long long)g_flickAttempts,
+                    (unsigned long long)g_flickFires,
+                    OW::Config::aimDryRun ? 1 : 0);
+                lastSummaryTick = now;
+            }
+
             AimbotDetail::RunAimbotTickWithHeroPreset(state, origin_sens);
             Sleep(2);
         }

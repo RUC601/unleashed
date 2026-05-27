@@ -171,21 +171,14 @@ namespace Render {
     }
 
     // ---- DrawStrokeText ----
-    // Draws text with a 1 px black outline.
+    // Legacy name kept for callers; draws crisp text without multipass outline.
 
     void DrawStrokeText(const ImVec2& pos, ImU32 color, const char* text, float fontSize) {
         ImDrawList* d = DL();
         if (!d || !text) return;
 
-        const float alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
-        ImU32 black = ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.0f, 0.0f, alpha));
         const ImVec2 p = ToCanvas(pos);
-        const float scale = ScaleUniform();
-        const float scaledFontSize = fontSize * scale;
-        d->AddText(nullptr, scaledFontSize, ImVec2(p.x, p.y - scale), black, text);
-        d->AddText(nullptr, scaledFontSize, ImVec2(p.x, p.y + scale), black, text);
-        d->AddText(nullptr, scaledFontSize, ImVec2(p.x - scale, p.y), black, text);
-        d->AddText(nullptr, scaledFontSize, ImVec2(p.x + scale, p.y), black, text);
+        const float scaledFontSize = fontSize * ScaleUniform();
         d->AddText(nullptr, scaledFontSize, p, color, text);
     }
 

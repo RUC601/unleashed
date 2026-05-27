@@ -6,6 +6,7 @@
 #include "Kmbox/KmBoxConfig.h"
 #include "Utils/Config.hpp"
 #include "Game/Overwatch.hpp"
+#include "Game/Target.hpp"
 #include "Game/Structs.hpp"
 #include "Renderer/Overlay.hpp"
 #include "Renderer/Renderer.hpp"
@@ -23,6 +24,8 @@
 #include <functional>
 #include <string>
 #include <vector>
+
+static void ApplySelectedTypePreset();
 
 // =====================================================================
 // LOCAL UI STATE
@@ -278,6 +281,7 @@ namespace {
         OW::Config::configFileName = profileName;
         ReloadConfigProfile();
         OW::Config::lastConfigProfile = profileName;
+        ApplySelectedTypePreset();
     }
 
     std::vector<std::string> EnumerateConfigProfiles()
@@ -378,7 +382,11 @@ static const HeroOption kHeroOptions[] = {
     { "Juno", OW::Config::HERO_PRESET_JUNO, "Support" },
 };
 static const char* kAimActivationKey[] = {
-    "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt"
+    "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt",
+    "V Key", "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock"
+};
+static const char* kInputSource[] = {
+    "Auto (KMBox > Local)", "KMBox Monitor", "GetAsyncKeyState", "DMA KeyState"
 };
 static const char* kAttack[]       = { "Shoot", "Ability 1", "Ability 2" };
 static const char* kBone[]         = { "Head", "Neck", "Chest" };
@@ -401,6 +409,22 @@ static constexpr int kMenuToggleVk[] = {
     VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6,
     VK_F7, VK_F8, VK_F9, VK_F10, VK_F11, VK_F12
 };
+
+static int ClampHeroPresetSlotIndex(int slotIndex) {
+    return ImClamp(slotIndex, 0, IM_ARRAYSIZE(kSlotNums) - 1);
+}
+
+static int ActiveHeroPresetSlotIndex() {
+    UI::state.heroSegActive = ClampHeroPresetSlotIndex(UI::state.heroSegActive);
+    return UI::state.heroSegActive;
+}
+
+static void ShowPresetPanelTooltip(bool canUseHeroPreset) {
+    ImGui::SetItemTooltip("%s",
+        canUseHeroPreset
+            ? "Saves or loads the selected hero's aim preset in the active 1-7 slot. Choose the active slot on the Aiming page."
+            : "Select a specific hero to save or load per-hero aim presets across the 7 configurable slots.");
+}
 
 // =====================================================================
 // GROUP BOX STATE (lazy border drawing)
@@ -586,9 +610,9 @@ static void ApplySelectedTypePreset() {
     if (hero.heroId == 0)
         return;
 
-    UI::state.heroSegActive = ImClamp(UI::state.heroSegActive, 0, 6);
+    const int slotIndex = ActiveHeroPresetSlotIndex();
     const OW::Config::HeroPreset preset =
-        OW::Config::GetHeroPresetOrDefault(hero.heroId, UI::state.heroSegActive);
+        OW::Config::GetHeroPresetOrDefault(hero.heroId, slotIndex);
     OW::Config::ApplyHeroPresetToGlobals(preset);
 }
 
@@ -618,21 +642,27 @@ static void SyncSelectedTypeWithDetectedHero() {
         SelectTypeIndex(detectedIndex);
 }
 
-static void SaveSelectedTypePreset() {
+static bool SaveSelectedTypePreset() {
     const HeroOption& hero = CurrentHeroOption();
     if (hero.heroId == 0)
-        return;
+        return false;
 
-    UI::state.heroSegActive = ImClamp(UI::state.heroSegActive, 0, 6);
-    const OW::Config::HeroPreset preset =
-        OW::Config::GetHeroPresetOrDefault(hero.heroId, UI::state.heroSegActive);
-    OW::Config::SetHeroPreset(hero.heroId, UI::state.heroSegActive, preset);
+    const int slotIndex = ActiveHeroPresetSlotIndex();
+    const OW::Config::HeroPreset preset = OW::Config::MakeHeroPresetFromCurrent();
+    OW::Config::SetHeroPreset(hero.heroId, slotIndex, preset);
     OW::Config::SaveHeroPresets(OW::Config::ConfigPath());
+    return true;
 }
 
-static void LoadSelectedTypePreset() {
+static bool LoadSelectedTypePreset() {
+    const HeroOption& hero = CurrentHeroOption();
+    if (hero.heroId == 0)
+        return false;
+
+    ActiveHeroPresetSlotIndex();
     OW::Config::LoadHeroPresets(OW::Config::ConfigPath());
     ApplySelectedTypePreset();
+    return true;
 }
 
 static const char* PresetBoneName(int bone) {
@@ -1785,8 +1815,8 @@ void UI::InitStyle() {
 void UI::AimbotPage() {
     // ---- 7-slot preset selector for the current hero ----
     const int previousSlot = state.heroSegActive;
-    state.heroSegActive = UISegmented(kSlotNums, 7, state.heroSegActive);
-    state.heroSegActive = ImClamp(state.heroSegActive, 0, 6);
+    state.heroSegActive = UISegmented(kSlotNums, IM_ARRAYSIZE(kSlotNums), state.heroSegActive);
+    state.heroSegActive = ActiveHeroPresetSlotIndex();
     if (previousSlot != state.heroSegActive)
         ApplySelectedTypePreset();
 
@@ -1829,7 +1859,7 @@ void UI::AimbotPage() {
     // ---- Two columns ----
     UITwoColumns([&]() {
         // LEFT: Aimbot Hero Basic Options
-        UIGroupBox("Aimbot Hero Basic Options", 560.0f);
+        UIGroupBox("Aim Hero Basic Options", 560.0f);
         {
             // Aim Mode
             SettingRow("Aim Mode", kAimbotLeftLabelWidth);
@@ -1961,7 +1991,7 @@ void UI::AimbotPage() {
         CloseGroupBox();
     }, [&]() {
         // RIGHT: Aimbot Hero Expert Options
-        UIGroupBox("Aimbot Hero Expert Options", 425.0f);
+        UIGroupBox("Aim Hero Expert Options", 425.0f);
         {
             // Max Aim Time
             SettingRow("Max Aim Time", kAimbotRightLabelWidth);
@@ -2024,12 +2054,40 @@ void UI::AimbotPage() {
         CloseGroupBox();
     });
 
+    // ---- Diagnostics ----
+    UIGroupBox("Diagnostics");
+    {
+        SettingRow("Input Source");
+        ImGui::PushItemWidth(-1);
+        UISelect("##inputSource", &OW::Config::inputSource,
+                 kInputSource, IM_ARRAYSIZE(kInputSource));
+        ImGui::PopItemWidth();
+        if (OW::Config::inputSource == 3) {
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+                "DMA KeyState requires keyboard aim key (not mouse button)");
+        }
+        ImGui::Spacing();
+        ImGui::Checkbox("Dry Run (Log Only)", &OW::Config::aimDryRun);
+        if (OW::Config::aimDryRun) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(NO cursor movement)");
+        }
+        ImGui::Checkbox("Verbose Aim Logs", &OW::Config::aimVerboseLog);
+        if (OW::Config::aimVerboseLog) {
+            ImGui::TextWrapped("Warning: verbose logging may impact performance");
+        }
+        ImGui::SliderInt("Log Interval (ms)", &OW::Config::aimDryRunLogIntervalMs, 50, 1000);
+    }
+    CloseGroupBox();
+
     if (selectedHero->heroId == 0) {
         if (presetChanged)
             OW::Config::ApplyHeroPresetToGlobals(activePreset);
     } else {
-        if (presetChanged)
+        if (presetChanged) {
             OW::Config::SetHeroPreset(selectedHero->heroId, state.heroSegActive, activePreset);
+            OW::Config::ApplyHeroPresetToGlobals(activePreset);
+        }
     }
 }
 
@@ -2315,6 +2373,21 @@ void UI::MiscPage() {
                           ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
+        SettingRow("Host DPI (DMA)");
+        ImGui::PushItemWidth(-1);
+        float detectedHostDpi = OW::Config::hostMouseDpiAutoDetected
+            ? OW::Config::detectedHostMouseDpi
+            : 0.0f;
+        ImGui::InputFloat("##HostDpiDisplay", &detectedHostDpi, 0.0f, 0.0f, "%.0f",
+                          ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopItemWidth();
+
+        SettingRow("Mouse DPI");
+        ImGui::PushItemWidth(-1);
+        kmboxSaveRequested |= ImGui::InputFloat("##MouseDpi", &OW::Config::hostMouseDpi,
+                                                0.0f, 0.0f, "%.0f");
+        ImGui::PopItemWidth();
+
         SettingRow("Reference Sens");
         const float useDmaButtonWidth = 72.0f;
         const float useDmaSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
@@ -2342,6 +2415,33 @@ void UI::MiscPage() {
 
         SettingRow("Debug Logging");
         kmboxSaveRequested |= ImGui::Checkbox("##Debug", &OW::Config::kmboxDebugLog);
+
+        // ---- Sensitivity auto-calibration button ----
+        SettingRow("Sensitivity Calibration");
+        {
+            const bool wasCalibrated = OW::Config::calibratedPixelsPerRadian > 0.0f;
+            if (ImGui::Button(OW::Config::calibrationInProgress ? "Calibrating..." : "Calibrate", ImVec2(72.0f, kControlHeight))) {
+                if (!OW::Config::calibrationInProgress) {
+                    OW::CalibrateSensitivity();
+                    kmboxSaveRequested = true;
+                }
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Sends a known mouse movement and measures the view angle change to compute the actual pixels-per-radian ratio.\nRequires the game to be running and in a state where mouse movement changes view angles.\nWarning: This will move the remote machine's mouse cursor!");
+            ImGui::SameLine();
+            if (wasCalibrated) {
+                char buf[128];
+                std::snprintf(buf, sizeof(buf), "Yaw: %.1f px/rad", OW::Config::calibratedPixelsPerRadian);
+                if (OW::Config::calibratedPixelsPerRadianPitch > 0.0f) {
+                    std::snprintf(buf, sizeof(buf), "Yaw: %.1f / Pitch: %.1f px/rad",
+                        OW::Config::calibratedPixelsPerRadian,
+                        OW::Config::calibratedPixelsPerRadianPitch);
+                }
+                ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.45f, 1.0f), "%s", buf);
+            } else {
+                ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "Not calibrated");
+            }
+        }
 
         SettingRow("Connection Test");
         if (ImGui::Button("Test", ImVec2(72.0f, kControlHeight))) {
@@ -2380,12 +2480,50 @@ void UI::MiscPage() {
     }
     CloseGroupBox();
 
-    UIGroupBox("Primary Screen");
+    UIGroupBox("Target Screen");
     {
         bool screenChanged = false;
         bool screenSaveRequested = false;
+        int localWidth = GetSystemMetrics(SM_CXSCREEN);
+        int localHeight = GetSystemMetrics(SM_CYSCREEN);
+        RECT canvasRect = {};
+        if (HWND canvasWindow = g_Overlay.GetOverlayWindow();
+            canvasWindow && GetWindowRect(canvasWindow, &canvasRect)) {
+            const int canvasWidth = canvasRect.right - canvasRect.left;
+            const int canvasHeight = canvasRect.bottom - canvasRect.top;
+            if (canvasWidth > 0 && canvasHeight > 0) {
+                localWidth = canvasWidth;
+                localHeight = canvasHeight;
+            }
+        }
+        int detectedWidth = OW::detectedScreenWidth;
+        int detectedHeight = OW::detectedScreenHeight;
 
-        SettingRow("Screen Width");
+        SettingRow("Local Width");
+        ImGui::PushItemWidth(-1);
+        ImGui::InputInt("##localScreenWidth", &localWidth, 0, 0,
+                        ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopItemWidth();
+
+        SettingRow("Local Height");
+        ImGui::PushItemWidth(-1);
+        ImGui::InputInt("##localScreenHeight", &localHeight, 0, 0,
+                        ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopItemWidth();
+
+        SettingRow("DMA Width");
+        ImGui::PushItemWidth(-1);
+        ImGui::InputInt("##detectedScreenWidth", &detectedWidth, 0, 0,
+                        ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopItemWidth();
+
+        SettingRow("DMA Height");
+        ImGui::PushItemWidth(-1);
+        ImGui::InputInt("##detectedScreenHeight", &detectedHeight, 0, 0,
+                        ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopItemWidth();
+
+        SettingRow("Fallback Width");
         ImGui::PushItemWidth(-1);
         screenChanged |= ImGui::InputInt("##manualScreenWidth", &OW::Config::manualScreenWidth, 0, 0);
         screenSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
@@ -2393,7 +2531,7 @@ void UI::MiscPage() {
             OW::Config::manualScreenWidth = 0;
         ImGui::PopItemWidth();
 
-        SettingRow("Screen Height");
+        SettingRow("Fallback Height");
         ImGui::PushItemWidth(-1);
         screenChanged |= ImGui::InputInt("##manualScreenHeight", &OW::Config::manualScreenHeight, 0, 0);
         screenSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
@@ -2485,23 +2623,45 @@ void UI::Render() {
                          ImVec2(brandPos.x + 30.0f, brandPos.y + 30.0f));
         }
 
-        DrawText(dl, s_boldFont, ImVec2(brandPos.x + 40.0f, brandPos.y + 2.0f),
-                 kColText, "UNLEASHED");
-
         const float selectorW = 172.0f;
         const float presetButtonW = 82.0f;
         const float actionGap = 6.0f;
         const float actionW = selectorW + presetButtonW * 2.0f + actionGap * 2.0f;
-        ImGui::SetCursorScreenPos(ImVec2(headerRect.Max.x - actionW - 12.0f,
-                                         headerRect.Min.y + 11.0f));
-        if (TypeSelectorButton(CurrentHeroOption(), ImVec2(selectorW, 26.0f)))
+        const float actionStartX = headerRect.Max.x - actionW - 12.0f;
+
+        const char* title = "UNLEASHED";
+        if (s_boldFont)
+            ImGui::PushFont(s_boldFont);
+        const ImVec2 titleSize = ImGui::CalcTextSize(title);
+        if (s_boldFont)
+            ImGui::PopFont();
+        const float titleAreaMinX = brandPos.x + 40.0f;
+        const float titleAreaMaxX = actionStartX - 12.0f;
+        const float titleX = ImClamp((titleAreaMinX + titleAreaMaxX - titleSize.x) * 0.5f,
+                                     titleAreaMinX,
+                                     MaxFloat(titleAreaMinX, titleAreaMaxX - titleSize.x));
+        const float topBandHeight = kHeaderHeight - 43.0f;
+        DrawText(dl, s_boldFont,
+                 ImVec2(titleX, headerRect.Min.y + (topBandHeight - titleSize.y) * 0.5f),
+                 kColText, title);
+
+        const HeroOption& selectedHero = CurrentHeroOption();
+        const bool canUseHeroPreset = selectedHero.heroId != 0;
+        ImGui::SetCursorScreenPos(ImVec2(actionStartX, headerRect.Min.y + 11.0f));
+        if (TypeSelectorButton(selectedHero, ImVec2(selectorW, 26.0f)))
             ImGui::OpenPopup("TypePickerPopup");
+        ShowPresetPanelTooltip(canUseHeroPreset);
         ImGui::SameLine(0.0f, actionGap);
+
+        ImGui::BeginDisabled(!canUseHeroPreset);
         if (ImGui::Button("Save Preset", ImVec2(presetButtonW, 26.0f)))
             SaveSelectedTypePreset();
+        ShowPresetPanelTooltip(canUseHeroPreset);
         ImGui::SameLine(0.0f, actionGap);
         if (ImGui::Button("Load Preset", ImVec2(presetButtonW, 26.0f)))
             LoadSelectedTypePreset();
+        ShowPresetPanelTooltip(canUseHeroPreset);
+        ImGui::EndDisabled();
         TypePickerPanel();
 
         // Top tab bar at the bottom of the header
@@ -2568,7 +2728,7 @@ void UI::Render() {
 
     switch (state.activeTab) {
         case TAB_AIMING:
-            subTabNames[0] = "Aimbot";
+            subTabNames[0] = "Aim";
             subTabNames[1] = "Trigger";
             subTabCount = 2;
             state.aimingSubTab = ImClamp(state.aimingSubTab, 0, subTabCount - 1);

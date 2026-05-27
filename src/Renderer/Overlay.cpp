@@ -1,7 +1,8 @@
 #include "Renderer/Overlay.hpp"
 #include "Features/UI.hpp"
+#include "Game/Offsets.hpp"
+#include "Game/SDK.hpp"
 #include "Game/Overwatch.hpp"
-#include "Memory/Memory.h"
 #include "Utils/Config.hpp"
 #include "resource.h"
 
@@ -17,13 +18,14 @@ namespace {
 constexpr int kDefaultMenuClientWidth = 650;
 constexpr int kDefaultMenuClientHeight = 550;
 constexpr int kMinimumMenuClientHeight = 140;
+constexpr int kInitialMenuTopMargin = 24;
+constexpr int kInitialMenuBottomMargin = 16;
 constexpr int kMenuResizeGrip = 8;
 constexpr int kMenuDragHeight = 41;
 constexpr int kHeaderActionWidth = 364;
 constexpr wchar_t kCanvasClassName[] = L"UnleashedOverlayCanvasDX11";
 constexpr wchar_t kMenuClassName[] = L"UnleashedOverlayMenuDX11";
-constexpr char kTargetProcessName[] = "Overwatch.exe";
-constexpr ULONGLONG kCanvasBoundsRefreshMs = 500;
+constexpr ULONGLONG kCanvasBoundsRefreshMs = 2000;
 
 ImGuiContext* g_menuContext = nullptr;
 
@@ -32,13 +34,10 @@ struct CanvasBounds {
     int y = 0;
     UINT width = 1;
     UINT height = 1;
-    bool detectedTarget = false;
 };
 
-struct TargetWindowSearch {
-    DWORD pid = 0;
-    HWND hwnd = nullptr;
-    RECT clientRect = {};
+struct MonitorBoundsSearch {
+    RECT rect = {};
     long long bestArea = 0;
 };
 
@@ -58,7 +57,7 @@ int RoundClientSize(float value) {
     return static_cast<int>(value + 0.5f);
 }
 
-bool TryMakeCanvasBounds(const RECT& rect, bool detectedTarget, CanvasBounds& bounds) {
+bool TryMakeCanvasBounds(const RECT& rect, CanvasBounds& bounds) {
     const int width = rect.right - rect.left;
     const int height = rect.bottom - rect.top;
     if (width <= 0 || height <= 0)
@@ -68,123 +67,89 @@ bool TryMakeCanvasBounds(const RECT& rect, bool detectedTarget, CanvasBounds& bo
     bounds.y = rect.top;
     bounds.width = static_cast<UINT>(width);
     bounds.height = static_cast<UINT>(height);
-    bounds.detectedTarget = detectedTarget;
     return true;
 }
 
-BOOL CALLBACK EnumWindowsForTargetProcess(HWND hWnd, LPARAM lParam) {
-    TargetWindowSearch* search = reinterpret_cast<TargetWindowSearch*>(lParam);
+bool IsPlausibleViewport(UINT width, UINT height) {
+    if (width < 800 || width > 7680 || height < 600 || height > 4320)
+        return false;
+
+    const float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
+    return aspectRatio >= 1.0f && aspectRatio <= 3.0f;
+}
+
+bool TryReadViewportFromTarget(UINT& width, UINT& height) {
+    if (!OW::SDK || !OW::SDK->IsInitialized() || OW::SDK->dwGameBase == 0)
+        return false;
+
+    const uint64_t base = OW::SDK->dwGameBase;
+    const UINT detectedWidth = OW::SDK->RPM<uint32_t>(base + OW::offset::ViewportWidth_RVA);
+    const UINT detectedHeight = OW::SDK->RPM<uint32_t>(base + OW::offset::ViewportHeight_RVA);
+    if (!IsPlausibleViewport(detectedWidth, detectedHeight))
+        return false;
+
+    width = detectedWidth;
+    height = detectedHeight;
+    return true;
+}
+
+bool TryGetMonitorBounds(HMONITOR monitor, CanvasBounds& bounds) {
+    if (!monitor)
+        return false;
+
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(monitor, &monitorInfo))
+        return false;
+
+    return TryMakeCanvasBounds(monitorInfo.rcMonitor, bounds);
+}
+
+bool TryGetPrimaryMonitorBounds(CanvasBounds& bounds) {
+    POINT origin = { 0, 0 };
+    HMONITOR monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+    return TryGetMonitorBounds(monitor, bounds);
+}
+
+BOOL CALLBACK EnumLargestMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM lParam) {
+    MonitorBoundsSearch* search = reinterpret_cast<MonitorBoundsSearch*>(lParam);
     if (!search)
         return TRUE;
-    if (!IsWindowVisible(hWnd) || IsIconic(hWnd))
-        return TRUE;
-    if (GetWindow(hWnd, GW_OWNER) != nullptr)
-        return TRUE;
 
-    DWORD windowPid = 0;
-    GetWindowThreadProcessId(hWnd, &windowPid);
-    if (windowPid != search->pid)
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(monitor, &monitorInfo))
         return TRUE;
 
-    RECT clientRect = {};
-    if (!GetClientRect(hWnd, &clientRect))
-        return TRUE;
-
-    POINT origin = { clientRect.left, clientRect.top };
-    if (!ClientToScreen(hWnd, &origin))
-        return TRUE;
-
-    clientRect.right += origin.x;
-    clientRect.bottom += origin.y;
-    clientRect.left = origin.x;
-    clientRect.top = origin.y;
-
-    const int width = clientRect.right - clientRect.left;
-    const int height = clientRect.bottom - clientRect.top;
+    const RECT rect = monitorInfo.rcMonitor;
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
     const long long area = static_cast<long long>(width) * static_cast<long long>(height);
     if (width <= 0 || height <= 0 || area <= 0)
         return TRUE;
 
-    if (!search->hwnd || area > search->bestArea) {
-        search->hwnd = hWnd;
-        search->clientRect = clientRect;
+    if (area > search->bestArea) {
+        search->rect = rect;
         search->bestArea = area;
     }
 
     return TRUE;
 }
 
-bool TryFindTargetClientRect(RECT& clientRect) {
-    const DWORD targetPid = mem.GetPidFromName(kTargetProcessName);
-    if (!targetPid)
+bool TryGetLargestMonitorBounds(CanvasBounds& bounds) {
+    MonitorBoundsSearch search = {};
+    EnumDisplayMonitors(nullptr, nullptr, EnumLargestMonitor, reinterpret_cast<LPARAM>(&search));
+    if (search.bestArea <= 0)
         return false;
 
-    TargetWindowSearch search = {};
-    search.pid = targetPid;
-    EnumWindows(EnumWindowsForTargetProcess, reinterpret_cast<LPARAM>(&search));
-    if (!search.hwnd)
-        return false;
-
-    clientRect = search.clientRect;
-    return true;
-}
-
-bool TryGetMonitorRectFromTarget(CanvasBounds& bounds) {
-    RECT targetRect = {};
-    if (!TryFindTargetClientRect(targetRect))
-        return false;
-
-    HMONITOR monitor = MonitorFromRect(&targetRect, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitorInfo = {};
-    monitorInfo.cbSize = sizeof(monitorInfo);
-    if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo))
-        return false;
-
-    return TryMakeCanvasBounds(monitorInfo.rcMonitor, true, bounds);
-}
-
-bool TryGetPrimaryMonitorRect(RECT& monitorRect) {
-    const POINT origin = { 0, 0 };
-    HMONITOR monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
-
-    MONITORINFO monitorInfo = {};
-    monitorInfo.cbSize = sizeof(monitorInfo);
-    if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo))
-        return false;
-
-    monitorRect = monitorInfo.rcMonitor;
-    return true;
-}
-
-bool TryGetManualCanvasBounds(CanvasBounds& bounds) {
-    if (OW::Config::manualScreenWidth <= 0 || OW::Config::manualScreenHeight <= 0)
-        return false;
-
-    RECT primaryRect = {};
-    int x = 0;
-    int y = 0;
-    if (TryGetPrimaryMonitorRect(primaryRect)) {
-        x = primaryRect.left;
-        y = primaryRect.top;
-    }
-
-    bounds.x = x;
-    bounds.y = y;
-    bounds.width = static_cast<UINT>(OW::Config::manualScreenWidth);
-    bounds.height = static_cast<UINT>(OW::Config::manualScreenHeight);
-    bounds.detectedTarget = false;
-    return true;
+    return TryMakeCanvasBounds(search.rect, bounds);
 }
 
 CanvasBounds ResolveCanvasBounds() {
     CanvasBounds bounds = {};
-    if (TryGetMonitorRectFromTarget(bounds))
+    if (TryGetPrimaryMonitorBounds(bounds))
         return bounds;
-    if (TryGetManualCanvasBounds(bounds))
-        return bounds;
-
-    RECT primaryRect = {};
-    if (TryGetPrimaryMonitorRect(primaryRect) && TryMakeCanvasBounds(primaryRect, false, bounds))
+    if (TryGetLargestMonitorBounds(bounds))
         return bounds;
 
     bounds.width = static_cast<UINT>(MaxInt(1, GetSystemMetrics(SM_CXSCREEN)));
@@ -192,9 +157,11 @@ CanvasBounds ResolveCanvasBounds() {
     return bounds;
 }
 
-void ApplyCanvasScreenSize(const CanvasBounds& bounds) {
-    if (bounds.detectedTarget)
-        OW::SetDetectedScreenSize(static_cast<int>(bounds.width), static_cast<int>(bounds.height));
+void RefreshTargetScreenSize() {
+    UINT width = 0;
+    UINT height = 0;
+    if (TryReadViewportFromTarget(width, height))
+        OW::SetDetectedScreenSize(static_cast<int>(width), static_cast<int>(height));
     else
         OW::ClearDetectedScreenSize();
 }
@@ -510,7 +477,7 @@ bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
     m_canvasY = initialBounds.y;
     m_canvasWidth = initialBounds.width;
     m_canvasHeight = initialBounds.height;
-    ApplyCanvasScreenSize(initialBounds);
+    RefreshTargetScreenSize();
 
     m_canvasHWnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
@@ -548,7 +515,10 @@ bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
     const int workW = workArea.right - workArea.left;
     const int workH = workArea.bottom - workArea.top;
     const int menuX = workArea.left + (workW - menuW) / 2;
-    const int menuY = workArea.top + (workH - menuH) / 2;
+    const int desiredMenuY = workArea.top + kInitialMenuTopMargin;
+    const int minMenuY = workArea.top;
+    const int maxMenuY = MaxInt(minMenuY, workArea.bottom - menuH - kInitialMenuBottomMargin);
+    const int menuY = MaxInt(minMenuY, MinInt(desiredMenuY, maxMenuY));
 
     m_menuHWnd = CreateWindowExW(
         menuExStyle,
@@ -777,7 +747,7 @@ void Overlay::UpdateCanvasBounds(bool force) {
     m_lastCanvasBoundsRefreshMs = now;
 
     const CanvasBounds bounds = ResolveCanvasBounds();
-    ApplyCanvasScreenSize(bounds);
+    RefreshTargetScreenSize();
 
     RECT currentRect = {};
     if (!GetWindowRect(m_canvasHWnd, &currentRect))

@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <unordered_map>
 #include <windows.h>
+#include <chrono>
+#include <thread>
 
 #include "Game/Decrypt.hpp"
 #include "Game/Entity.hpp"
@@ -75,8 +77,17 @@ namespace OW {
         }
 
         {
-            const float baseSensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 2000.0f);
+            // Use calibrated pixels-per-radian if available, otherwise fall back to manual kmboxAimSensitivity
+            float baseSensitivity;
+            if (Config::calibratedPixelsPerRadian > 0.0f) {
+                baseSensitivity = std::clamp(Config::calibratedPixelsPerRadian, 0.1f, 20000.0f);
+            } else {
+                baseSensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 2000.0f);
+            }
             float sensitivity = baseSensitivity;
+            float pitchSensitivity = (Config::calibratedPixelsPerRadianPitch > 0.0f)
+                ? Config::calibratedPixelsPerRadianPitch
+                : sensitivity;
             float syncScale = 1.0f;
             if (Config::autoSyncSensitivity &&
                 std::isfinite(Config::gameMouseSensitivity) &&
@@ -85,16 +96,21 @@ namespace OW {
                 Config::sensReference > 0.0f) {
                 syncScale = Config::sensReference / Config::gameMouseSensitivity;
                 sensitivity = baseSensitivity * syncScale;
+                pitchSensitivity = (Config::calibratedPixelsPerRadianPitch > 0.0f)
+                    ? Config::calibratedPixelsPerRadianPitch * syncScale
+                    : sensitivity;
             }
 
             if (!std::isfinite(sensitivity) || sensitivity <= 0.0f) {
-                Diagnostics::Aim("mouse.convert warning invalid_effective_sensitivity computed=%.9f fallback=%.9f autoSync=%d gameSens=%.9f refSens=%.9f",
+                Diagnostics::Aim("mouse.convert warning invalid_effective_sensitivity computed=%.9f fallback=%.9f autoSync=%d gameSens=%.9f refSens=%.9f pitchSens=%.9f",
                     sensitivity,
                     baseSensitivity,
                     Config::autoSyncSensitivity ? 1 : 0,
                     Config::gameMouseSensitivity,
-                    Config::sensReference);
+                    Config::sensReference,
+                    pitchSensitivity);
                 sensitivity = baseSensitivity;
+                pitchSensitivity = sensitivity;
                 syncScale = 1.0f;
             }
 
@@ -102,7 +118,7 @@ namespace OW {
             static float accumY = 0.0f;
             static int callCount = 0;
 
-            const float scaledX = delta.X * sensitivity;
+            const float scaledX = delta.X * pitchSensitivity;
             const float scaledY = delta.Y * sensitivity;
             const float accumBeforeX = accumX;
             const float accumBeforeY = accumY;
@@ -131,8 +147,8 @@ namespace OW {
                 accumX,
                 accumY);
             if (callCount <= 50 || pixelX != 0 || pixelY != 0) {
-                std::printf("[KMBOX] #%d delta=(%.6f,%.6f) sens=%.1f px=(%d,%d) accum=(%.3f,%.3f)\n",
-                    callCount, delta.X, delta.Y, sensitivity,
+                std::printf("[KMBOX] #%d delta=(%.6f,%.6f) yawSens=%.1f pitchSens=%.1f px=(%d,%d) accum=(%.3f,%.3f)\n",
+                    callCount, delta.X, delta.Y, sensitivity, pitchSensitivity,
                     pixelX, pixelY, accumX, accumY);
             }
 
@@ -145,15 +161,54 @@ namespace OW {
                 return;
             }
 
-            if (Config::kmboxDeviceType == 0) {
-                const int status = kmbox::KmBoxMgr.Mouse.Move(pixelX, pixelY);
-                Diagnostics::Aim("mouse.enqueue network pixel=(%d,%d) status=%d",
-                    pixelX,
-                    pixelY,
-                    status);
+            // ---- Micro-split mouse movement ----
+            const int maxPixels = std::clamp(Config::moveSplitMaxPixels, 1, 50);
+            const int delayUs = std::clamp(Config::moveSplitDelayUs, 0, 10000);
+            const int absX = std::abs(pixelX);
+            const int absY = std::abs(pixelY);
+            const int maxComponent = (std::max)(absX, absY);
+            const int steps = Config::moveSplitEnabled
+                ? (std::max)(1, (maxComponent + maxPixels - 1) / maxPixels)
+                : 1;
+
+            if (steps <= 1) {
+                // Single command (original behavior)
+                if (Config::kmboxDeviceType == 0) {
+                    const int status = kmbox::KmBoxMgr.Mouse.Move(pixelX, pixelY);
+                    Diagnostics::Aim("mouse.enqueue network pixel=(%d,%d) status=%d",
+                        pixelX, pixelY, status);
+                } else {
+                    kmbox::kmBoxBMgr.km_move(pixelX, pixelY);
+                    Diagnostics::Aim("mouse.enqueue serial pixel=(%d,%d)", pixelX, pixelY);
+                }
             } else {
-                kmbox::kmBoxBMgr.km_move(pixelX, pixelY);
-                Diagnostics::Aim("mouse.enqueue serial pixel=(%d,%d)", pixelX, pixelY);
+                // Split into micro-movements
+                Diagnostics::Aim("mouse.move.split total_pixels=(%d,%d) steps=%d max_pixels_per_step=%d delay_us=%d",
+                    pixelX, pixelY, steps, maxPixels, delayUs);
+                int remainingX = pixelX;
+                int remainingY = pixelY;
+                for (int i = 0; i < steps; i++) {
+                    const int curX = remainingX / (steps - i);
+                    const int curY = remainingY / (steps - i);
+                    remainingX -= curX;
+                    remainingY -= curY;
+
+                    if (Config::kmboxDeviceType == 0) {
+                        const int status = kmbox::KmBoxMgr.Mouse.Move(curX, curY);
+                        Diagnostics::Aim("mouse.enqueue.split network step=%d/%d cur=(%d,%d) status=%d",
+                            i + 1, steps, curX, curY, status);
+                    } else {
+                        kmbox::kmBoxBMgr.km_move(curX, curY);
+                        Diagnostics::Aim("mouse.enqueue.split serial step=%d/%d cur=(%d,%d)",
+                            i + 1, steps, curX, curY);
+                    }
+
+                    if (i < steps - 1 && delayUs > 0) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(delayUs));
+                    }
+                }
+                Diagnostics::Aim("mouse.move.split_complete steps=%d total=(%d,%d)",
+                    steps, pixelX, pixelY);
             }
             return;
         }
@@ -161,6 +216,129 @@ namespace OW {
 
     inline void SendMouseMove(float deltaX, float deltaY, int moveTimeMs = -1) {
         SendMouseMove(Vector3(deltaX, deltaY, 0.0f), moveTimeMs);
+    }
+
+    // =========================================================================
+    // Sensitivity auto-calibration
+    // =========================================================================
+
+    inline float CalibrateSensitivity(bool calibrateBothAxes = true) {
+        // 1. Set calibration flag
+        Config::calibrationInProgress = true;
+
+        // 2. Read initial view angle from remote memory (pitch, yaw, roll in radians)
+        Vector3 angleBefore = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+        Sleep(Config::calibrationStabilityWaitMs);
+        angleBefore = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170); // re-read for stability
+
+        // 3. Send a known horizontal mouse move (only yaw matters)
+        int moveX = Config::calibrationMovePixels;
+        int moveY = 0;
+        if (Config::kmboxDeviceType == 0)
+            kmbox::KmBoxMgr.Mouse.Move(moveX, moveY);
+        else
+            kmbox::kmBoxBMgr.km_move(moveX, moveY);
+
+        // 4. Wait for movement to register
+        Sleep(Config::calibrationStabilityWaitMs);
+
+        // 5. Read new view angle
+        Vector3 angleAfter = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+
+        // 6. Calculate delta in radians (only yaw for horizontal calibration)
+        constexpr float kPi = 3.14159265358979323846f;
+        float yawDelta = fabsf(angleAfter.Y - angleBefore.Y);
+        // Handle angle wrapping (if angles wrap at +/-PI)
+        if (yawDelta > kPi) yawDelta = 2.0f * kPi - yawDelta;
+
+        // 7. Calculate pixels per radian
+        if (yawDelta > 0.0001f) {
+            Config::calibratedPixelsPerRadian = static_cast<float>(moveX) / yawDelta;
+        } else {
+            std::printf("[CALIBRATE] Yaw delta too small (%.9f rad) -- game may be in menu or not running\n", yawDelta);
+            Config::calibrationInProgress = false;
+            return 0.0f;
+        }
+
+        // 8. Also calibrate vertical (pitch) sensitivity
+        if (calibrateBothAxes) {
+            Sleep(Config::calibrationStabilityWaitMs);
+
+            Vector3 pitchBefore = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+            Sleep(Config::calibrationStabilityWaitMs);
+            pitchBefore = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+
+            int pitchMoveX = 0;
+            int pitchMoveY = Config::calibrationMovePixels;
+            if (Config::kmboxDeviceType == 0)
+                kmbox::KmBoxMgr.Mouse.Move(pitchMoveX, pitchMoveY);
+            else
+                kmbox::kmBoxBMgr.km_move(pitchMoveX, pitchMoveY);
+
+            Sleep(Config::calibrationStabilityWaitMs);
+
+            Vector3 pitchAfter = SDK->RPM<Vector3>(SDK->g_player_controller + 0x1170);
+
+            float pitchDelta = fabsf(pitchAfter.X - pitchBefore.X);
+            if (pitchDelta > kPi) pitchDelta = 2.0f * kPi - pitchDelta;
+
+            if (pitchDelta > 0.0001f) {
+                float pitchRatio = static_cast<float>(pitchMoveY) / pitchDelta;
+                // Store separate pitch sensitivity only if >5% different from yaw
+                if (Config::calibratedPixelsPerRadian > 0.0f) {
+                    float ratioDiff = fabsf(pitchRatio - Config::calibratedPixelsPerRadian) / Config::calibratedPixelsPerRadian;
+                    if (ratioDiff > 0.05f) {
+                        Config::calibratedPixelsPerRadianPitch = pitchRatio;
+                        std::printf("[CALIBRATE] Pitch sensitivity differs from yaw by %.1f%% -- storing separate value\n", ratioDiff * 100.0f);
+                    } else {
+                        Config::calibratedPixelsPerRadianPitch = 0.0f;
+                    }
+                }
+            } else {
+                std::printf("[CALIBRATE] Pitch delta too small (%.9f rad) -- skipping pitch calibration\n", pitchDelta);
+            }
+        }
+
+        std::printf("[CALIBRATE] Result: yaw=%.1f px/rad pitch=%.1f px/rad\n",
+            Config::calibratedPixelsPerRadian,
+            Config::calibratedPixelsPerRadianPitch > 0.0f ? Config::calibratedPixelsPerRadianPitch : Config::calibratedPixelsPerRadian);
+
+        Config::calibrationInProgress = false;
+        return Config::calibratedPixelsPerRadian;
+    }
+
+    inline float RunCalibrationSamples() {
+        float total = 0.0f;
+        int validSamples = 0;
+        int numSamples = (std::max)(Config::calibrationSampleCount, 1);
+
+        for (int i = 0; i < numSamples; ++i) {
+            std::printf("[CALIBRATE] Sample %d/%d starting...\n", i + 1, numSamples);
+            float result = CalibrateSensitivity(true);
+            if (result > 0.0f) {
+                total += result;
+                ++validSamples;
+                std::printf("[CALIBRATE] Sample %d/%d complete: %.1f px/rad\n", i + 1, numSamples, result);
+            } else {
+                std::printf("[CALIBRATE] Sample %d/%d failed (zero delta)\n", i + 1, numSamples);
+            }
+
+            // Brief pause between samples to let view settle
+            if (i < numSamples - 1) {
+                Sleep(Config::calibrationStabilityWaitMs * 2);
+            }
+        }
+
+        if (validSamples > 0) {
+            float avg = total / static_cast<float>(validSamples);
+            Config::calibratedPixelsPerRadian = avg;
+            std::printf("[CALIBRATE] Averaged %d valid samples: %.1f px/rad\n", validSamples, avg);
+        } else {
+            std::printf("[CALIBRATE] All samples failed -- calibration unsuccessful\n");
+            Config::calibratedPixelsPerRadian = 0.0f;
+        }
+
+        return Config::calibratedPixelsPerRadian;
     }
 
     inline void SendMouseButton(int button, bool down) {
@@ -216,6 +394,13 @@ namespace OW {
         case 3: vk = VK_XBUTTON2; break;
         case 4: vk = VK_LSHIFT; break;
         case 5: vk = VK_LMENU; break;
+        case 6: vk = 0x56; break;          // 'V'
+        case 7: vk = VK_LCONTROL; break;
+        case 8: vk = VK_TAB; break;
+        case 9: vk = 0x45; break;          // 'E'
+        case 10: vk = 0x51; break;         // 'Q'
+        case 11: vk = 0x46; break;         // 'F'
+        case 12: vk = VK_CAPITAL; break;
         default: break;
         }
         return vk;

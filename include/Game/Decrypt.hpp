@@ -508,6 +508,9 @@ namespace OW {
         if (cached)
             return cached;
 
+        // Reads the raw global input.MouseScaleX float (for example 3.16).
+        // If the game applies per-hero sensitivity elsewhere, this global read
+        // does not include that per-hero override.
         const uintptr_t mouse_scale_x =
             SDK->dwGameBase + offset::InputMouseScaleX_RVA;
         if (IsPlausibleSensitivity(SDK->RPM<float>(mouse_scale_x))) {
