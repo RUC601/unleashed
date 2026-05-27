@@ -41,6 +41,12 @@ namespace OW {
         return (x >> bits) | (x << (64 - bits));
     }
 
+    static inline uint64_t ROL64(uint64_t x, int bits) {
+        bits &= 63;
+        if (bits == 0) return x;
+        return (x << bits) | (x >> (64 - bits));
+    }
+
     /**
      * Resolve the older global key pair used by legacy probes.
      *
@@ -292,9 +298,9 @@ namespace OW {
      *  3. Popcount bits below the requested bit and add the per-bucket base byte
      *     at parent+0x130+bucket to get the component-table index.
      *  4. Read parent+0x80 as the component table, then read the encrypted qword.
-     *  5. Apply the UC p329 component transform:
-     *     +Add1, XOR RPM(RPM(base+ComponentXorQword_RVA)+0x10C), +Add2,
-     *     XOR ComponentXorByte, XOR Xor1, XOR Xor2, net ROR64(3).
+     *  5. Apply the UC p331 / IDA 0527 component transform:
+     *     XOR key material, XOR fixed constant, ROR32, ADD, XOR byte key,
+     *     SUB fixed constant, ROR60, then ROR57.
      *  6. Mask the decoded pointer with the presence bit and return it.
      */
     inline uintptr_t DecryptComponent(uintptr_t parent, uint8_t idx,
@@ -350,8 +356,6 @@ namespace OW {
             return 0;
         }
 
-        component += offset::Component_Add1;
-
         uint64_t component_key_source = 0;
         uint64_t component_key_material_1 = 0;
         uint8_t component_key_byte = 0;
@@ -366,16 +370,26 @@ namespace OW {
             return 0;
         }
 
+#if 0
+        // 0521: old add/xor/add/xor/xor/xor/net-ROR3 tail retained for audit.
+        component += 0x4C8675CDE55BA1B2;
         component ^= component_key_material_1;
-
-        component += offset::Component_Add2;
-
+        component += 0x7BE57670994040F6;
         component ^= static_cast<uint64_t>(component_key_byte);
-        component ^= offset::Component_Xor1;
-        component ^= offset::Component_Xor2;
-
+        component ^= 0x3864150DB528414C;
+        component ^= 0xA4764E53CD34159B;
         component = (component << 0x2A) | (component >> 0x16);
         component = ROR64(component, 0x2D);
+#endif
+
+        component ^= component_key_material_1;
+        component ^= offset::Component_Xor1;
+        component = ROR64(component, offset::Component_Ror1);
+        component += offset::Component_Add1;
+        component ^= static_cast<uint64_t>(component_key_byte);
+        component -= offset::Component_Sub1;
+        component = ROR64(component, offset::Component_Ror2);
+        component = ROR64(component, offset::Component_Ror3);
 
         const uint64_t present_mask =
             static_cast<uint64_t>(static_cast<int64_t>(
@@ -394,53 +408,64 @@ namespace OW {
     }
 
     // =========================================================================
-    // Visibility decryption — May 2026 (UC p330, snowancestor 2026-05-25)
+    // Visibility decryption - 2026-05-27 (UC p331 + IDA sub_7FF7BD68C880)
     //
     // Replaces the old table-walk approach that used DEAD VisFN/Vis_Key.
-    // New chain reads from VisBase+0x98 and uses the same ComponentXorQword
-    // and ComponentXorByte sources as DecryptComponent.
+    // New chain reads from VisBase+0x2D8, uses key material at
+    // RPM(base+0x3A92E70)+0x16A, and finishes with a magic byte from .data.
     // =========================================================================
 
     /**
      * Decode the visibility flag from a visibility component.
      *
-     * This replaces the old VisFN/Vis_Key table walk. The current UC p330
-     * IsVisible35 chain reads VisBase+0x98, rotates/XORs it, mixes in the
-     * current ComponentXorByte, applies the add/sub constants, rotates right by
-     * 12, then XORs the one-bit rotate result with RPM(ComponentXorQword+0x6A).
-     * The decoded value is expected to be 1 for visible and 0 for occluded.
+     * This replaces the old VisFN/Vis_Key table walk and the 0521 p330
+     * VisBase+0x98 helper. The decoded value is expected to be non-zero for
+     * visible and zero for occluded.
      */
     inline uint64_t DecryptVis(uint64_t visBase) {
-        // Step 1: read encrypted qword from VisBase+0x98, ROR3, XOR constant
-        uint64_t enc = SDK->RPM<uint64_t>(visBase + offset::VisibilityValueOffset);
-        enc = ROR64(enc, offset::Visibility_Ror1) ^ offset::Visibility_Xor1;
+        uint64_t value = SDK->RPM<uint64_t>(visBase + offset::VisibilityValueOffset);
 
-        // Steps 2-3: cached ComponentXorByte and ComponentXorQword pointer.
+#if 0
+        // 0521: old p330 VisBase+0x98 chain retained for audit.
+        uint64_t enc = SDK->RPM<uint64_t>(visBase + 0x98);
+        enc = ROR64(enc, 3) ^ 0x53DB07B6B873760C;
         uint64_t var_qword = 0;
         uint64_t unused_material = 0;
         uint8_t var_byte = 0;
-        if (!SDK->GetCachedComponentKeyMaterial(
-                SDK->dwGameBase + offset::ComponentXorQword_RVA,
-                offset::ComponentXorQword_Off,
-                SDK->dwGameBase + offset::ComponentXorByte_RVA,
-                var_qword,
-                unused_material,
-                var_byte)) {
+        SDK->GetCachedComponentKeyMaterial(
+            SDK->dwGameBase + 0x3A86E30,
+            0x10C,
+            SDK->dwGameBase + 0x3772769,
+            var_qword,
+            unused_material,
+            var_byte);
+        uint64_t dec = (var_byte ^ (enc - 0x7A7DB4DE6CD03BBC)) + 0x5CE60F50EA1D337F;
+        dec = ROR64(dec + 0x78D75198F1D34D38, 0xC);
+        dec = SDK->RPM<uint64_t>(var_qword + 0x6A) ^ ((2 * dec) | (dec >> 0x3F));
+        return dec;
+#endif
+
+        value += offset::Visibility_Add1;
+        value = ROR64(value, offset::Visibility_Ror1);
+        value += offset::Visibility_Add2;
+        value = ROR64(value, offset::Visibility_Ror2);
+
+        const uint64_t key_ptr =
+            SDK->RPM<uint64_t>(SDK->dwGameBase + offset::VisibilityGlobalKeyPtr_RVA);
+        if (!key_ptr) {
             Diagnostics::RecordDecryptFailure();
             return 0;
         }
 
-        // Step 4: main transform
-        uint64_t dec =
-            (var_byte ^ (enc - offset::Visibility_Sub1)) + offset::Visibility_Add1;
+        value ^= SDK->RPM<uint64_t>(key_ptr + offset::VisibilityQwordOffset);
+        value = ROL64(value, offset::Visibility_Rol1);
+        value ^= offset::Visibility_Xor1;
+        value -= offset::Visibility_Sub1;
 
-        // Step 5: rotate after the add, before the qword mix.
-        dec = ROR64(dec + offset::Visibility_FinalAdd, offset::Visibility_FinalRor);
-
-        // Step 6: mix with qword data at var_qword+0x6A.
-        dec = SDK->RPM<uint64_t>(var_qword + offset::Visibility_QwordMixOff) ^
-              ((2 * dec) | (dec >> 0x3F));
-        return dec;
+        const uint64_t magic =
+            static_cast<uint64_t>(
+                SDK->RPM<uint8_t>(SDK->dwGameBase + offset::VisibilityMagicByte_RVA));
+        return magic ^ ROR64(value, offset::Visibility_FinalRor);
     }
 
     // =========================================================================
@@ -460,10 +485,11 @@ namespace OW {
         if (!enc)
             return 0;
 
-        const uint64_t slot_table = ROR64(
-            ((enc + offset::GameAdmin_Add1) ^ offset::GameAdmin_Xor1) +
-                offset::GameAdmin_Add2,
-            offset::GameAdmin_Ror);
+        uint64_t slot_table = enc + offset::GameAdmin_Add1;
+        slot_table ^= offset::GameAdmin_Xor1;
+        slot_table = ROR64(slot_table, offset::GameAdmin_Ror1);
+        slot_table += offset::GameAdmin_Add2;
+        slot_table = ROR64(slot_table, offset::GameAdmin_Ror2);
         if (!slot_table)
             return 0;
 
