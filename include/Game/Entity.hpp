@@ -483,7 +483,9 @@ namespace OW {
                 case eHero::HERO_TRAININGBOT2:
                 case eHero::HERO_TRAININGBOT3:
                 case eHero::HERO_TRAININGBOT4:
-                case eHero::HERO_TRAININGBOT8:
+                case eHero::HERO_TRAININGBOT5:
+                case eHero::HERO_TRAININGBOT6:
+                case eHero::HERO_TRAININGBOT7:
                     return {BONE_HEAD, BONE_NECK, BONE_BODY, BONE_BODY_BOT,
                             BONE_L_SHOULDER, BONE_R_SHOULDER,
                             BONE_L_ELBOW, BONE_R_ELBOW,
@@ -570,15 +572,7 @@ namespace OW {
                 return;
 
             const std::array<int, 18> indices = GetSkel();
-            const bool needsBotChestBone = (
-                this->HeroID == eHero::HERO_TRAININGBOT1 ||
-                this->HeroID == eHero::HERO_TRAININGBOT2 ||
-                this->HeroID == eHero::HERO_TRAININGBOT3 ||
-                this->HeroID == eHero::HERO_TRAININGBOT4 ||
-                this->HeroID == eHero::HERO_TRAININGBOT8 ||
-                this->HeroID == eHero::HERO_TRAININGBOT5 ||
-                this->HeroID == eHero::HERO_TRAININGBOT6 ||
-                this->HeroID == eHero::HERO_TRAININGBOT7);
+            const bool needsBotChestBone = GameData::IsTrainingBotHeroId(this->HeroID);
             auto fallbackSlowPath = [&]() {
                 for (size_t i = 0; i < indices.size(); ++i) {
                     Vector3 bone = GetBonePos(indices[i]);
@@ -914,14 +908,7 @@ namespace OW {
                 Vector2 pmin{}, pmax{}, w2s{};
                 Vector3 root = this->pos;
 
-                bool isBot = (HeroID == eHero::HERO_TRAININGBOT1 ||
-                              HeroID == eHero::HERO_TRAININGBOT2 ||
-                              HeroID == eHero::HERO_TRAININGBOT3 ||
-                              HeroID == eHero::HERO_TRAININGBOT4 ||
-                              HeroID == eHero::HERO_TRAININGBOT8 ||
-                              HeroID == eHero::HERO_TRAININGBOT5 ||
-                              HeroID == eHero::HERO_TRAININGBOT6 ||
-                              HeroID == eHero::HERO_TRAININGBOT7);
+                bool isBot = GameData::IsTrainingBotHeroId(HeroID);
 
                 // For W2S we need the global viewMatrix, WX, WY.
                 // These are accessed via the global variables declared in Overwatch.hpp.

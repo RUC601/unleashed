@@ -657,14 +657,7 @@ namespace OW {
         }
 
         inline bool IsTrainingBot(uint64_t heroId) {
-            return heroId == eHero::HERO_TRAININGBOT1 ||
-                   heroId == eHero::HERO_TRAININGBOT2 ||
-                   heroId == eHero::HERO_TRAININGBOT3 ||
-                   heroId == eHero::HERO_TRAININGBOT4 ||
-                   heroId == eHero::HERO_TRAININGBOT8 ||
-                   heroId == eHero::HERO_TRAININGBOT5 ||
-                   heroId == eHero::HERO_TRAININGBOT6 ||
-                   heroId == eHero::HERO_TRAININGBOT7;
+            return GameData::IsTrainingBotHeroId(heroId);
         }
 
         inline bool IsSpecialAimEntity(uint64_t heroId) {
@@ -984,14 +977,7 @@ namespace OW {
                 Config::health = entities[TarGetIndex].PlayerHealth;
                 Config::Targetenemyi = TarGetIndex;
                 if (Config::autobone && entities[TarGetIndex].HeroID != 0x16dd && entities[TarGetIndex].HeroID != 0x16ee) {
-                    bool isBot = (entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT1 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT2 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT3 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT4 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT8 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT5 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT6 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT7);
+                    bool isBot = GameData::IsTrainingBotHeroId(entities[TarGetIndex].HeroID);
                     if (isBot) {
                         float distbone[5] = { 0 };
                         int index[] = { 17, 16, 3, 13, 54 };
@@ -1154,14 +1140,7 @@ namespace OW {
             }
             if (TarGetIndex != -1) {
                 if ((Config::autobone || Config::autobone2) && entities[TarGetIndex].HeroID != 0x16dd && entities[TarGetIndex].HeroID != 0x16ee) {
-                    bool isBot = (entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT1 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT2 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT3 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT4 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT8 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT5 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT6 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT7);
+                    bool isBot = GameData::IsTrainingBotHeroId(entities[TarGetIndex].HeroID);
                     if (isBot) {
                         float distbone[5] = { 0 };
                         int index[] = { 17, 16, 3, 13, 54 };
@@ -1243,14 +1222,7 @@ namespace OW {
                         PreditPos = entities[i].GetBonePos(entities[i].GetSkel()[16]);
                     else
                         PreditPos = entities[i].GetBonePos(entities[i].GetSkel()[2]);
-                    bool isBot = (entities[i].HeroID == eHero::HERO_TRAININGBOT1 ||
-                                  entities[i].HeroID == eHero::HERO_TRAININGBOT2 ||
-                                  entities[i].HeroID == eHero::HERO_TRAININGBOT3 ||
-                                  entities[i].HeroID == eHero::HERO_TRAININGBOT4 ||
-                                  entities[i].HeroID == eHero::HERO_TRAININGBOT8 ||
-                                  entities[i].HeroID == eHero::HERO_TRAININGBOT5 ||
-                                  entities[i].HeroID == eHero::HERO_TRAININGBOT6 ||
-                                  entities[i].HeroID == eHero::HERO_TRAININGBOT7);
+                    bool isBot = GameData::IsTrainingBotHeroId(entities[i].HeroID);
                     if (isBot) {
                         PreditPos = entities[i].GetBonePos(3);
                         if (!local_entity.skillcd1) PreditPos.Y -= 0.4f;
@@ -1358,14 +1330,7 @@ namespace OW {
                 Config::health = entities[TarGetIndex].PlayerHealth;
                 Config::Targetenemyi = TarGetIndex;
                 if (Config::autobone2 && entities[TarGetIndex].HeroID != 0x16dd && entities[TarGetIndex].HeroID != 0x16ee) {
-                    bool isBot = (entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT1 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT2 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT3 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT4 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT8 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT5 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT6 ||
-                                  entities[TarGetIndex].HeroID == eHero::HERO_TRAININGBOT7);
+                    bool isBot = GameData::IsTrainingBotHeroId(entities[TarGetIndex].HeroID);
                     if (isBot) {
                         float distbone[5] = { 0 };
                         int index[] = { 17, 16, 3, 13, 54 };

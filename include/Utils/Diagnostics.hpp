@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace Diagnostics {
 
@@ -182,6 +184,14 @@ bool IsInitialized();
 void InitializeAimLog(const char* logPath = "./unleashed_aim_diag.log");
 void ShutdownAimLog();
 void Aim(const char* fmt, ...);
+
+constexpr size_t DefaultLogLineCapacity = 100;
+void SetLogLineCapacity(size_t maxLines);
+size_t GetLogLineCapacity();
+std::vector<std::string> GetLogLines();
+void ClearLogLines();
+bool IsLogOverlayVisible();
+void SetLogOverlayVisible(bool visible);
 
 void SetLogLevel(LogLevel minLevel);
 LogLevel GetLogLevel();

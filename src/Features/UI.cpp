@@ -355,7 +355,7 @@ static const HeroOption kHeroOptions[] = {
     { "Sojourn", OW::eHero::HERO_SOJOURN, "Damage" },
     { "Venture", OW::eHero::HERO_VENTURE, "Damage" },
     { "Echo", OW::eHero::HERO_ECHO, "Damage" },
-    { "Freja", OW::Config::HERO_PRESET_FREJA, "Damage" },
+    { "Freja", OW::eHero::HERO_FREJA, "Damage" },
     { "Reinhardt", OW::eHero::HERO_REINHARDT, "Tank" },
     { "Winston", OW::eHero::HERO_WINSTON, "Tank" },
     { "Zarya", OW::eHero::HERO_ZARYA, "Tank" },
@@ -368,7 +368,7 @@ static const HeroOption kHeroOptions[] = {
     { "Ramattra", OW::eHero::HERO_RAMATTRA, "Tank" },
     { "JunkerQueen", OW::eHero::HERO_JUNKERQUEEN, "Tank" },
     { "Mauga", OW::eHero::HERO_MAUGA, "Tank" },
-    { "Hazard", OW::Config::HERO_PRESET_HAZARD, "Tank" },
+    { "Hazard", OW::eHero::HERO_HAZARD, "Tank" },
     { "Mercy", OW::eHero::HERO_MERCY, "Support" },
     { "Lucio", OW::eHero::HERO_LUCIO, "Support" },
     { "Zenyatta", OW::eHero::HERO_ZENYATTA, "Support" },
@@ -379,15 +379,17 @@ static const HeroOption kHeroOptions[] = {
     { "Kiriko", OW::eHero::HERO_KIRIKO, "Support" },
     { "Lifeweaver", OW::eHero::HERO_LIFEWEAVER, "Support" },
     { "Illari", OW::eHero::HERO_ILLARI, "Support" },
-    { "Juno", OW::Config::HERO_PRESET_JUNO, "Support" },
+    { "Juno", OW::eHero::HERO_JUNO, "Support" },
+    { "Wuyang", OW::eHero::HERO_WUYANG, "Support" },
 };
 static const char* kAimActivationKey[] = {
     "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt",
     "V Key", "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock"
 };
 static const char* kInputSource[] = {
-    "Auto (KMBox > Local)", "KMBox Monitor", "GetAsyncKeyState", "DMA KeyState"
+    "Auto (DMA > KMBox > Local)", "DMA KeyState", "KMBox Monitor", "Local GetAsyncKeyState"
 };
+static constexpr int kInputSourceConfigOrder[] = { 0, 3, 1, 2 };
 static const char* kAttack[]       = { "Shoot", "Ability 1", "Ability 2" };
 static const char* kBone[]         = { "Head", "Neck", "Chest" };
 static const char* kAimMode[]      = { "Tracking", "Flick" };
@@ -410,6 +412,81 @@ static constexpr int kMenuToggleVk[] = {
     VK_F7, VK_F8, VK_F9, VK_F10, VK_F11, VK_F12
 };
 
+static int InputSourceConfigToUiIndex(int configValue) {
+    for (int i = 0; i < IM_ARRAYSIZE(kInputSourceConfigOrder); ++i) {
+        if (kInputSourceConfigOrder[i] == configValue)
+            return i;
+    }
+    return 0;
+}
+
+static int InputSourceUiIndexToConfig(int uiIndex) {
+    if (uiIndex < 0 || uiIndex >= IM_ARRAYSIZE(kInputSourceConfigOrder))
+        return 0;
+    return kInputSourceConfigOrder[uiIndex];
+}
+
+static void DrawProbeState(const char* label, bool available, bool down) {
+    const ImVec4 color = !available
+        ? ImVec4(0.55f, 0.58f, 0.62f, 1.0f)
+        : (down ? ImVec4(0.25f, 1.0f, 0.45f, 1.0f) : ImVec4(0.86f, 0.88f, 0.92f, 1.0f));
+    ImGui::TextColored(color, "%s: %s", label, !available ? "n/a" : (down ? "DOWN" : "up"));
+}
+
+static bool IsAimMouseActivationVk(int vk) {
+    switch (vk) {
+    case VK_LBUTTON:
+    case VK_RBUTTON:
+    case VK_MBUTTON:
+    case VK_XBUTTON1:
+    case VK_XBUTTON2:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void DrawAimHotkeyProbe() {
+    const int keySetting = OW::Config::aim_key;
+    const int vk = OW::get_bind_id(keySetting);
+    const char* keyLabel = (keySetting >= 0 && keySetting < IM_ARRAYSIZE(kAimActivationKey))
+        ? kAimActivationKey[keySetting]
+        : "Invalid";
+
+    ImGui::Text("Hotkey Probe: %s  vk=0x%02X", keyLabel, vk > 0 ? vk : 0);
+    if (vk <= 0) {
+        DrawProbeState("Local", false, false);
+        ImGui::SameLine();
+        DrawProbeState("KMBox", false, false);
+        ImGui::SameLine();
+        DrawProbeState("DMA", false, false);
+        return;
+    }
+
+    const bool localDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
+    const bool kmboxAvailable =
+        OW::Config::kmboxEnabled &&
+        OW::Config::kmboxDeviceType == 0 &&
+        kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load();
+    bool kmboxDown = false;
+    if (kmboxAvailable) {
+        kmboxDown = IsAimMouseActivationVk(vk)
+            ? kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk)
+            : kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
+    }
+
+    const bool dmaAvailable =
+        KeyState::initialized.load() &&
+        KeyState::gafAsyncKeyStateAddr.load() != 0;
+    const bool dmaDown = dmaAvailable && KeyState::IsKeyDown(vk);
+
+    DrawProbeState("Local", true, localDown);
+    ImGui::SameLine();
+    DrawProbeState("KMBox", kmboxAvailable, kmboxDown);
+    ImGui::SameLine();
+    DrawProbeState("DMA", dmaAvailable, dmaDown);
+}
+
 static int ClampHeroPresetSlotIndex(int slotIndex) {
     return ImClamp(slotIndex, 0, IM_ARRAYSIZE(kSlotNums) - 1);
 }
@@ -419,11 +496,22 @@ static int ActiveHeroPresetSlotIndex() {
     return UI::state.heroSegActive;
 }
 
-static void ShowPresetPanelTooltip(bool canUseHeroPreset) {
+static bool IsConcreteHeroSelection(const HeroOption& hero) {
+    return hero.heroId != 0;
+}
+
+static void ShowAimSlotSummaryTooltip(bool hasSpecificHero) {
     ImGui::SetItemTooltip("%s",
-        canUseHeroPreset
-            ? "Saves or loads the selected hero's aim preset in the active 1-7 slot. Choose the active slot on the Aiming page."
-            : "Select a specific hero to save or load per-hero aim presets across the 7 configurable slots.");
+        hasSpecificHero
+            ? "The 1-7 selector is an aim slot summary only. Save Config writes the complete INI config."
+            : "All uses the current local hero or global config fallback. The 1-7 selector is only an aim slot summary.");
+}
+
+static void ShowSaveConfigTooltip(bool savesSelectedHero) {
+    ImGui::SetItemTooltip("%s",
+        savesSelectedHero
+            ? "Save the selected hero's complete config.ini settings."
+            : "Save config.ini using the current local hero or global fallback.");
 }
 
 // =====================================================================
@@ -436,8 +524,10 @@ static float    g_gbWidth     = 0.0f;
 static float    g_gbMinHeight = 0.0f;
 static ImDrawListSplitter g_gbDrawSplitter;
 static uint64_t s_lastSyncedDetectedHeroId = 0;
+static std::string s_configSaveStatus;
+static double s_configSaveStatusUntil = 0.0;
 
-static constexpr float kShellWidth = 650.0f;
+static constexpr float kShellWidth = 720.0f;
 static constexpr float kShellBorder = 2.0f;
 static constexpr float kHeaderHeight = 84.0f;
 static constexpr float kMinShellHeight = 140.0f;
@@ -451,6 +541,7 @@ static constexpr float kControlHeight = 22.0f;
 static constexpr float kControlRounding = 0.0f;
 static constexpr float kGroupRounding = 0.0f;
 static constexpr float kGroupContentIndent = 14.0f;
+static constexpr float kGroupBorderClipInset = 2.0f;
 
 static const ImU32 kColShell0       = IM_COL32(0x05, 0x06, 0x09, 0xFF);
 static const ImU32 kColShell1       = IM_COL32(0x12, 0x13, 0x17, 0xFF);
@@ -475,6 +566,8 @@ static ImFont* s_boldFont = nullptr;
 static ImGuiID s_preNewFrameInitHook = 0;
 static ID3D11ShaderResourceView* s_logoTexture = nullptr;
 static constexpr int kLogoTextureSize = 32;
+static constexpr float kBrandLogoDrawSize = 30.0f;
+static constexpr float kBrandTitleGap = 12.0f;
 static float s_measuredBodyHeightByPage[5] = {};
 static UI::MenuClientSize s_desiredMenuClientSize{ kShellWidth, 550.0f };
 
@@ -503,6 +596,10 @@ static void EnsurePreNewFrameInitHook() {
 
 static float MaxFloat(float a, float b) {
     return (a > b) ? a : b;
+}
+
+static float MinFloat(float a, float b) {
+    return (a < b) ? a : b;
 }
 
 static ImU32 MixColor(ImU32 from, ImU32 to, float t) {
@@ -598,6 +695,33 @@ static std::string HeroDisplayNameForId(uint64_t heroId) {
         return unknown;
     }
     return name;
+}
+
+static std::string SaveSelectedConfig() {
+    const HeroOption& selectedHero = CurrentHeroOption();
+    const std::string path = OW::Config::ConfigPath();
+
+    if (IsConcreteHeroSelection(selectedHero)) {
+        OW::Config::SaveConfigForHero(path, selectedHero.heroId, OW::local_entity.LinkBase);
+        std::string status = "Saved ";
+        status += selectedHero.label;
+        status += " config";
+        Diagnostics::Info("%s to %s.", status.c_str(), path.c_str());
+        return status;
+    }
+
+    OW::Config::SaveConfig(path);
+    const uint64_t savedHeroId = OW::Config::lastheroid > 0
+        ? static_cast<uint64_t>(OW::Config::lastheroid)
+        : OW::local_entity.HeroID;
+    const std::string savedName = savedHeroId != 0
+        ? HeroDisplayNameForId(savedHeroId)
+        : std::string("global");
+    std::string status = "Saved ";
+    status += savedName;
+    status += " config";
+    Diagnostics::Info("%s to %s.", status.c_str(), path.c_str());
+    return status;
 }
 
 static uint64_t DetectedLocalHeroId() {
@@ -1166,7 +1290,9 @@ static void CloseGroupBox() {
 
     ImVec2 borderMin = g_gbStartPos;
     borderMin.y       = borderTopY;
-    ImVec2 borderMax  = ImVec2(g_gbStartPos.x + g_gbWidth, contentEnd.y + 9.0f);
+    ImVec2 borderMax  = ImVec2(
+        MaxFloat(borderMin.x + 1.0f, g_gbStartPos.x + g_gbWidth - kGroupBorderClipInset),
+        contentEnd.y + 9.0f);
     if (g_gbMinHeight > 0.0f)
         borderMax.y = MaxFloat(borderMax.y, borderMin.y + g_gbMinHeight);
 
@@ -1847,11 +1973,11 @@ void UI::AimbotPage() {
         if (DrawSelectedTypeSelector(kAimbotHeroLabelWidth, "AimbotSelectedType"))
             refreshActivePreset();
 
-        SettingRow("Slot", kAimbotHeroLabelWidth);
+        SettingRow("Aim Slot", kAimbotHeroLabelWidth);
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(activeSlotName.c_str());
 
-        SettingRow("Active", kAimbotHeroLabelWidth);
+        SettingRow("Aim Summary", kAimbotHeroLabelWidth);
         DrawPresetSummary(*selectedHero, activePreset, hasStoredPreset);
     }
     CloseGroupBox();
@@ -2053,32 +2179,6 @@ void UI::AimbotPage() {
         }
         CloseGroupBox();
     });
-
-    // ---- Diagnostics ----
-    UIGroupBox("Diagnostics");
-    {
-        SettingRow("Input Source");
-        ImGui::PushItemWidth(-1);
-        UISelect("##inputSource", &OW::Config::inputSource,
-                 kInputSource, IM_ARRAYSIZE(kInputSource));
-        ImGui::PopItemWidth();
-        if (OW::Config::inputSource == 3) {
-            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
-                "DMA KeyState requires keyboard aim key (not mouse button)");
-        }
-        ImGui::Spacing();
-        ImGui::Checkbox("Dry Run (Log Only)", &OW::Config::aimDryRun);
-        if (OW::Config::aimDryRun) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(NO cursor movement)");
-        }
-        ImGui::Checkbox("Verbose Aim Logs", &OW::Config::aimVerboseLog);
-        if (OW::Config::aimVerboseLog) {
-            ImGui::TextWrapped("Warning: verbose logging may impact performance");
-        }
-        ImGui::SliderInt("Log Interval (ms)", &OW::Config::aimDryRunLogIntervalMs, 50, 1000);
-    }
-    CloseGroupBox();
 
     if (selectedHero->heroId == 0) {
         if (presetChanged)
@@ -2305,6 +2405,60 @@ void UI::MiscPage() {
         if (UISelect("##menuToggleKey", &toggleKeyIndex, kMenuToggleKeys, IM_ARRAYSIZE(kMenuToggleKeys)))
             OW::Config::MenuToggleKey = kMenuToggleVk[toggleKeyIndex];
         ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Diagnostics");
+    {
+        SettingRow("Input Source");
+        ImGui::PushItemWidth(-1);
+        int inputSourceUiIndex = InputSourceConfigToUiIndex(OW::Config::inputSource);
+        if (UISelect("##inputSource", &inputSourceUiIndex,
+                     kInputSource, IM_ARRAYSIZE(kInputSource))) {
+            OW::Config::inputSource = InputSourceUiIndexToConfig(inputSourceUiIndex);
+        }
+        ImGui::PopItemWidth();
+
+        if (OW::Config::inputSource == 3) {
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+                "DMA KeyState requires keyboard aim key (not mouse button)");
+            const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
+            if (KeyState::initialized.load() && keyStateAddress != 0) {
+                ImGui::TextColored(ImVec4(0.25f, 1.0f, 0.45f, 1),
+                    "DMA KeyState ready: build=%lu session=%lu pid=%d addr=0x%llX size=%zu",
+                    static_cast<unsigned long>(KeyState::detectedBuild.load()),
+                    static_cast<unsigned long>(KeyState::resolvedSessionId.load()),
+                    KeyState::keyStateReadPid.load(),
+                    static_cast<unsigned long long>(keyStateAddress),
+                    KeyState::keyStateByteCount.load());
+            } else if (OW::Config::gafAsyncKeyStateOffset == 0) {
+                ImGui::TextColored(ImVec4(1, 0.35f, 0.2f, 1),
+                    "DMA KeyState auto resolver pending/failed; check Diagnostic Log");
+            } else {
+                ImGui::TextColored(ImVec4(1, 0.35f, 0.2f, 1),
+                    "DMA KeyState manual offset unresolved: 0x%llX",
+                    static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset));
+            }
+        }
+
+        DrawAimHotkeyProbe();
+        ImGui::Spacing();
+        ImGui::Checkbox("Dry Run (Log Only)", &OW::Config::aimDryRun);
+        if (OW::Config::aimDryRun) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(NO cursor movement)");
+        }
+        bool showLogOverlay = Diagnostics::IsLogOverlayVisible();
+        if (ImGui::Checkbox("Show Log Overlay", &showLogOverlay))
+            Diagnostics::SetLogOverlayVisible(showLogOverlay);
+        ImGui::SameLine();
+        if (ImGui::Button("Clear Log"))
+            Diagnostics::ClearLogLines();
+        ImGui::Checkbox("Verbose Aim Logs", &OW::Config::aimVerboseLog);
+        if (OW::Config::aimVerboseLog) {
+            ImGui::TextWrapped("Warning: verbose logging may impact performance");
+        }
+        ImGui::SliderInt("Log Interval (ms)", &OW::Config::aimDryRunLogIntervalMs, 50, 1000);
     }
     CloseGroupBox();
 
@@ -2581,8 +2735,11 @@ void UI::Render() {
 
     ImVec2 shellMin = viewport->Pos;
     float shellWidth = kShellWidth;
-    float shellHeight = CurrentShellHeight();
-    s_desiredMenuClientSize = { shellWidth, shellHeight };
+    const float desiredShellHeight = CurrentShellHeight();
+    float shellHeight = desiredShellHeight;
+    if (viewport->Size.y > 0.0f)
+        shellHeight = MinFloat(shellHeight, viewport->Size.y);
+    s_desiredMenuClientSize = { shellWidth, desiredShellHeight };
 
     ImVec2 shellMax(shellMin.x + shellWidth, shellMin.y + shellHeight);
     dl->AddRectFilled(shellMin, shellMax, kColShell0);
@@ -2620,13 +2777,13 @@ void UI::Render() {
         if (s_logoTexture) {
             dl->AddImage(reinterpret_cast<ImTextureID>(s_logoTexture),
                          brandPos,
-                         ImVec2(brandPos.x + 30.0f, brandPos.y + 30.0f));
+                         ImVec2(brandPos.x + kBrandLogoDrawSize, brandPos.y + kBrandLogoDrawSize));
         }
 
         const float selectorW = 172.0f;
-        const float presetButtonW = 82.0f;
+        const float configButtonW = 96.0f;
         const float actionGap = 6.0f;
-        const float actionW = selectorW + presetButtonW * 2.0f + actionGap * 2.0f;
+        const float actionW = selectorW + configButtonW + actionGap;
         const float actionStartX = headerRect.Max.x - actionW - 12.0f;
 
         const char* title = "UNLEASHED";
@@ -2635,33 +2792,40 @@ void UI::Render() {
         const ImVec2 titleSize = ImGui::CalcTextSize(title);
         if (s_boldFont)
             ImGui::PopFont();
-        const float titleAreaMinX = brandPos.x + 40.0f;
-        const float titleAreaMaxX = actionStartX - 12.0f;
-        const float titleX = ImClamp((titleAreaMinX + titleAreaMaxX - titleSize.x) * 0.5f,
-                                     titleAreaMinX,
-                                     MaxFloat(titleAreaMinX, titleAreaMaxX - titleSize.x));
-        const float topBandHeight = kHeaderHeight - 43.0f;
+        const float titleX = brandPos.x + kBrandLogoDrawSize + kBrandTitleGap;
+        const float titleY = brandPos.y + (kBrandLogoDrawSize - titleSize.y) * 0.5f;
         DrawText(dl, s_boldFont,
-                 ImVec2(titleX, headerRect.Min.y + (topBandHeight - titleSize.y) * 0.5f),
+                 ImVec2(titleX, titleY),
                  kColText, title);
 
         const HeroOption& selectedHero = CurrentHeroOption();
-        const bool canUseHeroPreset = selectedHero.heroId != 0;
+        const bool savesSelectedHero = IsConcreteHeroSelection(selectedHero);
         ImGui::SetCursorScreenPos(ImVec2(actionStartX, headerRect.Min.y + 11.0f));
         if (TypeSelectorButton(selectedHero, ImVec2(selectorW, 26.0f)))
             ImGui::OpenPopup("TypePickerPopup");
-        ShowPresetPanelTooltip(canUseHeroPreset);
+        ShowAimSlotSummaryTooltip(selectedHero.heroId != 0);
         ImGui::SameLine(0.0f, actionGap);
 
-        ImGui::BeginDisabled(!canUseHeroPreset);
-        if (ImGui::Button("Save Preset", ImVec2(presetButtonW, 26.0f)))
-            SaveSelectedTypePreset();
-        ShowPresetPanelTooltip(canUseHeroPreset);
-        ImGui::SameLine(0.0f, actionGap);
-        if (ImGui::Button("Load Preset", ImVec2(presetButtonW, 26.0f)))
-            LoadSelectedTypePreset();
-        ShowPresetPanelTooltip(canUseHeroPreset);
-        ImGui::EndDisabled();
+        if (ImGui::Button("Save Config", ImVec2(configButtonW, 26.0f))) {
+            s_configSaveStatus = SaveSelectedConfig();
+            s_configSaveStatusUntil = ImGui::GetTime() + 3.0;
+        }
+        ShowSaveConfigTooltip(savesSelectedHero);
+
+        const double now = ImGui::GetTime();
+        if (!s_configSaveStatus.empty() && now >= s_configSaveStatusUntil)
+            s_configSaveStatus.clear();
+        if (!s_configSaveStatus.empty()) {
+            const ImVec2 statusSize = ImGui::CalcTextSize(s_configSaveStatus.c_str());
+            const float statusMinX = titleX + titleSize.x + 16.0f;
+            const float statusMaxX = actionStartX - 10.0f;
+            if (statusMinX < statusMaxX) {
+                const float statusX = MaxFloat(statusMinX, statusMaxX - statusSize.x);
+                const float statusY = titleY + (titleSize.y - statusSize.y) * 0.5f;
+                DrawText(dl, nullptr, ImVec2(statusX, statusY),
+                         kColTextMuted, s_configSaveStatus.c_str());
+            }
+        }
         TypePickerPanel();
 
         // Top tab bar at the bottom of the header
@@ -2796,11 +2960,16 @@ void UI::Render() {
     float bodyTopPad = CurrentBodyTopPad();
     float bodyY = contentBandY + subBarHeight + bodyTopPad;
     float bodyH = MaxFloat(0.0f, contentMax.y - bodyY);
+    const bool pageBodyNeedsVerticalScroll =
+        s_measuredBodyHeightByPage[CurrentPageKey()] > bodyH + 1.0f;
+    ImGuiWindowFlags pageBodyFlags =
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDecoration;
+    if (pageBodyNeedsVerticalScroll)
+        pageBodyFlags |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
 
     // Begin a child region for scrollable content.
     ImGui::SetCursorScreenPos(ImVec2(winPos.x, bodyY));
-    ImGui::BeginChild("PageBody", ImVec2(winW, bodyH), false,
-                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDecoration);
+    ImGui::BeginChild("PageBody", ImVec2(winW, bodyH), false, pageBodyFlags);
     const float bodyCursorStartY = ImGui::GetCursorPosY();
 
     // Apply page-body padding.

@@ -6,10 +6,12 @@
 #include <cstdarg>
 #include <cstdio>
 #include <ctime>
+#include <deque>
 #include <fstream>
 #include <limits>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace Diagnostics {
 namespace {
@@ -25,6 +27,11 @@ std::atomic<bool> g_aimLogInitialized{ false };
 std::mutex g_aimLogMutex;
 std::ofstream g_aimLogFile;
 std::string g_aimLogPath = "./unleashed_aim_diag.log";
+
+std::mutex g_ringLogMutex;
+std::deque<std::string> g_ringLogLines;
+size_t g_ringLogCapacity = DefaultLogLineCapacity;
+std::atomic<bool> g_logOverlayVisible{ false };
 
 std::atomic<uint64_t> g_dmaReadSucceeded{ 0 };
 std::atomic<uint64_t> g_dmaReadFailed{ 0 };
@@ -182,6 +189,17 @@ std::string BuildTimestamp()
     return stamped;
 }
 
+void AppendRingLogLine(const char* line)
+{
+    if (!line || !*line)
+        return;
+
+    std::lock_guard<std::mutex> lock(g_ringLogMutex);
+    while (g_ringLogLines.size() >= g_ringLogCapacity)
+        g_ringLogLines.pop_front();
+    g_ringLogLines.emplace_back(line);
+}
+
 void LogV(LogLevel level, const char* fmt, va_list args)
 {
     if (!ShouldLog(level))
@@ -193,6 +211,8 @@ void LogV(LogLevel level, const char* fmt, va_list args)
     char line[2300] = {};
     std::snprintf(line, sizeof(line), "[%s] [%s] %s",
         BuildTimestamp().c_str(), ToString(level), message.data());
+
+    AppendRingLogLine(line);
 
     std::lock_guard<std::mutex> lock(g_logMutex);
     std::printf("%s\n", line);
@@ -212,6 +232,8 @@ void AimLogV(const char* fmt, va_list args)
     char line[2300] = {};
     std::snprintf(line, sizeof(line), "[%s] [AIM] %s",
         BuildTimestamp().c_str(), message.data());
+
+    AppendRingLogLine(line);
 
     std::lock_guard<std::mutex> lock(g_aimLogMutex);
     if (!g_aimLogInitialized.load(std::memory_order_acquire)) {
@@ -345,6 +367,45 @@ void Aim(const char* fmt, ...)
     va_start(args, fmt);
     AimLogV(fmt, args);
     va_end(args);
+}
+
+void SetLogLineCapacity(size_t maxLines)
+{
+    if (maxLines == 0)
+        maxLines = 1;
+
+    std::lock_guard<std::mutex> lock(g_ringLogMutex);
+    g_ringLogCapacity = maxLines;
+    while (g_ringLogLines.size() > g_ringLogCapacity)
+        g_ringLogLines.pop_front();
+}
+
+size_t GetLogLineCapacity()
+{
+    std::lock_guard<std::mutex> lock(g_ringLogMutex);
+    return g_ringLogCapacity;
+}
+
+std::vector<std::string> GetLogLines()
+{
+    std::lock_guard<std::mutex> lock(g_ringLogMutex);
+    return std::vector<std::string>(g_ringLogLines.begin(), g_ringLogLines.end());
+}
+
+void ClearLogLines()
+{
+    std::lock_guard<std::mutex> lock(g_ringLogMutex);
+    g_ringLogLines.clear();
+}
+
+bool IsLogOverlayVisible()
+{
+    return g_logOverlayVisible.load(std::memory_order_acquire);
+}
+
+void SetLogOverlayVisible(bool visible)
+{
+    g_logOverlayVisible.store(visible, std::memory_order_release);
 }
 
 void SetLogLevel(LogLevel minLevel)

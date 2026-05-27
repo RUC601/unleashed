@@ -927,14 +927,7 @@ inline void entity_thread() {
                 entity.chest_pos.Y -= 0.3f;
             }
 
-            bool isStandardBot = (entity.HeroID == OW::eHero::HERO_TRAININGBOT1 ||
-                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT2 ||
-                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT3 ||
-                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT4 ||
-                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT8 ||
-                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT5 ||
-                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT6 ||
-                                  entity.HeroID == OW::eHero::HERO_TRAININGBOT7);
+            bool isStandardBot = OW::GameData::IsTrainingBotHeroId(entity.HeroID);
             if (isStandardBot) {
                 if (entity.cached_bot_chest_bone_valid)
                     entity.chest_pos = entity.cached_bot_chest_bone;
@@ -1872,8 +1865,13 @@ namespace OverlayRenderDetail {
                                ImU32WithAlpha(255, 225, 60, opacity), text.c_str(), 12.0f);
     }
 
+    inline bool IsSkillReadyCooldownSentinel(float cooldown) {
+        return std::isfinite(cooldown) && std::fabs(cooldown - 1.0f) <= 0.001f;
+    }
+
     inline bool IsSkillOnCooldown(bool active, float cooldown) {
-        return !active && std::isfinite(cooldown) && cooldown > 0.05f;
+        return !active && std::isfinite(cooldown) && cooldown > 0.05f &&
+               !IsSkillReadyCooldownSentinel(cooldown);
     }
 
     inline std::string FormatCooldownLabel(const char* label, float cooldown) {
@@ -2588,11 +2586,18 @@ inline void skillinfo() {
                 const float slotX = cursorX;
                 const float slotY = skillRowY;
                 const bool onCooldown = OverlayRenderDetail::IsSkillOnCooldown(active, cooldown);
-                const bool ready = active && !onCooldown;
+                const bool readyCooldownSentinel = OverlayRenderDetail::IsSkillReadyCooldownSentinel(cooldown);
+                const bool ready = active || readyCooldownSentinel;
+                const ImColor readyFillColor = isEnemy
+                    ? OverlayRenderDetail::ImColorWithAlpha(74, 24, 18, alpha * 0.96f)
+                    : OverlayRenderDetail::ImColorWithAlpha(18, 58, 48, alpha * 0.94f);
+                const Render::Color readyBorderColor = isEnemy
+                    ? Render::Color(255, 178, 92, OverlayRenderDetail::ToByte(alpha))
+                    : Render::Color(172, 255, 226, OverlayRenderDetail::ToByte(alpha));
 
                 Render::DrawFilledRect(Vector2(slotX, slotY), skillSlotSize, skillSlotSize,
                                        ready
-                                           ? OverlayRenderDetail::ImColorWithAlpha(18, 58, 48, alpha * 0.94f)
+                                           ? readyFillColor
                                            : OverlayRenderDetail::ImColorWithAlpha(12, 16, 22, alpha * 0.82f));
                 if (ID3D11ShaderResourceView* texture = skillTexture(abilityIcon)) {
                     Render::DrawIcon(texture, ImVec2(slotX + 1.0f, slotY + 1.0f),
@@ -2617,7 +2622,7 @@ inline void skillinfo() {
 
                 Render::DrawRect(Vector2(slotX, slotY), skillSlotSize, skillSlotSize,
                                  ready
-                                     ? Render::Color(172, 255, 226, OverlayRenderDetail::ToByte(alpha))
+                                     ? readyBorderColor
                                      : Render::Color(255, 255, 255, OverlayRenderDetail::ToByte(alpha * 0.28f)),
                                  ready ? 1.6f : 1.0f);
                 cursorX += skillSlotSize + skillSlotGap;
@@ -2767,21 +2772,25 @@ namespace AimbotDetail {
     }
 
     inline void LogAimKeyState(int keySetting, int vk, int sourceType, bool pressed) {
-        static bool initialized = false;
-        static int lastKeySetting = -1;
-        static int lastVk = -1;
-        static int lastSourceType = -1;
-        static bool lastPressed = false;
-        static DWORD lastLogTick = 0;
+        struct LastLogState {
+            bool initialized = false;
+            int keySetting = -1;
+            int vk = -1;
+            bool pressed = false;
+            DWORD lastLogTick = 0;
+        };
+
+        static LastLogState lastStates[3]{};
+        const int stateIndex = (sourceType >= 0 && sourceType < 3) ? sourceType : 0;
+        LastLogState& state = lastStates[stateIndex];
 
         const DWORD now = GetTickCount();
-        const bool changed = !initialized ||
-            lastKeySetting != keySetting ||
-            lastVk != vk ||
-            lastSourceType != sourceType ||
-            lastPressed != pressed;
+        const bool changed = !state.initialized ||
+            state.keySetting != keySetting ||
+            state.vk != vk ||
+            state.pressed != pressed;
 
-        if (changed || (pressed && (lastLogTick == 0 || now - lastLogTick >= 1000))) {
+        if (changed || (pressed && (state.lastLogTick == 0 || now - state.lastLogTick >= 1000))) {
             const char* sourceLabel = "GetAsyncKeyState";
             if (sourceType == 1)
                 sourceLabel = "kmbox_monitor";
@@ -2794,12 +2803,11 @@ namespace AimbotDetail {
                 sourceLabel,
                 kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0,
                 pressed ? 1 : 0);
-            initialized = true;
-            lastKeySetting = keySetting;
-            lastVk = vk;
-            lastSourceType = sourceType;
-            lastPressed = pressed;
-            lastLogTick = now;
+            state.initialized = true;
+            state.keySetting = keySetting;
+            state.vk = vk;
+            state.pressed = pressed;
+            state.lastLogTick = now;
         }
     }
 
@@ -2816,15 +2824,38 @@ namespace AimbotDetail {
             return false;
         }
 
-        // === DMA KeyState path (inputSource=3): read remote keyboard state via DMA ===
-        if (OW::Config::inputSource == 3) {
+        auto readDmaKeyState = [&](bool strictDmaOnly) {
+            const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
+            if (!KeyState::initialized.load() || keyStateAddress == 0) {
+                LogAimKeyState(keySetting, vk, 2, false);
+                if (strictDmaOnly) {
+                    static DWORD lastDmaUnavailableWarnTick = 0;
+                    const DWORD now = GetTickCount();
+                    if (lastDmaUnavailableWarnTick == 0 || now - lastDmaUnavailableWarnTick >= 1000) {
+                        Diagnostics::Aim("hotkey early_return reason=dma_keystate_unavailable keySetting=%d vk=0x%X gafAsyncKeyStateOffset=0x%llX resolvedAddress=0x%llX size=%zu build=%lu session=%lu readPid=%d",
+                            keySetting,
+                            vk,
+                            static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset),
+                            static_cast<unsigned long long>(keyStateAddress),
+                            KeyState::keyStateByteCount.load(),
+                            static_cast<unsigned long>(KeyState::detectedBuild.load()),
+                            static_cast<unsigned long>(KeyState::resolvedSessionId.load()),
+                            KeyState::keyStateReadPid.load());
+                        lastDmaUnavailableWarnTick = now;
+                    }
+                }
+                return false;
+            }
+
             if (IsMouseActivationKey(vk)) {
                 LogAimKeyState(keySetting, vk, 2, false);
-                static DWORD lastDmaMouseWarnTick = 0;
-                const DWORD now = GetTickCount();
-                if (lastDmaMouseWarnTick == 0 || now - lastDmaMouseWarnTick >= 1000) {
-                    Diagnostics::Aim("hotkey early_return reason=mouse_button_not_supported_via_dma_keystate keySetting=%d vk=0x%X", keySetting, vk);
-                    lastDmaMouseWarnTick = now;
+                if (strictDmaOnly) {
+                    static DWORD lastDmaMouseWarnTick = 0;
+                    const DWORD now = GetTickCount();
+                    if (lastDmaMouseWarnTick == 0 || now - lastDmaMouseWarnTick >= 1000) {
+                        Diagnostics::Aim("hotkey early_return reason=mouse_button_not_supported_via_dma_keystate keySetting=%d vk=0x%X", keySetting, vk);
+                        lastDmaMouseWarnTick = now;
+                    }
                 }
                 return false;
             }
@@ -2832,15 +2863,15 @@ namespace AimbotDetail {
             bool pressed = KeyState::IsKeyDown(static_cast<uint32_t>(vk));
             LogAimKeyState(keySetting, vk, 2, pressed);
             return pressed;
-        }
+        };
 
-        const bool useKmBoxMonitor =
+        const bool kmBoxMonitorAvailable =
             OW::Config::kmboxEnabled &&
             OW::Config::kmboxDeviceType == 0 &&
             kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load();
 
-        bool pressed = false;
-        if (useKmBoxMonitor) {
+        auto readKmBoxMonitor = [&]() {
+            bool pressed = false;
             if (IsMouseActivationKey(vk))
                 pressed = kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
             else
@@ -2848,11 +2879,41 @@ namespace AimbotDetail {
 
             LogAimKeyState(keySetting, vk, 1, pressed);
             return pressed;
+        };
+
+        auto readLocalAsyncKeyState = [&]() {
+            const bool pressed = (GetAsyncKeyState(vk) & 0x8000) != 0;
+            LogAimKeyState(keySetting, vk, 0, pressed);
+            return pressed;
+        };
+
+        if (OW::Config::inputSource == 3)
+            return readDmaKeyState(true);
+
+        if (OW::Config::inputSource == 1) {
+            if (!kmBoxMonitorAvailable) {
+                LogAimKeyState(keySetting, vk, 1, false);
+                return false;
+            }
+            return readKmBoxMonitor();
         }
 
-        pressed = (GetAsyncKeyState(vk) & 0x8000) != 0;
-        LogAimKeyState(keySetting, vk, 0, pressed);
-        return pressed;
+        if (OW::Config::inputSource == 2)
+            return readLocalAsyncKeyState();
+
+        if (!IsMouseActivationKey(vk)) {
+            const bool dmaPressed = readDmaKeyState(false);
+            if (dmaPressed)
+                return true;
+        }
+
+        if (kmBoxMonitorAvailable) {
+            const bool pressed = readKmBoxMonitor();
+            if (pressed)
+                return true;
+        }
+
+        return readLocalAsyncKeyState();
     }
 
     inline bool IsAimKeyPressed() {

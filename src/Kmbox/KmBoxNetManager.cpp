@@ -91,6 +91,51 @@ namespace
         }
     }
 
+    void FormatKeyboardKeys(const standard_keyboard_report_t& keyboard, char* buffer, size_t bufferSize)
+    {
+        if (!buffer || bufferSize == 0)
+            return;
+
+        size_t offset = 0;
+        buffer[0] = '\0';
+        for (unsigned char key : keyboard.data) {
+            if (key == 0)
+                continue;
+
+            const int written = std::snprintf(
+                buffer + offset,
+                bufferSize - offset,
+                "%s%02X",
+                offset == 0 ? "" : " ",
+                static_cast<unsigned int>(key));
+            if (written <= 0)
+                break;
+
+            offset += static_cast<size_t>(written);
+            if (offset >= bufferSize)
+                break;
+        }
+
+        if (offset == 0)
+            std::snprintf(buffer, bufferSize, "none");
+    }
+
+    void LogKeyboardReportChange(
+        const standard_keyboard_report_t& previous,
+        const standard_keyboard_report_t& current)
+    {
+        if (previous.buttons == current.buttons &&
+            std::memcmp(previous.data, current.data, sizeof(current.data)) == 0) {
+            return;
+        }
+
+        char keys[64] = {};
+        FormatKeyboardKeys(current, keys, sizeof(keys));
+        Diagnostics::Info("[KMBOX-NET] keyboard report changed. modifiers=0x%02X keys=%s",
+            static_cast<unsigned int>(current.buttons),
+            keys);
+    }
+
     bool IsOutputCommand(KmBoxCommandType type)
     {
         return type == KmBoxCommandType::MouseMove ||
@@ -866,23 +911,33 @@ void KmBoxKeyBoard::ListenThread()
         if (Ret >= static_cast<int>(sizeof(this->hw_Mouse) + sizeof(this->hw_Keyboard))) {
             unsigned char previousButtons = 0;
             unsigned char currentButtons = 0;
+            standard_keyboard_report_t previousKeyboard{};
+            standard_keyboard_report_t currentKeyboard{};
             std::lock_guard<std::mutex> lock(this->monitorMutex);
             previousButtons = this->hw_Mouse.buttons;
+            previousKeyboard = this->hw_Keyboard;
             memcpy(&this->hw_Mouse, Buffer, sizeof(this->hw_Mouse));
             memcpy(&this->hw_Keyboard, &Buffer[sizeof(this->hw_Mouse)], sizeof(this->hw_Keyboard));
             currentButtons = this->hw_Mouse.buttons;
+            currentKeyboard = this->hw_Keyboard;
 
             const unsigned long long packetCount =
                 this->inputPacketCount.fetch_add(1, std::memory_order_acq_rel) + 1;
             if (packetCount == 1) {
-                Diagnostics::Info("[KMBOX-NET] first input packet received. bytes=%d mouse_buttons=0x%02X",
-                    Ret, static_cast<unsigned int>(currentButtons));
+                char keys[64] = {};
+                FormatKeyboardKeys(currentKeyboard, keys, sizeof(keys));
+                Diagnostics::Info("[KMBOX-NET] first input packet received. bytes=%d mouse_buttons=0x%02X keyboard_modifiers=0x%02X keyboard_keys=%s",
+                    Ret,
+                    static_cast<unsigned int>(currentButtons),
+                    static_cast<unsigned int>(currentKeyboard.buttons),
+                    keys);
             }
 
             if (previousButtons != currentButtons) {
                 this->lastLoggedMouseButtons.store(currentButtons, std::memory_order_release);
                 LogMouseButtonChanges(previousButtons, currentButtons);
             }
+            LogKeyboardReportChange(previousKeyboard, currentKeyboard);
         } else if (Ret <= 0) {
             break;
         }

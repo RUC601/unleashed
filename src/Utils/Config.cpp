@@ -81,7 +81,7 @@ namespace OW { namespace Config {
             { OW::eHero::HERO_SOJOURN,      "Sojourn",      "Sojourn",        nullptr },
             { OW::eHero::HERO_VENTURE,      "Venture",      "Venture",        nullptr },
             { OW::eHero::HERO_ECHO,         "Echo",         "Echo",           nullptr },
-            { HERO_PRESET_FREJA,            "Freja",        nullptr,          nullptr },
+            { OW::eHero::HERO_FREJA,        "Freja",        nullptr,          nullptr },
             { OW::eHero::HERO_REINHARDT,    "Reinhardt",    "Reinhardt",      nullptr },
             { OW::eHero::HERO_WINSTON,      "Winston",      "Winston",        nullptr },
             { OW::eHero::HERO_ZARYA,        "Zarya",        "Zarya",          nullptr },
@@ -94,7 +94,7 @@ namespace OW { namespace Config {
             { OW::eHero::HERO_RAMATTRA,     "Ramattra",     "Ramattra",       nullptr },
             { OW::eHero::HERO_JUNKERQUEEN,  "JunkerQueen",  "Junker Queen",   nullptr },
             { OW::eHero::HERO_MAUGA,        "Mauga",        "Mauga",          nullptr },
-            { HERO_PRESET_HAZARD,           "Hazard",       nullptr,          nullptr },
+            { OW::eHero::HERO_HAZARD,       "Hazard",       nullptr,          nullptr },
             { OW::eHero::HERO_MERCY,        "Mercy",        "Mercy",          nullptr },
             { OW::eHero::HERO_LUCIO,        "Lucio",        "Lucio",          nullptr },
             { OW::eHero::HERO_ZENYATTA,     "Zenyatta",     "Zenyatta",       nullptr },
@@ -105,7 +105,8 @@ namespace OW { namespace Config {
             { OW::eHero::HERO_KIRIKO,       "Kiriko",       "Kiriko",         nullptr },
             { OW::eHero::HERO_LIFEWEAVER,   "Lifeweaver",   "LifeWeaver",     "Lifeweaver" },
             { OW::eHero::HERO_ILLARI,       "Illari",       "Illari",         nullptr },
-            { HERO_PRESET_JUNO,             "Juno",         nullptr,          nullptr },
+            { OW::eHero::HERO_JUNO,         "Juno",         nullptr,          nullptr },
+            { OW::eHero::HERO_WUYANG,       "Wuyang",       nullptr,          nullptr },
         };
 
         void ApplyAimMode(int mode);
@@ -803,6 +804,10 @@ namespace OW { namespace Config {
             aimbotAttack = 0;
             aimbotTeam = 0;
             aimbotPriority = 0;
+            inputSource = 2;
+            aimDryRun = false;
+            aimVerboseLog = false;
+            aimDryRunLogIntervalMs = 100;
         }
 
         void ResetAimMethodDefaultsUnlocked()
@@ -844,8 +849,9 @@ namespace OW { namespace Config {
             crosscircle = false;          // default: false
             eyeray = false;               // default: false
             MenuToggleKey = VK_HOME;      // default: VK_HOME
-            gafAsyncKeyStateOffset = 0;   // default: disabled until configured per host build
-            gafAsyncKeyStateSize = 256;   // default: standard 256-byte VK array
+            gafAsyncKeyStateOffset = 0;   // default: auto resolve by host build
+            gafAsyncKeyStateSize = 256;   // default for manual direct RVA mode
+            gafAsyncKeyStateSessionId = 0; // default: auto from interactive proxy process
             lastConfigProfile = "config.ini";
 
             enargb = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);       // default: 1,0,0,0.4
@@ -1169,6 +1175,10 @@ namespace OW { namespace Config {
             aimbotAttack = ReadInt(ini, section, "aimbotAttack", aimbotAttack);
             aimbotTeam = ReadInt(ini, section, "aimbotTeam", aimbotTeam);
             aimbotPriority = ReadInt(ini, section, "aimbotPriority", aimbotPriority);
+            inputSource = ReadInt(ini, section, "inputSource", inputSource);
+            aimDryRun = ReadBool(ini, section, "aimDryRun", aimDryRun);
+            aimVerboseLog = ReadBool(ini, section, "aimVerboseLog", aimVerboseLog);
+            aimDryRunLogIntervalMs = ReadInt(ini, section, "aimDryRunLogIntervalMs", aimDryRunLogIntervalMs);
         }
 
         void LoadAimMethodSettingsUnlocked(const IniFile& ini)
@@ -1209,6 +1219,10 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "aimbotAttack", aimbotAttack);
             WriteIntValue(path, section, "aimbotTeam", aimbotTeam);
             WriteIntValue(path, section, "aimbotPriority", aimbotPriority);
+            WriteIntValue(path, section, "inputSource", inputSource);
+            WriteBoolValue(path, section, "aimDryRun", aimDryRun);
+            WriteBoolValue(path, section, "aimVerboseLog", aimVerboseLog);
+            WriteIntValue(path, section, "aimDryRunLogIntervalMs", aimDryRunLogIntervalMs);
         }
 
         void SaveAimMethodSettingsUnlocked(const std::string& path)
@@ -1256,6 +1270,7 @@ namespace OW { namespace Config {
             MenuToggleKey = ReadInt(ini, section, "MenuToggleKey", MenuToggleKey);
             gafAsyncKeyStateOffset = ReadUInt64(ini, section, "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
             gafAsyncKeyStateSize = ReadInt(ini, section, "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
+            gafAsyncKeyStateSessionId = ReadInt(ini, section, "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
             lastConfigProfile = ReadString(ini, section, "lastConfigProfile", lastConfigProfile.c_str());
             manualScreenWidth = ReadInt(ini, section, "manualScreenWidth", manualScreenWidth);
             manualScreenHeight = ReadInt(ini, section, "manualScreenHeight", manualScreenHeight);
@@ -1376,10 +1391,12 @@ namespace OW { namespace Config {
             config_version = kCurrentConfigVersion;
 
             ClampSetting("AimKey", AimKey, 1, 255, 0x01);
-            ClampSetting("aim_key", aim_key, 0, 5, 1);
-            ClampSetting("aim_key2", aim_key2, 0, 5, 1);
+            ClampSetting("aim_key", aim_key, 0, 12, 1);
+            ClampSetting("aim_key2", aim_key2, 0, 12, 1);
             ClampSetting("togglekey", togglekey, 0, 54, 0);
             ClampSetting("MenuToggleKey", MenuToggleKey, 1, 255, VK_HOME);
+            ClampSetting("inputSource", inputSource, 0, 3, 2);
+            ClampSetting("aimDryRunLogIntervalMs", aimDryRunLogIntervalMs, 50, 1000, 100);
             ClampSetting("ultimateDisplayMode", ultimateDisplayMode, 0, 2, 0);
             ClampSetting("skillDisplayMode", skillDisplayMode, 0, 2, 0);
             ClampSetting("radarCorner", radarCorner, 0, 3, 0);
@@ -1389,6 +1406,7 @@ namespace OW { namespace Config {
                     gafAsyncKeyStateSize);
                 gafAsyncKeyStateSize = 256;
             }
+            ClampSetting("gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId, 0, 64, 0);
 
             ClampFloatSetting("Fov", Fov, 0.0f, 500.0f, 200.0f);
             ClampFloatSetting("Fov2", Fov2, 0.0f, 500.0f, 200.0f);
@@ -1576,8 +1594,9 @@ namespace OW { namespace Config {
                 ToText(autoSyncSensitivity).c_str(), hostMouseDpi, detectedHostMouseDpi,
                 ToText(hostMouseDpiAutoDetected).c_str(), kmboxInputDelayMs,
                 ToText(kmboxDebugLog).c_str());
-            LogConfig(level, "Dump: keystate offset=%s size=%d",
-                ToText(gafAsyncKeyStateOffset).c_str(), gafAsyncKeyStateSize);
+            LogConfig(level, "Dump: keystate offset=%s size=%d sessionId=%d",
+                ToText(gafAsyncKeyStateOffset).c_str(), gafAsyncKeyStateSize,
+                gafAsyncKeyStateSessionId);
             LogConfig(level, "Dump: manual screen width=%d height=%d",
                 manualScreenWidth, manualScreenHeight);
             LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s",
@@ -1725,6 +1744,7 @@ namespace OW { namespace Config {
             SaveKmboxSettingsUnlocked(path);
             WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
             WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
+            WriteIntValue(path, "Global", "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
             WriteIntValue(path, "Global", "ultimateDisplayMode", ultimateDisplayMode);
             WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
             WriteIntValue(path, "Global", "radarCorner", radarCorner);
@@ -1836,6 +1856,7 @@ namespace OW { namespace Config {
         WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);
         WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
         WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
+        WriteIntValue(path, "Global", "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
         WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
         WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
         WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);

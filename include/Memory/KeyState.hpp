@@ -2,6 +2,7 @@
 
 #include "Memory/Memory.h"
 #include "Utils/Config.hpp"
+#include "Utils/Diagnostics.hpp"
 
 #include <Windows.h>
 #include <algorithm>
@@ -10,9 +11,13 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace KeyState {
 
@@ -30,6 +35,142 @@ namespace KeyState {
     inline std::string kernelModuleName = "win32kbase.sys";
     inline uint64_t gafAsyncKeyStateOffset = 0;
     inline std::atomic<size_t> keyStateByteCount{ keyStateBitmap.size() };
+    inline std::atomic<int> keyStateReadPid{ static_cast<int>(kSystemPid) };
+    inline std::atomic<DWORD> detectedBuild{ 0 };
+    inline std::atomic<DWORD> resolvedSessionId{ 0 };
+    inline std::atomic<uint64_t> resolvedModuleBase{ 0 };
+    inline std::atomic<uint64_t> resolvedSlotsRva{ 0 };
+    inline std::atomic<uint64_t> resolvedKeyStateOffset{ 0 };
+    inline std::atomic<bool> resolvedViaAutoTable{ false };
+
+    struct KeyboardProxyProcess {
+        DWORD pid = 0;
+        DWORD sessionId = 0;
+        std::string name;
+    };
+
+    struct SessionSlotsProfile {
+        DWORD minBuild = 0;
+        const char* label = "";
+        const char* moduleName = "";
+        uint64_t slotsRva = 0;
+        uint64_t keyStateOffset = 0;
+    };
+
+    inline bool EqualsNoCase(const char* lhs, const char* rhs)
+    {
+        if (!lhs || !rhs)
+            return false;
+
+        while (*lhs && *rhs) {
+            const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(*lhs)));
+            const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(*rhs)));
+            if (a != b)
+                return false;
+            ++lhs;
+            ++rhs;
+        }
+        return *lhs == '\0' && *rhs == '\0';
+    }
+
+    inline int KeyboardProxyPriority(const char* name)
+    {
+        if (EqualsNoCase(name, "explorer.exe"))
+            return 0;
+        if (EqualsNoCase(name, "dwm.exe"))
+            return 1;
+        if (EqualsNoCase(name, "winlogon.exe"))
+            return 2;
+        if (EqualsNoCase(name, "taskhostw.exe"))
+            return 3;
+        if (EqualsNoCase(name, "smartscreen.exe"))
+            return 4;
+        return 100;
+    }
+
+    inline DWORD QueryWindowsBuild()
+    {
+        if (!mem.vHandle)
+            return 0;
+
+        ULONG64 build = 0;
+        if (!VMMDLL_ConfigGet(mem.vHandle, VMMDLL_OPT_WIN_VERSION_BUILD, &build))
+            return 0;
+
+        detectedBuild.store(static_cast<DWORD>(build), std::memory_order_release);
+        return static_cast<DWORD>(build);
+    }
+
+    inline const SessionSlotsProfile* SelectSessionSlotsProfile(DWORD build)
+    {
+        static constexpr SessionSlotsProfile profiles[] = {
+            // 25H2+ / build 26200+ per current memflow fallback table.
+            { 26200, "Win11 25H2+", "win32k.sys", 0x86678, 0x3808 },
+            // 24H2 / build 26100. memflow treats the win32k.sys path as >= 22632.
+            { 22632, "Win11 24H2", "win32k.sys", 0x824F0, 0x3808 },
+            // 22H2/23H2 builds keep the session slot path in win32ksgd.sys.
+            { 22621, "Win11 22H2/23H2", "win32ksgd.sys", 0x3110, 0x36A8 },
+        };
+
+        for (const auto& profile : profiles) {
+            if (build >= profile.minBuild)
+                return &profile;
+        }
+        return nullptr;
+    }
+
+    inline bool FindKeyboardProxyProcess(KeyboardProxyProcess& proxy)
+    {
+        proxy = {};
+        if (!mem.vHandle)
+            return false;
+
+        const DWORD desiredSession = OW::Config::gafAsyncKeyStateSessionId > 0
+            ? static_cast<DWORD>(OW::Config::gafAsyncKeyStateSessionId)
+            : 0;
+
+        PVMMDLL_PROCESS_INFORMATION processInfo = nullptr;
+        DWORD processCount = 0;
+        if (!VMMDLL_ProcessGetInformationAll(mem.vHandle, &processInfo, &processCount))
+            return false;
+
+        int bestPriority = 1000;
+        for (DWORD i = 0; i < processCount; ++i) {
+            const auto& info = processInfo[i];
+            if (info.dwPID == 0)
+                continue;
+
+            const char* name = info.szNameLong[0] ? info.szNameLong : info.szName;
+            const int priority = KeyboardProxyPriority(name);
+            if (priority >= 100)
+                continue;
+
+            const DWORD sessionId = info.win.dwSessionId;
+            if (desiredSession != 0 && sessionId != desiredSession)
+                continue;
+
+            const bool better =
+                proxy.pid == 0 ||
+                priority < bestPriority ||
+                (priority == bestPriority && desiredSession == 0 && sessionId > proxy.sessionId);
+
+            if (better) {
+                proxy.pid = info.dwPID;
+                proxy.sessionId = sessionId;
+                proxy.name = name;
+                bestPriority = priority;
+            }
+        }
+
+        VMMDLL_MemFree(processInfo);
+        return proxy.pid != 0;
+    }
+
+    inline bool ReadU64(DWORD pid, uint64_t address, uint64_t& value)
+    {
+        value = 0;
+        return mem.Read(static_cast<uintptr_t>(address), &value, sizeof(value), static_cast<int>(pid));
+    }
 
     inline uint64_t ResolveKernelModuleBaseForPid(DWORD pid, const std::string& moduleName)
     {
@@ -91,21 +232,176 @@ namespace KeyState {
         return configuredSize == 64 ? 64u : keyStateBitmap.size();
     }
 
-    inline uint64_t ResolveGafAsyncKeyStateAddress()
+    inline uint64_t ResolveExportAddress(DWORD pid, const char* moduleName, const char* exportName)
     {
-        gafAsyncKeyStateOffset = OW::Config::gafAsyncKeyStateOffset;
+        if (!mem.vHandle || !moduleName || !exportName)
+            return 0;
+
+        PVMMDLL_MAP_EAT eatMap = nullptr;
+        if (!VMMDLL_Map_GetEATU(mem.vHandle, pid, const_cast<LPSTR>(moduleName), &eatMap))
+            return 0;
+
+        uint64_t address = 0;
+        if (eatMap->dwVersion == VMMDLL_MAP_EAT_VERSION) {
+            for (DWORD i = 0; i < eatMap->cMap; ++i) {
+                const auto& entry = eatMap->pMap[i];
+                if (entry.uszFunction && std::strcmp(entry.uszFunction, exportName) == 0) {
+                    address = entry.vaFunction;
+                    break;
+                }
+            }
+        }
+
+        VMMDLL_MemFree(eatMap);
+        return address;
+    }
+
+    inline uint64_t ResolveManualDirectAddress(const KeyboardProxyProcess& proxy)
+    {
+        kernelModuleName = "win32kbase.sys";
         keyStateByteCount.store(
             NormalizeKeyStateByteCount(OW::Config::gafAsyncKeyStateSize),
             std::memory_order_release);
 
-        if (gafAsyncKeyStateOffset == 0)
-            return 0;
-
-        const uint64_t moduleBase = ResolveKernelModuleBase(kernelModuleName);
+        const uint64_t moduleBase = ResolveKernelModuleBaseForPid(proxy.pid, kernelModuleName);
         if (!moduleBase)
             return 0;
 
-        return moduleBase + gafAsyncKeyStateOffset;
+        const uint64_t address = moduleBase + OW::Config::gafAsyncKeyStateOffset;
+        keyStateReadPid.store(static_cast<int>(proxy.pid), std::memory_order_release);
+        resolvedSessionId.store(proxy.sessionId, std::memory_order_release);
+        resolvedModuleBase.store(moduleBase, std::memory_order_release);
+        resolvedSlotsRva.store(OW::Config::gafAsyncKeyStateOffset, std::memory_order_release);
+        resolvedKeyStateOffset.store(0, std::memory_order_release);
+        resolvedViaAutoTable.store(false, std::memory_order_release);
+
+        Diagnostics::Info("DMA KeyState manual direct resolver: proxy=%s pid=%lu session=%lu module=%s base=0x%llX rva=0x%llX addr=0x%llX size=%zu.",
+            proxy.name.c_str(),
+            static_cast<unsigned long>(proxy.pid),
+            static_cast<unsigned long>(proxy.sessionId),
+            kernelModuleName.c_str(),
+            static_cast<unsigned long long>(moduleBase),
+            static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset),
+            static_cast<unsigned long long>(address),
+            keyStateByteCount.load(std::memory_order_acquire));
+        return address;
+    }
+
+    inline uint64_t ResolveWin10ExportAddress(const KeyboardProxyProcess& proxy, DWORD build)
+    {
+        kernelModuleName = "win32kbase.sys";
+        const uint64_t address = ResolveExportAddress(proxy.pid, kernelModuleName.c_str(), "gafAsyncKeyState");
+        if (!address)
+            return 0;
+
+        keyStateByteCount.store(64u, std::memory_order_release);
+        keyStateReadPid.store(static_cast<int>(proxy.pid), std::memory_order_release);
+        resolvedSessionId.store(proxy.sessionId, std::memory_order_release);
+        resolvedModuleBase.store(ResolveKernelModuleBaseForPid(proxy.pid, kernelModuleName), std::memory_order_release);
+        resolvedSlotsRva.store(0, std::memory_order_release);
+        resolvedKeyStateOffset.store(0, std::memory_order_release);
+        resolvedViaAutoTable.store(true, std::memory_order_release);
+
+        Diagnostics::Info("DMA KeyState export resolver: build=%lu proxy=%s pid=%lu session=%lu module=%s export=gafAsyncKeyState addr=0x%llX size=%zu.",
+            static_cast<unsigned long>(build),
+            proxy.name.c_str(),
+            static_cast<unsigned long>(proxy.pid),
+            static_cast<unsigned long>(proxy.sessionId),
+            kernelModuleName.c_str(),
+            static_cast<unsigned long long>(address),
+            keyStateByteCount.load(std::memory_order_acquire));
+        return address;
+    }
+
+    inline uint64_t ResolveSessionSlotsAddress(
+        const KeyboardProxyProcess& proxy,
+        DWORD build,
+        const SessionSlotsProfile& profile)
+    {
+        kernelModuleName = profile.moduleName;
+        const uint64_t moduleBase = ResolveKernelModuleBaseForPid(proxy.pid, kernelModuleName);
+        if (!moduleBase)
+            return 0;
+
+        const DWORD sessionId = OW::Config::gafAsyncKeyStateSessionId > 0
+            ? static_cast<DWORD>(OW::Config::gafAsyncKeyStateSessionId)
+            : (proxy.sessionId > 0 ? proxy.sessionId : 1);
+
+        uint64_t slots = 0;
+        const uint64_t slotsAddress = moduleBase + profile.slotsRva;
+        if (!ReadU64(proxy.pid, slotsAddress, slots) || !slots)
+            return 0;
+
+        uint64_t slot = 0;
+        const uint64_t slotAddress = slots + (static_cast<uint64_t>(sessionId - 1) * sizeof(uint64_t));
+        if (!ReadU64(proxy.pid, slotAddress, slot) || !slot)
+            return 0;
+
+        uint64_t sessionState = 0;
+        if (!ReadU64(proxy.pid, slot, sessionState) || !sessionState)
+            return 0;
+
+        const uint64_t keyStateAddress = sessionState + profile.keyStateOffset;
+        keyStateByteCount.store(64u, std::memory_order_release);
+        keyStateReadPid.store(static_cast<int>(proxy.pid), std::memory_order_release);
+        resolvedSessionId.store(sessionId, std::memory_order_release);
+        resolvedModuleBase.store(moduleBase, std::memory_order_release);
+        resolvedSlotsRva.store(profile.slotsRva, std::memory_order_release);
+        resolvedKeyStateOffset.store(profile.keyStateOffset, std::memory_order_release);
+        resolvedViaAutoTable.store(true, std::memory_order_release);
+
+        Diagnostics::Info("DMA KeyState auto resolver: profile=%s build=%lu proxy=%s pid=%lu session=%lu module=%s base=0x%llX slotsRva=0x%llX slots=0x%llX slot=0x%llX state=0x%llX keyOffset=0x%llX addr=0x%llX size=%zu.",
+            profile.label,
+            static_cast<unsigned long>(build),
+            proxy.name.c_str(),
+            static_cast<unsigned long>(proxy.pid),
+            static_cast<unsigned long>(sessionId),
+            kernelModuleName.c_str(),
+            static_cast<unsigned long long>(moduleBase),
+            static_cast<unsigned long long>(profile.slotsRva),
+            static_cast<unsigned long long>(slots),
+            static_cast<unsigned long long>(slot),
+            static_cast<unsigned long long>(sessionState),
+            static_cast<unsigned long long>(profile.keyStateOffset),
+            static_cast<unsigned long long>(keyStateAddress),
+            keyStateByteCount.load(std::memory_order_acquire));
+        return keyStateAddress;
+    }
+
+    inline uint64_t ResolveGafAsyncKeyStateAddress()
+    {
+        KeyboardProxyProcess proxy{};
+        if (!FindKeyboardProxyProcess(proxy)) {
+            Diagnostics::Warn("DMA KeyState resolver could not find an interactive proxy process.");
+            return 0;
+        }
+
+        const DWORD build = QueryWindowsBuild();
+        if (OW::Config::gafAsyncKeyStateOffset != 0) {
+            gafAsyncKeyStateOffset = OW::Config::gafAsyncKeyStateOffset;
+            return ResolveManualDirectAddress(proxy);
+        }
+
+        const SessionSlotsProfile* profile = SelectSessionSlotsProfile(build);
+        if (profile) {
+            gafAsyncKeyStateOffset = profile->slotsRva;
+            if (const uint64_t address = ResolveSessionSlotsAddress(proxy, build, *profile))
+                return address;
+        }
+
+        const uint64_t exportAddress = ResolveWin10ExportAddress(proxy, build);
+        if (exportAddress) {
+            gafAsyncKeyStateOffset = 0;
+            return exportAddress;
+        }
+
+        Diagnostics::Warn("DMA KeyState resolver failed. build=%lu proxy=%s pid=%lu session=%lu manualOffset=0x%llX.",
+            static_cast<unsigned long>(build),
+            proxy.name.c_str(),
+            static_cast<unsigned long>(proxy.pid),
+            static_cast<unsigned long>(proxy.sessionId),
+            static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset));
+        return 0;
     }
 
     inline bool Initialize()
@@ -134,7 +430,11 @@ namespace KeyState {
             keyStateByteCount.load(std::memory_order_acquire),
             latest.size());
 
-        if (!mem.Read(static_cast<uintptr_t>(address), latest.data(), bytesToRead, static_cast<int>(kSystemPid)))
+        if (!mem.Read(
+                static_cast<uintptr_t>(address),
+                latest.data(),
+                bytesToRead,
+                keyStateReadPid.load(std::memory_order_acquire)))
             return;
 
         std::lock_guard<std::mutex> lock(keyStateMutex);

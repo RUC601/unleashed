@@ -15,7 +15,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 namespace {
 
-constexpr int kDefaultMenuClientWidth = 650;
+constexpr int kDefaultMenuClientWidth = 720;
 constexpr int kDefaultMenuClientHeight = 550;
 constexpr int kMinimumMenuClientHeight = 140;
 constexpr int kInitialMenuTopMargin = 24;

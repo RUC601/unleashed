@@ -47,6 +47,22 @@ namespace OW {
         static constexpr auto Component_Ror2        = 60;                 // verified 0527
         static constexpr auto Component_Ror3        = 57;                 // verified 0527 helper call
 
+        // Wrapper/helper path from plexies p332. This is not the main
+        // DecryptComponent tail above: it uses a helper XOR/ROR stage plus a
+        // different byte/key-field pair. IDA at RVA 0x58EF91 references the same
+        // qword slot as ComponentXorQword_RVA; plexies' 0x4092E70 entry is not a
+        // referenced slot in the 0527 IDA database.
+        static constexpr auto ComponentWrapperHelper_XorKey = 0x3450DD4E165D1B80;
+        static constexpr auto ComponentWrapperHelper_Ror    = 29;
+        static constexpr auto ComponentWrapperByte_RVA      = 0x377E422;
+        static constexpr auto ComponentWrapperQword_RVA     = ComponentXorQword_RVA;
+        static constexpr auto ComponentWrapperQword_Off     = 0x45;
+        static constexpr auto ComponentWrapper_SubK         = 0x5E1EE52880C2AB5C;
+        static constexpr auto ComponentWrapper_XorK         = 0x0C42F747C128EF56;
+        static constexpr auto ComponentWrapper_AddK         = 0x476DC63CD7A9AA1C;
+        static constexpr auto ComponentWrapper_Ror1         = 12;
+        static constexpr auto ComponentWrapper_Ror2         = 19;
+
         // Visibility/data flag resolver (forum p331 full disassembly, IDA RVA 0x58C880).
         // OLD (0521): static constexpr auto VisibilityGlobalKeyPtr_RVA = 0x3B76970;
         static constexpr auto VisibilityGlobalKeyPtr_RVA = 0x3A92E70; // verified 0527: key ptr RIP ref

@@ -290,6 +290,60 @@ namespace {
             drawLine(badColor, "NO ENTITY DATA \xE2\x80\x94 check pipeline");
     }
 
+    static void DrawDiagnosticLogOverlay()
+    {
+        if (!Diagnostics::IsLogOverlayVisible())
+            return;
+
+        std::vector<std::string> lines = Diagnostics::GetLogLines();
+
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 viewportPos = viewport ? viewport->Pos : ImVec2(0.0f, 0.0f);
+        const ImVec2 viewportSize = viewport ? viewport->Size : ImGui::GetIO().DisplaySize;
+        const float maxWidth = (std::max)(360.0f, viewportSize.x - 32.0f);
+        const float logWidth = (std::min)(980.0f, maxWidth);
+        const float maxHeight = (std::max)(120.0f, viewportSize.y * 0.28f);
+        const float logHeight = (std::min)(260.0f, maxHeight);
+
+        ImGui::SetNextWindowPos(
+            ImVec2(viewportPos.x + viewportSize.x * 0.5f, viewportPos.y + viewportSize.y - 24.0f),
+            ImGuiCond_Always,
+            ImVec2(0.5f, 1.0f));
+        ImGui::SetNextWindowBgAlpha(0.72f);
+
+        const ImGuiWindowFlags flags =
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoSavedSettings;
+
+        if (ImGui::Begin("Diagnostic Log", nullptr, flags)) {
+            ImGui::Text("Lines: %zu / %zu", lines.size(), Diagnostics::GetLogLineCapacity());
+            ImGui::SameLine();
+            if (ImGui::Button("Clear")) {
+                Diagnostics::ClearLogLines();
+                lines.clear();
+            }
+
+            ImGui::Separator();
+            ImGui::BeginChild(
+                "##DiagnosticLogLines",
+                ImVec2(logWidth, logHeight),
+                true,
+                ImGuiWindowFlags_HorizontalScrollbar);
+
+            if (lines.empty()) {
+                ImGui::TextDisabled("No diagnostics yet.");
+            } else {
+                for (const std::string& line : lines)
+                    ImGui::TextUnformatted(line.c_str());
+                ImGui::SetScrollHereY(1.0f);
+            }
+
+            ImGui::EndChild();
+        }
+        ImGui::End();
+    }
+
     static void DrawFovCircle()
     {
         if (!OW::Config::draw_fov)
@@ -511,6 +565,7 @@ void RenderCallback()
         }
     }
     DrawPipelineDiagnostics();
+    DrawDiagnosticLogOverlay();
 }
 
 static void InitializeKmBoxFromConfig()
@@ -602,11 +657,11 @@ static void StartBackgroundThreads()
     std::thread(looprpmthread).detach();
     std::printf("  [+] looprpmthread\n");
 
-    // KeyState polls the primary host's VK state through DMA. Aim/trigger
-    // paths can switch to KeyState::IsKeyDown() after the offset is configured.
+    // KeyState polls the primary host's VK state through DMA. It auto-resolves
+    // common Win11 session-slot layouts and still allows a manual RVA override.
     KeyState::Start();
     std::printf("  [+] keystate_thread%s\n",
-        KeyState::initialized.load(std::memory_order_acquire) ? "" : " (pending gafAsyncKeyStateOffset)");
+        KeyState::initialized.load(std::memory_order_acquire) ? "" : " (pending resolver)");
 }
 
 // =============================================================================
