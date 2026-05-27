@@ -1276,8 +1276,8 @@ inline void viewmatrix_thread() {
 
     __try {
         while (true) {
-            // VM11 (May 2026): three-key subtract-XOR-subtract chain.
-            // UC p321-p323 working snippets use the p2 -> +0x6C8 -> +0x8 -> +0xC0
+            // VM12 (2026-05-27): two-key add-XOR chain.
+            // UC p330/p331 working snippets use the p2 -> +0x6C8 -> +0x8 -> +0xC0
             // pre-composed view-projection matrix as the primary WorldToScreen source.
             uint64_t enc = SDK->RPM<uint64_t>(SDK->dwGameBase + OW::offset::Address_viewmatrix_base);
             if (!enc) {
@@ -1285,9 +1285,8 @@ inline void viewmatrix_thread() {
                 Sleep(5);
                 continue;
             }
-            uint64_t dec = ((enc - OW::offset::offset_viewmatrix_xor_key)
-                         ^ OW::offset::offset_viewmatrix_xor_key2)
-                         - OW::offset::offset_viewmatrix_xor_key3;
+            uint64_t dec = (enc + OW::offset::offset_viewmatrix_xor_key)
+                         ^ OW::offset::offset_viewmatrix_xor_key2;
             if (!dec) {
                 OW::RecordViewMatrixUnresolved("decoded base pointer", dec, lastViewMatrixLogTick);
                 Sleep(5);
