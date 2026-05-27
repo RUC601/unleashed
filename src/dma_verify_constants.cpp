@@ -30,7 +30,7 @@ static constexpr uint64_t kRvaPairArray = OW::offset::Address_entity_base;
 static constexpr uint64_t kRvaPointerG = OW::offset::Address_viewmatrix_base;
 static constexpr uint64_t kRvaVisibilityGlobalKeyPtr = OW::offset::VisibilityGlobalKeyPtr_RVA;
 static constexpr uint64_t kVisibilityQwordOffset = OW::offset::VisibilityQwordOffset;
-static constexpr uint64_t kVisibilityQwordMixOffset = OW::offset::Visibility_QwordMixOff;
+static constexpr uint64_t kRvaVisibilityMagicByte = OW::offset::VisibilityMagicByte_RVA;
 
 static constexpr ULONG64 kReadFlags =
     VMMDLL_FLAG_NOCACHE |
@@ -190,14 +190,14 @@ uint64_t Ror64(uint64_t value, unsigned bits)
 
 uint64_t TransformComponentValue(uint64_t value, uint64_t key_material, uint8_t key_byte)
 {
-    value += OW::offset::Component_Add1;
     value ^= key_material;
-    value += OW::offset::Component_Add2;
-    value ^= static_cast<uint64_t>(key_byte);
     value ^= OW::offset::Component_Xor1;
-    value ^= OW::offset::Component_Xor2;
-    value = Rol64(value, 0x2A);
-    value = Ror64(value, 0x2D);
+    value = Ror64(value, OW::offset::Component_Ror1);
+    value += OW::offset::Component_Add1;
+    value ^= static_cast<uint64_t>(key_byte);
+    value -= OW::offset::Component_Sub1;
+    value = Ror64(value, OW::offset::Component_Ror2);
+    value = Ror64(value, OW::offset::Component_Ror3);
     return value;
 }
 
@@ -299,10 +299,10 @@ int main(int argc, char** argv)
     const bool key_byte_ok = key_byte_read_ok && key_byte != 0;
     PrintRead8("key byte", key_byte_address, key_byte_ok, key_byte);
 
-    uint64_t visibility_mix = 0;
-    const uint64_t visibility_mix_address = p1 + kVisibilityQwordMixOffset;
-    const bool visibility_mix_ok = p1_ok && ReadExact(visibility_mix_address, visibility_mix);
-    PrintRead64("visibility mix", visibility_mix_address, visibility_mix_ok, visibility_mix);
+    uint8_t visibility_magic = 0;
+    const uint64_t visibility_magic_address = g_base + kRvaVisibilityMagicByte;
+    const bool visibility_magic_ok = ReadExact(visibility_magic_address, visibility_magic);
+    PrintRead8("visibility magic byte", visibility_magic_address, visibility_magic_ok, visibility_magic);
 
     const uint64_t visibility_key_slot = g_base + kRvaVisibilityGlobalKeyPtr;
     uint64_t visibility_key_ptr = 0;
