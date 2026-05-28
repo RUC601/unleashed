@@ -45,6 +45,7 @@ namespace HeroSkillControls {
     inline constexpr HeroSkillControlFlags TrackingOverlay = 1u << 13;
     inline constexpr HeroSkillControlFlags PitchControl = 1u << 14;
     inline constexpr HeroSkillControlFlags PhaseTiming = 1u << 15;
+    inline constexpr HeroSkillControlFlags AmmoGuard = 1u << 16;
 }
 
 namespace HeroSkillHotkey {
@@ -110,10 +111,11 @@ enum class HeroSkillRunState {
 
 void RunInputSequence(const std::string& skillId,
                       const std::vector<Config::HeroSkillSequenceStep>& steps,
-                      int activationKey,
+                      int key,
                       const Config::HeroSkillTrackingParams& trackingParams);
 HeroSkillRunState RunViewpointController(const std::string& skillId,
                                          const Config::HeroSkillSettings& params);
+bool AnyInputSequenceActive();
 void CancelActiveSkill();
 void ProcessHeroSkills();
 
@@ -122,29 +124,125 @@ inline Config::HeroSkillSettings MakeAsheComboSequenceDefaults()
     Config::HeroSkillSettings settings{};
     settings.enabled = false;
     settings.key = HeroSkillHotkey::Mouse4;
-    settings.activationKey = HeroSkillHotkey::Mouse4;
     settings.healthThreshold = 50.0f;
     settings.enemyHealthThreshold = 50.0f;
     settings.allyHealthThreshold = 50.0f;
     settings.distance = 30.0f;
     settings.mode = 0;
     settings.cooldown = 0.0f;
-    settings.cooldownGuard = false;
+    settings.cooldownGuard = true;
     settings.prediction = true;
     settings.minTargets = 1;
     settings.radius = 0.0f;
-    settings.tracking = { 0, 5.0f, 200.0f, Config::kAimBoneHead, 0.13f };
+    settings.tracking = { 0, 5.0f, 0.0f, Config::kAimBoneHead, 0.13f };
+    settings.ammoGuard = true;
+    settings.ammoGuardReserve = 1;
 
-    // Fire-pattern rhythm: 1 scoped → 3 unscoped → repeat.
-    // This compresses the total fire interval by interleaving the higher-damage
-    // scoped shot (longer recovery) with faster unscoped shots (shorter recovery).
-    // HoldMs is the output pulse width; releaseMs covers mode-switch + fire recovery.
-    // Timing values are approximate tune-later defaults.
+    // Locked backend Ashe fire pattern. This timing was tuned live and is no
+    // longer exposed as editable UI steps. mask bit0=left, bit1=right.
     settings.sequenceSteps = {
-        { Config::HeroSkillInputChannel::Secondary, 150, 400 },
-        { Config::HeroSkillInputChannel::Primary,   40, 210 },
-        { Config::HeroSkillInputChannel::Primary,   40, 210 },
-        { Config::HeroSkillInputChannel::Primary,   40, 500 }
+        { 0x01,  49 },
+        { 0x02, 140 },
+        { 0x03,  70 },
+        { 0x02,  70 },
+        { 0x00, 183 },
+        { 0x01,  49 },
+        { 0x00, 183 },
+        { 0x01,  49 },
+        { 0x00, 183 },
+        { 0x01,  49 },
+        { 0x00,  45 },
+        { 0x02, 140 },
+        { 0x03,  70 },
+        { 0x02,  70 },
+        { 0x00, 183 },
+        { 0x01,  49 },
+        { 0x00, 183 },
+        { 0x01,  49 },
+        { 0x00, 183 },
+        { 0x01,  49 },
+        { 0x00,  47 },
+        { 0x02, 140 },
+        { 0x03,  70 },
+        { 0x02,  70 },
+        { 0x00, 183 },
+        { 0x01,  49 },
+        { 0x00, 183 },
+        { 0x01,  49 },
+    };
+    return settings;
+}
+
+inline std::vector<Config::HeroSkillSequenceStep> MakeAsheBruteLeftSequenceSteps()
+{
+    // Experimental recovery pattern: keep right held through a scoped window and
+    // over-sample left-click edges so the rate limiter can accept the first valid tap.
+    return {
+        { 0x01, 73, 1.0f, 0 },  // opening left press
+        { 0x03, 11, 1.0f, 0 },  // right joins
+        { 0x02, 95, 1.0f, 0 },  // left release, hold scoped state
+        { 0x03, 18, 1.0f, 0 },
+        { 0x02, 28, 1.0f, 0 },
+        { 0x03, 18, 1.0f, 0 },
+        { 0x02, 28, 1.0f, 0 },
+        { 0x03, 18, 1.0f, 0 },
+        { 0x02, 28, 1.0f, 0 },
+        { 0x03, 18, 1.0f, 0 },
+        { 0x02, 28, 1.0f, 0 },
+        { 0x03, 18, 1.0f, 0 },
+        { 0x02, 28, 1.0f, 0 },
+        { 0x00, 16, 1.0f, 0 },  // release scope
+        { 0x01, 34, 1.0f, 0 },  // hip-fire retry at the cycle boundary
+        { 0x00, 87, 1.0f, 0 },
+    };
+}
+
+inline std::vector<Config::HeroSkillSequenceStep> MakeAsheSpacedLeftSequenceSteps()
+{
+    // Experimental stable pattern: keep the 518 ms cycle, but space the scoped
+    // left taps farther apart than the hand-measured baseline.
+    return {
+        { 0x01,  73, 1.0f, 0 },
+        { 0x03,  11, 1.0f, 0 },
+        { 0x02, 125, 1.0f, 0 },
+        { 0x03,  24, 1.0f, 0 },
+        { 0x02, 105, 1.0f, 0 },
+        { 0x03,  24, 1.0f, 0 },
+        { 0x02,  15, 1.0f, 0 },
+        { 0x00,  16, 1.0f, 0 },
+        { 0x01,  42, 1.0f, 0 },
+        { 0x00,  83, 1.0f, 0 },
+    };
+}
+
+inline Config::HeroSkillSettings MakeFrejaSequenceSetDefaults()
+{
+    Config::HeroSkillSettings settings{};
+    settings.enabled = false;
+    settings.key = HeroSkillHotkey::Mouse4;
+    settings.healthThreshold = 50.0f;
+    settings.enemyHealthThreshold = 50.0f;
+    settings.allyHealthThreshold = 50.0f;
+    settings.distance = 30.0f;
+    settings.mode = 0;
+    settings.cooldown = 0.0f;
+    settings.cooldownGuard = true;
+    settings.prediction = true;
+    settings.minTargets = 1;
+    settings.radius = 0.0f;
+    settings.tracking = { 0, 5.0f, 0.0f, Config::kAimBoneChest, 0.13f };
+    settings.ammoGuard = false;
+    settings.ammoGuardReserve = 1;
+
+    // Editable Freja placeholder: two primary taps, then a secondary hold/release.
+    // Keep this visible in the UI so we can tune the timing after range tests.
+    settings.sequenceSteps = {
+        { 0x01,  45 },
+        { 0x00, 110 },
+        { 0x01,  45 },
+        { 0x00, 110 },
+        { 0x02, 180 },
+        { 0x00, 180 },
     };
     return settings;
 }
@@ -154,7 +252,6 @@ inline Config::HeroSkillSettings MakeZaryaPropelJumpDefaults()
     Config::HeroSkillSettings settings{};
     settings.enabled = false;
     settings.key = HeroSkillHotkey::Mouse4;
-    settings.activationKey = HeroSkillHotkey::Mouse4;
     settings.healthThreshold = 50.0f;
     settings.enemyHealthThreshold = 50.0f;
     settings.allyHealthThreshold = 50.0f;
@@ -166,18 +263,27 @@ inline Config::HeroSkillSettings MakeZaryaPropelJumpDefaults()
     settings.minTargets = 1;
     settings.radius = 0.0f;
 
-    // Angular speeds and random jitter range. Each activation picks a uniform
-    // random speed within [base - range, base + range]. Default base 300 deg/s
-    // with ±55 deg/s jitter. fireDelayMs is the gap between secondary-fire pulse
-    // and the jump key press.
-    settings.pitchDownSpeed = 300.0f;
-    settings.pitchDownRandomRange = 55.0f;
-    settings.pitchUpSpeed = 300.0f;
-    settings.pitchUpRandomRange = 55.0f;
-    settings.pitchDownTargetAngle = 85.0f;
-    settings.pitchUpOffsetAngle = 90.0f;
+    // Pitch down: duration-driven. Target angle / randomized duration -> speed.
+    // fireDelayMs is the gap between the secondary-fire pulse and jump key.
+    settings.pitchDownDurationMs = 45;
+    settings.pitchDownDurationJitter = 10.0f;
+    settings.pitchDownTargetAngle = 90.0f;
+    settings.pitchUpOffsetJitter = 1.5f;
     settings.fireDelayMs = 50;
     settings.jumpKeyCode = VK_SPACE;
+    return settings;
+}
+
+inline Config::HeroSkillSettings MakeZaryaReloadAmmoProbeDefaults()
+{
+    Config::HeroSkillSettings settings{};
+    settings.enabled = false;
+    settings.key = HeroSkillHotkey::RightMouse;
+    settings.cooldownGuard = false;
+    settings.cooldown = 0.0f;
+    settings.prediction = false;
+    settings.ammoGuard = false;
+    settings.ammoGuardReserve = 10;
     return settings;
 }
 
@@ -249,8 +355,23 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         HeroSkillCategory::Skill,
         HeroSkillControls::Enabled | HeroSkillControls::Key |
             HeroSkillControls::CooldownGuard | HeroSkillControls::Cooldown |
-            HeroSkillControls::SequenceSteps | HeroSkillControls::TrackingOverlay,
+            HeroSkillControls::AmmoGuard |
+            HeroSkillControls::SequenceSteps,
         MakeAsheComboSequenceDefaults()
+    },
+    {
+        OW::eHero::HERO_FREJA,
+        "freja",
+        "sequence-set",
+        "Sequence Set",
+        "quick-dash",
+        HeroSkillInputAction::PrimaryFire,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled | HeroSkillControls::Key |
+            HeroSkillControls::CooldownGuard | HeroSkillControls::Cooldown |
+            HeroSkillControls::AmmoGuard |
+            HeroSkillControls::SequenceSteps,
+        MakeFrejaSequenceSetDefaults()
     },
     {
         OW::eHero::HERO_HANJO,
@@ -332,6 +453,17 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
             HeroSkillControls::CooldownGuard | HeroSkillControls::Cooldown |
             HeroSkillControls::PitchControl | HeroSkillControls::PhaseTiming,
         MakeZaryaPropelJumpDefaults()
+    },
+    {
+        OW::eHero::HERO_ZARYA,
+        "zarya",
+        "reload-ammo-probe",
+        "Reload Ammo Probe",
+        "particle-cannon",
+        HeroSkillInputAction::SecondaryFire,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled,
+        MakeZaryaReloadAmmoProbeDefaults()
     },
     {
         OW::eHero::HERO_ROADHOG,

@@ -8,6 +8,7 @@
 #include <utility>
 #include <type_traits>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -994,6 +995,55 @@ namespace OW {
         uint64_t skill = FnSkillStruct(&skillStruct, skillId);
         if (!skill) return false;
         return SDK->RPM<float>(skill + 0x60);
+    }
+
+    inline int readammo(uint64_t base, uint16_t skillIdx, uint16_t skillIdx2) {
+        __m128 skillStruct{};
+        uint16_t skillId[15] = { skillIdx, skillIdx2 };
+        skillStruct.m128_u64[1] = base + 0xD0;
+        const uint64_t skill = FnSkillStruct(&skillStruct, skillId);
+        if (!skill) return -1;
+
+        auto roundedAmmo = [](float value) -> int {
+            if (!std::isfinite(value) || value < 0.0f || value > 300.0f)
+                return -1;
+            if (value > 0.0f && value < 0.01f)
+                return -1;
+            return static_cast<int>(std::lround(value));
+        };
+
+        int zeroCandidate = -1;
+        auto chooseAmmo = [&zeroCandidate](int value) -> int {
+            if (value > 0)
+                return value;
+            if (value == 0)
+                zeroCandidate = 0;
+            return -1;
+        };
+
+        int ammo = chooseAmmo(roundedAmmo(SDK->RPM<float>(skill + 0x60)));
+        if (ammo > 0)
+            return ammo;
+
+        ammo = chooseAmmo(roundedAmmo(SDK->RPM<float>(skill + 0x50)));
+        if (ammo > 0)
+            return ammo;
+
+        const int rawAmmo50 = SDK->RPM<int>(skill + 0x50);
+        if (rawAmmo50 >= 0 && rawAmmo50 <= 300) {
+            ammo = chooseAmmo(rawAmmo50);
+            if (ammo > 0)
+                return ammo;
+        }
+
+        const int rawAmmo60 = SDK->RPM<int>(skill + 0x60);
+        if (rawAmmo60 >= 0 && rawAmmo60 <= 300) {
+            ammo = chooseAmmo(rawAmmo60);
+            if (ammo > 0)
+                return ammo;
+        }
+
+        return zeroCandidate;
     }
 
 } // namespace OW

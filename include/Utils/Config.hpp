@@ -43,7 +43,7 @@ namespace OW { namespace Config {
 
     // ---- Triggerbot (primary) ----
     inline int   triggerbotMode = 0;          // 0=Hold, 1=Toggle, 2=Always
-    inline int   triggerbotKey  = 1;          // key index (reuses aim_key VK list 0-12)
+    inline int   triggerbotKey  = 1;          // key index (reuses activation key VK list; None maps to VK 0)
     inline float triggerbotShotInterval = 0.0f;   // scaled 0-100 → 0-500ms (slider value)
     inline bool  triggerbotChargeAware  = false;  // wait for charge before firing
     inline float triggerbotMinCharge    = 30.0f;  // minimum charge % (0-100, for charge-aware)
@@ -293,7 +293,7 @@ namespace OW { namespace Config {
         bool enabled = false;
         int action = 0;          // 0=Primary, 1=Secondary, 2=Scoped, 3=Unscoped, 4-6=Abilities, 7=Ultimate
         int mode = 0;            // 0=Hold, 1=Toggle, 2=Always
-        int key = 1;             // key index (reuses aim_key VK list)
+        int key = 1;             // key index (reuses activation key VK list; None maps to VK 0)
         float shotInterval = 0.0f;
         bool chargeAware = false;
         float minCharge = 30.0f;
@@ -308,7 +308,7 @@ namespace OW { namespace Config {
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         float hitbox = 0.13f;    // hitbox radius/size
         int aimMode = 0;         // 0=Tracking, 1=Flick
-        int key = 1;             // aim activation key index (reuses aim_key VK list)
+        int key = 1;             // aim activation key index (reuses activation key VK list)
         bool prediction = false; // movement prediction
         int priority = 0;        // 0=FOV, 1=HP, 2=Distance
         int targetTeam = 0;      // 0=Enemies, 1=Allies, 2=All
@@ -327,12 +327,13 @@ namespace OW { namespace Config {
         Secondary = 1
     };
 
-    inline constexpr int kMaxHeroSkillSequenceSteps = 16;
+    inline constexpr int kMaxHeroSkillSequenceSteps = 64;
 
     struct HeroSkillSequenceStep {
-        HeroSkillInputChannel channel = HeroSkillInputChannel::Primary;
-        int holdMs = 0;
-        int releaseMs = 0;
+        int buttonMask = 1;   // bit0=left, bit1=right, bit2=middle
+        int durationMs = 0;
+        float speedScale = 1.0f;
+        int jitterMs = 0;
     };
 
     struct HeroSkillTrackingParams {
@@ -356,17 +357,16 @@ namespace OW { namespace Config {
         bool prediction = false;
         int minTargets = 1;
         float radius = 0.0f;
-        int activationKey = 0;
         std::vector<HeroSkillSequenceStep> sequenceSteps{};
         HeroSkillTrackingParams tracking{};
-        float pitchDownSpeed = 0.0f;
-        float pitchDownRandomRange = 0.0f;
-        float pitchUpSpeed = 0.0f;
-        float pitchUpRandomRange = 0.0f;
-        float pitchDownTargetAngle = 0.0f;
-        float pitchUpOffsetAngle = 0.0f;
-        int fireDelayMs = 0;
-        int jumpKeyCode = 0;
+        int pitchDownDurationMs = 45;
+        float pitchDownDurationJitter = 10.0f;
+        float pitchDownTargetAngle = 90.0f;
+        float pitchUpOffsetJitter = 1.5f;
+        int fireDelayMs = 50;
+        int jumpKeyCode = VK_SPACE;
+        bool ammoGuard = false;
+        int ammoGuardReserve = 1;
     };
 
     using HeroSkillPresetStore = std::unordered_map<uint64_t, std::unordered_map<std::string, HeroSkillSettings>>;

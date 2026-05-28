@@ -21,6 +21,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cfloat>
@@ -28,7 +30,9 @@
 #include <cstring>
 #include <cstdio>
 #include <functional>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 static void ApplySelectedTypePreset();
@@ -44,6 +48,240 @@ namespace {
         bool ok = false;
         std::string message;
     };
+
+    struct FirePatternRecorderEvent {
+        long long timeMs = 0;
+        int previousMask = 0;
+        int mask = 0;
+    };
+
+    constexpr int kFirePatternRecorderMaxMs = 8000;
+    std::atomic<bool> g_firePatternRecorderRunning{ false };
+    std::jthread g_firePatternRecorderThread;
+    std::mutex g_firePatternRecorderMutex;
+    std::string g_firePatternRecorderStatus = "Idle";
+
+    int MouseButtonMask(bool left, bool right)
+    {
+        return (left ? 0x01 : 0) | (right ? 0x02 : 0);
+    }
+
+    bool KmboxMonitorAvailable()
+    {
+        return OW::Config::kmboxEnabled &&
+            OW::Config::kmboxDeviceType == 0 &&
+            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() &&
+            kmbox::KmBoxMgr.KeyBoard.InputPacketCount() > 0;
+    }
+
+    bool DmaKeyStateAvailable()
+    {
+        return KeyState::initialized.load() && KeyState::gafAsyncKeyStateAddr.load() != 0;
+    }
+
+    bool ReadLocalMouseButton(int vk)
+    {
+        return (GetAsyncKeyState(vk) & 0x8000) != 0;
+    }
+
+    bool ReadDmaMouseButton(int vk)
+    {
+        return DmaKeyStateAvailable() && KeyState::IsKeyDown(static_cast<uint32_t>(vk));
+    }
+
+    bool ReadKmboxMouseButton(int vk)
+    {
+        return KmboxMonitorAvailable() && kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
+    }
+
+    bool ReadRecorderMouseButton(int vk)
+    {
+        switch (OW::Config::inputSource) {
+        case 1:
+            if (KmboxMonitorAvailable())
+                return ReadKmboxMouseButton(vk);
+            return ReadDmaMouseButton(vk) || ReadLocalMouseButton(vk);
+        case 2:
+            return ReadLocalMouseButton(vk);
+        case 3:
+            return ReadDmaMouseButton(vk);
+        default:
+            if (KmboxMonitorAvailable())
+                return ReadKmboxMouseButton(vk);
+            return ReadDmaMouseButton(vk) || ReadLocalMouseButton(vk);
+        }
+    }
+
+    const char* RecorderInputSourceName()
+    {
+        if (OW::Config::inputSource == 1)
+            return KmboxMonitorAvailable() ? "kmbox_monitor" : "kmbox_fallback_dma_or_local";
+        if (OW::Config::inputSource == 2)
+            return "local_GetAsyncKeyState";
+        if (OW::Config::inputSource == 3)
+            return "dma_keystate";
+        return KmboxMonitorAvailable() ? "auto_kmbox_monitor" : "auto_dma_or_local";
+    }
+
+    std::string MaskChangeText(int previousMask, int mask)
+    {
+        const int changed = previousMask ^ mask;
+        std::string text;
+        auto append = [&](const char* item) {
+            if (!text.empty())
+                text += "+";
+            text += item;
+        };
+
+        if (changed & 0x01)
+            append((mask & 0x01) ? "L_down" : "L_up");
+        if (changed & 0x02)
+            append((mask & 0x02) ? "R_down" : "R_up");
+        if (text.empty())
+            text = "none";
+        return text;
+    }
+
+    void SetFirePatternRecorderStatus(const std::string& status)
+    {
+        std::lock_guard<std::mutex> lock(g_firePatternRecorderMutex);
+        g_firePatternRecorderStatus = status;
+    }
+
+    std::string GetFirePatternRecorderStatus()
+    {
+        std::lock_guard<std::mutex> lock(g_firePatternRecorderMutex);
+        return g_firePatternRecorderStatus;
+    }
+
+    void LogFirePatternRecorderSummary(const std::vector<FirePatternRecorderEvent>& events,
+                                       long long totalMs,
+                                       const char* sourceName)
+    {
+        Diagnostics::Aim("fire_pattern.record stop source=%s events=%zu totalMs=%lld",
+            sourceName,
+            events.size(),
+            totalMs);
+
+        if (events.empty()) {
+            Diagnostics::Aim("fire_pattern.record result=no_mouse_edges");
+            SetFirePatternRecorderStatus("No events captured");
+            return;
+        }
+
+        const long long firstEventMs = events.front().timeMs;
+        std::string candidate = "fire_pattern.steps_candidate ";
+        for (size_t index = 0; index < events.size(); ++index) {
+            const FirePatternRecorderEvent& event = events[index];
+            const long long nextMs = index + 1 < events.size()
+                ? events[index + 1].timeMs
+                : totalMs;
+            const long long durationMs = (std::max)(0ll, nextMs - event.timeMs);
+            const long long cumulativeMs = (std::max)(0ll, nextMs - firstEventMs);
+            const std::string action = MaskChangeText(event.previousMask, event.mask);
+
+            Diagnostics::Aim("fire_pattern.raw event=%zu action=%s mask=0x%02X nextDeltaMs=%lld cumulativeMs=%lld",
+                index + 1,
+                action.c_str(),
+                event.mask,
+                durationMs,
+                cumulativeMs);
+
+            Diagnostics::Aim("fire_pattern.step step=%zu mask=0x%02X durationMs=%lld boundary=%s",
+                index + 1,
+                event.mask,
+                durationMs,
+                index + 1 < events.size() ? "next_event" : "stop");
+
+            char stepText[48] = {};
+            std::snprintf(stepText, sizeof(stepText), "{0x%02X,%lld}%s",
+                event.mask,
+                durationMs,
+                index + 1 < events.size() ? "," : "");
+            candidate += stepText;
+        }
+
+        Diagnostics::Aim("%s", candidate.c_str());
+
+        char status[96] = {};
+        std::snprintf(status, sizeof(status), "Captured %zu events", events.size());
+        SetFirePatternRecorderStatus(status);
+    }
+
+    void FirePatternRecorderLoop(std::stop_token stopToken)
+    {
+        g_firePatternRecorderRunning.store(true, std::memory_order_release);
+        SetFirePatternRecorderStatus("Recording...");
+        timeBeginPeriod(1);
+
+        std::vector<FirePatternRecorderEvent> events;
+        events.reserve(64);
+
+        const char* sourceName = RecorderInputSourceName();
+        const auto started = std::chrono::steady_clock::now();
+        bool left = ReadRecorderMouseButton(VK_LBUTTON);
+        bool right = ReadRecorderMouseButton(VK_RBUTTON);
+        int previousMask = MouseButtonMask(left, right);
+
+        Diagnostics::Aim("fire_pattern.record start source=%s initialMask=0x%02X maxMs=%d",
+            sourceName,
+            previousMask,
+            kFirePatternRecorderMaxMs);
+
+        long long elapsedMs = 0;
+        while (!stopToken.stop_requested()) {
+            const auto now = std::chrono::steady_clock::now();
+            elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count();
+            if (elapsedMs >= kFirePatternRecorderMaxMs)
+                break;
+
+            left = ReadRecorderMouseButton(VK_LBUTTON);
+            right = ReadRecorderMouseButton(VK_RBUTTON);
+            const int mask = MouseButtonMask(left, right);
+            if (mask != previousMask) {
+                events.push_back({ elapsedMs, previousMask, mask });
+                Diagnostics::Aim("fire_pattern.edge tMs=%lld action=%s previousMask=0x%02X mask=0x%02X",
+                    elapsedMs,
+                    MaskChangeText(previousMask, mask).c_str(),
+                    previousMask,
+                    mask);
+                previousMask = mask;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        const auto finished = std::chrono::steady_clock::now();
+        elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(finished - started).count();
+        LogFirePatternRecorderSummary(events, elapsedMs, sourceName);
+        timeEndPeriod(1);
+        g_firePatternRecorderRunning.store(false, std::memory_order_release);
+    }
+
+    bool IsFirePatternRecorderRunning()
+    {
+        return g_firePatternRecorderRunning.load(std::memory_order_acquire);
+    }
+
+    void StartFirePatternRecorder()
+    {
+        if (IsFirePatternRecorderRunning())
+            return;
+
+        if (g_firePatternRecorderThread.joinable())
+            g_firePatternRecorderThread.join();
+
+        g_firePatternRecorderThread = std::jthread(FirePatternRecorderLoop);
+    }
+
+    void StopFirePatternRecorder()
+    {
+        if (!g_firePatternRecorderThread.joinable())
+            return;
+
+        g_firePatternRecorderThread.request_stop();
+        g_firePatternRecorderThread.join();
+    }
 
     std::string CurrentDirectoryPath()
     {
@@ -453,9 +691,6 @@ static const char* kInputSource[] = {
 };
 static const char* kHeroSkillModes[] = {
     "Auto", "Assist", "Manual"
-};
-static const char* kHeroSkillSequenceChannels[] = {
-    "Primary", "Secondary"
 };
 static const char* kHeroSkillTrackingBones[] = {
     "Chest", "Head", "Neck"
@@ -1430,6 +1665,64 @@ static const char* FormatSliderValue(char* buf, size_t size, float value, const 
     return text;
 }
 
+static int SliderDecimalPlacesFromText(const char* text) {
+    if (!text)
+        return -1;
+
+    for (const char* p = text; *p != '\0'; ++p) {
+        if (*p < '0' || *p > '9')
+            continue;
+
+        while (*p >= '0' && *p <= '9')
+            ++p;
+
+        if (*p != '.')
+            return 0;
+
+        int decimals = 0;
+        ++p;
+        while (*p >= '0' && *p <= '9') {
+            ++decimals;
+            ++p;
+        }
+        return decimals;
+    }
+
+    return -1;
+}
+
+static float StepFromDecimalPlaces(int decimals) {
+    decimals = ImClamp(decimals, 0, 4);
+
+    float step = 1.0f;
+    for (int i = 0; i < decimals; ++i)
+        step *= 0.1f;
+    return step;
+}
+
+static float SliderKeyboardSlowStep(float v_min, float v_max, const char* formatText,
+                                    bool integralValue) {
+    if (integralValue)
+        return 1.0f;
+
+    const int decimals = SliderDecimalPlacesFromText(formatText);
+    if (decimals >= 0)
+        return StepFromDecimalPlaces(decimals);
+
+    const float range = std::fabs(v_max - v_min);
+    if (range <= 1.0f)
+        return 0.01f;
+    if (range <= 10.0f)
+        return 0.1f;
+    return 1.0f;
+}
+
+static float RoundToSliderStep(float value, float step) {
+    if (step <= 0.0f)
+        return value;
+    return std::round(value / step) * step;
+}
+
 // =====================================================================
 // UIGroupBox  --  Opens a group box.  Closes any previously open group
 //                 box (drawing its border lazily via CloseGroupBox).
@@ -1613,7 +1906,7 @@ static void PushControlWidth(float rightPaddingPx = kControlRightPadding) {
 }
 
 static bool UISlider(const char* label, float* value, float v_min, float v_max,
-                     const char* formatText) {
+                     const char* formatText, bool integralValue = false) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return false;
 
@@ -1644,10 +1937,22 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
                                          ImGuiButtonFlags_PressedOnClick);
     bool valueChanged = false;
 
+    auto assignValue = [&](float next) {
+        next = ImClamp(next, v_min, v_max);
+        if (integralValue)
+            next = static_cast<float>(ImClamp(static_cast<int>(std::lround(next)),
+                                              static_cast<int>(std::lround(v_min)),
+                                              static_cast<int>(std::lround(v_max))));
+        if (std::fabs(*value - next) <= 0.000001f)
+            return;
+
+        *value = next;
+        valueChanged = true;
+    };
+
     auto setFromNorm = [&](float normalized) {
         normalized = ImClamp(normalized, 0.0f, 1.0f);
-        *value = v_min + normalized * range;
-        valueChanged = true;
+        assignValue(v_min + normalized * range);
     };
 
     const bool mousePressed = pressed && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
@@ -1664,28 +1969,36 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
         setFromNorm((mousePos.x - bb.Min.x) / (bb.Max.x - bb.Min.x));
     }
 
-    if ((ImGui::IsItemFocused() || hovered) && !ImGui::GetIO().WantTextInput) {
+    const bool keyboardTarget = (ImGui::IsItemFocused() || hovered || g.ActiveId == id) &&
+                                ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (keyboardTarget && !ImGui::GetIO().WantTextInput) {
+        ImGui::SetKeyOwner(ImGuiKey_LeftArrow, id);
+        ImGui::SetKeyOwner(ImGuiKey_RightArrow, id);
+        ImGui::SetKeyOwner(ImGuiKey_UpArrow, id);
+        ImGui::SetKeyOwner(ImGuiKey_DownArrow, id);
+        ImGui::SetKeyOwner(ImGuiKey_Home, id);
+        ImGui::SetKeyOwner(ImGuiKey_End, id);
+
+        const float slowStep = SliderKeyboardSlowStep(v_min, v_max, formatText, integralValue);
+        const float fastStep = slowStep * 10.0f;
         auto nudgeValue = [&](float delta) {
             const float next = ImClamp(*value + delta, v_min, v_max);
-            *value = std::round(next * 100.0f) / 100.0f;
-            *value = ImClamp(*value, v_min, v_max);
-            valueChanged = true;
+            assignValue(RoundToSliderStep(next, slowStep));
         };
 
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
-            nudgeValue(0.01f);
-        } else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
-            nudgeValue(-0.01f);
-        } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-            nudgeValue(0.10f);
-        } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-            nudgeValue(-0.10f);
-        } else if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
-            *value = v_min;
-            valueChanged = true;
-        } else if (ImGui::IsKeyPressed(ImGuiKey_End)) {
-            *value = v_max;
-            valueChanged = true;
+        const ImGuiInputFlags repeat = ImGuiInputFlags_Repeat;
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, repeat, id)) {
+            nudgeValue(slowStep);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, repeat, id)) {
+            nudgeValue(-slowStep);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, repeat, id)) {
+            nudgeValue(fastStep);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, repeat, id)) {
+            nudgeValue(-fastStep);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Home, repeat, id)) {
+            assignValue(v_min);
+        } else if (ImGui::IsKeyPressed(ImGuiKey_End, repeat, id)) {
+            assignValue(v_max);
         }
     }
 
@@ -1726,6 +2039,9 @@ static bool UISlider(const char* label, float* value, float v_min, float v_max,
         IM_COL32(0x00, 0x00, 0x00, 0x80), displayText);
     window->DrawList->AddText(textPos, kColText, displayText);
 
+    if (valueChanged)
+        ImGui::MarkItemEdited(id);
+
     return valueChanged;
 }
 
@@ -1736,7 +2052,7 @@ static bool UISlider(const char* label, int* value, float v_min, float v_max,
     const int clampedValue = ImClamp(*value, minValue, maxValue);
     float sliderValue = static_cast<float>(clampedValue);
 
-    const bool sliderChanged = UISlider(label, &sliderValue, v_min, v_max, formatText);
+    const bool sliderChanged = UISlider(label, &sliderValue, v_min, v_max, formatText, true);
     const int roundedValue = ImClamp(static_cast<int>(std::lround(sliderValue)), minValue, maxValue);
     if (roundedValue != *value) {
         *value = roundedValue;
@@ -2728,6 +3044,10 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     auto hasControl = [&](OW::HeroSkillControlFlags control) {
         return OW::HasHeroSkillControl(definition, control);
     };
+    const bool isAsheFirePattern =
+        definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ASHE) &&
+        definition.skillId &&
+        std::strcmp(definition.skillId, "fire-pattern") == 0;
 
     ImGui::PushID(definition.skillId);
 
@@ -2755,14 +3075,16 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     }
 
     const bool hasSequenceControls = hasControl(OW::HeroSkillControls::SequenceSteps);
+    const bool showSequenceControls = hasSequenceControls && !isAsheFirePattern;
     const bool hasTrackingOverlay = hasControl(OW::HeroSkillControls::TrackingOverlay);
     const bool hasPitchControls = hasControl(OW::HeroSkillControls::PitchControl);
     const bool hasPhaseTiming = hasControl(OW::HeroSkillControls::PhaseTiming);
 
-    if (hasSequenceControls || hasPitchControls || hasPhaseTiming) {
+    if ((hasSequenceControls || hasPitchControls || hasPhaseTiming) &&
+        !hasControl(OW::HeroSkillControls::Key)) {
         SettingRow("Activation Key", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISelect("##skillActivationKey", &settings.activationKey,
+        changed |= UISelect("##skillActivationKey", &settings.key,
                             OW::Labels::kAimActivationKeys,
                             OW::Labels::AimActivationKeyCount());
         ImGui::PopItemWidth();
@@ -2827,6 +3149,18 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         ImGui::PopItemWidth();
     }
 
+    if (hasControl(OW::HeroSkillControls::AmmoGuard)) {
+        SettingRow("Ammo Guard", kAimbotRightLabelWidth);
+        changed |= UICheckbox("##skillAmmoGuard", &settings.ammoGuard);
+
+        if (settings.ammoGuard) {
+            SettingRow("Reserve Ammo", kAimbotRightLabelWidth);
+            PushControlWidth();
+            changed |= UISlider("##skillAmmoReserve", &settings.ammoGuardReserve, 0.0f, 12.0f, "1");
+            ImGui::PopItemWidth();
+        }
+    }
+
     if (hasControl(OW::HeroSkillControls::MinTargets)) {
         SettingRow("Min Targets", kAimbotRightLabelWidth);
         PushControlWidth();
@@ -2834,9 +3168,22 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         ImGui::PopItemWidth();
     }
 
-    if (hasSequenceControls) {
+    if (showSequenceControls) {
         ImGui::Spacing();
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Sequence Steps");
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Sequence Steps  (L=Left  R=Right)");
+
+        if (!settings.sequenceSteps.empty()) {
+            float speedScale = settings.sequenceSteps.front().speedScale;
+            SettingRow("Speed Scale", kAimbotRightLabelWidth);
+            PushControlWidth();
+            if (UISlider("##sequenceSpeedScale", &speedScale, 0.5f, 2.0f, "1.00x")) {
+                for (OW::Config::HeroSkillSequenceStep& step : settings.sequenceSteps)
+                    step.speedScale = speedScale;
+                changed = true;
+            }
+            ImGui::PopItemWidth();
+        }
+
         for (int index = 0; index < static_cast<int>(settings.sequenceSteps.size()); ++index) {
             OW::Config::HeroSkillSequenceStep& step = settings.sequenceSteps[static_cast<size_t>(index)];
             ImGui::PushID(index);
@@ -2845,22 +3192,22 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
             ImGui::Text("#%d", index + 1);
             ImGui::SameLine(0.0f, 8.0f);
 
-            int channel = static_cast<int>(step.channel);
-            ImGui::PushItemWidth(112.0f);
-            if (UISelect("##stepChannel", &channel, kHeroSkillSequenceChannels, IM_ARRAYSIZE(kHeroSkillSequenceChannels))) {
-                step.channel = static_cast<OW::Config::HeroSkillInputChannel>(channel);
-                changed = true;
-            }
-            ImGui::PopItemWidth();
+            bool left = (step.buttonMask & 1) != 0;
+            bool right = (step.buttonMask & 2) != 0;
+            if (UICheckbox("L", &left)) { step.buttonMask ^= 1; changed = true; }
+            ImGui::SameLine(0.0f, 4.0f);
+            if (UICheckbox("R", &right)) { step.buttonMask ^= 2; changed = true; }
             ImGui::SameLine(0.0f, 8.0f);
 
             ImGui::PushItemWidth(150.0f);
-            changed |= UISlider("##stepHold", &step.holdMs, 0.0f, 1000.0f, "35 ms");
+            changed |= UISlider("##stepDur", &step.durationMs, 0.0f, 1000.0f, "117 ms");
             ImGui::PopItemWidth();
             ImGui::SameLine(0.0f, 8.0f);
 
-            ImGui::PushItemWidth(150.0f);
-            changed |= UISlider("##stepRelease", &step.releaseMs, 0.0f, 1000.0f, "215 ms");
+            ImGui::TextUnformatted("+/-");
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::PushItemWidth(96.0f);
+            changed |= UISlider("##stepJitter", &step.jitterMs, 0.0f, 50.0f, "0 ms");
             ImGui::PopItemWidth();
             ImGui::SameLine(0.0f, 8.0f);
 
@@ -2876,7 +3223,15 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
 
         if (static_cast<int>(settings.sequenceSteps.size()) < OW::Config::kMaxHeroSkillSequenceSteps) {
             if (ImGui::Button("Add Step")) {
-                settings.sequenceSteps.push_back({ OW::Config::HeroSkillInputChannel::Primary, 35, 215 });
+                settings.sequenceSteps.push_back({ 1, 117, 1.0f, 0 });
+                changed = true;
+            }
+        }
+
+        if (!definition.defaultSettings.sequenceSteps.empty()) {
+            ImGui::SameLine(0.0f, 8.0f);
+            if (ImGui::Button("Reset Steps")) {
+                settings.sequenceSteps = definition.defaultSettings.sequenceSteps;
                 changed = true;
             }
         }
@@ -2913,19 +3268,27 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         ImGui::PopItemWidth();
     }
 
-    auto drawSpeedPair = [&](const char* idBase, float& baseSpeed, float& randomRange) {
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float available = ImGui::GetContentRegionAvail().x - kControlRightPadding;
-        const float itemWidth = MaxFloat(1.0f, (available - spacing) * 0.5f);
-        std::string baseId = std::string("##") + idBase + "Base";
-        std::string rangeId = std::string("##") + idBase + "Range";
-
-        ImGui::PushItemWidth(itemWidth);
-        changed |= UISlider(baseId.c_str(), &baseSpeed, 0.0f, 720.0f, "Base 180 deg/s");
+    auto drawFloatSlider = [&](const char* rowLabel,
+                               const char* id,
+                               float& value,
+                               float minValue,
+                               float maxValue,
+                               const char* formatText) {
+        SettingRow(rowLabel, kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider(id, &value, minValue, maxValue, formatText);
         ImGui::PopItemWidth();
-        ImGui::SameLine(0.0f, spacing);
-        ImGui::PushItemWidth(itemWidth);
-        changed |= UISlider(rangeId.c_str(), &randomRange, 0.0f, 720.0f, "+/- 0 deg/s");
+    };
+
+    auto drawIntSlider = [&](const char* rowLabel,
+                             const char* id,
+                             int& value,
+                             float minValue,
+                             float maxValue,
+                             const char* formatText) {
+        SettingRow(rowLabel, kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider(id, &value, minValue, maxValue, formatText);
         ImGui::PopItemWidth();
     };
 
@@ -2933,40 +3296,27 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         ImGui::Spacing();
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Pitch Down");
 
-        SettingRow("Speed", kAimbotRightLabelWidth);
-        drawSpeedPair("pitchDown", settings.pitchDownSpeed, settings.pitchDownRandomRange);
+        drawIntSlider("Duration", "##pitchDownDuration", settings.pitchDownDurationMs, 20.0f, 100.0f, "45 ms");
+        drawFloatSlider("Duration Jitter", "##pitchDownDurationJitter", settings.pitchDownDurationJitter, 0.0f, 50.0f, "+/- 10 ms");
+        drawFloatSlider("Target Angle", "##pitchDownTarget", settings.pitchDownTargetAngle, 0.0f, 180.0f, "90 deg");
+    }
 
-        SettingRow("Target Angle", kAimbotRightLabelWidth);
-        PushControlWidth();
-        changed |= UISlider("##pitchDownTarget", &settings.pitchDownTargetAngle, -89.0f, 89.0f, "85 deg");
-        ImGui::PopItemWidth();
-
+    if (hasPitchControls || hasPhaseTiming) {
         ImGui::Spacing();
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Pitch Up");
 
-        SettingRow("Speed", kAimbotRightLabelWidth);
-        drawSpeedPair("pitchUp", settings.pitchUpSpeed, settings.pitchUpRandomRange);
+        if (hasPitchControls) {
+            drawFloatSlider("Return Jitter", "##pitchUpOffsetJitter", settings.pitchUpOffsetJitter, 0.0f, 20.0f, "+/- 1.5 deg");
+        }
+
+        if (hasPhaseTiming) {
+            drawIntSlider("Fire Delay", "##skillFireDelay", settings.fireDelayMs, 0.0f, 100.0f, "50 ms");
+            drawIntSlider("Jump Key (VK)", "##skillJumpKeyCode", settings.jumpKeyCode, 0.0f, 255.0f, "32");
+        }
     }
 
-    if (hasPhaseTiming) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Phase Timing");
-
-        SettingRow("Fire Delay", kAimbotRightLabelWidth);
-        PushControlWidth();
-        changed |= UISlider("##skillFireDelay", &settings.fireDelayMs, 0.0f, 2000.0f, "800 ms");
-        ImGui::PopItemWidth();
-
-        SettingRow("Pitch Up Offset", kAimbotRightLabelWidth);
-        PushControlWidth();
-        changed |= UISlider("##pitchUpOffset", &settings.pitchUpOffsetAngle, -180.0f, 180.0f, "90 deg");
-        ImGui::PopItemWidth();
-
-        SettingRow("Keyboard VK", kAimbotRightLabelWidth);
-        PushControlWidth();
-        changed |= UISlider("##skillJumpKeyCode", &settings.jumpKeyCode, 0.0f, 255.0f, "32");
-        ImGui::PopItemWidth();
-    }
+    if (isAsheFirePattern)
+        settings.sequenceSteps = definition.defaultSettings.sequenceSteps;
 
     if (changed)
         OW::Config::SetHeroSkillSettings(heroId, definition.skillId ? definition.skillId : "", settings);
@@ -3250,6 +3600,22 @@ void UI::MiscPage() {
 
         DrawAimHotkeyProbe();
         ImGui::Spacing();
+
+        SettingRow("Fire Recorder");
+        if (IsFirePatternRecorderRunning()) {
+            if (ImGui::Button("Stop", ImVec2(72.0f, kControlHeight)))
+                StopFirePatternRecorder();
+        } else {
+            if (ImGui::Button("Start", ImVec2(72.0f, kControlHeight)))
+                StartFirePatternRecorder();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Records left/right mouse button down/up edges from the current input source for up to 8 seconds.\nPerform one full fire-pattern cycle plus the first press of the next cycle, then press Stop.\nResults are written to unleashed_aim_diag.log and the log overlay.");
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "%s", GetFirePatternRecorderStatus().c_str());
+
+        ImGui::Spacing();
         ImGui::Checkbox("Dry Run (Log Only)", &OW::Config::aimDryRun);
         if (OW::Config::aimDryRun) {
             ImGui::SameLine();
@@ -3265,7 +3631,10 @@ void UI::MiscPage() {
         if (OW::Config::aimVerboseLog) {
             ImGui::TextWrapped("Warning: verbose logging may impact performance");
         }
-        ImGui::SliderInt("Log Interval (ms)", &OW::Config::aimDryRunLogIntervalMs, 50, 1000);
+        SettingRow("Log Interval (ms)");
+        PushControlWidth();
+        UISlider("##LogInterval", &OW::Config::aimDryRunLogIntervalMs, 50.0f, 1000.0f, "50 ms");
+        ImGui::PopItemWidth();
     }
     CloseGroupBox();
 
@@ -3344,9 +3713,8 @@ void UI::MiscPage() {
 
         SettingRow("Aim Sensitivity");
         PushControlWidth();
-        ImGui::SliderFloat("##AimSensitivity", &OW::Config::kmboxAimSensitivity,
-                           0.1f, 5.0f, "%.2f");
-        kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+        kmboxSaveRequested |= UISlider("##AimSensitivity", &OW::Config::kmboxAimSensitivity,
+                                       0.1f, 5.0f, "1.00");
         ImGui::PopItemWidth();
 
         SettingRow("Game Sens (DMA)");
@@ -3394,9 +3762,8 @@ void UI::MiscPage() {
 
         SettingRow("Input Delay (ms)");
         PushControlWidth();
-        ImGui::SliderInt("##InputDelay", &OW::Config::kmboxInputDelayMs,
-                         0, 20, "%d ms");
-        kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+        kmboxSaveRequested |= UISlider("##InputDelay", &OW::Config::kmboxInputDelayMs,
+                                       0.0f, 20.0f, "0 ms");
         ImGui::PopItemWidth();
 
         SettingRow("Debug Logging");

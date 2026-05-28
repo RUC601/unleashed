@@ -106,10 +106,12 @@ private:
     void StopWorkers();
     void QueueWorkerLoop();
     void HeartbeatLoop();
-    int SetMouseButton(unsigned int Mask, bool Down, unsigned int Cmd);
+    int SetMouseButton(unsigned int Mask, bool Down, unsigned int Cmd, bool Force = false);
 public:
     KmBoxNetManager();
     ~KmBoxNetManager();
+    int ForceReleaseMouseButtons();
+    int SendKeyboardKey(unsigned char hidCode, bool down);
     KmBoxConnectionState GetConnectionState() const;
     bool IsConnected() const;
     // Initialize device connection

@@ -30,6 +30,7 @@ namespace KmBoxRuntimeConfig
     inline constexpr int CommandTimeoutMs = 100;
     inline constexpr int CommandQueueMaxSize = 256;
     inline constexpr int CommandFlushIntervalMs = 4;
+    inline constexpr int MouseButtonFlushIntervalMs = 1;
     inline constexpr int HeartbeatIntervalMs = 1000;
     inline constexpr int ReconnectBackoffMs = 750;
 }
@@ -48,6 +49,7 @@ enum class KmBoxCommandType {
     MouseMove,
     MouseAutoMove,
     MouseButton,
+    Keyboard,
     Monitor,
     Reboot,
     SetConfig,
@@ -71,6 +73,7 @@ inline const char* ToString(KmBoxCommandType type) {
     case KmBoxCommandType::MouseMove:     return "mouse_move";
     case KmBoxCommandType::MouseAutoMove: return "mouse_auto_move";
     case KmBoxCommandType::MouseButton:   return "mouse_button";
+    case KmBoxCommandType::Keyboard:      return "keyboard";
     case KmBoxCommandType::Monitor:       return "monitor";
     case KmBoxCommandType::Reboot:        return "reboot";
     case KmBoxCommandType::SetConfig:     return "set_config";

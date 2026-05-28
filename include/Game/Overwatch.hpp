@@ -18,6 +18,7 @@
 #include <DirectXMath.h>
 
 #include "Game/AbilityIcons.hpp"
+#include "Game/HeroSkills.hpp"
 #include "Game/Target.hpp"
 #include "Renderer/IconManager.hpp"
 #include "Renderer/Renderer.hpp"
@@ -3798,7 +3799,24 @@ namespace AimbotDetail {
         return IsConfiguredAimKeyPressed(keySetting);
     }
 
+    inline bool InputSequenceBlocksAim(const char* caller) {
+        if (!OW::AnyInputSequenceActive())
+            return false;
+
+        static DWORD lastLogTick = 0;
+        const DWORD now = GetTickCount();
+        if (lastLogTick == 0 || now - lastLogTick >= 500) {
+            Diagnostics::Aim("aim_trigger blocked reason=input_sequence_active caller=%s",
+                caller ? caller : "unknown");
+            lastLogTick = now;
+        }
+        return true;
+    }
+
     inline void RunTriggerbot(bool secondary, float origin_sens) {
+        if (InputSequenceBlocksAim(secondary ? "triggerbot2" : "triggerbot"))
+            return;
+
         const int mode = secondary ? OW::Config::triggerbotMode2 : OW::Config::triggerbotMode;
         const int keySetting = secondary ? OW::Config::triggerbotKey2 : OW::Config::triggerbotKey;
         const float shotInterval = secondary ? OW::Config::triggerbotShotInterval2 : OW::Config::triggerbotShotInterval;
@@ -3853,6 +3871,9 @@ namespace AimbotDetail {
         if (!OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox))
             return;
 
+        if (InputSequenceBlocksAim(secondary ? "triggerbot2_fire" : "triggerbot_fire"))
+            return;
+
         // 5. Charge awareness
         if (chargeAware) {
             c_entity local = LocalEntity();
@@ -3884,6 +3905,8 @@ namespace AimbotDetail {
     }
 
     inline void RunTracking(float origin_sens) {
+        if (InputSequenceBlocksAim("tracking"))
+            return;
         if (!IsAimKeyPressed() || OW::Config::reloading)
             return;
         g_trackingAttempts++;
@@ -3923,7 +3946,7 @@ namespace AimbotDetail {
             return; // Don't actually move cursor
         }
 
-        while (IsAimKeyPressed() && !OW::Config::reloading) {
+        while (IsAimKeyPressed() && !OW::Config::reloading && !OW::AnyInputSequenceActive()) {
             const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
             c_entity target{};
             if (IsZeroVector(vec)) {
@@ -3971,6 +3994,8 @@ namespace AimbotDetail {
     }
 
     inline void RunFlick(RuntimeState& state, float origin_sens) {
+        if (InputSequenceBlocksAim("flick"))
+            return;
         if (!IsAimKeyPressed() || OW::Config::shooted || OW::Config::reloading)
             return;
         g_flickAttempts++;
@@ -4014,7 +4039,8 @@ namespace AimbotDetail {
 
         while (IsAimKeyPressed() &&
                !OW::Config::shooted &&
-               !OW::Config::reloading) {
+               !OW::Config::reloading &&
+               !OW::AnyInputSequenceActive()) {
             if (LocalEntity().HeroID == OW::eHero::HERO_WIDOWMAKER && !IsInputVkDown(VK_RBUTTON)) {
                 Diagnostics::Aim("flick no_move reason=widow_scope_not_held");
                 Sleep(1);
@@ -4294,8 +4320,10 @@ namespace AimbotDetail {
 
     inline void RunSecondAim() {
         if (!OW::Config::secondaim) return;
+        if (InputSequenceBlocksAim("secondaim"))
+            return;
 
-        while (IsSecondAimKeyPressed() && !OW::Config::shooted2) {
+        while (IsSecondAimKeyPressed() && !OW::Config::shooted2 && !OW::AnyInputSequenceActive()) {
             const Vector3 vec = OW::GetVector3aim2(OW::Config::Prediction2);
             c_entity target{};
             if (!IsZeroVector(vec) && CurrentTarget(target) &&
@@ -4336,6 +4364,9 @@ namespace AimbotDetail {
     }
 
     inline void RunAimbotTick(RuntimeState& state, float& origin_sens) {
+        if (InputSequenceBlocksAim("aimbot_tick"))
+            return;
+
         if (OW::Config::AntiAFK) {
             OW::SetKey(0x57);
             Sleep(1000);
@@ -4377,6 +4408,9 @@ namespace AimbotDetail {
     }
 
     inline void RunAimbotTickWithHeroPreset(RuntimeState& state, float& origin_sens) {
+        if (InputSequenceBlocksAim("aimbot_preset"))
+            return;
+
         ScopedHeroPresetOverride heroPresetOverride;
         RunAimbotTick(state, origin_sens);
     }

@@ -407,6 +407,19 @@ namespace OW {
         }
     }
 
+    inline void ForceReleaseMouseButtons() {
+        if (!Config::kmboxEnabled)
+            return;
+
+        if (Config::kmboxDeviceType == 0) {
+            kmbox::KmBoxMgr.ForceReleaseMouseButtons();
+        } else {
+            kmbox::kmBoxBMgr.km_left(false);
+            kmbox::kmBoxBMgr.km_right(false);
+            kmbox::kmBoxBMgr.km_middle(false);
+        }
+    }
+
     inline bool SendMouseButtonMask(uint32_t keyMask, bool down) {
         if (!Config::kmboxEnabled || keyMask == 0 || (keyMask & ~0x7u) != 0)
             return false;
@@ -460,7 +473,6 @@ namespace OW {
 
     inline Vector3 SmoothLinear(Vector3 LocalAngle, Vector3 TargetAngle, float speed) {
         const float factor = std::isfinite(speed) ? std::clamp(speed, 0.0f, 1.0f) : 0.0f;
-        float dist = LocalAngle.DistTo(TargetAngle);
         static float lastx = 0;
         static float lasty = 0;
         static float lastz = 0;
@@ -475,7 +487,6 @@ namespace OW {
         Result.Z = LocalAngle.Z + deltaz;
 
         if (Config::trackcompensate) {
-            float radius = 1.f / dist;
             Vector3 realresult{
                 LocalAngle.X + TargetAngle.X - lastx,
                 LocalAngle.Y + TargetAngle.Y - lasty,

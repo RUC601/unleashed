@@ -20,6 +20,19 @@ namespace
             type == KmBoxCommandType::MouseAutoMove ||
             type == KmBoxCommandType::MouseButton;
     }
+
+    bool IsSerialMouseMoveCommand(KmBoxCommandType type)
+    {
+        return type == KmBoxCommandType::MouseMove ||
+            type == KmBoxCommandType::MouseAutoMove;
+    }
+
+    int SerialFlushIntervalForCommand(KmBoxCommandType type)
+    {
+        return type == KmBoxCommandType::MouseButton
+            ? KmBoxRuntimeConfig::MouseButtonFlushIntervalMs
+            : KmBoxRuntimeConfig::CommandFlushIntervalMs;
+    }
 }
 
 // Find a COM port by device description substring
@@ -232,7 +245,20 @@ void KmBoxBManager::EnqueueCommand(const std::string& command, KmBoxCommandType 
         queued.command = command;
         queued.type = type;
         queued.enqueuedAt = std::chrono::steady_clock::now();
-        commandQueue.push_back(std::move(queued));
+
+        if (type == KmBoxCommandType::MouseButton) {
+            auto insertAt = commandQueue.end();
+            while (insertAt != commandQueue.begin()) {
+                auto previous = insertAt;
+                --previous;
+                if (!IsSerialMouseMoveCommand(previous->type))
+                    break;
+                insertAt = previous;
+            }
+            commandQueue.insert(insertAt, std::move(queued));
+        } else {
+            commandQueue.push_back(std::move(queued));
+        }
     }
     queueCv.notify_one();
 }
@@ -284,7 +310,7 @@ void KmBoxBManager::QueueWorkerLoop()
 
         const auto now = std::chrono::steady_clock::now();
         const auto elapsed = now - lastFlush;
-        const auto flushInterval = std::chrono::milliseconds(KmBoxRuntimeConfig::CommandFlushIntervalMs);
+        const auto flushInterval = std::chrono::milliseconds(SerialFlushIntervalForCommand(command.type));
         if (elapsed < flushInterval)
             std::this_thread::sleep_for(flushInterval - elapsed);
 

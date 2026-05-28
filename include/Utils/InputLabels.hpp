@@ -9,13 +9,18 @@ namespace OW::Labels {
 
     inline constexpr const char* kAimActivationKeys[] = {
         "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt",
-        "V Key", "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock", "Space"
+        "V Key", "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock", "Space",
+        "None"
     };
 
     inline constexpr int kAimActivationKeyVks[] = {
         VK_RBUTTON, VK_LBUTTON, VK_XBUTTON1, VK_XBUTTON2, VK_LSHIFT, VK_LMENU,
-        0x56, VK_LCONTROL, VK_TAB, 0x45, 0x51, 0x46, VK_CAPITAL, VK_SPACE
+        0x56, VK_LCONTROL, VK_TAB, 0x45, 0x51, 0x46, VK_CAPITAL, VK_SPACE,
+        0
     };
+
+    static_assert(std::size(kAimActivationKeys) == std::size(kAimActivationKeyVks),
+                  "Activation key labels and VK bindings must stay aligned.");
 
     inline constexpr const char* kAimModes[] = {
         "Tracking", "Flick"

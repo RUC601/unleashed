@@ -145,6 +145,19 @@ namespace
             type == KmBoxCommandType::MouseAutoMove ||
             type == KmBoxCommandType::MouseButton;
     }
+
+    bool IsMouseMoveCommand(KmBoxCommandType type)
+    {
+        return type == KmBoxCommandType::MouseMove ||
+            type == KmBoxCommandType::MouseAutoMove;
+    }
+
+    int FlushIntervalForCommand(KmBoxCommandType type)
+    {
+        return type == KmBoxCommandType::MouseButton
+            ? KmBoxRuntimeConfig::MouseButtonFlushIntervalMs
+            : KmBoxRuntimeConfig::CommandFlushIntervalMs;
+    }
 }
 
 KmBoxNetManager::KmBoxNetManager()
@@ -549,7 +562,23 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
             commandQueue.pop_front();
         }
 
-        commandQueue.push_back(Command);
+        if (Command.type == KmBoxCommandType::MouseButton) {
+            auto insertAt = commandQueue.end();
+            while (insertAt != commandQueue.begin()) {
+                auto previous = insertAt;
+                --previous;
+                if (!IsMouseMoveCommand(previous->type))
+                    break;
+                insertAt = previous;
+            }
+
+            commandQueue.insert(insertAt, Command);
+            Diagnostics::Aim("udp.enqueue prioritized_button queue_size_after=%zu",
+                commandQueue.size());
+        } else {
+            commandQueue.push_back(Command);
+        }
+
         if (IsOutputCommand(Command.type)) {
             Diagnostics::Aim("udp.enqueue pushed type=%s queue_size_after=%zu",
                 ToString(Command.type),
@@ -591,7 +620,7 @@ void KmBoxNetManager::QueueWorkerLoop()
             }
         }
 
-        const auto flushInterval = std::chrono::milliseconds(KmBoxRuntimeConfig::CommandFlushIntervalMs);
+        const auto flushInterval = std::chrono::milliseconds(FlushIntervalForCommand(command.type));
         const auto elapsed = std::chrono::steady_clock::now() - lastFlush;
         if (elapsed < flushInterval)
             std::this_thread::sleep_for(flushInterval - elapsed);
@@ -816,10 +845,10 @@ int KmBoxMouse::Move_Auto(int x, int y, int Runtime)
     return kmbox::KmBoxMgr.EnqueueCommand(command);
 }
 
-int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int Cmd)
+int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int Cmd, bool Force)
 {
-    client_data packet = BuildPacket(Cmd, NextRandom());
     soft_mouse_t payload{};
+    int previousStateMask = 0;
     {
         std::lock_guard<std::mutex> lock(mouseStateMutex);
         const int current = Mouse.MouseData.button;
@@ -827,22 +856,89 @@ int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int C
             ? (current | static_cast<int>(Mask))
             : (current & ~static_cast<int>(Mask));
 
-        if (next == current) {
+        if (!Force && next == current) {
             Diagnostics::Trace("[KMBOX-NET] coalesced redundant mouse button state cmd=0x%08X down=%d",
                 Cmd, Down ? 1 : 0);
             return success;
         }
 
+        previousStateMask = current;
         Mouse.MouseData.button = next;
         payload = Mouse.MouseData;
     }
 
-    memcpy_s(&packet.cmd_mouse, sizeof(soft_mouse_t), &payload, sizeof(soft_mouse_t));
+    const int stateMask = payload.button;
+    const bool rightStateInvolved =
+        Cmd == cmd_mouse_right ||
+        ((previousStateMask | stateMask) & 0x02) != 0;
+    const unsigned int packetCmd = rightStateInvolved ? cmd_mouse_right : Cmd;
+    client_data packet = BuildPacket(packetCmd, NextRandom());
+    int commandLength = 0;
+
+    if (rightStateInvolved) {
+        payload.button = stateMask;
+        payload.x = 0;
+        payload.y = 0;
+        payload.wheel = 0;
+        Diagnostics::Aim("udp.mouse.button build cmd=0x%08X down=%d prevMask=0x%02X stateMask=0x%02X payloadButton=%d fullMask=1 force=%d",
+            packetCmd,
+            Down ? 1 : 0,
+            previousStateMask,
+            stateMask,
+            payload.button,
+            Force ? 1 : 0);
+
+        memcpy_s(&packet.cmd_mouse, sizeof(soft_mouse_t), &payload, sizeof(soft_mouse_t));
+        commandLength = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
+    } else {
+        const int buttonState = Down ? 1 : 0;
+        payload.button = buttonState;
+        Diagnostics::Aim("udp.mouse.button build cmd=0x%08X down=%d prevMask=0x%02X stateMask=0x%02X payloadButton=%d fullMask=0 force=%d",
+            packetCmd,
+            Down ? 1 : 0,
+            previousStateMask,
+            stateMask,
+            payload.button,
+            Force ? 1 : 0);
+
+        memcpy_s(&packet.cmd_mouse.button, sizeof(packet.cmd_mouse.button), &buttonState, sizeof(buttonState));
+        commandLength = sizeof(cmd_head_t) + sizeof(buttonState);
+    }
 
     KmBoxQueuedNetCommand command{};
     command.data = packet;
-    command.length = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
+    command.length = commandLength;
     command.type = KmBoxCommandType::MouseButton;
+    command.enqueuedAt = std::chrono::steady_clock::now();
+    return EnqueueCommand(command);
+}
+
+int KmBoxNetManager::ForceReleaseMouseButtons()
+{
+    int status = SetMouseButton(0x01, false, cmd_mouse_left, true);
+    const int rightStatus = SetMouseButton(0x02, false, cmd_mouse_right, true);
+    const int middleStatus = SetMouseButton(0x04, false, cmd_mouse_middle, true);
+    if (status == success && rightStatus != success)
+        status = rightStatus;
+    if (status == success && middleStatus != success)
+        status = middleStatus;
+    return status;
+}
+
+int KmBoxNetManager::SendKeyboardKey(unsigned char hidCode, bool down)
+{
+    client_data packet = BuildPacket(cmd_keyboard_all, NextRandom());
+    soft_keyboard_t kb{};
+    if (down) {
+        kb.button[0] = static_cast<char>(hidCode);
+    }
+
+    memcpy_s(&packet.cmd_keyboard, sizeof(soft_keyboard_t), &kb, sizeof(soft_keyboard_t));
+
+    KmBoxQueuedNetCommand command{};
+    command.data = packet;
+    command.length = sizeof(cmd_head_t) + sizeof(soft_keyboard_t);
+    command.type = KmBoxCommandType::Keyboard;
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
 }

@@ -311,6 +311,16 @@ target_compile_options(AngleMathTest PRIVATE /W3)
 target_compile_definitions(AngleMathTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 # ============================================================================
+# HeroSkillSequenceDefaultsTest - guard hand-measured sequence defaults
+# ============================================================================
+
+add_executable(HeroSkillSequenceDefaultsTest src/Game/HeroSkillSequenceDefaultsTest.cpp)
+target_include_directories(HeroSkillSequenceDefaultsTest PRIVATE include vendor/imgui)
+target_compile_features(HeroSkillSequenceDefaultsTest PRIVATE cxx_std_20)
+target_compile_options(HeroSkillSequenceDefaultsTest PRIVATE /W3)
+target_compile_definitions(HeroSkillSequenceDefaultsTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+# ============================================================================
 # DecryptDump2 — find DecryptComponent + test Key2 candidates (v2, MSVC-safe)
 # ============================================================================
 

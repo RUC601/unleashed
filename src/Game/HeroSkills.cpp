@@ -4,12 +4,17 @@
 
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
+#include "Kmbox/KmBoxNetManager.h"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <iterator>
+#include <limits>
 #include <mutex>
 #include <random>
 #include <string>
@@ -28,46 +33,81 @@ namespace {
     constexpr auto kActionPulseDebounce = std::chrono::milliseconds(500);
     constexpr float kPitchDoneEpsilonRad = 0.35f * kDegToRad;
     constexpr float kYawDoneEpsilonRad = 0.35f * kDegToRad;
-
-    enum class SequencePhase {
-        Hold,
-        Release
-    };
-
+    constexpr float kViewpointPitchLimitRad = 89.85f * kDegToRad;
+    constexpr float kViewpointFloorReadyPitchRad = 88.5f * kDegToRad;
+    constexpr float kViewpointReturnDoneEpsilonRad = 2.0f * kDegToRad;
+    constexpr float kViewpointYawReturnEpsilonRad = 2.0f * kDegToRad;
+    constexpr auto kViewpointFloorSettle = std::chrono::milliseconds(18);
+    constexpr auto kViewpointReturnTimeout = std::chrono::milliseconds(450);
+    constexpr auto kViewpointYawRestoreBudget = std::chrono::milliseconds(140);
+    constexpr auto kViewpointDebugInterval = std::chrono::milliseconds(100);
+    constexpr uint16_t kStateScriptAmmo = 0x35;
+    constexpr uint16_t kReloadStateSkill = 0x4BF;
+    constexpr int kZaryaAmmoClipSize = 100;
+    constexpr double kZaryaPrimaryAmmoPerSecond = 20.0;
+    constexpr double kZaryaSecondaryAmmoCost = 25.0;
+    constexpr auto kZaryaReloadSuccessMinDuration = std::chrono::milliseconds(900);
+    constexpr auto kZaryaBudgetLogInterval = std::chrono::milliseconds(250);
     struct SequenceRuntime {
         bool active = false;
         size_t stepIndex = 0;
-        SequencePhase phase = SequencePhase::Hold;
-        Clock::time_point phaseStarted{};
-        Config::HeroSkillInputChannel activeChannel = Config::HeroSkillInputChannel::Primary;
-        bool hasActiveChannel = false;
+        int currentMask = 0;
+        Clock::time_point stepStarted{};
+        int effectiveDurationMs = 0;
+        std::jthread worker{};
+        Clock::time_point hitMonitorStarted{};
+        Clock::time_point hitLastChange{};
+        uint64_t hitTargetAddress = 0;
+        float hitLastHealth = std::numeric_limits<float>::quiet_NaN();
+        int hitDamageEvents = 0;
+        bool hitHasSample = false;
     };
 
-    enum class ViewpointPhase {
-        Idle,
-        PitchDown,
-        SecondaryDown,
-        SecondaryUp,
-        Delay,
-        KeyboardDown,
-        KeyboardUp,
-        PitchUp,
-        RestoreYaw,
-        Completed,
-        Cancelled
+    struct SequenceSelfTestRuntime {
+        bool enabled = false;
+        int key = 0;
+        uint64_t heroId = 0;
+        std::string skillId{};
+        bool forceSkill = false;
+        Clock::time_point pressAt{};
+        Clock::time_point releaseAt{};
+        Clock::time_point reloadPressAt{};
+        Clock::time_point reloadReleaseAt{};
+        bool reloadEnabled = false;
+        int reloadKeyVk = 0x52;
+        bool startLogged = false;
+        bool stopLogged = false;
+        bool reloadPressLogged = false;
+        bool reloadReleaseLogged = false;
     };
+
+    namespace ViewpointPhase {
+        constexpr int Idle = 0;
+        constexpr int PitchDown = 1;
+        constexpr int PitchUp = 2;
+        constexpr int Completed = 3;
+        constexpr int Cancelled = 4;
+    }
 
     struct ViewpointRuntime {
-        ViewpointPhase phase = ViewpointPhase::Idle;
-        bool previousKeyDown = false;
+        int phase = 0;        // 0=idle, 1=pitchDown, 2=pitchUp, 3=completed, 4=cancelled
+        bool prevKeyDown = false;
         Clock::time_point phaseStarted{};
         Clock::time_point lastTick{};
+        Clock::time_point lastDebugLog{};
+        Clock::time_point floorReadyStarted{};
+        Clock::time_point secondaryPressedAt{};
+        Clock::time_point fireDelayStarted{};
+        Clock::time_point jumpPressedAt{};
         Vector3 initialAngles{};
         float pitchDownSpeedDeg = 0.0f;
+        float pitchUpTargetAngle = 0.0f;
         float pitchUpSpeedDeg = 0.0f;
-        bool secondaryHeld = false;
-        bool keyboardHeld = false;
-        int keyboardVk = 0;
+        int jumpVk = 0;
+        bool fired = false;
+        bool jumped = false;
+        bool secondaryDown = false;
+        bool jumpDown = false;
     };
 
     struct CandidateEntity {
@@ -86,17 +126,192 @@ namespace {
         float gravity = 0.0f;
     };
 
+    struct AmmoGuardSample {
+        int ammo = -1;
+        int stateAmmo = -1;
+        int reserveAmmoPath = -1;
+        int reserveState = -1;
+        int rawStateAmmo = -1;
+        int rawReserveState = -1;
+        int budgetAmmo = -1;
+        int source = 0;
+        uint64_t skillBase = 0;
+        uint64_t heroId = 0;
+    };
+
+    struct AmmoGuardLogState {
+        int ammo = -2;
+        int stateAmmo = -2;
+        int reserveAmmoPath = -2;
+        int reserveState = -2;
+        int rawStateAmmo = -2;
+        int rawReserveState = -2;
+        int budgetAmmo = -2;
+        int source = -1;
+        Clock::time_point lastLog{};
+    };
+
+    struct ZaryaAmmoProbeRuntime {
+        bool lastReloading = false;
+        Clock::time_point reloadStarted{};
+        bool reloadQualified = false;
+        bool budgetArmed = false;
+        double ammo = -1.0;
+        bool leftWasDown = false;
+        bool rightWasDown = false;
+        bool autoRightSent = false;
+        Clock::time_point lastObserved{};
+        Clock::time_point lastBudgetLog{};
+        int lastLoggedAmmo = -1000;
+    };
+
+    struct SequenceAmmoBudgetState {
+        int remaining = -1;
+        int reserve = 1;
+        bool blocked = false;
+    };
+
     std::unordered_map<std::string, SequenceRuntime> g_sequences;
     std::unordered_map<std::string, ViewpointRuntime> g_viewpoints;
     std::unordered_map<std::string, Clock::time_point> g_lastActionExecutions;
+    std::unordered_map<std::string, Clock::time_point> g_lastSkillGuardLogs;
+    std::unordered_map<std::string, AmmoGuardLogState> g_lastAmmoGuardSamples;
+    std::unordered_map<std::string, ZaryaAmmoProbeRuntime> g_zaryaAmmoProbes;
+    std::unordered_map<std::string, SequenceAmmoBudgetState> g_sequenceAmmoBudgets;
+    std::mutex g_sequenceAmmoBudgetMutex;
     std::unordered_map<std::string, bool> g_timedActionsActive;
     std::mutex g_timedActionsMutex;
     std::mt19937 g_random{ std::random_device{}() };
+    std::mutex g_randomMutex;
+    std::atomic<bool> g_anyInputSequenceActive{ false };
     uint64_t g_lastHeroId = 0;
+
+    void RefreshAnyInputSequenceActive();
+    bool ConsumeSequenceAmmoBudgetForStep(const std::string& runtimeKey, int previousMask, int nextMask);
+
+    int ReadEnvInt(const char* name, int fallback, int minValue, int maxValue)
+    {
+        char buffer[64] = {};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return fallback;
+
+        char* end = nullptr;
+        const long value = std::strtol(buffer, &end, 10);
+        if (!end || *end != '\0')
+            return fallback;
+
+        return std::clamp(static_cast<int>(value), minValue, maxValue);
+    }
+
+    uint64_t ReadEnvUInt64(const char* name, uint64_t fallback)
+    {
+        char buffer[64] = {};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return fallback;
+
+        char* end = nullptr;
+        const unsigned long long value = std::strtoull(buffer, &end, 0);
+        if (!end || *end != '\0')
+            return fallback;
+
+        return static_cast<uint64_t>(value);
+    }
+
+    std::string ReadEnvString(const char* name)
+    {
+        char buffer[128] = {};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return {};
+
+        return std::string(buffer, static_cast<size_t>(length));
+    }
+
+    bool SendKeyboardState(int vk, bool down);
+
+    SequenceSelfTestRuntime& SequenceSelfTest()
+    {
+        static SequenceSelfTestRuntime runtime = [] {
+            SequenceSelfTestRuntime value{};
+            char enabled[16] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UNLEASHED_SEQUENCE_TEST",
+                enabled,
+                static_cast<DWORD>(sizeof(enabled)));
+            if (length == 0 || length >= sizeof(enabled) || enabled[0] == '0')
+                return value;
+
+            const int delayMs = ReadEnvInt("UNLEASHED_SEQUENCE_TEST_DELAY_MS", 8000, 0, 60000);
+            const int durationMs = ReadEnvInt("UNLEASHED_SEQUENCE_TEST_DURATION_MS", 10000, 100, 60000);
+            const int reloadDelayMs = ReadEnvInt("UNLEASHED_SEQUENCE_TEST_RELOAD_DELAY_MS", 250, 0, 5000);
+            const int reloadTapMs = ReadEnvInt("UNLEASHED_SEQUENCE_TEST_RELOAD_TAP_MS", 80, 10, 1000);
+            value.enabled = true;
+            value.key = ReadEnvInt("UNLEASHED_SEQUENCE_TEST_KEY", HeroSkillHotkey::Mouse4, 0, 14);
+            value.heroId = ReadEnvUInt64("UNLEASHED_SEQUENCE_TEST_HERO", 0);
+            value.skillId = ReadEnvString("UNLEASHED_SEQUENCE_TEST_SKILL");
+            value.forceSkill = value.heroId != 0 && !value.skillId.empty();
+            value.reloadEnabled = ReadEnvInt("UNLEASHED_SEQUENCE_TEST_RELOAD", 1, 0, 1) != 0;
+            value.reloadKeyVk = ReadEnvInt("UNLEASHED_SEQUENCE_TEST_RELOAD_VK", 0x52, 1, 255);
+            const Clock::time_point now = Clock::now();
+            if (value.reloadEnabled) {
+                value.reloadPressAt = now + std::chrono::milliseconds(reloadDelayMs);
+                value.reloadReleaseAt = value.reloadPressAt + std::chrono::milliseconds(reloadTapMs);
+                value.pressAt = value.reloadReleaseAt + std::chrono::milliseconds(delayMs);
+            } else {
+                value.pressAt = now + std::chrono::milliseconds(delayMs);
+                value.reloadPressAt = {};
+                value.reloadReleaseAt = {};
+            }
+            value.releaseAt = value.pressAt + std::chrono::milliseconds(durationMs);
+            Diagnostics::Aim("sequence.self_test armed key=%d delayMs=%d durationMs=%d reload=%d reloadVk=0x%X reloadDelayMs=%d reloadTapMs=%d forceHero=0x%llX forceSkill=%s",
+                value.key,
+                delayMs,
+                durationMs,
+                value.reloadEnabled ? 1 : 0,
+                value.reloadKeyVk,
+                reloadDelayMs,
+                reloadTapMs,
+                static_cast<unsigned long long>(value.heroId),
+                value.skillId.c_str());
+            return value;
+        }();
+
+        return runtime;
+    }
+
+    bool UseSequenceWorker()
+    {
+        static const bool enabled = [] {
+            char value[16] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UNLEASHED_SEQUENCE_WORKER",
+                value,
+                static_cast<DWORD>(sizeof(value)));
+            const bool workerEnabled = length == 0 || length >= sizeof(value) || value[0] != '0';
+            Diagnostics::Aim("sequence.worker_mode enabled=%d", workerEnabled ? 1 : 0);
+            return workerEnabled;
+        }();
+
+        return enabled;
+    }
 
     bool SkillControls(const HeroSkillDefinition& definition, HeroSkillControlFlags control)
     {
         return HasHeroSkillControl(definition, control);
+    }
+
+    bool IsAsheFirePatternDefinition(const HeroSkillDefinition& definition)
+    {
+        return definition.heroId == static_cast<uint64_t>(eHero::HERO_ASHE) &&
+            std::string(definition.skillId ? definition.skillId : "") == "fire-pattern";
+    }
+
+    bool IsZaryaReloadAmmoProbeDefinition(const HeroSkillDefinition& definition)
+    {
+        return definition.heroId == static_cast<uint64_t>(eHero::HERO_ZARYA) &&
+            std::string(definition.skillId ? definition.skillId : "") == "reload-ammo-probe";
     }
 
     bool IsActivationKeyHeld(int activationKey)
@@ -108,35 +323,105 @@ namespace {
         return AimbotDetail::IsInputVkDown(vk, activationKey);
     }
 
-    int MouseButtonForChannel(Config::HeroSkillInputChannel channel)
+    bool IsSequenceSelfTestHeld(int activationKey)
     {
-        return channel == Config::HeroSkillInputChannel::Secondary ? 1 : 0;
+        SequenceSelfTestRuntime& runtime = SequenceSelfTest();
+        if (!runtime.enabled || runtime.key != activationKey)
+            return false;
+
+        const Clock::time_point now = Clock::now();
+        if (now < runtime.pressAt)
+            return false;
+
+        if (now < runtime.releaseAt) {
+            if (!runtime.startLogged) {
+                runtime.startLogged = true;
+                Diagnostics::Aim("sequence.self_test press key=%d", runtime.key);
+            }
+            return true;
+        }
+
+        if (!runtime.stopLogged) {
+            runtime.stopLogged = true;
+            Diagnostics::Aim("sequence.self_test release key=%d", runtime.key);
+        }
+        return false;
     }
 
-    void SetOutputChannel(Config::HeroSkillInputChannel channel, bool down)
+    void UpdateSequenceSelfTestReload()
     {
-        OW::SendMouseButton(MouseButtonForChannel(channel), down);
-    }
-
-    void ReleaseSequenceChannel(SequenceRuntime& runtime)
-    {
-        if (!runtime.hasActiveChannel)
+        SequenceSelfTestRuntime& runtime = SequenceSelfTest();
+        if (!runtime.enabled || !runtime.reloadEnabled)
             return;
 
-        SetOutputChannel(runtime.activeChannel, false);
-        runtime.hasActiveChannel = false;
+        const Clock::time_point now = Clock::now();
+        if (!runtime.reloadPressLogged && now >= runtime.reloadPressAt) {
+            if (SendKeyboardState(runtime.reloadKeyVk, true)) {
+                runtime.reloadPressLogged = true;
+                Diagnostics::Aim("sequence.self_test reload_press vk=0x%X", runtime.reloadKeyVk);
+            } else {
+                runtime.reloadPressLogged = true;
+                runtime.reloadReleaseLogged = true;
+                Diagnostics::Aim("sequence.self_test reload_failed vk=0x%X", runtime.reloadKeyVk);
+            }
+        }
+
+        if (runtime.reloadPressLogged && !runtime.reloadReleaseLogged &&
+            now >= runtime.reloadReleaseAt) {
+            SendKeyboardState(runtime.reloadKeyVk, false);
+            runtime.reloadReleaseLogged = true;
+            Diagnostics::Aim("sequence.self_test reload_release vk=0x%X", runtime.reloadKeyVk);
+        }
     }
 
-    void ReleaseAllOutputChannels()
+    bool SequenceDiagnosticsEnabled()
     {
-        OW::SendMouseButton(0, false);
-        OW::SendMouseButton(1, false);
+        return Config::aimVerboseLog || SequenceSelfTest().enabled;
+    }
+
+    void ApplyButtonMaskDiff(int prevMask, int newMask)
+    {
+        const int changed = prevMask ^ newMask;
+        for (int bit = 0; bit < 3; ++bit) {
+            const int bitFlag = 1 << bit;
+            if (changed & bitFlag)
+                OW::SendMouseButton(bit, (newMask & bitFlag) != 0);
+        }
+    }
+
+    void ReleaseAllButtons()
+    {
+        OW::ForceReleaseMouseButtons();
+    }
+
+    // VK → USB HID key code for the most common game keys.
+    // Unmapped VK codes return 0 (no-op).
+    unsigned char VkToHidKeyCode(int vk)
+    {
+        switch (vk) {
+        case VK_SPACE:  return 0x2C; // KEY_SPACEBAR
+        case VK_LCONTROL:
+        case VK_RCONTROL: return 0xE0; // KEY_LEFT_CONTROL
+        case VK_LSHIFT:
+        case VK_RSHIFT:   return 0xE1; // KEY_LEFT_SHIFT
+        case 0x45:        return 0x08; // E key
+        case 0x51:        return 0x14; // Q key
+        case 0x52:        return 0x15; // R key
+        case VK_TAB:      return 0x2B; // KEY_TAB
+        default:          return 0;
+        }
     }
 
     bool SendKeyboardState(int vk, bool down)
     {
-        if (vk <= 0 || vk > 255)
+        const unsigned char hidCode = VkToHidKeyCode(vk);
+        if (hidCode == 0)
             return false;
+
+        if (Config::kmboxEnabled && Config::kmboxDeviceType == 0) {
+            kmbox::KmBoxMgr.SendKeyboardKey(hidCode, down);
+            return true;
+        }
 
         INPUT input{};
         input.type = INPUT_KEYBOARD;
@@ -145,33 +430,261 @@ namespace {
         return SendInput(1, &input, sizeof(input)) == 1;
     }
 
+    void BeginSecondaryPulse(const std::string& skillId, ViewpointRuntime& runtime, Clock::time_point now)
+    {
+        if (runtime.secondaryDown)
+            return;
+
+        Diagnostics::Info("Hero skill viewpoint secondary pulse start. skill=%s", skillId.c_str());
+        OW::SendMouseButton(1, true);
+        runtime.secondaryDown = true;
+        runtime.secondaryPressedAt = now;
+    }
+
+    bool BeginKeyboardPulse(const std::string& skillId,
+                            ViewpointRuntime& runtime,
+                            int vk,
+                            Clock::time_point now)
+    {
+        if (vk <= 0 || vk > 255)
+            return false;
+        if (runtime.jumpDown)
+            return true;
+        if (!SendKeyboardState(vk, true))
+            return false;
+
+        Diagnostics::Info("Hero skill viewpoint keyboard pulse start. skill=%s vk=%d",
+            skillId.c_str(), vk);
+        runtime.jumpDown = true;
+        runtime.jumpPressedAt = now;
+        return true;
+    }
+
+    void UpdateViewpointPulses(const std::string& skillId, ViewpointRuntime& runtime, Clock::time_point now)
+    {
+        if (runtime.secondaryDown && now - runtime.secondaryPressedAt >= kBriefPulse) {
+            OW::SendMouseButton(1, false);
+            runtime.secondaryDown = false;
+            runtime.fired = true;
+            runtime.fireDelayStarted = now;
+            Diagnostics::Info("Hero skill viewpoint secondary pulse end. skill=%s", skillId.c_str());
+        }
+
+        if (runtime.jumpDown && now - runtime.jumpPressedAt >= kBriefPulse) {
+            SendKeyboardState(runtime.jumpVk, false);
+            runtime.jumpDown = false;
+            Diagnostics::Info("Hero skill viewpoint keyboard pulse end. skill=%s vk=%d",
+                skillId.c_str(), runtime.jumpVk);
+        }
+    }
+
+    long long MillisecondsSince(Clock::time_point start, Clock::time_point now)
+    {
+        if (start.time_since_epoch().count() == 0)
+            return 0;
+        return std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+    }
+
+    void LogSequenceHitSummary(const std::string& skillId, const SequenceRuntime& runtime)
+    {
+        if (!runtime.hitHasSample)
+            return;
+
+        const Clock::time_point now = Clock::now();
+        Diagnostics::Aim("sequence.hit_summary skill=%s target=0x%llX damageEvents=%d durationMs=%lld lastHealth=%.1f",
+            skillId.c_str(),
+            static_cast<unsigned long long>(runtime.hitTargetAddress),
+            runtime.hitDamageEvents,
+            MillisecondsSince(runtime.hitMonitorStarted, now),
+            runtime.hitLastHealth);
+    }
+
+    bool IsSequenceHitCandidate(const c_entity& entity, const c_entity& local, bool requireEnemyTeam)
+    {
+        if (!entity.address || entity.address == local.address)
+            return false;
+        if (!entity.Alive)
+            return false;
+        if (!std::isfinite(entity.PlayerHealth) || entity.PlayerHealth <= 0.0f)
+            return false;
+        if (requireEnemyTeam && !TargetingDetail::TargetTeamMatches(entity, 0, local))
+            return false;
+        return true;
+    }
+
+    Vector3 SequenceHitProbePosition(const c_entity& entity)
+    {
+        if (!TargetingDetail::IsZeroVector(entity.chest_pos))
+            return entity.chest_pos;
+        if (!TargetingDetail::IsZeroVector(entity.neck_pos))
+            return entity.neck_pos;
+        if (!TargetingDetail::IsZeroVector(entity.head_pos))
+            return entity.head_pos;
+        return entity.pos;
+    }
+
+    bool TryPickSequenceHitTarget(const std::vector<c_entity>& snapshot,
+                                  const c_entity& local,
+                                  const SequenceRuntime& runtime,
+                                  c_entity& outTarget,
+                                  int& outIndex)
+    {
+        if (runtime.hitTargetAddress != 0) {
+            for (size_t index = 0; index < snapshot.size(); ++index) {
+                const c_entity& entity = snapshot[index];
+                if (entity.address == runtime.hitTargetAddress &&
+                    IsSequenceHitCandidate(entity, local, false)) {
+                    outTarget = entity;
+                    outIndex = static_cast<int>(index);
+                    return true;
+                }
+            }
+        }
+
+        const int configuredIndex = Config::Targetenemyi;
+        if (TargetingDetail::IsValidIndex(configuredIndex, snapshot.size())) {
+            const c_entity& configured = snapshot[static_cast<size_t>(configuredIndex)];
+            if (IsSequenceHitCandidate(configured, local, false)) {
+                outTarget = configured;
+                outIndex = configuredIndex;
+                return true;
+            }
+        }
+
+        const Vector2 crosshair = TargetingDetail::CrosshairCenter();
+        float bestScore = (std::numeric_limits<float>::max)();
+        int bestIndex = -1;
+        bool found = false;
+
+        auto scan = [&](bool requireEnemyTeam) {
+            for (size_t index = 0; index < snapshot.size(); ++index) {
+                const c_entity& entity = snapshot[index];
+                if (!IsSequenceHitCandidate(entity, local, requireEnemyTeam))
+                    continue;
+
+                const Vector3 position = SequenceHitProbePosition(entity);
+                if (TargetingDetail::IsZeroVector(position))
+                    continue;
+
+                Vector2 projected{};
+                if (!viewMatrix.WorldToScreen(position, &projected, Vector2(WX, WY), false))
+                    continue;
+
+                if (!std::isfinite(projected.X) || !std::isfinite(projected.Y))
+                    continue;
+
+                const float score = crosshair.Distance(projected);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestIndex = static_cast<int>(index);
+                    found = true;
+                }
+            }
+        };
+
+        scan(true);
+        if (!found)
+            scan(false);
+
+        if (!found || !TargetingDetail::IsValidIndex(bestIndex, snapshot.size()))
+            return false;
+
+        outTarget = snapshot[static_cast<size_t>(bestIndex)];
+        outIndex = bestIndex;
+        return true;
+    }
+
+    void UpdateSequenceHitTiming(const std::string& skillId, SequenceRuntime& runtime)
+    {
+        const std::vector<c_entity> snapshot = TargetingDetail::SnapshotEntities();
+        const c_entity local = TargetingDetail::SnapshotLocalEntity();
+        c_entity target{};
+        int targetIndex = -1;
+        if (!TryPickSequenceHitTarget(snapshot, local, runtime, target, targetIndex))
+            return;
+
+        const Clock::time_point now = Clock::now();
+        if (runtime.hitMonitorStarted.time_since_epoch().count() == 0)
+            runtime.hitMonitorStarted = now;
+
+        if (!runtime.hitHasSample || runtime.hitTargetAddress != target.address) {
+            runtime.hitTargetAddress = target.address;
+            runtime.hitLastHealth = target.PlayerHealth;
+            runtime.hitLastChange = now;
+            runtime.hitHasSample = true;
+            runtime.hitDamageEvents = 0;
+            Diagnostics::Aim("sequence.hit_target skill=%s index=%d target=0x%llX health=%.1f hero=0x%llX",
+                skillId.c_str(),
+                targetIndex,
+                static_cast<unsigned long long>(target.address),
+                target.PlayerHealth,
+                static_cast<unsigned long long>(target.HeroID));
+            return;
+        }
+
+        const float delta = target.PlayerHealth - runtime.hitLastHealth;
+        if (std::fabs(delta) < 0.5f)
+            return;
+
+        if (delta < 0.0f)
+            ++runtime.hitDamageEvents;
+
+        Diagnostics::Aim("sequence.hit_timing skill=%s target=0x%llX index=%d tMs=%lld dtMs=%lld health=%.1f delta=%.1f damageEvents=%d",
+            skillId.c_str(),
+            static_cast<unsigned long long>(target.address),
+            targetIndex,
+            MillisecondsSince(runtime.hitMonitorStarted, now),
+            MillisecondsSince(runtime.hitLastChange, now),
+            target.PlayerHealth,
+            delta,
+            runtime.hitDamageEvents);
+
+        runtime.hitLastHealth = target.PlayerHealth;
+        runtime.hitLastChange = now;
+    }
+
     void ReleaseViewpointOutputs(ViewpointRuntime& runtime)
     {
-        if (runtime.secondaryHeld) {
-            SetOutputChannel(Config::HeroSkillInputChannel::Secondary, false);
-            runtime.secondaryHeld = false;
+        if (runtime.secondaryDown) {
+            OW::SendMouseButton(1, false);
+            runtime.secondaryDown = false;
         }
-        if (runtime.keyboardHeld) {
-            SendKeyboardState(runtime.keyboardVk, false);
-            runtime.keyboardHeld = false;
+        if (runtime.jumpDown) {
+            SendKeyboardState(runtime.jumpVk, false);
+            runtime.jumpDown = false;
         }
     }
 
     void CancelSequence(const std::string& skillId, SequenceRuntime& runtime, const char* reason)
     {
-        if (runtime.active) {
-            ReleaseSequenceChannel(runtime);
+        const bool hadWorker = runtime.worker.joinable();
+        const bool shouldForceRelease = runtime.active || hadWorker || runtime.currentMask != 0;
+        if (hadWorker) {
+            runtime.worker.request_stop();
+            runtime.worker.join();
+        }
+
+        if (runtime.currentMask != 0) {
+            ApplyButtonMaskDiff(runtime.currentMask, 0);
+            runtime.currentMask = 0;
+        }
+        if (shouldForceRelease)
+            ReleaseAllButtons();
+
+        LogSequenceHitSummary(skillId, runtime);
+
+        if (runtime.active || hadWorker) {
             Diagnostics::Info("Hero skill sequence cancelled. skill=%s reason=%s",
                 skillId.c_str(), reason ? reason : "unknown");
         }
         runtime = SequenceRuntime{};
+        RefreshAnyInputSequenceActive();
     }
 
     void CancelViewpoint(const std::string& skillId, ViewpointRuntime& runtime, const char* reason)
     {
-        const bool wasActive = runtime.phase != ViewpointPhase::Idle &&
-            runtime.phase != ViewpointPhase::Completed &&
-            runtime.phase != ViewpointPhase::Cancelled;
+        const bool wasActive = runtime.phase == ViewpointPhase::PitchDown ||
+            runtime.phase == ViewpointPhase::PitchUp;
         ReleaseViewpointOutputs(runtime);
         runtime.phase = ViewpointPhase::Cancelled;
         runtime.lastTick = Clock::now();
@@ -219,6 +732,83 @@ namespace {
         return std::clamp(delta, -maxStep, maxStep);
     }
 
+    float ClampViewPitchTarget(float pitchRad)
+    {
+        return std::clamp(pitchRad, -kViewpointPitchLimitRad, kViewpointPitchLimitRad);
+    }
+
+    const char* ViewpointPhaseName(int phase)
+    {
+        switch (phase) {
+        case ViewpointPhase::Idle: return "idle";
+        case ViewpointPhase::PitchDown: return "pitchDown";
+        case ViewpointPhase::PitchUp: return "pitchUp";
+        case ViewpointPhase::Completed: return "completed";
+        case ViewpointPhase::Cancelled: return "cancelled";
+        default: return "unknown";
+        }
+    }
+
+    bool ShouldLogViewpointTick(ViewpointRuntime& runtime, Clock::time_point now)
+    {
+        if (runtime.lastDebugLog.time_since_epoch().count() != 0 &&
+            now - runtime.lastDebugLog < kViewpointDebugInterval) {
+            return false;
+        }
+
+        runtime.lastDebugLog = now;
+        return true;
+    }
+
+    bool IsPitchWithin(float targetPitch, float epsilonRad)
+    {
+        Vector3 current{};
+        return TryReadCurrentViewAngles(current) &&
+            std::fabs(targetPitch - current.X) <= epsilonRad;
+    }
+
+    bool IsYawWithin(float targetYaw, float epsilonRad)
+    {
+        Vector3 current{};
+        return TryReadCurrentViewAngles(current) &&
+            std::fabs(NormalizeAngle(targetYaw - current.Y)) <= epsilonRad;
+    }
+
+    void LogViewpointTick(const std::string& skillId,
+                          ViewpointRuntime& runtime,
+                          float targetPitch,
+                          float targetYaw,
+                          float speedDeg,
+                          float deltaSeconds,
+                          Clock::time_point now)
+    {
+        if (!Config::aimVerboseLog)
+            return;
+        if (!ShouldLogViewpointTick(runtime, now))
+            return;
+
+        Vector3 current{};
+        if (!TryReadCurrentViewAngles(current)) {
+            Diagnostics::Warn("Hero skill viewpoint tick read failed. skill=%s phase=%s",
+                skillId.c_str(), ViewpointPhaseName(runtime.phase));
+            return;
+        }
+
+        Diagnostics::Info("Hero skill viewpoint tick. skill=%s phase=%s currentPitch=%.2f targetPitch=%.2f deltaPitch=%.2f currentYaw=%.2f targetYaw=%.2f deltaYaw=%.2f speed=%.2f dt=%.4f fired=%d jumped=%d",
+            skillId.c_str(),
+            ViewpointPhaseName(runtime.phase),
+            current.X * kRadToDeg,
+            targetPitch * kRadToDeg,
+            (targetPitch - current.X) * kRadToDeg,
+            current.Y * kRadToDeg,
+            targetYaw * kRadToDeg,
+            NormalizeAngle(targetYaw - current.Y) * kRadToDeg,
+            speedDeg,
+            deltaSeconds,
+            runtime.fired ? 1 : 0,
+            runtime.jumped ? 1 : 0);
+    }
+
     float DeltaSeconds(ViewpointRuntime& runtime, Clock::time_point now)
     {
         if (runtime.lastTick.time_since_epoch().count() == 0) {
@@ -233,24 +823,121 @@ namespace {
 
     float PickPhaseSpeed(float baseSpeed, float randomRange)
     {
-        baseSpeed = std::clamp(baseSpeed, 0.0f, 720.0f);
-        randomRange = std::clamp(randomRange, 0.0f, 720.0f);
+        baseSpeed = std::clamp(baseSpeed, 0.0f, 4000.0f);
+        randomRange = std::clamp(randomRange, 0.0f, 4000.0f);
         if (randomRange <= 0.0f)
             return baseSpeed;
 
         const float low = (std::max)(0.0f, baseSpeed - randomRange);
-        const float high = (std::min)(720.0f, baseSpeed + randomRange);
+        const float high = (std::min)(4000.0f, baseSpeed + randomRange);
         if (high <= low)
             return low;
 
         std::uniform_real_distribution<float> distribution(low, high);
+        std::lock_guard<std::mutex> lock(g_randomMutex);
         return distribution(g_random);
+    }
+
+    float PickSignedJitter(float range)
+    {
+        range = std::clamp(range, 0.0f, 20.0f);
+        if (range <= 0.0f)
+            return 0.0f;
+
+        std::uniform_real_distribution<float> distribution(-range, range);
+        std::lock_guard<std::mutex> lock(g_randomMutex);
+        return distribution(g_random);
+    }
+
+    int PickSequenceDurationMs(const Config::HeroSkillSequenceStep& step)
+    {
+        float speedScale = step.speedScale;
+        if (!std::isfinite(speedScale))
+            speedScale = 1.0f;
+        speedScale = std::clamp(speedScale, 0.5f, 2.0f);
+
+        float duration = static_cast<float>(std::clamp(step.durationMs, 0, 1000)) * speedScale;
+        const int jitterMs = std::clamp(step.jitterMs, 0, 50);
+        if (jitterMs > 0) {
+            std::uniform_int_distribution<int> distribution(-jitterMs, jitterMs);
+            std::lock_guard<std::mutex> lock(g_randomMutex);
+            duration += static_cast<float>(distribution(g_random));
+        }
+
+        return std::clamp(static_cast<int>(std::lround(duration)), 5, 1000);
+    }
+
+    void EnterSequenceStep(int& currentMask, const Config::HeroSkillSequenceStep& step)
+    {
+        ApplyButtonMaskDiff(currentMask, step.buttonMask);
+        currentMask = step.buttonMask;
+    }
+
+    void SleepUntilSequenceDeadline(std::stop_token stopToken, Clock::time_point deadline)
+    {
+        while (!stopToken.stop_requested()) {
+            const Clock::time_point now = Clock::now();
+            if (now >= deadline)
+                return;
+
+            const auto remaining = deadline - now;
+            if (remaining > std::chrono::milliseconds(2))
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            else
+                std::this_thread::yield();
+        }
+    }
+
+    void RunSequenceWorker(std::stop_token stopToken,
+                           std::string skillId,
+                           std::vector<Config::HeroSkillSequenceStep> steps)
+    {
+        timeBeginPeriod(1);
+
+        int currentMask = 0;
+        size_t stepIndex = 0;
+        Diagnostics::Info("Hero skill sequence worker started. skill=%s steps=%zu",
+            skillId.c_str(), steps.size());
+
+        while (!stopToken.stop_requested() && !steps.empty()) {
+            if (stepIndex >= steps.size())
+                stepIndex = 0;
+
+            const Config::HeroSkillSequenceStep& step = steps[stepIndex];
+            const int durationMs = PickSequenceDurationMs(step);
+            if (ConsumeSequenceAmmoBudgetForStep(skillId, currentMask, step.buttonMask))
+                break;
+            EnterSequenceStep(currentMask, step);
+
+            if (SequenceDiagnosticsEnabled()) {
+                Diagnostics::Aim("sequence.step skill=%s step=%zu mask=0x%02X durationMs=%d baseMs=%d scale=%.3f jitterMs=%d",
+                    skillId.c_str(),
+                    stepIndex + 1,
+                    step.buttonMask,
+                    durationMs,
+                    step.durationMs,
+                    step.speedScale,
+                    step.jitterMs);
+            }
+
+            SleepUntilSequenceDeadline(stopToken, Clock::now() + std::chrono::milliseconds(durationMs));
+            ++stepIndex;
+        }
+
+        ApplyButtonMaskDiff(currentMask, 0);
+        ReleaseAllButtons();
+        timeEndPeriod(1);
+        Diagnostics::Info("Hero skill sequence worker stopped. skill=%s", skillId.c_str());
     }
 
     void BeginViewpoint(const std::string& skillId,
                         ViewpointRuntime& runtime,
                         const Config::HeroSkillSettings& params)
     {
+        const bool prevKeyDown = runtime.prevKeyDown;
+        runtime = ViewpointRuntime{};
+        runtime.prevKeyDown = prevKeyDown;
+
         Vector3 currentAngles{};
         if (!TryReadCurrentViewAngles(currentAngles)) {
             runtime.phase = ViewpointPhase::Cancelled;
@@ -259,21 +946,63 @@ namespace {
         }
 
         runtime.initialAngles = currentAngles;
-        runtime.pitchDownSpeedDeg = PickPhaseSpeed(params.pitchDownSpeed, params.pitchDownRandomRange);
-        runtime.pitchUpSpeedDeg = PickPhaseSpeed(params.pitchUpSpeed, params.pitchUpRandomRange);
-        runtime.keyboardVk = std::clamp(params.jumpKeyCode, 0, 255);
+
+        const float pitchDownTargetDeg = std::clamp(params.pitchDownTargetAngle, 0.0f, 180.0f);
+        const float effectivePitchDownTarget = ClampViewPitchTarget(pitchDownTargetDeg * kDegToRad);
+        const float effectivePitchDownTargetDeg = effectivePitchDownTarget * kRadToDeg;
+        const int durationBaseMs = std::clamp(params.pitchDownDurationMs, 20, 100);
+        const float durationJitterMs = std::clamp(params.pitchDownDurationJitter, 0.0f, 50.0f);
+        const float pitchUpReturnJitterDeg = PickSignedJitter(params.pitchUpOffsetJitter);
+        const float durationMs = (std::max)(
+            1.0f,
+            PickPhaseSpeed(static_cast<float>(durationBaseMs),
+                           durationJitterMs));
+
+        runtime.pitchDownSpeedDeg = std::clamp((pitchDownTargetDeg / durationMs) * 1000.0f, 0.0f, 4000.0f);
+        runtime.pitchUpTargetAngle = ClampViewPitchTarget(runtime.initialAngles.X + pitchUpReturnJitterDeg * kDegToRad);
+        const float pitchUpTravelDeg = std::fabs(effectivePitchDownTargetDeg - runtime.pitchUpTargetAngle * kRadToDeg);
+        runtime.pitchUpSpeedDeg = std::clamp((pitchUpTravelDeg / durationMs) * 1000.0f, 0.0f, 4000.0f);
+        runtime.jumpVk = std::clamp(params.jumpKeyCode, 0, 255);
         runtime.phase = ViewpointPhase::PitchDown;
         runtime.phaseStarted = Clock::now();
         runtime.lastTick = runtime.phaseStarted;
-        runtime.secondaryHeld = false;
-        runtime.keyboardHeld = false;
 
-        Diagnostics::Info("Hero skill viewpoint started. skill=%s downSpeed=%.2f upSpeed=%.2f initialPitch=%.2f initialYaw=%.2f",
+        Diagnostics::Info("Hero skill viewpoint started. skill=%s durationMs=%.2f requestedDownTarget=%.2f effectiveDownTarget=%.2f downSpeed=%.2f returnJitter=%.2f effectiveUpTarget=%.2f upSpeed=%.2f initialPitch=%.2f initialYaw=%.2f",
             skillId.c_str(),
+            durationMs,
+            pitchDownTargetDeg,
+            effectivePitchDownTargetDeg,
             runtime.pitchDownSpeedDeg,
+            pitchUpReturnJitterDeg,
+            runtime.pitchUpTargetAngle * kRadToDeg,
             runtime.pitchUpSpeedDeg,
             runtime.initialAngles.X * kRadToDeg,
             runtime.initialAngles.Y * kRadToDeg);
+    }
+
+    // Rough pixels-per-degree constant for fast viewpoint moves.
+    // Bypasses sensitivity calibration and move-splitting — we just want raw speed.
+    constexpr float kViewpointPixelsPerDegree = 18.0f;
+
+    void FastRawMouseMove(float pitchDeg, float yawDeg)
+    {
+        const int px = static_cast<int>(std::lround(yawDeg * kViewpointPixelsPerDegree));
+        const int py = static_cast<int>(std::lround(pitchDeg * kViewpointPixelsPerDegree));
+
+        if (Config::kmboxEnabled) {
+            if (Config::kmboxDeviceType == 0) {
+                if (px != 0 || py != 0)
+                    kmbox::KmBoxMgr.Mouse.Move(px, py);
+            } else {
+                if (px != 0 || py != 0)
+                    kmbox::kmBoxBMgr.km_move(px, py);
+            }
+            return;
+        }
+
+        // Non-KMBox fallback: use the normal pipeline (local testing only).
+        if (px != 0 || py != 0)
+            SendMouseMove(Vector3(pitchDeg * kDegToRad, yawDeg * kDegToRad, 0.0f), 0);
     }
 
     bool MovePitchToward(float targetPitch, float speedDeg, float deltaSeconds)
@@ -286,13 +1015,14 @@ namespace {
         if (std::fabs(deltaPitch) <= kPitchDoneEpsilonRad)
             return true;
 
-        const float maxStep = (std::max)(0.0f, speedDeg) * kDegToRad * deltaSeconds;
-        if (maxStep <= 0.0f)
-            return true;
+        const float maxStepRad = (std::max)(0.0f, speedDeg) * kDegToRad * deltaSeconds;
+        if (maxStepRad <= 0.0f)
+            return false;
 
-        const float step = ClampDelta(deltaPitch, maxStep);
-        SendMouseMove(Vector3(step, 0.0f, 0.0f));
-        return std::fabs(deltaPitch) <= (maxStep + kPitchDoneEpsilonRad);
+        const float stepRad = ClampDelta(deltaPitch, maxStepRad);
+        FastRawMouseMove(stepRad * kRadToDeg, 0.0f);
+
+        return false;
     }
 
     bool MoveYawToward(float targetYaw, float speedDeg, float deltaSeconds)
@@ -305,13 +1035,14 @@ namespace {
         if (std::fabs(deltaYaw) <= kYawDoneEpsilonRad)
             return true;
 
-        const float maxStep = (std::max)(0.0f, speedDeg) * kDegToRad * deltaSeconds;
-        if (maxStep <= 0.0f)
-            return true;
+        const float maxStepRad = (std::max)(0.0f, speedDeg) * kDegToRad * deltaSeconds;
+        if (maxStepRad <= 0.0f)
+            return false;
 
-        const float step = ClampDelta(deltaYaw, maxStep);
-        SendMouseMove(Vector3(0.0f, step, 0.0f));
-        return std::fabs(deltaYaw) <= (maxStep + kYawDoneEpsilonRad);
+        const float stepRad = ClampDelta(deltaYaw, maxStepRad);
+        FastRawMouseMove(0.0f, stepRad * kRadToDeg);
+
+        return false;
     }
 
     struct ScopedTrackingConfig {
@@ -612,6 +1343,200 @@ namespace {
         g_lastActionExecutions[runtimeKey] = Clock::now();
     }
 
+    bool ReadLocalReloadingFast(const c_entity& local, bool& reloading)
+    {
+        reloading = Config::reloading;
+        if (!SDK || !local.SkillBase)
+            return false;
+
+        __try {
+            reloading = OW::IsSkillActivate1(local.SkillBase + 0x40, 0, kReloadStateSkill);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            reloading = Config::reloading;
+            return false;
+        }
+    }
+
+    void ResetZaryaAmmoProbeBudgetLog(ZaryaAmmoProbeRuntime& runtime)
+    {
+        runtime.lastBudgetLog = {};
+        runtime.lastLoggedAmmo = -1000;
+    }
+
+    void LogZaryaAmmoProbeBudget(const std::string& runtimeKey,
+                                 ZaryaAmmoProbeRuntime& runtime,
+                                 const char* reason,
+                                 bool leftDown,
+                                 bool rightDown,
+                                 Clock::time_point now)
+    {
+        const int ammoInt = runtime.budgetArmed
+            ? static_cast<int>(std::floor(runtime.ammo + 0.001))
+            : -1;
+        const bool forced = reason && reason[0] != '\0';
+        const bool changed = ammoInt != runtime.lastLoggedAmmo;
+        const bool periodic = runtime.lastBudgetLog.time_since_epoch().count() == 0 ||
+            now - runtime.lastBudgetLog >= kZaryaBudgetLogInterval;
+        if (!forced && (!changed || !periodic))
+            return;
+
+        runtime.lastBudgetLog = now;
+        runtime.lastLoggedAmmo = ammoInt;
+        Diagnostics::Aim("zarya.ammo_probe budget skill=%s reason=%s ammo=%.1f left=%d right=%d autoRight=%d",
+            runtimeKey.c_str(),
+            forced ? reason : "tick",
+            runtime.ammo,
+            leftDown ? 1 : 0,
+            rightDown ? 1 : 0,
+            runtime.autoRightSent ? 1 : 0);
+    }
+
+    void ArmZaryaAmmoProbeBudget(const std::string& runtimeKey,
+                                 ZaryaAmmoProbeRuntime& runtime,
+                                 Clock::time_point now,
+                                 bool leftDown,
+                                 bool rightDown,
+                                 long long reloadDurationMs)
+    {
+        runtime.budgetArmed = true;
+        runtime.ammo = static_cast<double>(kZaryaAmmoClipSize);
+        runtime.leftWasDown = leftDown;
+        runtime.rightWasDown = rightDown;
+        runtime.autoRightSent = false;
+        runtime.lastObserved = now;
+        ResetZaryaAmmoProbeBudgetLog(runtime);
+
+        Diagnostics::Aim("zarya.ammo_probe reload_success skill=%s durationMs=%lld seedAmmo=%d",
+            runtimeKey.c_str(),
+            reloadDurationMs,
+            kZaryaAmmoClipSize);
+        LogZaryaAmmoProbeBudget(runtimeKey, runtime, "reload_seed", leftDown, rightDown, now);
+    }
+
+    void UpdateZaryaAmmoProbe(const std::string& runtimeKey,
+                              const Config::HeroSkillSettings& settings,
+                              const c_entity& local)
+    {
+        ZaryaAmmoProbeRuntime& runtime = g_zaryaAmmoProbes[runtimeKey];
+        const Clock::time_point now = Clock::now();
+        const bool leftDown = AimbotDetail::IsInputVkDown(VK_LBUTTON);
+        const bool rightDown = AimbotDetail::IsInputVkDown(VK_RBUTTON);
+
+        bool reloading = false;
+        const bool fastReloadRead = ReadLocalReloadingFast(local, reloading);
+        if (reloading) {
+            if (!runtime.lastReloading) {
+                runtime.reloadStarted = now;
+                runtime.reloadQualified = false;
+                runtime.budgetArmed = false;
+                runtime.ammo = -1.0;
+                runtime.autoRightSent = false;
+                ResetZaryaAmmoProbeBudgetLog(runtime);
+                Diagnostics::Aim("zarya.ammo_probe reload_start skill=%s source=%s skillBase=0x%llX",
+                    runtimeKey.c_str(),
+                    fastReloadRead ? "fast" : "cache",
+                    static_cast<unsigned long long>(local.SkillBase));
+            }
+
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - runtime.reloadStarted);
+            if (!runtime.reloadQualified && elapsed >= kZaryaReloadSuccessMinDuration) {
+                runtime.reloadQualified = true;
+                Diagnostics::Aim("zarya.ammo_probe reload_qualified skill=%s durationMs=%lld",
+                    runtimeKey.c_str(),
+                    static_cast<long long>(elapsed.count()));
+            }
+
+            runtime.lastReloading = true;
+            runtime.leftWasDown = leftDown;
+            runtime.rightWasDown = rightDown;
+            runtime.lastObserved = now;
+            return;
+        }
+
+        if (runtime.lastReloading) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - runtime.reloadStarted);
+            if (runtime.reloadQualified || elapsed >= kZaryaReloadSuccessMinDuration) {
+                ArmZaryaAmmoProbeBudget(
+                    runtimeKey,
+                    runtime,
+                    now,
+                    leftDown,
+                    rightDown,
+                    static_cast<long long>(elapsed.count()));
+            } else {
+                Diagnostics::Aim("zarya.ammo_probe reload_too_short skill=%s durationMs=%lld",
+                    runtimeKey.c_str(),
+                    static_cast<long long>(elapsed.count()));
+                runtime.budgetArmed = false;
+                runtime.ammo = -1.0;
+            }
+
+            runtime.lastReloading = false;
+            runtime.reloadStarted = {};
+            runtime.reloadQualified = false;
+            runtime.leftWasDown = leftDown;
+            runtime.rightWasDown = rightDown;
+            runtime.lastObserved = now;
+            return;
+        }
+
+        runtime.lastReloading = false;
+        if (!runtime.budgetArmed) {
+            runtime.leftWasDown = leftDown;
+            runtime.rightWasDown = rightDown;
+            runtime.lastObserved = now;
+            return;
+        }
+
+        if (runtime.lastObserved.time_since_epoch().count() == 0)
+            runtime.lastObserved = now;
+
+        double elapsedSeconds = std::chrono::duration<double>(now - runtime.lastObserved).count();
+        elapsedSeconds = std::clamp(elapsedSeconds, 0.0, 0.25);
+
+        if (runtime.leftWasDown && elapsedSeconds > 0.0) {
+            runtime.ammo -= kZaryaPrimaryAmmoPerSecond * elapsedSeconds;
+        }
+
+        const bool manualRightEdge = !runtime.rightWasDown && rightDown;
+        if (manualRightEdge)
+            runtime.ammo -= kZaryaSecondaryAmmoCost;
+
+        runtime.ammo = std::clamp(runtime.ammo, 0.0, static_cast<double>(kZaryaAmmoClipSize));
+        runtime.lastObserved = now;
+        runtime.leftWasDown = leftDown;
+        runtime.rightWasDown = rightDown;
+
+        LogZaryaAmmoProbeBudget(
+            runtimeKey,
+            runtime,
+            manualRightEdge ? "manual_right" : "",
+            leftDown,
+            rightDown,
+            now);
+
+        const int thresholdAmmo = std::clamp(settings.ammoGuardReserve, 1, 50);
+        if (!runtime.autoRightSent && runtime.ammo < static_cast<double>(thresholdAmmo) && !rightDown) {
+            const std::string pulseKey = runtimeKey + ":auto_right";
+            if (StartTimedHotkey(pulseKey, VK_RBUTTON, kBriefPulse)) {
+                runtime.autoRightSent = true;
+                runtime.ammo = std::clamp(
+                    runtime.ammo - kZaryaSecondaryAmmoCost,
+                    0.0,
+                    static_cast<double>(kZaryaAmmoClipSize));
+                MarkActionExecuted(runtimeKey);
+                Diagnostics::Aim("zarya.ammo_probe auto_right skill=%s threshold=%d ammoAfter=%.1f",
+                    runtimeKey.c_str(),
+                    thresholdAmmo,
+                    runtime.ammo);
+                LogZaryaAmmoProbeBudget(runtimeKey, runtime, "auto_right", leftDown, true, now);
+            }
+        }
+    }
+
     bool IsRuntimeActionDefinition(const HeroSkillDefinition& definition)
     {
         const std::string skill = definition.skillId ? definition.skillId : "";
@@ -634,6 +1559,8 @@ namespace {
             return false;
 
         switch (definition.inputAction) {
+        case HeroSkillInputAction::PrimaryFire:
+            return Config::reloading;
         case HeroSkillInputAction::Ability1:
             return SkillCooldownActive(local.skillcd1);
         case HeroSkillInputAction::Ability2:
@@ -644,6 +1571,349 @@ namespace {
         default:
             return false;
         }
+    }
+
+    bool IsManualCooldownActive(const std::string& runtimeKey,
+                                const Config::HeroSkillSettings& settings)
+    {
+        if (!std::isfinite(settings.cooldown) || settings.cooldown <= 0.001f)
+            return false;
+
+        const auto item = g_lastActionExecutions.find(runtimeKey);
+        if (item == g_lastActionExecutions.end())
+            return false;
+
+        const auto cooldown = std::chrono::duration<float>(settings.cooldown);
+        return Clock::now() - item->second < cooldown;
+    }
+
+    bool ShouldLogSkillGuard(const std::string& runtimeKey)
+    {
+        Clock::time_point& lastLog = g_lastSkillGuardLogs[runtimeKey];
+        const Clock::time_point now = Clock::now();
+        if (lastLog.time_since_epoch().count() != 0 &&
+            now - lastLog < std::chrono::milliseconds(500)) {
+            return false;
+        }
+        lastLog = now;
+        return true;
+    }
+
+    bool IsSequenceActive(const std::string& runtimeKey)
+    {
+        const auto item = g_sequences.find(runtimeKey);
+        return item != g_sequences.end() && item->second.active;
+    }
+
+    void RefreshAnyInputSequenceActive()
+    {
+        bool active = false;
+        for (const auto& item : g_sequences) {
+            const SequenceRuntime& runtime = item.second;
+            if (runtime.active || runtime.worker.joinable() || runtime.currentMask != 0) {
+                active = true;
+                break;
+            }
+        }
+        g_anyInputSequenceActive.store(active, std::memory_order_release);
+    }
+
+    bool UsesAsheAmmoBudgetFallback(const std::string& runtimeKey)
+    {
+        static const std::string asheFirePatternKey =
+            std::to_string(static_cast<uint64_t>(eHero::HERO_ASHE)) + ":fire-pattern";
+        return runtimeKey == asheFirePatternKey;
+    }
+
+    int AsheAmmoClipSize()
+    {
+        return 12;
+    }
+
+    int ClampSequenceReserve(int reserveAmmo)
+    {
+        return std::clamp(reserveAmmo, 0, 50);
+    }
+
+    int CountSequenceShotEvents(int previousMask, int nextMask)
+    {
+        const bool previousLeft = (previousMask & 0x01) != 0;
+        const bool previousRight = (previousMask & 0x02) != 0;
+        const bool nextLeft = (nextMask & 0x01) != 0;
+        const bool nextRight = (nextMask & 0x02) != 0;
+
+        const bool hipShot = !previousLeft && nextLeft && !nextRight;
+        const bool scopedReleaseShot = previousLeft && previousRight && !nextLeft && nextRight;
+        return (hipShot ? 1 : 0) + (scopedReleaseShot ? 1 : 0);
+    }
+
+    void ResetSequenceAmmoBudget(const std::string& runtimeKey)
+    {
+        if (!UsesAsheAmmoBudgetFallback(runtimeKey))
+            return;
+
+        std::lock_guard<std::mutex> lock(g_sequenceAmmoBudgetMutex);
+        SequenceAmmoBudgetState& budget = g_sequenceAmmoBudgets[runtimeKey];
+        budget.remaining = AsheAmmoClipSize();
+        budget.blocked = false;
+    }
+
+    void UpdateSequenceAmmoBudgetFromRead(const std::string& runtimeKey, int reserveAmmo, int ammo)
+    {
+        if (!UsesAsheAmmoBudgetFallback(runtimeKey))
+            return;
+
+        std::lock_guard<std::mutex> lock(g_sequenceAmmoBudgetMutex);
+        SequenceAmmoBudgetState& budget = g_sequenceAmmoBudgets[runtimeKey];
+        budget.reserve = ClampSequenceReserve(reserveAmmo);
+        if (ammo >= 0) {
+            budget.remaining = ammo;
+            budget.blocked = ammo <= budget.reserve;
+        } else if (budget.remaining < 0) {
+            budget.remaining = AsheAmmoClipSize();
+            budget.blocked = false;
+        }
+    }
+
+    int SequenceAmmoBudgetRemaining(const std::string& runtimeKey)
+    {
+        if (!UsesAsheAmmoBudgetFallback(runtimeKey))
+            return -1;
+
+        std::lock_guard<std::mutex> lock(g_sequenceAmmoBudgetMutex);
+        const auto item = g_sequenceAmmoBudgets.find(runtimeKey);
+        if (item == g_sequenceAmmoBudgets.end())
+            return -1;
+        return item->second.remaining;
+    }
+
+    bool IsSequenceAmmoBudgetBlocking(const std::string& runtimeKey, int reserveAmmo)
+    {
+        if (!UsesAsheAmmoBudgetFallback(runtimeKey))
+            return false;
+
+        std::lock_guard<std::mutex> lock(g_sequenceAmmoBudgetMutex);
+        SequenceAmmoBudgetState& budget = g_sequenceAmmoBudgets[runtimeKey];
+        budget.reserve = ClampSequenceReserve(reserveAmmo);
+        if (budget.remaining < 0)
+            budget.remaining = AsheAmmoClipSize();
+        budget.blocked = budget.remaining <= budget.reserve;
+        return budget.blocked;
+    }
+
+    bool ConsumeSequenceAmmoBudgetForStep(const std::string& runtimeKey, int previousMask, int nextMask)
+    {
+        if (!UsesAsheAmmoBudgetFallback(runtimeKey))
+            return false;
+
+        const int shotEvents = CountSequenceShotEvents(previousMask, nextMask);
+        if (shotEvents <= 0)
+            return false;
+
+        std::lock_guard<std::mutex> lock(g_sequenceAmmoBudgetMutex);
+        SequenceAmmoBudgetState& budget = g_sequenceAmmoBudgets[runtimeKey];
+        if (budget.remaining < 0)
+            budget.remaining = AsheAmmoClipSize();
+
+        if (budget.remaining <= budget.reserve) {
+            budget.blocked = true;
+            Diagnostics::Aim("sequence.ammo_budget block skill=%s remaining=%d reserve=%d shotEvents=%d",
+                runtimeKey.c_str(),
+                budget.remaining,
+                budget.reserve,
+                shotEvents);
+            return true;
+        }
+
+        budget.remaining = (std::max)(0, budget.remaining - shotEvents);
+        budget.blocked = budget.remaining <= budget.reserve;
+        Diagnostics::Aim("sequence.ammo_budget consume skill=%s remaining=%d reserve=%d shotEvents=%d blocked=%d",
+            runtimeKey.c_str(),
+            budget.remaining,
+            budget.reserve,
+            shotEvents,
+            budget.blocked ? 1 : 0);
+        return false;
+    }
+
+    int RoundedAmmoValue(float value)
+    {
+        if (!std::isfinite(value) || value < 0.0f || value > 300.0f)
+            return -1;
+        if (value > 0.0f && value < 0.01f)
+            return -1;
+        return static_cast<int>(std::lround(value));
+    }
+
+    bool IsClipAmmoCandidate(int value)
+    {
+        return value >= 0 && value <= AsheAmmoClipSize();
+    }
+
+    int ReadRawSkillListAmmoValue(uint64_t skillBase, uint16_t wantedId)
+    {
+        if (!SDK || !skillBase)
+            return -1;
+
+        __try {
+            const uint64_t skillContainer = SDK->RPM<uint64_t>(skillBase + 0x1848);
+            if (!skillContainer)
+                return -1;
+
+            const uint64_t rawList = SDK->RPM<uint64_t>(skillContainer + 0x10);
+            const uint32_t rawSize = SDK->RPM<uint32_t>(skillContainer + 0x18);
+            if (!rawList || rawSize == 0 || rawSize > 512)
+                return -1;
+
+            constexpr int kOffsets[] = { 0x30, 0x34, 0x38, 0x3C, 0x40, 0x48, 0x50, 0x60 };
+            int zeroCandidate = -1;
+            for (uint32_t index = 0; index < rawSize; ++index) {
+                const uint64_t entry = rawList + static_cast<uint64_t>(index) * 0x80;
+                if (SDK->RPM<uint16_t>(entry) != wantedId)
+                    continue;
+
+                for (const int offset : kOffsets) {
+                    const int floatValue = RoundedAmmoValue(SDK->RPM<float>(entry + offset));
+                    if (IsClipAmmoCandidate(floatValue)) {
+                        if (floatValue > 0)
+                            return floatValue;
+                        zeroCandidate = 0;
+                    }
+
+                    const int intValue = SDK->RPM<int>(entry + offset);
+                    if (IsClipAmmoCandidate(intValue)) {
+                        if (intValue > 0)
+                            return intValue;
+                        zeroCandidate = 0;
+                    }
+                }
+            }
+            return zeroCandidate;
+        } __except (1) {
+            return -1;
+        }
+    }
+
+    AmmoGuardSample TryReadLocalAmmoRemaining(const c_entity& local)
+    {
+        AmmoGuardSample sample{};
+        sample.skillBase = local.SkillBase;
+        sample.heroId = local.HeroID;
+        if (!local.SkillBase)
+            return sample;
+
+        const uint64_t base = local.SkillBase + 0x40;
+        sample.stateAmmo = OW::readammo(base, 0, kStateScriptAmmo);
+        sample.reserveAmmoPath = OW::readammo(base, 0x0B, kStateScriptAmmo);
+        sample.reserveState = OW::readammo(base, 0, 0x0B);
+        sample.rawStateAmmo = ReadRawSkillListAmmoValue(local.SkillBase, kStateScriptAmmo);
+        sample.rawReserveState = ReadRawSkillListAmmoValue(local.SkillBase, 0x0B);
+
+        const int candidates[] = {
+            sample.stateAmmo,
+            sample.reserveAmmoPath,
+            sample.reserveState,
+            sample.rawStateAmmo,
+            sample.rawReserveState,
+        };
+
+        for (size_t index = 0; index < std::size(candidates); ++index) {
+            const int candidate = candidates[index];
+            if (candidate >= 0 && candidate <= 12) {
+                sample.ammo = candidate;
+                sample.source = static_cast<int>(index) + 1;
+                return sample;
+            }
+        }
+
+        for (size_t index = 0; index < std::size(candidates); ++index) {
+            const int candidate = candidates[index];
+            if (candidate >= 0) {
+                sample.ammo = candidate;
+                sample.source = static_cast<int>(index) + 1;
+                return sample;
+            }
+        }
+
+        return sample;
+    }
+
+    void LogAmmoGuardSample(const std::string& runtimeKey,
+                            const AmmoGuardSample& sample,
+                            int reserveAmmo,
+                            bool blocking)
+    {
+        AmmoGuardLogState& state = g_lastAmmoGuardSamples[runtimeKey];
+        const Clock::time_point now = Clock::now();
+        const bool changed =
+            state.ammo != sample.ammo ||
+            state.stateAmmo != sample.stateAmmo ||
+            state.reserveAmmoPath != sample.reserveAmmoPath ||
+            state.reserveState != sample.reserveState ||
+            state.rawStateAmmo != sample.rawStateAmmo ||
+            state.rawReserveState != sample.rawReserveState ||
+            state.budgetAmmo != sample.budgetAmmo ||
+            state.source != sample.source;
+        const bool periodic = state.lastLog.time_since_epoch().count() == 0 ||
+            now - state.lastLog >= std::chrono::milliseconds(500);
+
+        if (!changed && !blocking && !periodic)
+            return;
+
+        state.ammo = sample.ammo;
+        state.stateAmmo = sample.stateAmmo;
+        state.reserveAmmoPath = sample.reserveAmmoPath;
+        state.reserveState = sample.reserveState;
+        state.rawStateAmmo = sample.rawStateAmmo;
+        state.rawReserveState = sample.rawReserveState;
+        state.budgetAmmo = sample.budgetAmmo;
+        state.source = sample.source;
+        state.lastLog = now;
+
+        Diagnostics::Aim("sequence.ammo_guard skill=%s ammo=%d reserve=%d blocking=%d source=%d stateAmmo=%d reserveAmmoPath=%d reserveState=%d rawStateAmmo=%d rawReserveState=%d budgetAmmo=%d hero=0x%llX skillBase=0x%llX",
+            runtimeKey.c_str(),
+            sample.ammo,
+            reserveAmmo,
+            blocking ? 1 : 0,
+            sample.source,
+            sample.stateAmmo,
+            sample.reserveAmmoPath,
+            sample.reserveState,
+            sample.rawStateAmmo,
+            sample.rawReserveState,
+            sample.budgetAmmo,
+            static_cast<unsigned long long>(sample.heroId),
+            static_cast<unsigned long long>(sample.skillBase));
+    }
+
+    bool IsAmmoGuardBlocking(const std::string& runtimeKey,
+                             const Config::HeroSkillSettings& settings,
+                             const c_entity& local)
+    {
+        if (!settings.ammoGuard)
+            return false;
+
+        const int reserveAmmo = std::clamp(settings.ammoGuardReserve, 0, 50);
+        AmmoGuardSample sample = TryReadLocalAmmoRemaining(local);
+        UpdateSequenceAmmoBudgetFromRead(runtimeKey, reserveAmmo, sample.ammo);
+
+        if (sample.ammo < 0 && UsesAsheAmmoBudgetFallback(runtimeKey)) {
+            sample.budgetAmmo = SequenceAmmoBudgetRemaining(runtimeKey);
+            sample.ammo = sample.budgetAmmo;
+            sample.source = 6;
+        }
+
+        const bool blocking = sample.ammo >= 0 &&
+            (sample.ammo <= reserveAmmo || IsSequenceAmmoBudgetBlocking(runtimeKey, reserveAmmo));
+        LogAmmoGuardSample(runtimeKey, sample, reserveAmmo, blocking);
+
+        if (sample.ammo < 0)
+            return false;
+
+        if (!blocking)
+            return false;
+
+        return true;
     }
 
     bool EvaluateTrajectoryAction(const std::string& runtimeKey,
@@ -767,6 +2037,9 @@ namespace {
             CancelViewpoint(skillId, viewpoint->second, "disabled_or_inactive");
 
         g_lastActionExecutions.erase(skillId);
+        g_lastSkillGuardLogs.erase(skillId);
+        g_lastAmmoGuardSamples.erase(skillId);
+        g_zaryaAmmoProbes.erase(skillId);
     }
 
     std::string RuntimeSkillKey(uint64_t heroId, const char* skillId)
@@ -776,13 +2049,19 @@ namespace {
 
 } // namespace
 
+bool AnyInputSequenceActive()
+{
+    return g_anyInputSequenceActive.load(std::memory_order_acquire);
+}
+
 void RunInputSequence(const std::string& skillId,
                       const std::vector<Config::HeroSkillSequenceStep>& steps,
-                      int activationKey,
+                      int key,
                       const Config::HeroSkillTrackingParams& trackingParams)
 {
     SequenceRuntime& runtime = g_sequences[skillId];
-    const bool held = IsActivationKeyHeld(activationKey);
+    const bool held = IsSequenceSelfTestHeld(key) || IsActivationKeyHeld(key);
+    const bool useWorker = UseSequenceWorker();
 
     if (!held || steps.empty()) {
         if (runtime.active)
@@ -790,66 +2069,104 @@ void RunInputSequence(const std::string& skillId,
         return;
     }
 
-    const Clock::time_point now = Clock::now();
     if (!runtime.active) {
         runtime.active = true;
         runtime.stepIndex = 0;
-        runtime.phase = SequencePhase::Hold;
-        runtime.phaseStarted = now;
-        runtime.activeChannel = steps.front().channel;
-        runtime.hasActiveChannel = true;
-        SetOutputChannel(runtime.activeChannel, true);
-        Diagnostics::Info("Hero skill sequence started. skill=%s steps=%zu activationKey=%d",
-            skillId.c_str(), steps.size(), activationKey);
-    }
+        runtime.currentMask = 0;
+        runtime.stepStarted = Clock::now();
+        runtime.effectiveDurationMs = PickSequenceDurationMs(steps.front());
+        g_anyInputSequenceActive.store(true, std::memory_order_release);
+        MarkActionExecuted(skillId);
 
-    if (runtime.stepIndex >= steps.size())
-        runtime.stepIndex = 0;
-
-    const Config::HeroSkillSequenceStep& step = steps[runtime.stepIndex];
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - runtime.phaseStarted);
-
-    if (runtime.phase == SequencePhase::Hold) {
-        if (elapsed.count() >= step.holdMs) {
-            ReleaseSequenceChannel(runtime);
-            runtime.phase = SequencePhase::Release;
-            runtime.phaseStarted = now;
+        if (useWorker) {
+            runtime.worker = std::jthread(RunSequenceWorker,
+                skillId,
+                std::vector<Config::HeroSkillSequenceStep>(steps.begin(), steps.end()));
+        } else {
+            if (ConsumeSequenceAmmoBudgetForStep(skillId, runtime.currentMask, steps.front().buttonMask)) {
+                CancelSequence(skillId, runtime, "ammo_guard_budget");
+                return;
+            }
+            EnterSequenceStep(runtime.currentMask, steps.front());
         }
-    } else if (elapsed.count() >= step.releaseMs) {
-        runtime.stepIndex = (runtime.stepIndex + 1) % steps.size();
-        const Config::HeroSkillSequenceStep& nextStep = steps[runtime.stepIndex];
-        runtime.phase = SequencePhase::Hold;
-        runtime.phaseStarted = now;
-        runtime.activeChannel = nextStep.channel;
-        runtime.hasActiveChannel = true;
-        SetOutputChannel(runtime.activeChannel, true);
+
+        Diagnostics::Info("Hero skill sequence started. skill=%s steps=%zu activationKey=%d",
+            skillId.c_str(), steps.size(), key);
+
+        if (SequenceDiagnosticsEnabled() && !useWorker) {
+            const Config::HeroSkillSequenceStep& step = steps.front();
+            Diagnostics::Aim("sequence.step skill=%s step=%zu mask=0x%02X durationMs=%d baseMs=%d scale=%.3f jitterMs=%d",
+                skillId.c_str(),
+                runtime.stepIndex + 1,
+                step.buttonMask,
+                runtime.effectiveDurationMs,
+                step.durationMs,
+                step.speedScale,
+                step.jitterMs);
+        }
+    } else if (!useWorker) {
+        if (runtime.stepIndex >= steps.size()) {
+            runtime.stepIndex = 0;
+            runtime.stepStarted = Clock::now();
+            runtime.effectiveDurationMs = PickSequenceDurationMs(steps.front());
+            if (ConsumeSequenceAmmoBudgetForStep(skillId, runtime.currentMask, steps.front().buttonMask)) {
+                CancelSequence(skillId, runtime, "ammo_guard_budget");
+                return;
+            }
+            EnterSequenceStep(runtime.currentMask, steps.front());
+        }
+
+        const Clock::time_point now = Clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - runtime.stepStarted);
+        if (elapsed.count() >= runtime.effectiveDurationMs) {
+            runtime.stepIndex = (runtime.stepIndex + 1) % steps.size();
+            const Config::HeroSkillSequenceStep& nextStep = steps[runtime.stepIndex];
+            runtime.stepStarted = now;
+            runtime.effectiveDurationMs = PickSequenceDurationMs(nextStep);
+            if (ConsumeSequenceAmmoBudgetForStep(skillId, runtime.currentMask, nextStep.buttonMask)) {
+                CancelSequence(skillId, runtime, "ammo_guard_budget");
+                return;
+            }
+            EnterSequenceStep(runtime.currentMask, nextStep);
+
+            if (SequenceDiagnosticsEnabled()) {
+                Diagnostics::Aim("sequence.step skill=%s step=%zu mask=0x%02X durationMs=%d baseMs=%d scale=%.3f jitterMs=%d",
+                    skillId.c_str(),
+                    runtime.stepIndex + 1,
+                    nextStep.buttonMask,
+                    runtime.effectiveDurationMs,
+                    nextStep.durationMs,
+                    nextStep.speedScale,
+                    nextStep.jitterMs);
+            }
+        }
     }
 
-    RunTrackingOverlayTick(trackingParams);
+    (void)trackingParams;
+    UpdateSequenceHitTiming(skillId, runtime);
 }
 
 HeroSkillRunState RunViewpointController(const std::string& skillId,
                                          const Config::HeroSkillSettings& params)
 {
     ViewpointRuntime& runtime = g_viewpoints[skillId];
-    const bool keyDown = IsActivationKeyHeld(params.activationKey);
+    const bool keyDown = IsActivationKeyHeld(params.key);
 
     if (Config::doingentity == 0) {
         CancelViewpoint(skillId, runtime, "shutdown");
-        runtime.previousKeyDown = keyDown;
+        runtime.prevKeyDown = keyDown;
         return HeroSkillRunState::Cancelled;
     }
 
-    const bool active = runtime.phase != ViewpointPhase::Idle &&
-        runtime.phase != ViewpointPhase::Completed &&
-        runtime.phase != ViewpointPhase::Cancelled;
-    if (!active && keyDown && !runtime.previousKeyDown)
+    const bool active = runtime.phase == ViewpointPhase::PitchDown ||
+        runtime.phase == ViewpointPhase::PitchUp;
+    if (!active && keyDown && !runtime.prevKeyDown)
         BeginViewpoint(skillId, runtime, params);
 
-    runtime.previousKeyDown = keyDown;
+    runtime.prevKeyDown = keyDown;
 
     const Clock::time_point now = Clock::now();
-    const float dt = DeltaSeconds(runtime, now);
+    UpdateViewpointPulses(skillId, runtime, now);
 
     switch (runtime.phase) {
     case ViewpointPhase::Idle:
@@ -858,75 +2175,98 @@ HeroSkillRunState RunViewpointController(const std::string& skillId,
     case ViewpointPhase::Cancelled:
         return HeroSkillRunState::Cancelled;
     case ViewpointPhase::PitchDown: {
-        const float targetPitch = std::clamp(params.pitchDownTargetAngle, -89.0f, 89.0f) * kDegToRad;
-        if (MovePitchToward(targetPitch, runtime.pitchDownSpeedDeg, dt)) {
-            runtime.phase = ViewpointPhase::SecondaryDown;
-            runtime.phaseStarted = now;
+        const float dt = DeltaSeconds(runtime, now);
+        const float targetPitch = ClampViewPitchTarget(
+            std::clamp(params.pitchDownTargetAngle, 0.0f, 180.0f) * kDegToRad);
+        LogViewpointTick(skillId, runtime, targetPitch, runtime.initialAngles.Y, runtime.pitchDownSpeedDeg, dt, now);
+        const bool pitchDone = MovePitchToward(targetPitch, runtime.pitchDownSpeedDeg, dt);
+
+        Vector3 current{};
+        const bool haveCurrent = TryReadCurrentViewAngles(current);
+        const bool nearFloor = haveCurrent && current.X >= kViewpointFloorReadyPitchRad;
+        if (nearFloor) {
+            if (runtime.floorReadyStarted.time_since_epoch().count() == 0)
+                runtime.floorReadyStarted = now;
+        } else {
+            runtime.floorReadyStarted = {};
         }
-        break;
-    }
-    case ViewpointPhase::SecondaryDown:
-        SetOutputChannel(Config::HeroSkillInputChannel::Secondary, true);
-        runtime.secondaryHeld = true;
-        runtime.phase = ViewpointPhase::SecondaryUp;
-        runtime.phaseStarted = now;
-        break;
-    case ViewpointPhase::SecondaryUp:
-        if (now - runtime.phaseStarted >= kBriefPulse) {
-            SetOutputChannel(Config::HeroSkillInputChannel::Secondary, false);
-            runtime.secondaryHeld = false;
-            runtime.phase = ViewpointPhase::Delay;
-            runtime.phaseStarted = now;
-        }
-        break;
-    case ViewpointPhase::Delay:
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - runtime.phaseStarted).count() >= params.fireDelayMs) {
-            runtime.phase = ViewpointPhase::KeyboardDown;
-            runtime.phaseStarted = now;
-        }
-        break;
-    case ViewpointPhase::KeyboardDown:
-        if (runtime.keyboardVk > 0) {
-            if (!SendKeyboardState(runtime.keyboardVk, true)) {
-                Diagnostics::Warn("Hero skill keyboard pulse failed. skill=%s vk=%d",
-                    skillId.c_str(), runtime.keyboardVk);
-            } else {
-                runtime.keyboardHeld = true;
-            }
-        }
-        runtime.phase = ViewpointPhase::KeyboardUp;
-        runtime.phaseStarted = now;
-        break;
-    case ViewpointPhase::KeyboardUp:
-        if (now - runtime.phaseStarted >= kBriefPulse) {
-            if (runtime.keyboardHeld)
-                SendKeyboardState(runtime.keyboardVk, false);
-            runtime.keyboardHeld = false;
+
+        const bool floorSettled = nearFloor && now - runtime.floorReadyStarted >= kViewpointFloorSettle;
+        if (pitchDone || floorSettled) {
+            Diagnostics::Info("Hero skill viewpoint pitch down reached. skill=%s targetPitch=%.2f currentPitch=%.2f settled=%d",
+                skillId.c_str(),
+                targetPitch * kRadToDeg,
+                haveCurrent ? current.X * kRadToDeg : 0.0f,
+                floorSettled ? 1 : 0);
+            BeginSecondaryPulse(skillId, runtime, now);
             runtime.phase = ViewpointPhase::PitchUp;
             runtime.phaseStarted = now;
-        }
-        break;
-    case ViewpointPhase::PitchUp: {
-        // DirectionToAimEuler uses positive pitch for downward movement, so
-        // "pitch up" subtracts the configured positive offset from the start pitch.
-        const float targetPitch = std::clamp(
-            runtime.initialAngles.X - params.pitchUpOffsetAngle * kDegToRad,
-            -89.0f * kDegToRad,
-            89.0f * kDegToRad);
-        if (MovePitchToward(targetPitch, runtime.pitchUpSpeedDeg, dt)) {
-            runtime.phase = ViewpointPhase::RestoreYaw;
-            runtime.phaseStarted = now;
+            runtime.lastTick = runtime.phaseStarted;
+            runtime.lastDebugLog = {};
+            runtime.floorReadyStarted = {};
         }
         break;
     }
-    case ViewpointPhase::RestoreYaw:
-        if (MoveYawToward(runtime.initialAngles.Y, runtime.pitchUpSpeedDeg, dt)) {
-            ReleaseViewpointOutputs(runtime);
+    case ViewpointPhase::PitchUp: {
+        const float dt = DeltaSeconds(runtime, now);
+        const float downTargetPitch = ClampViewPitchTarget(
+            std::clamp(params.pitchDownTargetAngle, 0.0f, 180.0f) * kDegToRad);
+        if (!runtime.fired) {
+            LogViewpointTick(skillId, runtime, downTargetPitch, runtime.initialAngles.Y, runtime.pitchDownSpeedDeg, dt, now);
+            MovePitchToward(downTargetPitch, runtime.pitchDownSpeedDeg, dt);
+            break;
+        }
+
+        const int fireDelayMs = std::clamp(params.fireDelayMs, 0, 100);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - runtime.fireDelayStarted);
+        if (!runtime.jumped && elapsed.count() < fireDelayMs) {
+            LogViewpointTick(skillId, runtime, downTargetPitch, runtime.initialAngles.Y, runtime.pitchDownSpeedDeg, dt, now);
+            MovePitchToward(downTargetPitch, runtime.pitchDownSpeedDeg, dt);
+            break;
+        }
+
+        if (!runtime.jumped) {
+            Vector3 verifiedAngles{};
+            if (TryReadCurrentViewAngles(verifiedAngles)) {
+                if (runtime.jumpVk > 0 && !BeginKeyboardPulse(skillId, runtime, runtime.jumpVk, now)) {
+                    Diagnostics::Warn("Hero skill keyboard pulse failed. skill=%s vk=%d",
+                        skillId.c_str(), runtime.jumpVk);
+                }
+                runtime.jumped = true;
+                Diagnostics::Info("Hero skill viewpoint jump gate passed. skill=%s pitch=%.2f yaw=%.2f elapsedMs=%lld",
+                    skillId.c_str(),
+                    verifiedAngles.X * kRadToDeg,
+                    verifiedAngles.Y * kRadToDeg,
+                    static_cast<long long>(elapsed.count()));
+            }
+            break;
+        }
+
+        LogViewpointTick(skillId, runtime, runtime.pitchUpTargetAngle, runtime.initialAngles.Y, runtime.pitchUpSpeedDeg, dt, now);
+        const auto returnElapsed = now - runtime.phaseStarted;
+        const bool returnTimedOut = returnElapsed >= kViewpointReturnTimeout;
+        bool pitchDone = IsPitchWithin(runtime.pitchUpTargetAngle, kViewpointReturnDoneEpsilonRad);
+        if (!pitchDone && !returnTimedOut)
+            pitchDone = MovePitchToward(runtime.pitchUpTargetAngle, runtime.pitchUpSpeedDeg, dt);
+
+        bool yawDone = IsYawWithin(runtime.initialAngles.Y, kViewpointYawReturnEpsilonRad);
+        if (pitchDone && !yawDone && !returnTimedOut &&
+            returnElapsed < kViewpointYawRestoreBudget) {
+            yawDone = MoveYawToward(runtime.initialAngles.Y, runtime.pitchUpSpeedDeg, dt);
+        }
+
+        if (runtime.jumped && !runtime.jumpDown &&
+            (returnTimedOut || (pitchDone && (yawDone || returnElapsed >= kViewpointYawRestoreBudget)))) {
             runtime.phase = ViewpointPhase::Completed;
-            Diagnostics::Info("Hero skill viewpoint completed. skill=%s", skillId.c_str());
+            Diagnostics::Info("Hero skill viewpoint completed. skill=%s timeout=%d pitchDone=%d yawDone=%d",
+                skillId.c_str(),
+                returnTimedOut ? 1 : 0,
+                pitchDone ? 1 : 0,
+                yawDone ? 1 : 0);
             return HeroSkillRunState::Completed;
         }
         break;
+    }
     default:
         break;
     }
@@ -942,8 +2282,10 @@ void CancelActiveSkill()
     for (auto& item : g_viewpoints)
         CancelViewpoint(item.first, item.second, "cancel_all");
 
-    ReleaseAllOutputChannels();
+    ReleaseAllButtons();
     g_lastActionExecutions.clear();
+    g_zaryaAmmoProbes.clear();
+    RefreshAnyInputSequenceActive();
 }
 
 void ProcessHeroSkills()
@@ -954,7 +2296,10 @@ void ProcessHeroSkills()
     }
 
     const c_entity localSnapshot = TargetingDetail::SnapshotLocalEntity();
-    const uint64_t heroId = localSnapshot.HeroID;
+    const SequenceSelfTestRuntime& selfTest = SequenceSelfTest();
+    UpdateSequenceSelfTestReload();
+    const bool forceSelfTestSkill = selfTest.enabled && selfTest.forceSkill;
+    const uint64_t heroId = forceSelfTestSkill ? selfTest.heroId : localSnapshot.HeroID;
     if (heroId != g_lastHeroId) {
         CancelActiveSkill();
         g_lastHeroId = heroId;
@@ -967,6 +2312,10 @@ void ProcessHeroSkills()
     for (const HeroSkillDefinition& definition : AllHeroSkillDefinitions()) {
         if (definition.heroId != heroId)
             continue;
+        if (forceSelfTestSkill &&
+            std::string(definition.skillId ? definition.skillId : "") != selfTest.skillId) {
+            continue;
+        }
 
         processedAnyForHero = true;
         const std::string skillKey = RuntimeSkillKey(heroId, definition.skillId);
@@ -974,14 +2323,54 @@ void ProcessHeroSkills()
             heroId,
             definition.skillId ? definition.skillId : "",
             definition.defaultSettings);
+        if (IsAsheFirePatternDefinition(definition))
+            settings.sequenceSteps = definition.defaultSettings.sequenceSteps;
 
         if (!settings.enabled) {
             CancelSkill(skillKey);
             continue;
         }
 
-        if (SkillControls(definition, HeroSkillControls::SequenceSteps)) {
-            RunInputSequence(skillKey, settings.sequenceSteps, settings.activationKey, settings.tracking);
+        if (IsZaryaReloadAmmoProbeDefinition(definition)) {
+            UpdateZaryaAmmoProbe(skillKey, settings, localSnapshot);
+            continue;
+        }
+
+        const bool sequenceSkill = SkillControls(definition, HeroSkillControls::SequenceSteps);
+        const bool sequenceActive = sequenceSkill && IsSequenceActive(skillKey);
+        if (sequenceSkill && !sequenceActive && AimbotDetail::IsInputVkDown('R'))
+            ResetSequenceAmmoBudget(skillKey);
+
+        if (!sequenceActive && IsInRechargeInterval(definition, settings, localSnapshot)) {
+            CancelSkill(skillKey);
+            if (ShouldLogSkillGuard(skillKey)) {
+                Diagnostics::Aim("skill.cooldown_guard block skill=%s input=%d reloading=%d skillcd1=%.3f skillcd2=%.3f ultimate=%.1f",
+                    skillKey.c_str(),
+                    static_cast<int>(definition.inputAction),
+                    Config::reloading ? 1 : 0,
+                    localSnapshot.skillcd1,
+                    localSnapshot.skillcd2,
+                    localSnapshot.ultimate);
+            }
+            continue;
+        }
+
+        if (!sequenceActive && IsManualCooldownActive(skillKey, settings)) {
+            if (ShouldLogSkillGuard(skillKey)) {
+                Diagnostics::Aim("skill.manual_cooldown block skill=%s cooldown=%.3f",
+                    skillKey.c_str(),
+                    settings.cooldown);
+            }
+            continue;
+        }
+
+        if (IsAmmoGuardBlocking(skillKey, settings, localSnapshot)) {
+            CancelSkill(skillKey);
+            continue;
+        }
+
+        if (sequenceSkill) {
+            RunInputSequence(skillKey, settings.sequenceSteps, settings.key, settings.tracking);
         }
 
         if (SkillControls(definition, HeroSkillControls::PitchControl) ||
@@ -990,9 +2379,6 @@ void ProcessHeroSkills()
         }
 
         if (!IsRuntimeActionDefinition(definition))
-            continue;
-
-        if (IsInRechargeInterval(definition, settings, localSnapshot))
             continue;
 
         if (definition.category == HeroSkillCategory::Ultimate) {

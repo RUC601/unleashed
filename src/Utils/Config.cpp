@@ -4,6 +4,7 @@
 
 #include "Utils/Config.hpp"
 
+#include "Game/Structs.hpp"
 #include "Game/Target.hpp"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
@@ -841,12 +842,9 @@ namespace OW { namespace Config {
             if (!std::isfinite(settings.tracking.smooth)) settings.tracking.smooth = 0.0f;
             if (!std::isfinite(settings.tracking.fov)) settings.tracking.fov = 0.0f;
             if (!std::isfinite(settings.tracking.hitbox)) settings.tracking.hitbox = 0.0f;
-            if (!std::isfinite(settings.pitchDownSpeed)) settings.pitchDownSpeed = 0.0f;
-            if (!std::isfinite(settings.pitchDownRandomRange)) settings.pitchDownRandomRange = 0.0f;
-            if (!std::isfinite(settings.pitchUpSpeed)) settings.pitchUpSpeed = 0.0f;
-            if (!std::isfinite(settings.pitchUpRandomRange)) settings.pitchUpRandomRange = 0.0f;
-            if (!std::isfinite(settings.pitchDownTargetAngle)) settings.pitchDownTargetAngle = 0.0f;
-            if (!std::isfinite(settings.pitchUpOffsetAngle)) settings.pitchUpOffsetAngle = 0.0f;
+            if (!std::isfinite(settings.pitchDownDurationJitter)) settings.pitchDownDurationJitter = 10.0f;
+            if (!std::isfinite(settings.pitchDownTargetAngle)) settings.pitchDownTargetAngle = 90.0f;
+            if (!std::isfinite(settings.pitchUpOffsetJitter)) settings.pitchUpOffsetJitter = 1.5f;
 
             settings.key = std::clamp(settings.key, 0, MaxActivationKeyIndex());
             settings.healthThreshold = std::clamp(settings.healthThreshold, 0.0f, 500.0f);
@@ -857,28 +855,27 @@ namespace OW { namespace Config {
             settings.cooldown = std::clamp(settings.cooldown, 0.0f, 60.0f);
             settings.minTargets = std::clamp(settings.minTargets, 1, 8);
             settings.radius = std::clamp(settings.radius, 0.0f, 30.0f);
-            settings.activationKey = std::clamp(settings.activationKey, 0, MaxActivationKeyIndex());
             if (settings.sequenceSteps.size() > static_cast<size_t>(kMaxHeroSkillSequenceSteps))
                 settings.sequenceSteps.resize(static_cast<size_t>(kMaxHeroSkillSequenceSteps));
             for (HeroSkillSequenceStep& step : settings.sequenceSteps) {
-                const int channel = std::clamp(static_cast<int>(step.channel), 0, 1);
-                step.channel = static_cast<HeroSkillInputChannel>(channel);
-                step.holdMs = std::clamp(step.holdMs, 0, 1000);
-                step.releaseMs = std::clamp(step.releaseMs, 0, 1000);
+                if (!std::isfinite(step.speedScale)) step.speedScale = 1.0f;
+                step.buttonMask = std::clamp(step.buttonMask, 0, 7);
+                step.durationMs = std::clamp(step.durationMs, 0, 1000);
+                step.speedScale = std::clamp(step.speedScale, 0.5f, 2.0f);
+                step.jitterMs = std::clamp(step.jitterMs, 0, 50);
             }
             settings.tracking.method = std::clamp(settings.tracking.method, 0, 2);
             settings.tracking.smooth = std::clamp(settings.tracking.smooth, 0.0f, 100.0f);
             settings.tracking.fov = std::clamp(settings.tracking.fov, 0.0f, 500.0f);
             settings.tracking.bone = NormalizeAimBone(settings.tracking.bone);
             settings.tracking.hitbox = std::clamp(settings.tracking.hitbox, 0.0f, 5.0f);
-            settings.pitchDownSpeed = std::clamp(settings.pitchDownSpeed, 0.0f, 720.0f);
-            settings.pitchDownRandomRange = std::clamp(settings.pitchDownRandomRange, 0.0f, 720.0f);
-            settings.pitchUpSpeed = std::clamp(settings.pitchUpSpeed, 0.0f, 720.0f);
-            settings.pitchUpRandomRange = std::clamp(settings.pitchUpRandomRange, 0.0f, 720.0f);
-            settings.pitchDownTargetAngle = std::clamp(settings.pitchDownTargetAngle, -89.0f, 89.0f);
-            settings.pitchUpOffsetAngle = std::clamp(settings.pitchUpOffsetAngle, -180.0f, 180.0f);
-            settings.fireDelayMs = std::clamp(settings.fireDelayMs, 0, 2000);
+            settings.pitchDownDurationMs = std::clamp(settings.pitchDownDurationMs, 20, 100);
+            settings.pitchDownDurationJitter = std::clamp(settings.pitchDownDurationJitter, 0.0f, 50.0f);
+            settings.pitchDownTargetAngle = std::clamp(settings.pitchDownTargetAngle, 0.0f, 180.0f);
+            settings.pitchUpOffsetJitter = std::clamp(settings.pitchUpOffsetJitter, 0.0f, 20.0f);
+            settings.fireDelayMs = std::clamp(settings.fireDelayMs, 0, 100);
             settings.jumpKeyCode = std::clamp(settings.jumpKeyCode, 0, 255);
+            settings.ammoGuardReserve = std::clamp(settings.ammoGuardReserve, 0, 50);
             return settings;
         }
 
@@ -1525,9 +1522,10 @@ namespace OW { namespace Config {
         rapidjson::Value HeroSkillSequenceStepToJson(const HeroSkillSequenceStep& step, Allocator& allocator)
         {
             rapidjson::Value value(rapidjson::kObjectType);
-            AddJsonInt(value, "channel", static_cast<int>(step.channel), allocator);
-            AddJsonInt(value, "holdMs", step.holdMs, allocator);
-            AddJsonInt(value, "releaseMs", step.releaseMs, allocator);
+            AddJsonInt(value, "buttonMask", step.buttonMask, allocator);
+            AddJsonInt(value, "durationMs", step.durationMs, allocator);
+            AddJsonFloat(value, "speedScale", step.speedScale, allocator);
+            AddJsonInt(value, "jitterMs", step.jitterMs, allocator);
             return value;
         }
 
@@ -1548,7 +1546,6 @@ namespace OW { namespace Config {
             AddJsonBool(value, "prediction", settings.prediction, allocator);
             AddJsonInt(value, "minTargets", settings.minTargets, allocator);
             AddJsonFloat(value, "radius", settings.radius, allocator);
-            AddJsonInt(value, "activationKey", settings.activationKey, allocator);
 
             rapidjson::Value sequenceSteps(rapidjson::kArrayType);
             for (const HeroSkillSequenceStep& step : settings.sequenceSteps)
@@ -1562,14 +1559,14 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "trackingFov", settings.tracking.fov, allocator);
             AddJsonInt(value, "trackingBone", settings.tracking.bone, allocator);
             AddJsonFloat(value, "trackingHitbox", settings.tracking.hitbox, allocator);
-            AddJsonFloat(value, "pitchDownSpeed", settings.pitchDownSpeed, allocator);
-            AddJsonFloat(value, "pitchDownRandomRange", settings.pitchDownRandomRange, allocator);
-            AddJsonFloat(value, "pitchUpSpeed", settings.pitchUpSpeed, allocator);
-            AddJsonFloat(value, "pitchUpRandomRange", settings.pitchUpRandomRange, allocator);
+            AddJsonInt(value, "pitchDownDurationMs", settings.pitchDownDurationMs, allocator);
+            AddJsonFloat(value, "pitchDownDurationJitter", settings.pitchDownDurationJitter, allocator);
             AddJsonFloat(value, "pitchDownTargetAngle", settings.pitchDownTargetAngle, allocator);
-            AddJsonFloat(value, "pitchUpOffsetAngle", settings.pitchUpOffsetAngle, allocator);
+            AddJsonFloat(value, "pitchUpOffsetJitter", settings.pitchUpOffsetJitter, allocator);
             AddJsonInt(value, "fireDelayMs", settings.fireDelayMs, allocator);
             AddJsonInt(value, "jumpKeyCode", settings.jumpKeyCode, allocator);
+            AddJsonBool(value, "ammoGuard", settings.ammoGuard, allocator);
+            AddJsonInt(value, "ammoGuardReserve", settings.ammoGuardReserve, allocator);
             return value;
         }
 
@@ -1873,10 +1870,10 @@ namespace OW { namespace Config {
             if (!value.IsObject())
                 return defaults;
 
-            defaults.channel = static_cast<HeroSkillInputChannel>(
-                ReadJsonInt(value, "channel", static_cast<int>(defaults.channel)));
-            defaults.holdMs = ReadJsonInt(value, "holdMs", defaults.holdMs);
-            defaults.releaseMs = ReadJsonInt(value, "releaseMs", defaults.releaseMs);
+            defaults.buttonMask = ReadJsonInt(value, "buttonMask", defaults.buttonMask);
+            defaults.durationMs = ReadJsonInt(value, "durationMs", defaults.durationMs);
+            defaults.speedScale = ReadJsonFloat(value, "speedScale", defaults.speedScale);
+            defaults.jitterMs = ReadJsonInt(value, "jitterMs", defaults.jitterMs);
             return defaults;
         }
 
@@ -1886,7 +1883,10 @@ namespace OW { namespace Config {
                 return ValidateHeroSkillSettingsValue(defaults);
 
             defaults.enabled = ReadJsonBool(value, "enabled", defaults.enabled);
-            defaults.key = ReadJsonInt(value, "key", defaults.key);
+            const auto keyItem = value.FindMember("key");
+            defaults.key = keyItem != value.MemberEnd()
+                ? ReadJsonInt(value, "key", defaults.key)
+                : ReadJsonInt(value, "activationKey", defaults.key);
             defaults.healthThreshold = ReadJsonFloat(value, "healthThreshold", defaults.healthThreshold);
             defaults.enemyHealthThreshold = ReadJsonFloat(value, "enemyHealthThreshold", defaults.enemyHealthThreshold);
             defaults.allyHealthThreshold = ReadJsonFloat(value, "allyHealthThreshold", defaults.allyHealthThreshold);
@@ -1897,7 +1897,6 @@ namespace OW { namespace Config {
             defaults.prediction = ReadJsonBool(value, "prediction", defaults.prediction);
             defaults.minTargets = ReadJsonInt(value, "minTargets", defaults.minTargets);
             defaults.radius = ReadJsonFloat(value, "radius", defaults.radius);
-            defaults.activationKey = ReadJsonInt(value, "activationKey", defaults.activationKey);
 
             const auto sequenceSteps = value.FindMember("sequenceSteps");
             if (sequenceSteps != value.MemberEnd() && sequenceSteps->value.IsArray()) {
@@ -1917,15 +1916,201 @@ namespace OW { namespace Config {
             defaults.tracking.fov = ReadJsonFloat(value, "trackingFov", defaults.tracking.fov);
             defaults.tracking.bone = ReadJsonInt(value, "trackingBone", defaults.tracking.bone);
             defaults.tracking.hitbox = ReadJsonFloat(value, "trackingHitbox", defaults.tracking.hitbox);
-            defaults.pitchDownSpeed = ReadJsonFloat(value, "pitchDownSpeed", defaults.pitchDownSpeed);
-            defaults.pitchDownRandomRange = ReadJsonFloat(value, "pitchDownRandomRange", defaults.pitchDownRandomRange);
-            defaults.pitchUpSpeed = ReadJsonFloat(value, "pitchUpSpeed", defaults.pitchUpSpeed);
-            defaults.pitchUpRandomRange = ReadJsonFloat(value, "pitchUpRandomRange", defaults.pitchUpRandomRange);
+            defaults.pitchDownDurationMs = ReadJsonInt(value, "pitchDownDurationMs", defaults.pitchDownDurationMs);
+            defaults.pitchDownDurationJitter = ReadJsonFloat(value, "pitchDownDurationJitter", defaults.pitchDownDurationJitter);
             defaults.pitchDownTargetAngle = ReadJsonFloat(value, "pitchDownTargetAngle", defaults.pitchDownTargetAngle);
-            defaults.pitchUpOffsetAngle = ReadJsonFloat(value, "pitchUpOffsetAngle", defaults.pitchUpOffsetAngle);
+            defaults.pitchUpOffsetJitter = ReadJsonFloat(value, "pitchUpOffsetJitter", defaults.pitchUpOffsetJitter);
             defaults.fireDelayMs = ReadJsonInt(value, "fireDelayMs", defaults.fireDelayMs);
             defaults.jumpKeyCode = ReadJsonInt(value, "jumpKeyCode", defaults.jumpKeyCode);
+            defaults.ammoGuard = ReadJsonBool(value, "ammoGuard", defaults.ammoGuard);
+            defaults.ammoGuardReserve = ReadJsonInt(value, "ammoGuardReserve", defaults.ammoGuardReserve);
             return ValidateHeroSkillSettingsValue(defaults);
+        }
+
+        std::vector<HeroSkillSequenceStep> MakeMeasuredAsheFirePatternSteps()
+        {
+            return {
+                { 0x01,  49, 1.0f, 0 },
+                { 0x02, 140, 1.0f, 0 },
+                { 0x03,  70, 1.0f, 0 },
+                { 0x02,  70, 1.0f, 0 },
+                { 0x00, 183, 1.0f, 0 },
+                { 0x01,  49, 1.0f, 0 },
+                { 0x00, 183, 1.0f, 0 },
+
+                { 0x01,  49, 1.0f, 0 },
+                { 0x00, 183, 1.0f, 0 },
+                { 0x01,  49, 1.0f, 0 },
+                { 0x00,  45, 1.0f, 0 },
+                { 0x02, 140, 1.0f, 0 },
+                { 0x03,  70, 1.0f, 0 },
+                { 0x02,  70, 1.0f, 0 },
+                { 0x00, 183, 1.0f, 0 },
+
+                { 0x01,  49, 1.0f, 0 },
+                { 0x00, 183, 1.0f, 0 },
+                { 0x01,  49, 1.0f, 0 },
+                { 0x00, 183, 1.0f, 0 },
+
+                { 0x01,  49, 1.0f, 0 },
+                { 0x00,  47, 1.0f, 0 },
+                { 0x02, 140, 1.0f, 0 },
+                { 0x03,  70, 1.0f, 0 },
+                { 0x02,  70, 1.0f, 0 },
+                { 0x00, 183, 1.0f, 0 },
+                { 0x01,  49, 1.0f, 0 },
+                { 0x00, 183, 1.0f, 0 },
+                { 0x01,  49, 1.0f, 0 },
+            };
+        }
+
+        bool MatchesAsheTenStepFirePatternDefault(const std::vector<HeroSkillSequenceStep>& steps)
+        {
+            constexpr std::pair<int, int> semantic[] = {
+                { 0x01,  49 },
+                { 0x00, 182 },
+                { 0x02, 245 },
+                { 0x03,  70 },
+                { 0x02, 210 },
+                { 0x00, 154 },
+                { 0x01,  49 },
+                { 0x00, 182 },
+                { 0x01,  49 },
+                { 0x00, 300 },
+            };
+
+            if (steps.size() != std::size(semantic))
+                return false;
+
+            for (size_t index = 0; index < std::size(semantic); ++index) {
+                if (steps[index].buttonMask != semantic[index].first ||
+                    steps[index].durationMs != semantic[index].second) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool MatchesPreviousAsheFirePatternDefault(const std::vector<HeroSkillSequenceStep>& steps)
+        {
+            constexpr std::pair<int, int> previous[] = {
+                { 0x01,  60 },
+                { 0x03,   5 },
+                { 0x02, 220 },
+                { 0x03,  62 },
+                { 0x02,  47 },
+                { 0x00, 142 },
+                { 0x01,  75 },
+                { 0x00, 147 },
+            };
+
+            if (steps.size() != std::size(previous))
+                return false;
+
+            for (size_t index = 0; index < std::size(previous); ++index) {
+                if (steps[index].buttonMask != previous[index].first ||
+                    steps[index].durationMs != previous[index].second) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool MatchesLegacyFiveStepAsheFirePatternDefault(const std::vector<HeroSkillSequenceStep>& steps)
+        {
+            constexpr std::pair<int, int> legacy[] = {
+                { 0x01,   5 },
+                { 0x02, 190 },
+                { 0x03,   5 },
+                { 0x00, 119 },
+                { 0x00, 119 },
+            };
+
+            if (steps.size() != std::size(legacy))
+                return false;
+
+            for (size_t index = 0; index < std::size(legacy); ++index) {
+                if (steps[index].buttonMask != legacy[index].first ||
+                    steps[index].durationMs != legacy[index].second) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool MatchesMeasuredAsheFirePattern(const std::vector<HeroSkillSequenceStep>& steps)
+        {
+            const std::vector<HeroSkillSequenceStep> measured = MakeMeasuredAsheFirePatternSteps();
+            if (steps.size() != measured.size())
+                return false;
+
+            for (size_t index = 0; index < measured.size(); ++index) {
+                if (steps[index].buttonMask != measured[index].buttonMask ||
+                    steps[index].durationMs != measured[index].durationMs) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool SequenceJsonMissingTimingMetadata(const rapidjson::Value& value)
+        {
+            if (!value.IsObject())
+                return false;
+
+            const auto sequenceSteps = value.FindMember("sequenceSteps");
+            if (sequenceSteps == value.MemberEnd() || !sequenceSteps->value.IsArray())
+                return false;
+
+            for (const rapidjson::Value& step : sequenceSteps->value.GetArray()) {
+                if (!step.IsObject())
+                    continue;
+
+                if (step.FindMember("speedScale") == step.MemberEnd() ||
+                    step.FindMember("jitterMs") == step.MemberEnd()) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool ShouldMigrateAsheFirePatternSequence(uint64_t heroId,
+                                                  const std::string& skillId,
+                                                  const rapidjson::Value& value,
+                                                  const HeroSkillSettings& settings)
+        {
+            if (heroId != static_cast<uint64_t>(OW::eHero::HERO_ASHE) || skillId != "fire-pattern")
+                return false;
+
+            if (MatchesMeasuredAsheFirePattern(settings.sequenceSteps))
+                return false;
+
+            return SequenceJsonMissingTimingMetadata(value) ||
+                MatchesLegacyFiveStepAsheFirePatternDefault(settings.sequenceSteps) ||
+                MatchesAsheTenStepFirePatternDefault(settings.sequenceSteps) ||
+                MatchesPreviousAsheFirePatternDefault(settings.sequenceSteps);
+        }
+
+        bool ShouldDisableAsheFirePatternTrackingDefault(uint64_t heroId,
+                                                         const std::string& skillId,
+                                                         const HeroSkillSettings& settings)
+        {
+            if (heroId != static_cast<uint64_t>(OW::eHero::HERO_ASHE) || skillId != "fire-pattern")
+                return false;
+
+            if (!MatchesMeasuredAsheFirePattern(settings.sequenceSteps))
+                return false;
+
+            return settings.tracking.method == 0 &&
+                std::fabs(settings.tracking.smooth - 5.0f) < 0.001f &&
+                std::fabs(settings.tracking.fov - 200.0f) < 0.001f &&
+                settings.tracking.bone == kAimBoneHead &&
+                std::fabs(settings.tracking.hitbox - 0.13f) < 0.001f;
         }
 
         TriggerPreset ReadTriggerPresetJson(const rapidjson::Value& value, TriggerPreset defaults)
@@ -2039,7 +2224,23 @@ namespace OW { namespace Config {
                     if (skillId.empty())
                         continue;
 
-                    skills[skillId] = ReadHeroSkillSettingsJson(skill->value, HeroSkillSettings{});
+                    HeroSkillSettings settings = ReadHeroSkillSettingsJson(skill->value, HeroSkillSettings{});
+                    if (ShouldMigrateAsheFirePatternSequence(heroId, skillId, skill->value, settings)) {
+                        settings.sequenceSteps = MakeMeasuredAsheFirePatternSteps();
+                        settings.cooldownGuard = true;
+                        settings.ammoGuard = true;
+                        settings.ammoGuardReserve = 1;
+                        settings = ValidateHeroSkillSettingsValue(settings);
+                        LogConfig(Diagnostics::LogLevel::Info,
+                            "Migrated Ashe fire-pattern sequence to locked tuned defaults.");
+                    }
+                    if (ShouldDisableAsheFirePatternTrackingDefault(heroId, skillId, settings)) {
+                        settings.tracking.fov = 0.0f;
+                        settings = ValidateHeroSkillSettingsValue(settings);
+                        LogConfig(Diagnostics::LogLevel::Info,
+                            "Disabled Ashe fire-pattern tracking overlay default to keep button timing isolated.");
+                    }
+                    skills[skillId] = settings;
                 }
             }
         }
