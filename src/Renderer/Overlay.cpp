@@ -353,12 +353,10 @@ LRESULT WINAPI MenuWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     switch (msg) {
         case WM_ACTIVATE:
-            if (LOWORD(wParam) != WA_INACTIVE) {
-                g_Overlay.RestoreFromTaskbar();
-            } else if (LOWORD(wParam) == WA_INACTIVE &&
-                ShouldMinimizeForExternalActivation(reinterpret_cast<HWND>(lParam))) {
-                g_Overlay.MinimizeToTaskbar();
-            }
+            if (LOWORD(wParam) != WA_INACTIVE)
+                g_Overlay.OnMenuActivated();
+            else
+                g_Overlay.OnMenuDeactivated(reinterpret_cast<HWND>(lParam));
             break;
         case WM_GETMINMAXINFO:
             ApplyMinimumMenuTrackSize(lParam);
@@ -442,8 +440,6 @@ void Overlay::Run(std::function<void()> renderCallback) {
         if (IsMenuTogglePressed() && !m_minimizedToTaskbar)
             OW::Config::Menu = !OW::Config::Menu;
 
-        UpdateExternalActivationMinimize();
-
         if (m_minimizedToTaskbar) {
             Sleep(16);
             continue;
@@ -466,6 +462,7 @@ void Overlay::MinimizeToTaskbar() {
         return;
 
     m_minimizedToTaskbar = true;
+    m_canMinimizeOnMenuDeactivate = false;
     OW::Config::Menu = false;
 
     if (m_canvasHWnd && IsWindow(m_canvasHWnd))
@@ -479,6 +476,7 @@ void Overlay::RestoreFromTaskbar() {
         return;
 
     m_minimizedToTaskbar = false;
+    m_canMinimizeOnMenuDeactivate = false;
 
     if (m_canvasHWnd && IsWindow(m_canvasHWnd)) {
         ShowWindow(m_canvasHWnd, SW_SHOWNA);
@@ -492,6 +490,20 @@ void Overlay::RestoreFromTaskbar() {
         SetWindowPos(m_menuHWnd, HWND_TOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     }
+}
+
+void Overlay::OnMenuActivated() {
+    RestoreFromTaskbar();
+}
+
+void Overlay::OnMenuDeactivated(HWND activatedWindow) {
+    // Startup can produce activation messages before the menu has rendered.
+    // Wait for one real menu frame before treating deactivation as user intent.
+    if (!m_canMinimizeOnMenuDeactivate)
+        return;
+
+    if (ShouldMinimizeForExternalActivation(activatedWindow))
+        MinimizeToTaskbar();
 }
 
 void Overlay::RequestExit() {
@@ -813,15 +825,6 @@ void Overlay::UpdateWindowVisibility() {
     }
 }
 
-void Overlay::UpdateExternalActivationMinimize() {
-    if (m_minimizedToTaskbar || !OW::Config::Menu || !IsWindowVisibleAndRestored(m_menuHWnd))
-        return;
-
-    const HWND foregroundWindow = GetForegroundWindow();
-    if (foregroundWindow && !IsCurrentProcessWindow(foregroundWindow))
-        MinimizeToTaskbar();
-}
-
 void Overlay::UpdateCanvasBounds(bool force) {
     if (!m_canvasHWnd)
         return;
@@ -989,4 +992,5 @@ void Overlay::RenderMenu() {
     m_pContext->ClearRenderTargetView(m_menuRenderTargetView, clearColor);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     m_menuSwapChain->Present(1, 0);
+    m_canMinimizeOnMenuDeactivate = true;
 }

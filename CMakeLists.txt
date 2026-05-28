@@ -27,6 +27,7 @@ set(GAME_HEADERS
     include/Game/AbilityIcons.hpp
     include/Game/Decrypt.hpp
     include/Game/Entity.hpp
+    include/Game/HeroSkills.hpp
     include/Game/Offsets.hpp
     include/Game/Overwatch.hpp
     include/Game/SDK.hpp
@@ -62,6 +63,7 @@ set(UNLEASHED_SOURCES
     src/Utils/Types.cpp
     src/Utils/Config.cpp
     src/Features/UI.cpp
+    src/Game/HeroSkills.cpp
     src/Game/Offsets.cpp
     src/Kmbox/KmboxB.cpp
     src/Kmbox/KmboxMoveTest.cpp

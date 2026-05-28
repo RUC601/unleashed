@@ -527,6 +527,21 @@ namespace KeyState {
             slotsRva);
     }
 
+    inline bool TryScanWin10GafAsyncKeyStateRva(
+        DWORD pid,
+        const KernelModuleInfo& win32kbase,
+        uint64_t& gafAsyncKeyStateRva)
+    {
+        // memflow-win32's Win10 fallback scans NtUserGetAsyncKeyState for
+        // a RIP-relative reference to the compact gafAsyncKeyState bitmap.
+        return TryScanRipRelativeRva(
+            pid,
+            win32kbase,
+            { 0x48, 0x8B, 0x05, -1, -1, -1, -1, 0x48, 0x89, 0x81, -1, -1, 0x00, 0x00, 0x48, 0x8B, 0x8F },
+            3,
+            gafAsyncKeyStateRva);
+    }
+
     inline bool TryScanKeyStateOffset(DWORD pid, uint64_t& keyStateOffset)
     {
         KernelModuleInfo win32kbase{};
@@ -603,30 +618,47 @@ namespace KeyState {
         return address;
     }
 
-    inline uint64_t ResolveWin10ExportAddress(const KeyboardProxyProcess& proxy, DWORD build)
+    inline uint64_t ResolveWin10ExportAddress(
+        const KeyboardProxyProcess& proxy,
+        DWORD build,
+        std::string* failureDetails = nullptr)
     {
         kernelModuleName = "win32kbase.sys";
-        const uint64_t address = ResolveExportAddress(proxy.pid, kernelModuleName.c_str(), "gafAsyncKeyState");
-        if (!address)
+        KernelModuleInfo moduleInfo{};
+        if (!ResolveKernelModuleInfoForPid(proxy.pid, kernelModuleName, moduleInfo) &&
+            !ResolveKernelModuleInfo(kernelModuleName, moduleInfo)) {
+            AppendResolverFailure(failureDetails, proxy, proxy.sessionId, "win10_module", 0);
             return 0;
+        }
+
+        uint64_t address = ResolveExportAddress(proxy.pid, kernelModuleName.c_str(), "gafAsyncKeyState");
+        const bool resolvedByExport = address != 0;
+        uint64_t scannedRva = 0;
+        if (!address && TryScanWin10GafAsyncKeyStateRva(proxy.pid, moduleInfo, scannedRva))
+            address = moduleInfo.base + scannedRva;
+        if (!address) {
+            AppendResolverFailure(failureDetails, proxy, proxy.sessionId, "win10_gaf_export_sig", moduleInfo.base);
+            return 0;
+        }
 
         keyStateByteCount.store(64u, std::memory_order_release);
         keyStateReadPid.store(static_cast<int>(proxy.pid), std::memory_order_release);
         resolvedSessionId.store(proxy.sessionId, std::memory_order_release);
-        uint64_t moduleBase = ResolveKernelModuleBase(kernelModuleName);
-        if (!moduleBase)
-            moduleBase = ResolveKernelModuleBaseForPid(proxy.pid, kernelModuleName);
+        uint64_t moduleBase = moduleInfo.base;
         resolvedModuleBase.store(moduleBase, std::memory_order_release);
-        resolvedSlotsRva.store(0, std::memory_order_release);
+        resolvedSlotsRva.store(resolvedByExport || moduleBase == 0 ? 0 : scannedRva, std::memory_order_release);
         resolvedKeyStateOffset.store(0, std::memory_order_release);
         resolvedViaAutoTable.store(true, std::memory_order_release);
 
-        Diagnostics::Info("DMA KeyState export resolver: build=%lu proxy=%s pid=%lu session=%lu module=%s export=gafAsyncKeyState addr=0x%llX size=%zu.",
+        Diagnostics::Info("DMA KeyState Win10 resolver: build=%lu proxy=%s pid=%lu session=%lu module=%s method=%s base=0x%llX rva=0x%llX addr=0x%llX size=%zu.",
             static_cast<unsigned long>(build),
             proxy.name.c_str(),
             static_cast<unsigned long>(proxy.pid),
             static_cast<unsigned long>(proxy.sessionId),
             kernelModuleName.c_str(),
+            resolvedByExport ? "export" : "signature",
+            static_cast<unsigned long long>(moduleBase),
+            static_cast<unsigned long long>(resolvedByExport || moduleBase == 0 ? 0 : scannedRva),
             static_cast<unsigned long long>(address),
             keyStateByteCount.load(std::memory_order_acquire));
         return address;
@@ -753,7 +785,7 @@ namespace KeyState {
         }
 
         for (const KeyboardProxyProcess& proxy : proxies) {
-            const uint64_t exportAddress = ResolveWin10ExportAddress(proxy, build);
+            const uint64_t exportAddress = ResolveWin10ExportAddress(proxy, build, &failureDetails);
             if (exportAddress) {
                 gafAsyncKeyStateOffset = 0;
                 return exportAddress;

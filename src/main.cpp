@@ -18,6 +18,7 @@
 #include "Memory/Memory.h"        // ::mem   (global DMA instance)
 #include "Memory/KeyState.hpp"    // host keyboard/mouse state via DMA
 #include "Game/AbilityIcons.hpp"  // ability icon lookup table
+#include "Game/HeroSkills.hpp"    // generic hero skill primitives
 #include "Game/SDK.hpp"           // OW::SDK
 #include "Game/Decrypt.hpp"       // OW::GetGlobalKey, OW::DecryptComponent
 #include "Game/Overwatch.hpp"     // main threads: viewmatrix, entity, aimbot, ...
@@ -534,6 +535,7 @@ namespace {
 void RenderCallback()
 {
     Diagnostics::RecordFrame();
+    OW::ProcessHeroSkills();
 
     // The menu is rendered by the separate overlay menu window. This callback
     // only draws the transparent full-screen canvas layer.
@@ -825,6 +827,7 @@ int main()
     // ---------------------------------------------------------------
     std::printf("\n[MAIN] Display closed.  Shutting down...\n");
     Diagnostics::Info("Display closed. Shutting down.");
+    OW::CancelActiveSkill();
     StopDiagnosticStatusThread();
     Diagnostics::DumpStatus();
 

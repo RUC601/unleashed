@@ -52,6 +52,7 @@ public:
     void ListenThread();
     int StartMonitor(WORD Port);
     void EndMonitor();
+    unsigned long long InputPacketCount() const;
 public:
     bool IsMouseButtonPressed(int vkButton);
     bool GetKeyState(WORD vKey);

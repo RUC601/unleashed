@@ -743,7 +743,7 @@ namespace OW {
         }
 
         std::vector<EntityScanRecord> records{};
-        std::unordered_map<uint32_t, uint64_t> match_index{};
+        std::unordered_map<uint32_t, std::vector<uint64_t>> match_index{};
         std::unordered_set<uint64_t> seen_entities{};
         records.reserve(4096);
         match_index.reserve(4096);
@@ -771,7 +771,7 @@ namespace OW {
                 record.entity_id = SDK->RPM<uint64_t>(record.ptr + offset::Pool_PoolId);
 
             if (record.unique_id != 0)
-                match_index.emplace(record.unique_id, record.entity);
+                match_index[record.unique_id].push_back(record.entity);
             records.push_back(std::move(record));
         };
 
@@ -832,8 +832,10 @@ namespace OW {
                 continue;
 
             const auto match = match_index.find(unique_id);
-            if (match != match_index.end())
-                addPair(match->second, cur_entity);
+            if (match != match_index.end()) {
+                for (uint64_t component_parent : match->second)
+                    addPair(component_parent, cur_entity);
+            }
         }
 
         for (const EntityScanRecord& current : records) {

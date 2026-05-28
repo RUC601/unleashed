@@ -22,6 +22,8 @@ public:
     void Run(std::function<void()> renderCallback);
     void MinimizeToTaskbar();
     void RestoreFromTaskbar();
+    void OnMenuActivated();
+    void OnMenuDeactivated(HWND activatedWindow);
     void RequestExit();
     void Shutdown();
 
@@ -49,6 +51,7 @@ private:
     int                     m_menuAnchorY = 0;
     unsigned long long      m_lastCanvasBoundsRefreshMs = 0;
     bool                    m_menuAnchorValid = false;
+    bool                    m_canMinimizeOnMenuDeactivate = false;
     bool                    m_minimizedToTaskbar = false;
 
     bool RegisterWindowClasses(HINSTANCE instance);
@@ -62,7 +65,6 @@ private:
                          UINT width, UINT height);
     bool InitializeImGuiContext(ImGuiContext** context, HWND hWnd);
     void ShutdownImGuiContext(ImGuiContext*& context);
-    void UpdateExternalActivationMinimize();
     void UpdateWindowVisibility();
     void UpdateCanvasBounds(bool force = false);
     void ApplyDesiredMenuClientSize();

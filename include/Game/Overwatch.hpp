@@ -121,7 +121,11 @@ namespace OW {
     inline constexpr DWORD kEntityProcessIntervalMs = 16;
     inline constexpr DWORD kEntitySlowFieldIntervalMs = 500;
     inline constexpr DWORD kEntityHealthIntervalMs = kEntityProcessIntervalMs;
+    inline constexpr DWORD kEntityDeadComponentRefreshMs = 250;
+    inline constexpr DWORD kEntityLiveComponentRefreshMs = 2000;
+    inline constexpr DWORD kEntityFastRescanWindowMs = 2000;
     inline constexpr DWORD kEntityScannerIdleSleepMs = 5;
+    inline DWORD entity_fast_scan_until_tick = 0;
 
     inline Vector2 ResolveScreenSize()
     {
@@ -267,13 +271,16 @@ inline void entity_scan_thread() {
         const DWORD now = GetTickCount();
         bool pending_scan = false;
         bool known_entities_empty = true;
+        bool fast_rescan = false;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             pending_scan = OW::abletotread != 0;
             known_entities_empty = OW::ow_entities.empty() && OW::ow_entities_scan.empty();
+            fast_rescan = OW::entity_fast_scan_until_tick != 0 &&
+                now < OW::entity_fast_scan_until_tick;
         }
 
-        const DWORD scanInterval = known_entities_empty
+        const DWORD scanInterval = (known_entities_empty || fast_rescan)
             ? OW::kEntityEmptyScanIntervalMs
             : OW::kEntityScanIntervalMs;
         const bool scanDue = lastScanTick == 0 || now - lastScanTick >= scanInterval;
@@ -327,6 +334,7 @@ inline void entity_thread() {
     Vector3 lastpos{};
     size_t lastLoggedRawCount = static_cast<size_t>(-1);
     size_t lastLoggedValidatedCount = static_cast<size_t>(-1);
+    size_t previousProcessedValidCount = 0;
     DWORD lastProcessLogTick = 0;
     uint64_t entityCycleCount = 0;
     DWORD entityCycleRateTick = GetTickCount();
@@ -345,6 +353,7 @@ inline void entity_thread() {
         uint64_t visibility = 0;
         uint64_t angle = 0;
         uint64_t enemyAngle = 0;
+        DWORD baseUpdateTick = 0;
         DWORD healthUpdateTick = 0;
         bool healthValid = false;
         float playerHealth = 0.0f;
@@ -433,6 +442,7 @@ inline void entity_thread() {
         if (raw_entities.empty()) {
             Diagnostics::EntityProcessStats stats{};
             Diagnostics::LocalEntityStats localStats{};
+            previousProcessedValidCount = 0;
             componentBaseCache.clear();
             dynamicEntityCache.clear();
             {
@@ -608,6 +618,18 @@ inline void entity_thread() {
                     }
                 }
             }
+            if (componentCacheHit) {
+                const ComponentBaseCache& cachedBases = cacheIt->second;
+                const DWORD refreshInterval = cachedBases.alive
+                    ? OW::kEntityLiveComponentRefreshMs
+                    : OW::kEntityDeadComponentRefreshMs;
+                if (cachedBases.baseUpdateTick == 0 ||
+                    processLoopTick - cachedBases.baseUpdateTick >= refreshInterval) {
+                    componentBaseCache.erase(cacheIt);
+                    cacheIt = componentBaseCache.end();
+                    componentCacheHit = false;
+                }
+            }
 
             OW::EntityHeaderSnapshot componentHeader{};
             OW::EntityHeaderSnapshot linkHeader{};
@@ -673,6 +695,7 @@ inline void entity_thread() {
             if (!componentCacheHit) {
                 ComponentBaseCache cache{};
                 cache.linkParent = LinkParent;
+                cache.baseUpdateTick = processLoopTick;
                 cache.health     = OW::DecryptComponent(ComponentParent, OW::TYPE_HEALTH, componentSnapshot);
                 cache.link       = OW::DecryptComponent(LinkParent, OW::TYPE_LINK, linkSnapshot);
                 cache.team       = OW::DecryptComponent(ComponentParent, OW::TYPE_TEAM, componentSnapshot);
@@ -1260,11 +1283,17 @@ inline void entity_thread() {
         const size_t dynamic_count = hpdy_entities.size();
         processStats.validated = valid_count;
         processStats.dynamic = dynamic_count;
+        const bool suspectStaleScan =
+            (valid_count == 0 && !raw_entities.empty()) ||
+            (previousProcessedValidCount > 0 && valid_count + 1 < previousProcessedValidCount);
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             OW::entities = std::move(tmp_entities);
             OW::hp_dy_entities = std::move(hpdy_entities);
+            if (suspectStaleScan)
+                OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
         }
+        previousProcessedValidCount = valid_count;
         Diagnostics::SetEntityCount(valid_count);
         Diagnostics::SetEntityProcessStats(processStats);
         Diagnostics::SetLocalEntityStats(localStats);
@@ -1285,6 +1314,10 @@ inline void entity_thread() {
                     static_cast<unsigned long>(OW::kEntityProcessIntervalMs),
                     static_cast<unsigned long>(OW::kEntityHealthIntervalMs),
                     static_cast<unsigned long>(OW::kEntitySlowFieldIntervalMs));
+                if (suspectStaleScan) {
+                    Diagnostics::Info("[PIPELINE] Stage 4 suspected stale scan/cache; fast rescan for %lu ms.",
+                        static_cast<unsigned long>(OW::kEntityFastRescanWindowMs));
+                }
                 Diagnostics::Info("[PIPELINE] Stage 4 detail null=%zu duplicate=%zu health_base_fail=%zu link_base_fail=%zu hero_missing=%zu hero_fallback_fail=%zu name_unknown=%zu.",
                     processStats.nullPair,
                     processStats.duplicate,
@@ -2350,7 +2383,7 @@ namespace OverlayRenderDetail {
                               "#%d %s | %s | Hold | enabled:%s%s",
                               slotIndex + 1,
                               OW::Labels::AimModeName(slot.preset.aimMode),
-                              OW::Labels::AimActivationKeyName(OW::Config::aim_key),
+                              OW::Labels::AimActivationKeyName(slot.preset.key),
                               YesNo(slot.enabled),
                               active ? " | active" : "");
                 rows.push_back({
@@ -3180,11 +3213,12 @@ namespace AimbotDetail {
             else if (sourceType == 2)
                 sourceLabel = "dma_keystate";
 
-            Diagnostics::Aim("hotkey state keySetting=%d vk=0x%X source=%s monitorRunning=%d pressed=%d",
+            Diagnostics::Aim("hotkey state keySetting=%d vk=0x%X source=%s monitorRunning=%d monitorPackets=%llu pressed=%d",
                 keySetting,
                 vk,
                 sourceLabel,
                 kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0,
+                kmbox::KmBoxMgr.KeyBoard.InputPacketCount(),
                 pressed ? 1 : 0);
             state.initialized = true;
             state.keySetting = keySetting;
@@ -3197,7 +3231,8 @@ namespace AimbotDetail {
     inline bool IsKmBoxMonitorAvailable() {
         return OW::Config::kmboxEnabled &&
             OW::Config::kmboxDeviceType == 0 &&
-            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load();
+            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() &&
+            kmbox::KmBoxMgr.KeyBoard.InputPacketCount() > 0;
     }
 
     inline bool ReadKmBoxMonitorVk(int vk, int keySetting) {
@@ -3251,12 +3286,13 @@ namespace AimbotDetail {
         if (lastFallbackLogTick != 0 && now - lastFallbackLogTick < 1000)
             return;
 
-        Diagnostics::Aim("hotkey fallback reason=kmbox_monitor_unavailable keySetting=%d vk=0x%X configuredSource=kmbox kmboxEnabled=%d deviceType=%d monitorRunning=%d dmaReady=%d dmaAddr=0x%llX",
+        Diagnostics::Aim("hotkey fallback reason=kmbox_monitor_unavailable keySetting=%d vk=0x%X configuredSource=kmbox kmboxEnabled=%d deviceType=%d monitorRunning=%d monitorPackets=%llu dmaReady=%d dmaAddr=0x%llX",
             keySetting,
             vk,
             OW::Config::kmboxEnabled ? 1 : 0,
             OW::Config::kmboxDeviceType,
             kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0,
+            kmbox::KmBoxMgr.KeyBoard.InputPacketCount(),
             (KeyState::initialized.load() && KeyState::gafAsyncKeyStateAddr.load() != 0) ? 1 : 0,
             static_cast<unsigned long long>(KeyState::gafAsyncKeyStateAddr.load()));
         lastFallbackLogTick = now;

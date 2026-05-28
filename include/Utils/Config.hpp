@@ -6,6 +6,7 @@
 #include <string>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 #include <imgui.h>
 
 // -----------------------------------------------------------------------
@@ -292,7 +293,7 @@ namespace OW { namespace Config {
         bool enabled = false;
         int action = 0;          // 0=Primary, 1=Secondary, 2=Scoped, 3=Unscoped, 4-6=Abilities, 7=Ultimate
         int mode = 0;            // 0=Hold, 1=Toggle, 2=Always
-        int key = 1;             // key index (reuses aim_key VK list 0-12)
+        int key = 1;             // key index (reuses aim_key VK list)
         float shotInterval = 0.0f;
         bool chargeAware = false;
         float minCharge = 30.0f;
@@ -307,6 +308,7 @@ namespace OW { namespace Config {
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         float hitbox = 0.13f;    // hitbox radius/size
         int aimMode = 0;         // 0=Tracking, 1=Flick
+        int key = 1;             // aim activation key index (reuses aim_key VK list)
         bool prediction = false; // movement prediction
         int priority = 0;        // 0=FOV, 1=HP, 2=Distance
         int targetTeam = 0;      // 0=Enemies, 1=Allies, 2=All
@@ -320,8 +322,58 @@ namespace OW { namespace Config {
         HeroPreset preset{};
     };
 
+    enum class HeroSkillInputChannel : int {
+        Primary = 0,
+        Secondary = 1
+    };
+
+    inline constexpr int kMaxHeroSkillSequenceSteps = 16;
+
+    struct HeroSkillSequenceStep {
+        HeroSkillInputChannel channel = HeroSkillInputChannel::Primary;
+        int holdMs = 0;
+        int releaseMs = 0;
+    };
+
+    struct HeroSkillTrackingParams {
+        int method = 0;
+        float smooth = 0.0f;
+        float fov = 0.0f;
+        int bone = kAimBoneChest;
+        float hitbox = 0.0f;
+    };
+
+    struct HeroSkillSettings {
+        bool enabled = false;
+        int key = 0;
+        float healthThreshold = 50.0f;
+        float enemyHealthThreshold = 50.0f;
+        float allyHealthThreshold = 50.0f;
+        float distance = 30.0f;
+        int mode = 0;
+        float cooldown = 0.0f;
+        bool cooldownGuard = true;
+        bool prediction = false;
+        int minTargets = 1;
+        float radius = 0.0f;
+        int activationKey = 0;
+        std::vector<HeroSkillSequenceStep> sequenceSteps{};
+        HeroSkillTrackingParams tracking{};
+        float pitchDownSpeed = 0.0f;
+        float pitchDownRandomRange = 0.0f;
+        float pitchUpSpeed = 0.0f;
+        float pitchUpRandomRange = 0.0f;
+        float pitchDownTargetAngle = 0.0f;
+        float pitchUpOffsetAngle = 0.0f;
+        int fireDelayMs = 0;
+        int jumpKeyCode = 0;
+    };
+
+    using HeroSkillPresetStore = std::unordered_map<uint64_t, std::unordered_map<std::string, HeroSkillSettings>>;
+
     inline std::unordered_map<uint64_t, std::array<HeroSlotPreset, kMaxHeroPresetSlots>> heroAimPresets;
     inline std::unordered_map<uint64_t, std::array<HeroSlotPreset, kMaxHeroPresetSlots>> heroTriggerPresets;
+    inline HeroSkillPresetStore heroSkillPresets;
     inline int targetPriority = 0;
 
     // UI-only placeholders for heroes not present in the current local eHero enum.
@@ -379,6 +431,14 @@ namespace OW { namespace Config {
     void SaveHeroConfig(const std::string& path);
     void SaveHeroConfigForHero(const std::string& path, uint64_t heroId);
     void LoadHeroConfig(const std::string& path);
+    void LoadHeroSkillConfig(const std::string& path);
+    void SaveHeroSkillConfig(const std::string& path);
+    bool TryGetHeroSkillSettings(uint64_t heroId, const std::string& skillId, HeroSkillSettings& outSettings);
+    HeroSkillSettings GetHeroSkillSettings(uint64_t heroId, const std::string& skillId);
+    HeroSkillSettings GetHeroSkillSettings(uint64_t heroId,
+                                           const std::string& skillId,
+                                           const HeroSkillSettings& defaultSettings);
+    void SetHeroSkillSettings(uint64_t heroId, const std::string& skillId, const HeroSkillSettings& settings);
     void SaveHeroPresets(const std::string& path);
     void LoadHeroPresets(const std::string& path);
     void SaveConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);

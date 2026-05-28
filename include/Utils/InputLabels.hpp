@@ -9,12 +9,12 @@ namespace OW::Labels {
 
     inline constexpr const char* kAimActivationKeys[] = {
         "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt",
-        "V Key", "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock"
+        "V Key", "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock", "Space"
     };
 
     inline constexpr int kAimActivationKeyVks[] = {
         VK_RBUTTON, VK_LBUTTON, VK_XBUTTON1, VK_XBUTTON2, VK_LSHIFT, VK_LMENU,
-        0x56, VK_LCONTROL, VK_TAB, 0x45, 0x51, 0x46, VK_CAPITAL
+        0x56, VK_LCONTROL, VK_TAB, 0x45, 0x51, 0x46, VK_CAPITAL, VK_SPACE
     };
 
     inline constexpr const char* kAimModes[] = {

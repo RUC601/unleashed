@@ -9,6 +9,7 @@
 #include "Kmbox/KmboxMoveTest.h"
 #include "Kmbox/KmboxTimerResolution.h"
 #include "Utils/Config.hpp"
+#include "Game/HeroSkills.hpp"
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
 #include "Game/Structs.hpp"
@@ -450,6 +451,15 @@ static const char* kInputSource[] = {
     "KMBox Monitor (Primary)", "Auto (KMBox > DMA > Local)",
     "DMA KeyState (Diagnostic)", "Local GetAsyncKeyState (Diagnostic)"
 };
+static const char* kHeroSkillModes[] = {
+    "Auto", "Assist", "Manual"
+};
+static const char* kHeroSkillSequenceChannels[] = {
+    "Primary", "Secondary"
+};
+static const char* kHeroSkillTrackingBones[] = {
+    "Chest", "Head", "Neck"
+};
 static constexpr int kInputSourceConfigOrder[] = { 1, 0, 3, 2 };
 static const char* kBonePreference[] = { "Head", "Neck", "Chest", "Closest" };
 static constexpr int kBonePreferenceAimBones[] = {
@@ -824,6 +834,19 @@ static ID3D11ShaderResourceView* HeroAvatarForOption(const HeroOption& hero) {
     if (hero.heroId == 0)
         return nullptr;
     return HeroAvatarForName(hero.label);
+}
+
+static ID3D11ShaderResourceView* HeroSkillIconForDefinition(const OW::HeroSkillDefinition& definition) {
+    IconManager* icons = Render::GetIconManager();
+    if (!icons || !definition.heroSlug || !definition.iconSlug)
+        return nullptr;
+
+    const std::string key = std::string(definition.heroSlug) + "/" + definition.iconSlug;
+    if (ID3D11ShaderResourceView* icon = icons->GetIcon(key))
+        return icon;
+
+    icons->LoadAbilityIcons(definition.heroSlug, { definition.iconSlug });
+    return icons->GetIcon(key);
 }
 
 static std::string HeroDisplayNameForId(uint64_t heroId) {
@@ -2408,11 +2431,11 @@ void UI::AimbotPage() {
                 ImGui::PopItemWidth();
             }
 
-            // Aim activation key (maps to OW::Config::aim_key).
+            // Aim activation key is stored per aim slot.
             SettingRow("Aim Activation Key", kAimbotLeftLabelWidth);
             PushControlWidth();
-            UISelect("##aimActivationKey", &OW::Config::aim_key,
-                     OW::Labels::kAimActivationKeys, OW::Labels::AimActivationKeyCount());
+            presetChanged |= UISelect("##aimActivationKey", &activePreset.key,
+                                      OW::Labels::kAimActivationKeys, OW::Labels::AimActivationKeyCount());
             ImGui::PopItemWidth();
 
             // Attack
@@ -2695,6 +2718,263 @@ void UI::TriggerPage() {
     }
 }
 
+static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, uint64_t heroId) {
+    OW::Config::HeroSkillSettings settings = OW::Config::GetHeroSkillSettings(
+        heroId,
+        definition.skillId ? definition.skillId : "",
+        definition.defaultSettings);
+
+    bool changed = false;
+    auto hasControl = [&](OW::HeroSkillControlFlags control) {
+        return OW::HasHeroSkillControl(definition, control);
+    };
+
+    ImGui::PushID(definition.skillId);
+
+    if (ID3D11ShaderResourceView* icon = HeroSkillIconForDefinition(definition)) {
+        ImGui::Image(reinterpret_cast<ImTextureID>(icon), ImVec2(24.0f, 24.0f));
+        ImGui::SameLine(0.0f, 8.0f);
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "%s / %s",
+                       OW::HeroSkillCategoryName(definition.category),
+                       OW::HeroSkillInputActionName(definition.inputAction));
+
+    if (hasControl(OW::HeroSkillControls::Enabled)) {
+        SettingRow("Enabled", kAimbotRightLabelWidth);
+        changed |= UICheckbox("##skillEnabled", &settings.enabled);
+    }
+
+    if (hasControl(OW::HeroSkillControls::Key)) {
+        SettingRow("Key", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISelect("##skillKey", &settings.key,
+                            OW::Labels::kAimActivationKeys,
+                            OW::Labels::AimActivationKeyCount());
+        ImGui::PopItemWidth();
+    }
+
+    const bool hasSequenceControls = hasControl(OW::HeroSkillControls::SequenceSteps);
+    const bool hasTrackingOverlay = hasControl(OW::HeroSkillControls::TrackingOverlay);
+    const bool hasPitchControls = hasControl(OW::HeroSkillControls::PitchControl);
+    const bool hasPhaseTiming = hasControl(OW::HeroSkillControls::PhaseTiming);
+
+    if (hasSequenceControls || hasPitchControls || hasPhaseTiming) {
+        SettingRow("Activation Key", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISelect("##skillActivationKey", &settings.activationKey,
+                            OW::Labels::kAimActivationKeys,
+                            OW::Labels::AimActivationKeyCount());
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::Mode)) {
+        SettingRow("Mode", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISelect("##skillMode", &settings.mode, kHeroSkillModes, IM_ARRAYSIZE(kHeroSkillModes));
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::HealthThreshold)) {
+        SettingRow("Health Threshold", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillHealth", &settings.healthThreshold, 0.0f, 500.0f, "50 HP");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::EnemyHealthThreshold)) {
+        SettingRow("Enemy HP Threshold", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillEnemyHealth", &settings.enemyHealthThreshold, 0.0f, 500.0f, "50 HP");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::AllyHealthThreshold)) {
+        SettingRow("Ally HP Threshold", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillAllyHealth", &settings.allyHealthThreshold, 0.0f, 500.0f, "50 HP");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::Distance)) {
+        SettingRow("Distance", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillDistance", &settings.distance, 0.0f, 100.0f, "5.0 m");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::Radius)) {
+        SettingRow("Radius", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillRadius", &settings.radius, 0.0f, 30.0f, "1.5 m");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::Prediction)) {
+        SettingRow("Prediction", kAimbotRightLabelWidth);
+        changed |= UICheckbox("##skillPrediction", &settings.prediction);
+    }
+
+    if (hasControl(OW::HeroSkillControls::CooldownGuard)) {
+        SettingRow("Cooldown Guard", kAimbotRightLabelWidth);
+        changed |= UICheckbox("##skillCooldownGuard", &settings.cooldownGuard);
+    }
+
+    if (hasControl(OW::HeroSkillControls::Cooldown)) {
+        SettingRow("Cooldown", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillCooldown", &settings.cooldown, 0.0f, 60.0f, "10.0 s");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::MinTargets)) {
+        SettingRow("Min Targets", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillMinTargets", &settings.minTargets, 1.0f, 8.0f, "2");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasSequenceControls) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Sequence Steps");
+        for (int index = 0; index < static_cast<int>(settings.sequenceSteps.size()); ++index) {
+            OW::Config::HeroSkillSequenceStep& step = settings.sequenceSteps[static_cast<size_t>(index)];
+            ImGui::PushID(index);
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("#%d", index + 1);
+            ImGui::SameLine(0.0f, 8.0f);
+
+            int channel = static_cast<int>(step.channel);
+            ImGui::PushItemWidth(112.0f);
+            if (UISelect("##stepChannel", &channel, kHeroSkillSequenceChannels, IM_ARRAYSIZE(kHeroSkillSequenceChannels))) {
+                step.channel = static_cast<OW::Config::HeroSkillInputChannel>(channel);
+                changed = true;
+            }
+            ImGui::PopItemWidth();
+            ImGui::SameLine(0.0f, 8.0f);
+
+            ImGui::PushItemWidth(150.0f);
+            changed |= UISlider("##stepHold", &step.holdMs, 0.0f, 1000.0f, "35 ms");
+            ImGui::PopItemWidth();
+            ImGui::SameLine(0.0f, 8.0f);
+
+            ImGui::PushItemWidth(150.0f);
+            changed |= UISlider("##stepRelease", &step.releaseMs, 0.0f, 1000.0f, "215 ms");
+            ImGui::PopItemWidth();
+            ImGui::SameLine(0.0f, 8.0f);
+
+            if (ImGui::Button("Remove")) {
+                settings.sequenceSteps.erase(settings.sequenceSteps.begin() + index);
+                changed = true;
+                ImGui::PopID();
+                break;
+            }
+
+            ImGui::PopID();
+        }
+
+        if (static_cast<int>(settings.sequenceSteps.size()) < OW::Config::kMaxHeroSkillSequenceSteps) {
+            if (ImGui::Button("Add Step")) {
+                settings.sequenceSteps.push_back({ OW::Config::HeroSkillInputChannel::Primary, 35, 215 });
+                changed = true;
+            }
+        }
+    }
+
+    if (hasTrackingOverlay && settings.enabled) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Tracking Overlay");
+
+        SettingRow("Tracking Method", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISelect("##skillTrackingMethod", &settings.tracking.method, kAimMethod, IM_ARRAYSIZE(kAimMethod));
+        ImGui::PopItemWidth();
+
+        SettingRow("Tracking Smooth", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillTrackingSmooth", &settings.tracking.smooth, 0.0f, 100.0f, "5.00 %");
+        ImGui::PopItemWidth();
+
+        SettingRow("Tracking FOV", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillTrackingFov", &settings.tracking.fov, 0.0f, 500.0f, "200");
+        ImGui::PopItemWidth();
+
+        SettingRow("Tracking Bone", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISelect("##skillTrackingBone", &settings.tracking.bone,
+                            kHeroSkillTrackingBones, IM_ARRAYSIZE(kHeroSkillTrackingBones));
+        ImGui::PopItemWidth();
+
+        SettingRow("Tracking Hitbox", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillTrackingHitbox", &settings.tracking.hitbox, 0.0f, 5.0f, "0.13");
+        ImGui::PopItemWidth();
+    }
+
+    auto drawSpeedPair = [&](const char* idBase, float& baseSpeed, float& randomRange) {
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float available = ImGui::GetContentRegionAvail().x - kControlRightPadding;
+        const float itemWidth = MaxFloat(1.0f, (available - spacing) * 0.5f);
+        std::string baseId = std::string("##") + idBase + "Base";
+        std::string rangeId = std::string("##") + idBase + "Range";
+
+        ImGui::PushItemWidth(itemWidth);
+        changed |= UISlider(baseId.c_str(), &baseSpeed, 0.0f, 720.0f, "Base 180 deg/s");
+        ImGui::PopItemWidth();
+        ImGui::SameLine(0.0f, spacing);
+        ImGui::PushItemWidth(itemWidth);
+        changed |= UISlider(rangeId.c_str(), &randomRange, 0.0f, 720.0f, "+/- 0 deg/s");
+        ImGui::PopItemWidth();
+    };
+
+    if (hasPitchControls) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Pitch Down");
+
+        SettingRow("Speed", kAimbotRightLabelWidth);
+        drawSpeedPair("pitchDown", settings.pitchDownSpeed, settings.pitchDownRandomRange);
+
+        SettingRow("Target Angle", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##pitchDownTarget", &settings.pitchDownTargetAngle, -89.0f, 89.0f, "85 deg");
+        ImGui::PopItemWidth();
+
+        ImGui::Spacing();
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Pitch Up");
+
+        SettingRow("Speed", kAimbotRightLabelWidth);
+        drawSpeedPair("pitchUp", settings.pitchUpSpeed, settings.pitchUpRandomRange);
+    }
+
+    if (hasPhaseTiming) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Phase Timing");
+
+        SettingRow("Fire Delay", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillFireDelay", &settings.fireDelayMs, 0.0f, 2000.0f, "800 ms");
+        ImGui::PopItemWidth();
+
+        SettingRow("Pitch Up Offset", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##pitchUpOffset", &settings.pitchUpOffsetAngle, -180.0f, 180.0f, "90 deg");
+        ImGui::PopItemWidth();
+
+        SettingRow("Keyboard VK", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillJumpKeyCode", &settings.jumpKeyCode, 0.0f, 255.0f, "32");
+        ImGui::PopItemWidth();
+    }
+
+    if (changed)
+        OW::Config::SetHeroSkillSettings(heroId, definition.skillId ? definition.skillId : "", settings);
+
+    ImGui::PopID();
+    return changed;
+}
+
 // =====================================================================
 // UI::SkillsPage
 // =====================================================================
@@ -2759,12 +3039,36 @@ void UI::SkillsPage() {
     }
     CloseGroupBox();
 
-    UIGroupBox("Hero Specific");
-    {
-        SettingRow("Auto Shift (Genji)", kDefaultLabelWidth);
-        UICheckbox("##autoShiftGenji", &OW::Config::AutoShiftGenji);
+    const HeroOption& selectedHero = CurrentHeroOption();
+    int renderedSkillCount = 0;
+    if (selectedHero.heroId != 0) {
+        for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
+            if (definition.heroId != selectedHero.heroId)
+                continue;
+
+            std::string title = selectedHero.label;
+            title += " / ";
+            title += definition.displayName;
+            UIGroupBox(title.c_str());
+            DrawHeroSkillDefinition(definition, selectedHero.heroId);
+            CloseGroupBox();
+            ++renderedSkillCount;
+        }
     }
-    CloseGroupBox();
+
+    if (renderedSkillCount == 0) {
+        UIGroupBox("Hero Skills");
+        {
+            SettingRow("Selected Hero", kDefaultLabelWidth);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(selectedHero.label);
+
+            SettingRow("Definitions", kDefaultLabelWidth);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextDim), "None");
+        }
+        CloseGroupBox();
+    }
 
     ImGui::PopID();
 }

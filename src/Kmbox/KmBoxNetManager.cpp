@@ -1042,6 +1042,11 @@ void KmBoxKeyBoard::EndMonitor()
         this->t_Listen.join();
 }
 
+unsigned long long KmBoxKeyBoard::InputPacketCount() const
+{
+    return this->inputPacketCount.load(std::memory_order_acquire);
+}
+
 KmBoxKeyBoard::~KmBoxKeyBoard()
 {
     this->EndMonitor();
