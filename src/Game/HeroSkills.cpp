@@ -943,6 +943,7 @@ void CancelActiveSkill()
         CancelViewpoint(item.first, item.second, "cancel_all");
 
     ReleaseAllOutputChannels();
+    g_lastActionExecutions.clear();
 }
 
 void ProcessHeroSkills()
@@ -952,7 +953,8 @@ void ProcessHeroSkills()
         return;
     }
 
-    const uint64_t heroId = local_entity.HeroID;
+    const c_entity localSnapshot = TargetingDetail::SnapshotLocalEntity();
+    const uint64_t heroId = localSnapshot.HeroID;
     if (heroId != g_lastHeroId) {
         CancelActiveSkill();
         g_lastHeroId = heroId;
@@ -985,6 +987,21 @@ void ProcessHeroSkills()
         if (SkillControls(definition, HeroSkillControls::PitchControl) ||
             SkillControls(definition, HeroSkillControls::PhaseTiming)) {
             RunViewpointController(skillKey, settings);
+        }
+
+        if (!IsRuntimeActionDefinition(definition))
+            continue;
+
+        if (IsInRechargeInterval(definition, settings, localSnapshot))
+            continue;
+
+        if (definition.category == HeroSkillCategory::Ultimate) {
+            EvaluateChargedConditionAction(skillKey, definition, settings);
+        } else if (definition.inputAction == HeroSkillInputAction::SecondaryFire &&
+                   std::string(definition.skillId ? definition.skillId : "") == "rocket-punch") {
+            EvaluateChargeReleaseAction(skillKey, definition, settings);
+        } else {
+            EvaluateTrajectoryAction(skillKey, definition, settings, GetTrajectoryParams(definition.skillId));
         }
     }
 
