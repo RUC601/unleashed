@@ -708,7 +708,7 @@ namespace OW {
             return true;
         }
 
-        inline bool TryEntityAt(int index, c_entity& entity, bool requireVisible = true) {
+        inline bool TryEntityAt(int index, c_entity& entity, bool requireVisible = false) {
             const auto snapshot = SnapshotEntities();
             if (!IsValidIndex(index, snapshot.size())) return false;
             entity = snapshot[static_cast<size_t>(index)];
@@ -728,7 +728,7 @@ namespace OW {
         }
 
         inline bool IsSelectableCandidate(const c_entity& entity, int teamMode, const c_entity& local) {
-            return IsRuntimeTargetValid(entity, true) && TargetTeamMatches(entity, teamMode, local);
+            return IsRuntimeTargetValid(entity, false) && TargetTeamMatches(entity, teamMode, local);
         }
 
         inline Vector3 ConfiguredBonePosition(c_entity& entity, int boneSetting) {
@@ -870,7 +870,7 @@ namespace OW {
         return TargetingDetail::TryEntityAt(index, target, false);
     }
 
-    inline bool TryGetTargetEntity(int index, c_entity& entity, bool requireVisible = true) {
+    inline bool TryGetTargetEntity(int index, c_entity& entity, bool requireVisible = false) {
         return TargetingDetail::TryEntityAt(index, entity, requireVisible);
     }
 
@@ -951,7 +951,7 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                if (entities[i].Alive && teamPass) {
                     ++selectableCandidates;
                     if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                     else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
@@ -1114,7 +1114,7 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                if (entities[i].Alive && teamPass) {
                     if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                     else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
                     else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
@@ -1224,7 +1224,7 @@ namespace OW {
                 if (entities[i].HeroID == eHero::HERO_GENJI && entities[i].skill2act) continue;
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                if (entities[i].Alive && teamPass) {
                     Vector3 PreditPos;
                     if (!local_entity.skillcd1)
                         PreditPos = entities[i].GetBonePos(entities[i].GetSkel()[16]);
@@ -1282,7 +1282,7 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                if (entities[i].Alive && teamPass) {
                     if (entities[i].Team) {
                         if (Config::Bone2 == 1)      { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                         else if (Config::Bone2 == 2) { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
@@ -1400,7 +1400,7 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass && entities[i].Vis) {
+                if (entities[i].Alive && teamPass) {
                     PreditPos = entities[i].head_pos;
                     RootPos = entities[i].head_pos;
                     Vector2 Vec2 = viewMatrix.WorldToScreen(RootPos);

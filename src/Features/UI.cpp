@@ -463,6 +463,7 @@ static constexpr int kBonePreferenceAimBones[] = {
 };
 static constexpr int kBonePreferenceClosestIndex = 3;
 static const char* kAimMode[]      = { "Tracking", "Flick" };
+static const char* kTriggerbotMode[] = { "Hold", "Toggle", "Always" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPriority[]     = { "Lowest FOV", "Lowest HP", "Distance" };
@@ -640,7 +641,7 @@ static ID3D11ShaderResourceView* s_logoTexture = nullptr;
 static constexpr int kLogoTextureSize = 32;
 static constexpr float kBrandLogoDrawSize = 30.0f;
 static constexpr float kBrandTitleGap = 12.0f;
-static float s_measuredBodyHeightByPage[5] = {};
+static float s_measuredBodyHeightByPage[6] = {};
 static UI::MenuClientSize s_desiredMenuClientSize{ kShellWidth, 550.0f };
 
 // Forward declarations
@@ -1291,7 +1292,7 @@ static const char* FormatSliderValue(char* buf, size_t size, float value, const 
         return buf;
     }
     if (std::strcmp(text, "500 ms") == 0) {
-        std::snprintf(buf, size, "%.0f ms", value * 13.8889f);
+        std::snprintf(buf, size, "%.0f ms", value * 5.0f);
         return buf;
     }
 
@@ -1910,13 +1911,13 @@ static void DrawTopTabIcon(ImDrawList* drawList, int tabIndex, const ImVec2& min
 static int CurrentPageKey() {
     switch (UI::state.activeTab) {
         case UI::TAB_AIMING:
-            return UI::state.aimingSubTab == 0 ? 0 : 1;
+            return UI::state.aimingSubTab;  // 0=Aimbot, 1=Trigger, 2=Skills
         case UI::TAB_VISUALS:
-            return 2;
-        case UI::TAB_THEME:
             return 3;
-        case UI::TAB_MISC:
+        case UI::TAB_THEME:
             return 4;
+        case UI::TAB_MISC:
+            return 5;
         default:
             return 0;
     }
@@ -2319,25 +2320,40 @@ void UI::AimbotPage() {
 // UI::TriggerPage
 // =====================================================================
 void UI::TriggerPage() {
-    UIGroupBox("Input Trigger");
+    UIGroupBox("Triggerbot \342\200\224 Primary");
     {
-        SettingRow("Triggerbot", kDefaultLabelWidth);
         UICheckbox("##triggerEnable", &OW::Config::triggerbot);
 
-        SettingRow("Trigger Delay", kDefaultLabelWidth);
+        SettingRow("Mode", kDefaultLabelWidth);
         PushControlWidth();
-        UISlider("##triggerDelay", &OW::Config::aimbotTriggerDelay, 0.0f, 100.0f, "Instant");
-        ImGui::PopItemWidth();
-
-        SettingRow("Detection Range", kDefaultLabelWidth);
-        PushControlWidth();
-        UISlider("##triggerDetectionRange", &OW::Config::hitbox, 0.0f, 5.0f, "0.13");
+        UISelect("##triggerMode", &OW::Config::triggerbotMode,
+                 kTriggerbotMode, IM_ARRAYSIZE(kTriggerbotMode));
         ImGui::PopItemWidth();
 
         SettingRow("Activation Key", kDefaultLabelWidth);
         PushControlWidth();
-        UISelect("##triggerActivationKey", &OW::Config::aim_key,
+        UISelect("##triggerKey", &OW::Config::triggerbotKey,
                  kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
+        ImGui::PopItemWidth();
+
+        SettingRow("Shot Interval", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##triggerShotInterval", &OW::Config::triggerbotShotInterval, 0.0f, 100.0f, "500 ms");
+        ImGui::PopItemWidth();
+
+        SettingRow("Charge Aware", kDefaultLabelWidth);
+        UICheckbox("##triggerChargeAware", &OW::Config::triggerbotChargeAware);
+
+        if (OW::Config::triggerbotChargeAware) {
+            SettingRow("Min Charge", kDefaultLabelWidth);
+            PushControlWidth();
+            UISlider("##triggerMinCharge", &OW::Config::triggerbotMinCharge, 0.0f, 100.0f, "50.00 %");
+            ImGui::PopItemWidth();
+        }
+
+        SettingRow("Detection Range", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##triggerHitbox", &OW::Config::hitbox, 0.0f, 5.0f, "0.13");
         ImGui::PopItemWidth();
 
         SettingRow("Target Filter", kDefaultLabelWidth);
@@ -2347,7 +2363,45 @@ void UI::TriggerPage() {
 
         SettingRow("Priority", kDefaultLabelWidth);
         PushControlWidth();
-        UISelect("##triggerPriority", &OW::Config::targetPriority, kPriority, IM_ARRAYSIZE(kPriority));
+        UISelect("##triggerPriority", &OW::Config::aimbotPriority, kPriority, IM_ARRAYSIZE(kPriority));
+        ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Triggerbot \342\200\224 Secondary");
+    {
+        UICheckbox("##trigger2Enable", &OW::Config::triggerbot2);
+
+        SettingRow("Mode", kDefaultLabelWidth);
+        PushControlWidth();
+        UISelect("##triggerMode2", &OW::Config::triggerbotMode2,
+                 kTriggerbotMode, IM_ARRAYSIZE(kTriggerbotMode));
+        ImGui::PopItemWidth();
+
+        SettingRow("Activation Key", kDefaultLabelWidth);
+        PushControlWidth();
+        UISelect("##triggerKey2", &OW::Config::triggerbotKey2,
+                 kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
+        ImGui::PopItemWidth();
+
+        SettingRow("Shot Interval", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##triggerShotInterval2", &OW::Config::triggerbotShotInterval2, 0.0f, 100.0f, "500 ms");
+        ImGui::PopItemWidth();
+
+        SettingRow("Charge Aware", kDefaultLabelWidth);
+        UICheckbox("##triggerChargeAware2", &OW::Config::triggerbotChargeAware2);
+
+        if (OW::Config::triggerbotChargeAware2) {
+            SettingRow("Min Charge", kDefaultLabelWidth);
+            PushControlWidth();
+            UISlider("##triggerMinCharge2", &OW::Config::triggerbotMinCharge2, 0.0f, 100.0f, "50.00 %");
+            ImGui::PopItemWidth();
+        }
+
+        SettingRow("Detection Range", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##triggerHitbox2", &OW::Config::hitbox2, 0.0f, 5.0f, "0.13");
         ImGui::PopItemWidth();
     }
     CloseGroupBox();
@@ -2363,6 +2417,80 @@ void UI::TriggerPage() {
 }
 
 // =====================================================================
+// UI::SkillsPage
+// =====================================================================
+void UI::SkillsPage() {
+    ImGui::PushID("SkillsPage");
+
+    UIGroupBox("Auto Melee");
+    {
+        SettingRow("Enabled", kDefaultLabelWidth);
+        UICheckbox("##autoMeleeEnable", &OW::Config::AutoMelee);
+
+        SettingRow("Health Threshold", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##meleeHealth", &OW::Config::meleehealth, 0.0f, 300.0f, "50 HP");
+        ImGui::PopItemWidth();
+
+        SettingRow("Distance", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##meleeDistance", &OW::Config::meleedistance, 0.0f, 15.0f, "5.0 m");
+        ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Auto Alt-Fire");
+    {
+        SettingRow("Enabled", kDefaultLabelWidth);
+        UICheckbox("##autoRmbEnable", &OW::Config::AutoRMB);
+
+        SettingRow("Health Threshold", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##autoRmbHealth", &OW::Config::AutoRMBhealth, 0.0f, 500.0f, "50 HP");
+        ImGui::PopItemWidth();
+
+        SettingRow("Distance", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##autoRmbDistance", &OW::Config::AutoRMBdistance, 0.0f, 60.0f, "5.0 m");
+        ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Auto Skill");
+    {
+        SettingRow("Enabled", kDefaultLabelWidth);
+        UICheckbox("##autoSkillEnable", &OW::Config::AutoSkill);
+
+        SettingRow("Health Threshold", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##skillHealth", &OW::Config::SkillHealth, 0.0f, 500.0f, "50 HP");
+        ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Auto Shoot");
+    {
+        SettingRow("Enabled", kDefaultLabelWidth);
+        UICheckbox("##autoShootEnable", &OW::Config::AutoShoot);
+
+        SettingRow("Cooldown", kDefaultLabelWidth);
+        PushControlWidth();
+        UISlider("##shootCooldown", &OW::Config::Shoottime, 100, 2000, "500 ms");
+        ImGui::PopItemWidth();
+    }
+    CloseGroupBox();
+
+    UIGroupBox("Hero Specific");
+    {
+        SettingRow("Auto Shift (Genji)", kDefaultLabelWidth);
+        UICheckbox("##autoShiftGenji", &OW::Config::AutoShiftGenji);
+    }
+    CloseGroupBox();
+
+    ImGui::PopID();
+}
+
+// =====================================================================
 // UI::VisualsPage
 // =====================================================================
 void UI::VisualsPage() {
@@ -2371,15 +2499,15 @@ void UI::VisualsPage() {
     {
         const char* labels[] = {
             "Box", "Skeleton", "Radar",
-            "Distance", "Name", "Ultimate",
-            "Skill Info", "FOV Circle", "Health Packs",
-            "Radar Lines", "Healthbar Style 2", nullptr
+            "Distance", "Ultimate", "Skill Info",
+            "FOV Circle", "Health Packs", "Radar Lines",
+            "Healthbar Style 2", nullptr, nullptr
         };
         bool* values[] = {
             &OW::Config::draw_info, &OW::Config::draw_skel, &OW::Config::radar,
-            &OW::Config::dist, &OW::Config::name, &OW::Config::ult,
-            &OW::Config::skillinfo, &OW::Config::draw_fov, &OW::Config::draw_hp_pack,
-            &OW::Config::radarline, &OW::Config::healthbar2, nullptr
+            &OW::Config::dist, &OW::Config::ult, &OW::Config::skillinfo,
+            &OW::Config::draw_fov, &OW::Config::draw_hp_pack, &OW::Config::radarline,
+            &OW::Config::healthbar2, nullptr, nullptr
         };
         const float ratios[] = { 1.0f, 1.0f, 1.2f };
         DrawCheckboxGrid3(labels, values, 4, 26.0f, ratios);
@@ -3023,7 +3151,8 @@ void UI::Render() {
         case TAB_AIMING:
             subTabNames[0] = "Aim";
             subTabNames[1] = "Trigger";
-            subTabCount = 2;
+            subTabNames[2] = "Skills";
+            subTabCount = 3;
             state.aimingSubTab = ImClamp(state.aimingSubTab, 0, subTabCount - 1);
             activeSub   = &state.aimingSubTab;
             break;
@@ -3109,8 +3238,10 @@ void UI::Render() {
     if (state.activeTab == TAB_AIMING) {
         if (state.aimingSubTab == 0)
             AimbotPage();
-        else
+        else if (state.aimingSubTab == 1)
             TriggerPage();
+        else
+            SkillsPage();
     } else if (state.activeTab == TAB_VISUALS) {
         VisualsPage();
     } else if (state.activeTab == TAB_THEME) {

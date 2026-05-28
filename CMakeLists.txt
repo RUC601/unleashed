@@ -316,3 +316,18 @@ target_link_libraries(DecryptDump PRIVATE
 copy_leechcore_runtime(DecryptDump)
 target_compile_options(DecryptDump PRIVATE /W3 /wd4244 /wd4267)
 target_compile_definitions(DecryptDump PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+# ============================================================================
+# CNServerScanner — scan 国服 binary for correct RVA offsets
+# ============================================================================
+
+add_executable(CNServerScanner src/cn_server_scanner.cpp)
+target_include_directories(CNServerScanner PRIVATE include vendor/leechcore)
+target_link_libraries(CNServerScanner PRIVATE
+    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
+    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
+    ws2_32
+)
+copy_leechcore_runtime(CNServerScanner)
+target_compile_options(CNServerScanner PRIVATE /W3 /wd4244 /wd4267)
+target_compile_definitions(CNServerScanner PRIVATE _CRT_SECURE_NO_WARNINGS)

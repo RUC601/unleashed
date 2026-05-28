@@ -203,6 +203,8 @@ struct LocalEntityStats {
     int cameraXCm = 0;
     int cameraYCm = 0;
     int cameraZCm = 0;
+    uint32_t gameAdminLocalUID = 0;
+    bool localUidResolved = false;
 };
 
 struct StatusSnapshot {

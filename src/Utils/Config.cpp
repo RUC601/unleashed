@@ -851,7 +851,7 @@ namespace OW { namespace Config {
             healthbartextsize = 16.0f;    // default: 16
             dist = true;                  // default: true
             visualMaxDist = 100.0f;       // default: 100m
-            name = true;                  // default: true
+            name = false;                 // name labels are no longer shown in the UI
             ult = true;                   // default: true
             draw_skel = true;             // default: true
             skillinfo = false;            // default: false
@@ -1219,6 +1219,23 @@ namespace OW { namespace Config {
             aimDryRun = ReadBool(ini, section, "aimDryRun", aimDryRun);
             aimVerboseLog = ReadBool(ini, section, "aimVerboseLog", aimVerboseLog);
             aimDryRunLogIntervalMs = ReadInt(ini, section, "aimDryRunLogIntervalMs", aimDryRunLogIntervalMs);
+
+            triggerbotMode = ReadInt(ini, section, "triggerbotMode", triggerbotMode);
+            triggerbotKey = ReadInt(ini, section, "triggerbotKey", triggerbotKey);
+            triggerbotShotInterval = ReadFixedFloat(ini, section, "triggerbotShotInterval", triggerbotShotInterval);
+            triggerbotChargeAware = ReadBool(ini, section, "triggerbotChargeAware", triggerbotChargeAware);
+            triggerbotMinCharge = ReadFixedFloat(ini, section, "triggerbotMinCharge", triggerbotMinCharge);
+
+            triggerbotMode2 = ReadInt(ini, section, "triggerbotMode2", triggerbotMode2);
+            triggerbotKey2 = ReadInt(ini, section, "triggerbotKey2", triggerbotKey2);
+            triggerbotShotInterval2 = ReadFixedFloat(ini, section, "triggerbotShotInterval2", triggerbotShotInterval2);
+            triggerbotChargeAware2 = ReadBool(ini, section, "triggerbotChargeAware2", triggerbotChargeAware2);
+            triggerbotMinCharge2 = ReadFixedFloat(ini, section, "triggerbotMinCharge2", triggerbotMinCharge2);
+
+            triggerbotToggleActive = false;
+            triggerbotToggleActive2 = false;
+            triggerbotLastFireTick = 0;
+            triggerbotLastFireTick2 = 0;
         }
 
         void LoadAimMethodSettingsUnlocked(const IniFile& ini)
@@ -1263,6 +1280,18 @@ namespace OW { namespace Config {
             WriteBoolValue(path, section, "aimDryRun", aimDryRun);
             WriteBoolValue(path, section, "aimVerboseLog", aimVerboseLog);
             WriteIntValue(path, section, "aimDryRunLogIntervalMs", aimDryRunLogIntervalMs);
+
+            WriteIntValue(path, section, "triggerbotMode", triggerbotMode);
+            WriteIntValue(path, section, "triggerbotKey", triggerbotKey);
+            WriteFixedFloatValue(path, section, "triggerbotShotInterval", triggerbotShotInterval);
+            WriteBoolValue(path, section, "triggerbotChargeAware", triggerbotChargeAware);
+            WriteFixedFloatValue(path, section, "triggerbotMinCharge", triggerbotMinCharge);
+
+            WriteIntValue(path, section, "triggerbotMode2", triggerbotMode2);
+            WriteIntValue(path, section, "triggerbotKey2", triggerbotKey2);
+            WriteFixedFloatValue(path, section, "triggerbotShotInterval2", triggerbotShotInterval2);
+            WriteBoolValue(path, section, "triggerbotChargeAware2", triggerbotChargeAware2);
+            WriteFixedFloatValue(path, section, "triggerbotMinCharge2", triggerbotMinCharge2);
         }
 
         void SaveAimMethodSettingsUnlocked(const std::string& path)
@@ -1295,7 +1324,7 @@ namespace OW { namespace Config {
             healthbartextsize = ReadFixedFloat(ini, section, "healthbartextsize", healthbartextsize);
             dist = ReadBool(ini, section, "dist", dist);
             visualMaxDist = ReadFixedFloat(ini, section, "visualMaxDist", visualMaxDist);
-            name = ReadBool(ini, section, "name", name);
+            name = false;
             ult = ReadBool(ini, section, "ult", ult);
             draw_skel = ReadBool(ini, section, "draw_skel", draw_skel);
             skillinfo = ReadBool(ini, section, "skillinfo", skillinfo);
@@ -1504,6 +1533,15 @@ namespace OW { namespace Config {
             ClampFloatSetting("visualMaxDist", visualMaxDist, 0.0f, 1000.0f, 100.0f);
             ClampFloatSetting("lasthealth", lasthealth, 0.0f, 1000.0f, 0.0f);
             ClampFloatSetting("health", health, 0.0f, 1000.0f, 0.0f);
+
+            ClampSetting("triggerbotMode", triggerbotMode, 0, 2, 0);
+            ClampSetting("triggerbotKey", triggerbotKey, 0, 12, 1);
+            ClampFloatSetting("triggerbotShotInterval", triggerbotShotInterval, 0.0f, 100.0f, 0.0f);
+            ClampFloatSetting("triggerbotMinCharge", triggerbotMinCharge, 0.0f, 100.0f, 30.0f);
+            ClampSetting("triggerbotMode2", triggerbotMode2, 0, 2, 0);
+            ClampSetting("triggerbotKey2", triggerbotKey2, 0, 12, 1);
+            ClampFloatSetting("triggerbotShotInterval2", triggerbotShotInterval2, 0.0f, 100.0f, 0.0f);
+            ClampFloatSetting("triggerbotMinCharge2", triggerbotMinCharge2, 0.0f, 100.0f, 30.0f);
 
             NormalizeBoneSetting("TargetBone", TargetBone);
             NormalizeBoneSetting("Bone", Bone);

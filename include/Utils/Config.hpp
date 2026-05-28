@@ -38,6 +38,26 @@ namespace OW { namespace Config {
     inline bool Flick         = false;
     inline bool Flick2        = false;
 
+    // ---- Triggerbot (primary) ----
+    inline int   triggerbotMode = 0;          // 0=Hold, 1=Toggle, 2=Always
+    inline int   triggerbotKey  = 1;          // key index (reuses aim_key VK list 0-12)
+    inline float triggerbotShotInterval = 0.0f;   // scaled 0-100 → 0-500ms (slider value)
+    inline bool  triggerbotChargeAware  = false;  // wait for charge before firing
+    inline float triggerbotMinCharge    = 30.0f;  // minimum charge % (0-100, for charge-aware)
+
+    // ---- Triggerbot (secondary / triggerbot2) ----
+    inline int   triggerbotMode2 = 0;
+    inline int   triggerbotKey2  = 1;
+    inline float triggerbotShotInterval2 = 0.0f;
+    inline bool  triggerbotChargeAware2  = false;
+    inline float triggerbotMinCharge2    = 30.0f;
+
+    // ---- Triggerbot runtime state (not persisted) ----
+    inline bool  triggerbotToggleActive  = false;  // current toggle state (mode=Toggle)
+    inline bool  triggerbotToggleActive2 = false;
+    inline DWORD triggerbotLastFireTick  = 0;      // GetTickCount of last primary fire
+    inline DWORD triggerbotLastFireTick2 = 0;      // GetTickCount of last secondary fire
+
     // ---- Prediction ----
     inline bool projectile_arc  = false; // Ballistic arc correction for projectiles
     inline bool Prediction      = false;
@@ -182,7 +202,7 @@ namespace OW { namespace Config {
     inline float healthbartextsize = 16.f;
     inline bool dist            = true;
     inline float visualMaxDist  = 100.f;
-    inline bool name            = true;
+    inline bool name            = false;
     inline bool ult             = true;
     inline bool draw_skel       = true;
     inline bool skillinfo       = false;

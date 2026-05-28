@@ -443,6 +443,21 @@ inline void entity_thread() {
         localStats.cameraYCm = std::isfinite(cameraLocation.y) ? static_cast<int>(cameraLocation.y * 100.0f) : 0;
         localStats.cameraZCm = std::isfinite(cameraLocation.z) ? static_cast<int>(cameraLocation.z * 100.0f) : 0;
 
+        // Resolve local player UID from GameAdmin chain (slot 79)
+        const uint32_t gameAdminLocalUID = OW::GetGameAdminLocalUID();
+        bool gameAdminLocalUidUsed = false;
+        static bool gameAdminLocalUidLoggedCycle = false;
+        if (gameAdminLocalUID != 0 && !gameAdminLocalUidLoggedCycle && OW::PipelineDebugEnabled()) {
+            Diagnostics::Info("[PIPELINE] Stage 4 GameAdmin LocalUID=0x%08X(%u).",
+                static_cast<unsigned int>(gameAdminLocalUID),
+                static_cast<unsigned int>(gameAdminLocalUID));
+            gameAdminLocalUidLoggedCycle = true;
+        }
+        localStats.gameAdminLocalUID = gameAdminLocalUID;
+
+        // Also log entity MatchIds for cross-reference on first detailed cycle
+        static bool matchIdLogEnabled = true;
+
         std::unordered_map<uint64_t, const OW::c_entity*> previousEntityByAddress;
         previousEntityByAddress.reserve(previous_entities.size());
         for (const OW::c_entity& previous : previous_entities) {
@@ -989,19 +1004,18 @@ inline void entity_thread() {
                 }
             }
 
-            // ---- Visibility (May 2026 UC p330: new direct decrypt from VisBase) ----
-            if (!refreshSlowFields) {
-                entity.Vis = slowCache.vis;
-            } else if (entity.VisBase) {
-                if (detailedProcessLog && processStats.boneCandidates > 0) {
-                    Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu vis_start vis_base=0x%llX.",
-                        i,
-                        static_cast<unsigned long long>(entity.VisBase));
-                }
-                entity.Vis = OW::DecryptVis(entity.VisBase) != 0;
+            // ---- Visibility (refreshed every frame) ----
+            // p334 xwwxxwwxwxwxwx: bit 11 of visComp+0x98 = visibility (0=visible)
+            if (entity.VisBase) {
+                const uint64_t rawVis = OW::DecryptVis(entity.VisBase);
+                entity.Vis = (rawVis == 1);
                 slowCache.vis = entity.Vis;
-                if (detailedProcessLog && processStats.boneCandidates > 0) {
-                    Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu vis_done vis=%d.", i, entity.Vis ? 1 : 0);
+                if (rawVis != 0 && rawVis != 1) {
+                    Diagnostics::Aim("visibility.anomaly raw=%llu addr=0x%llX hero=0x%llX visbase=0x%llX",
+                        static_cast<unsigned long long>(rawVis),
+                        static_cast<unsigned long long>(entity.address),
+                        static_cast<unsigned long long>(entity.HeroID),
+                        static_cast<unsigned long long>(entity.VisBase));
                 }
             }
 
@@ -1037,6 +1051,8 @@ inline void entity_thread() {
             }
 
             // ---- Player controller / local entity detection ----
+            // PRIMARY: GameAdmin LocalUID matching (slot 79 -> admin+offset vs entity+0x138 MatchId)
+            // FALLBACK: camera proximity (dist <= 1m + known hero name)
             if (entity.AngleBase) {
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_start angle=0x%llX.",
@@ -1056,12 +1072,47 @@ inline void entity_thread() {
                 const int distanceCm = std::isfinite(dist)
                     ? static_cast<int>(dist * 100.0f + 0.5f)
                     : -1;
-                if (dist <= 1.f)
-                    localStats.nearCameraCandidates++;
 
                 const std::string& localHeroName = name;
                 if (localHeroName != "Unknown")
                     localStats.namedCandidates++;
+
+                // --- GameAdmin LocalUID match check ---
+                bool isLocalByUID = false;
+                uint32_t entityMatchId = 0;
+                if (gameAdminLocalUID != 0 && !gameAdminLocalUidUsed) {
+                    entityMatchId = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
+                    if (entityMatchId == gameAdminLocalUID) {
+                        isLocalByUID = true;
+                        gameAdminLocalUidUsed = true;
+                        localStats.localUidResolved = true;
+                        Diagnostics::Info("[PIPELINE] Stage 4 LOCAL FOUND by GameAdmin UID: entity=0x%llX MatchId=0x%08X LocalUID=0x%08X dist=%.1fm hero=%s.",
+                            static_cast<unsigned long long>(entity.address),
+                            static_cast<unsigned int>(entityMatchId),
+                            static_cast<unsigned int>(gameAdminLocalUID),
+                            static_cast<double>(dist),
+                            localHeroName.c_str());
+                    }
+                }
+
+                // Log MatchId cross-reference on first cycle (diagnostic only)
+                if (matchIdLogEnabled) {
+                    const uint32_t eMatchId = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
+                    if (eMatchId != 0) {
+                        Diagnostics::Info("[MATCHID] entity=0x%llX MatchId=0x%08X(%u) hero=%s angle=0x%llX dist=%.1fm.",
+                            static_cast<unsigned long long>(entity.address),
+                            static_cast<unsigned int>(eMatchId),
+                            static_cast<unsigned int>(eMatchId),
+                            localHeroName.c_str(),
+                            static_cast<unsigned long long>(entity.AngleBase),
+                            static_cast<double>(dist));
+                    }
+                }
+                // entityMatchId was used for GameAdmin UID comparison above
+
+                // Track proximity stats
+                if (dist <= 1.f)
+                    localStats.nearCameraCandidates++;
                 if (distanceCm >= 0 &&
                     (localStats.bestDistanceCm < 0 || distanceCm < localStats.bestDistanceCm)) {
                     localStats.bestDistanceCm = distanceCm;
@@ -1077,12 +1128,23 @@ inline void entity_thread() {
                     localStats.bestPosZCm = std::isfinite(entity.pos.Z) ? static_cast<int>(entity.pos.Z * 100.0f) : 0;
                 }
 
-                if (dist <= 1.f && localHeroName != "Unknown") {
+                // Selection priority:
+                // 1. GameAdmin UID match (unambiguous)
+                // 2. AngleBase present = local player (only local has PlayerController)
+                // 3. Proximity fallback (within 1m + known name)
+                const bool isNearCamera = dist <= 1.f;
+                const bool hasKnownName = localHeroName != "Unknown";
+                const bool shouldSelectLocal = isLocalByUID ||
+                    (!gameAdminLocalUidUsed && localStats.selected == 0) ||
+                    (!gameAdminLocalUidUsed && isNearCamera && hasKnownName);
+
+                if (shouldSelectLocal) {
                     if (detailedProcessLog) {
-                        Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_start skill_base=0x%llX hero=%s.",
+                        Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_start skill_base=0x%llX hero=%s uid=%d.",
                             i,
                             static_cast<unsigned long long>(entity.SkillBase),
-                            localHeroName.c_str());
+                            localHeroName.c_str(),
+                            isLocalByUID ? 1 : 0);
                     }
                     if (refreshSlowFields)
                         slowCache.skillcd1 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x189c);
@@ -1124,9 +1186,12 @@ inline void entity_thread() {
                     }
                     if (entity.GetTeam() == OW::eTeam::TEAM_DEATHMATCH)
                         entity.Team = false;
+                } else if (isLocalByUID) {
+                    // UID matched but selection already happened (should never occur)
                 }
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
-                    Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_done selected=%zu.", i, localStats.selected);
+                    Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_done selected=%zu uid=%d.",
+                        i, localStats.selected, isLocalByUID ? 1 : 0);
                 }
             }
 
@@ -1165,6 +1230,8 @@ inline void entity_thread() {
         Diagnostics::SetEntityCount(valid_count);
         Diagnostics::SetEntityProcessStats(processStats);
         Diagnostics::SetLocalEntityStats(localStats);
+        if (matchIdLogEnabled)
+            matchIdLogEnabled = false;
         Diagnostics::Trace("Entity process cycle: valid=%zu hp_dynamic=%zu raw=%zu.",
             valid_count, dynamic_count, raw_entities.size());
         if (OW::PipelineDebugEnabled()) {
@@ -1240,7 +1307,7 @@ inline void entity_thread() {
                     processStats.sampleHeadBadLocalXCm,
                     processStats.sampleHeadBadLocalYCm,
                     processStats.sampleHeadBadLocalZCm);
-                Diagnostics::Info("[PIPELINE] Stage 4 local angle_candidates=%zu near_camera=%zu named=%zu selected=%zu best_dist_cm=%d health=%d hero=0x%llX angle=0x%llX.",
+                Diagnostics::Info("[PIPELINE] Stage 4 local angle_candidates=%zu near_camera=%zu named=%zu selected=%zu best_dist_cm=%d health=%d hero=0x%llX angle=0x%llX LocalUID=0x%08X(%u) uidResolved=%d.",
                     localStats.angleCandidates,
                     localStats.nearCameraCandidates,
                     localStats.namedCandidates,
@@ -1248,7 +1315,10 @@ inline void entity_thread() {
                     localStats.bestDistanceCm,
                     localStats.selectedHealth,
                     static_cast<unsigned long long>(localStats.selectedHeroId),
-                    static_cast<unsigned long long>(localStats.selectedAngleBase));
+                    static_cast<unsigned long long>(localStats.selectedAngleBase),
+                    static_cast<unsigned int>(localStats.gameAdminLocalUID),
+                    static_cast<unsigned int>(localStats.gameAdminLocalUID),
+                    localStats.localUidResolved ? 1 : 0);
                 Diagnostics::Info("[PIPELINE] Stage 4 local coords zero_head=%zu nonzero_pos=%zu best addr=0x%llX hero=0x%llX angle=0x%llX health=%d head_cm=(%d,%d,%d) pos_cm=(%d,%d,%d) camera_cm=(%d,%d,%d).",
                     localStats.zeroHeadCandidates,
                     localStats.nonZeroPositionCandidates,
@@ -1511,11 +1581,12 @@ namespace OverlayRenderDetail {
     }
 
     inline float VisibilityAlpha(const OW::c_entity& entity, float opacity) {
-        return Clamp01(opacity * (entity.Vis ? 1.0f : 0.30f));
+        (void)entity;
+        return Clamp01(opacity);
     }
 
     inline ImVec4 ApplyVisualState(ImVec4 color, const OW::c_entity& entity, float opacity) {
-        const float brightness = entity.Vis ? 1.18f : 0.55f;
+        const float brightness = entity.Vis ? 1.18f : 0.90f;
         color.x = Clamp01(color.x * brightness);
         color.y = Clamp01(color.y * brightness);
         color.z = Clamp01(color.z * brightness);
@@ -2260,24 +2331,22 @@ inline void PlayerInfo() {
         bool drewAny = false;
 
         std::string heroName;
-        if (OW::Config::draw_info || OW::Config::skillinfo || OW::Config::healthbar2)
+        const bool showAboveHeadUltimate = OW::Config::ult && OW::Config::ultimateDisplayMode == 0;
+        const bool showAboveHeadSkillCooldowns = OW::Config::skillinfo && OW::Config::skillDisplayMode == 0;
+        if (OW::Config::skillinfo || OW::Config::healthbar2 || showAboveHeadUltimate)
             heroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
 
         ID3D11ShaderResourceView* heroIcon = nullptr;
-        if ((OW::Config::draw_info || OW::Config::healthbar2) && !specialEntity && heroName != "Unknown")
+        if ((OW::Config::healthbar2 || showAboveHeadUltimate) && !specialEntity && heroName != "Unknown")
             heroIcon = OverlayRenderDetail::FindHeroIcon(heroName);
 
         constexpr float iconSize = 24.0f;
-        const bool showAboveHeadUltimate = OW::Config::ult && OW::Config::ultimateDisplayMode == 0;
-        const bool showAboveHeadSkillCooldowns = OW::Config::skillinfo && OW::Config::skillDisplayMode == 0;
-        float labelY = top - 10.0f;
         Vector2 ultimateIndicatorCenter(centerX, top - 18.0f);
         if (heroIcon) {
             const float iconY = top - iconSize - 10.0f;
             ultimateIndicatorCenter = Vector2(centerX, iconY + iconSize * 0.5f);
-            labelY = iconY - 13.0f;
-        } else if (OW::Config::draw_info && showAboveHeadUltimate && entity.ultimate >= 100.0f) {
-            labelY = top - 38.0f;
+        } else if (showAboveHeadUltimate && entity.ultimate >= 100.0f) {
+            ultimateIndicatorCenter = Vector2(centerX, top - 28.0f);
         }
 
         if (OW::Config::draw_info || OW::Config::draw_edge || OW::Config::drawbox3d) {
@@ -2336,7 +2405,7 @@ inline void PlayerInfo() {
             drewAny = true;
         }
 
-        if (OW::Config::draw_info && showAboveHeadUltimate && !specialEntity) {
+        if (showAboveHeadUltimate && !specialEntity) {
             OverlayRenderDetail::DrawUltimateStatus(entity, ultimateIndicatorCenter, left, bottom, visualOpacity);
             drewAny = true;
         }
@@ -2354,22 +2423,6 @@ inline void PlayerInfo() {
             drewAny = true;
         }
 
-        if (OW::Config::draw_info && (OW::Config::name || showAboveHeadUltimate)) {
-            std::string label;
-            if (OW::Config::name && heroName != "Unknown") {
-                label = heroName;
-            }
-            if (showAboveHeadUltimate && !specialEntity) {
-                if (!label.empty()) label += " ";
-                label += "Ult " + std::to_string(static_cast<int>(entity.ultimate)) + "%";
-            }
-            if (!label.empty()) {
-                Render::DrawInfo(ImVec2(centerX, labelY), color, 14.0f, label.c_str(),
-                                 dist, entity.PlayerHealth, entity.PlayerHealthMax);
-                drewAny = true;
-            }
-        }
-
         if (drewAny)
             renderStats.drawn++;
     }
@@ -2379,8 +2432,8 @@ inline void PlayerInfo() {
 
 inline void skillinfo() {
     auto entity_snapshot = OW::TargetingDetail::SnapshotEntities();
-    const bool showUltimateLeft = OW::Config::draw_info && OW::Config::ult && OW::Config::ultimateDisplayMode == 1;
-    const bool showUltimateRight = OW::Config::draw_info && OW::Config::ult && OW::Config::ultimateDisplayMode == 2;
+    const bool showUltimateLeft = OW::Config::ult && OW::Config::ultimateDisplayMode == 1;
+    const bool showUltimateRight = OW::Config::ult && OW::Config::ultimateDisplayMode == 2;
     const bool showSkillLeft = OW::Config::skillinfo && OW::Config::skillDisplayMode == 1;
     const bool showSkillRight = OW::Config::skillinfo && OW::Config::skillDisplayMode == 2;
     if ((!showUltimateLeft && !showUltimateRight && !showSkillLeft && !showSkillRight) || entity_snapshot.empty())
@@ -3009,12 +3062,12 @@ namespace AimbotDetail {
         SetSensitivityLocked(false, origin_sens);
     }
 
-    inline bool CurrentTarget(c_entity& target, bool requireVisible = true) {
+    inline bool CurrentTarget(c_entity& target, bool requireVisible = false) {
         return OW::TryGetTargetEntity(OW::Config::Targetenemyi, target, requireVisible);
     }
 
     inline bool IsPrimaryTargetActionable(c_entity& target) {
-        if (!CurrentTarget(target, true)) return false;
+        if (!CurrentTarget(target)) return false;
         if (target.skill2act && target.HeroID == OW::eHero::HERO_GENJI) return false;
         if (target.skill1act && target.HeroID == OW::eHero::HERO_VENTURE) return false;
         if ((target.imort || target.barrprot) && !OW::Config::switch_team) return false;
@@ -3023,7 +3076,7 @@ namespace AimbotDetail {
 
     inline bool IsTriggerTargetActionable() {
         c_entity target{};
-        if (!CurrentTarget(target, true)) return false;
+        if (!CurrentTarget(target)) return false;
 
         c_entity local = LocalEntity();
         if (target.skill2act &&
@@ -3348,7 +3401,7 @@ namespace AimbotDetail {
 
         auto fvec = OW::GetVector3forfov();
         c_entity fov_target{};
-        if (IsZeroVector(fvec) || !OW::TryGetTargetEntity(OW::Config::Targetenemyifov, fov_target, true)) {
+        if (IsZeroVector(fvec) || !OW::TryGetTargetEntity(OW::Config::Targetenemyifov, fov_target)) {
             OW::Config::Fov = OW::Config::minFov1;
             OW::Config::Fov2 = OW::Config::minFov2;
             return;
@@ -3384,15 +3437,88 @@ namespace AimbotDetail {
         }
     }
 
+    inline bool IsTriggerKeyPressed(int keySetting) {
+        return IsConfiguredAimKeyPressed(keySetting);
+    }
+
     inline void RunTriggerbot(bool secondary, float origin_sens) {
-        const Vector3 vec = secondary ? OW::GetVector3aim2(OW::Config::Prediction2)
-                                      : OW::GetVector3(OW::Config::Prediction);
+        const int mode = secondary ? OW::Config::triggerbotMode2 : OW::Config::triggerbotMode;
+        const int keySetting = secondary ? OW::Config::triggerbotKey2 : OW::Config::triggerbotKey;
+        const float shotInterval = secondary ? OW::Config::triggerbotShotInterval2 : OW::Config::triggerbotShotInterval;
+        const bool chargeAware = secondary ? OW::Config::triggerbotChargeAware2 : OW::Config::triggerbotChargeAware;
+        const float minCharge = secondary ? OW::Config::triggerbotMinCharge2 : OW::Config::triggerbotMinCharge;
+        bool& toggleActive = secondary ? OW::Config::triggerbotToggleActive2 : OW::Config::triggerbotToggleActive;
+        DWORD& lastFireTick = secondary ? OW::Config::triggerbotLastFireTick2 : OW::Config::triggerbotLastFireTick;
+
+        // 1. Determine armed state
+        bool armed = false;
+        switch (mode) {
+        case 0: // Hold
+            armed = IsTriggerKeyPressed(keySetting);
+            break;
+        case 1: { // Toggle
+            const bool down = IsTriggerKeyPressed(keySetting);
+            static bool prevDownPrimary = false;
+            static bool prevDownSecondary = false;
+            bool& prevDown = secondary ? prevDownSecondary : prevDownPrimary;
+            if (down && !prevDown)
+                toggleActive = !toggleActive;
+            prevDown = down;
+            armed = toggleActive;
+            break;
+        }
+        case 2: // Always
+            armed = true;
+            break;
+        default:
+            break;
+        }
+
+        if (!armed) return;
+
+        // 2. Shot interval cooldown
+        if (shotInterval > 0.0f) {
+            const DWORD now = GetTickCount();
+            const DWORD intervalMs = static_cast<DWORD>(shotInterval * 5.0f); // 0-100 → 0-500ms
+            if (intervalMs > 0 && lastFireTick != 0 && (now - lastFireTick) < intervalMs)
+                return;
+        }
+
+        // 3. Find target
+        const bool predit = secondary ? OW::Config::Prediction2 : OW::Config::Prediction;
+        const Vector3 vec = secondary ? OW::GetVector3aim2(predit) : OW::GetVector3(predit);
         if (IsZeroVector(vec) || !IsTriggerTargetActionable()) return;
 
+        // 4. Check crosshair proximity
         AimData aim = BuildAimData(vec, false, 1.0f, 0.0f);
         const float hitbox = secondary ? OW::Config::hitbox2 : OW::Config::hitbox;
-        if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox))
+        if (!OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox))
+            return;
+
+        // 5. Charge awareness
+        if (chargeAware) {
+            c_entity local = LocalEntity();
+            float charge = 100.0f;
+
+            if (local.HeroID == OW::eHero::HERO_HANJO) {
+                charge = readult(local.SkillBase + 0x40, 0xB, 0x2A5) * 100.0f;
+            } else if (local.HeroID == OW::eHero::HERO_WIDOWMAKER) {
+                charge = IsInputVkDown(VK_RBUTTON)
+                    ? readult(local.SkillBase + 0x40, 0xB, 0x2567) * 100.0f
+                    : 0.0f;
+            }
+
+            if (charge < minCharge) return;
+        }
+
+        // 6. Fire
+        const c_entity local = LocalEntity();
+        if (local.HeroID == OW::eHero::HERO_HANJO && local.skill2act) {
+            FireHanzo();
+        } else {
             PressWithSensitivity(0x1, origin_sens, 2);
+        }
+        lastFireTick = GetTickCount();
     }
 
     inline bool ShouldYieldToSecondaryAim() {
@@ -3679,7 +3805,7 @@ namespace AimbotDetail {
 
         const Vector3 vec = OW::GetVector3(false);
         c_entity target{};
-        if (!IsZeroVector(vec) && CurrentTarget(target, true) && target.Team) {
+        if (!IsZeroVector(vec) && CurrentTarget(target) && target.Team) {
             const float dist = CameraPosition().DistTo(vec);
             if (OW::Config::health <= OW::Config::meleehealth &&
                 dist <= OW::Config::meleedistance &&
@@ -3695,7 +3821,7 @@ namespace AimbotDetail {
 
         const Vector3 vec = OW::GetVector3(false);
         c_entity target{};
-        if (!IsZeroVector(vec) && CurrentTarget(target, true) && target.Team) {
+        if (!IsZeroVector(vec) && CurrentTarget(target) && target.Team) {
             const float dist = CameraPosition().DistTo(vec);
             if (OW::Config::health <= OW::Config::AutoRMBhealth &&
                 dist <= OW::Config::AutoRMBdistance &&
@@ -3711,7 +3837,7 @@ namespace AimbotDetail {
 
         const Vector3 vec = OW::GetVector3(false);
         c_entity target{};
-        if (IsZeroVector(vec) || !CurrentTarget(target, true)) return;
+        if (IsZeroVector(vec) || !CurrentTarget(target)) return;
         if (target.imort || target.barrprot) return;
         if (target.HeroID == 0x16dd || target.HeroID == 0x16ee) return;
 
@@ -3814,7 +3940,7 @@ namespace AimbotDetail {
         while (IsSecondAimKeyPressed() && !OW::Config::shooted2) {
             const Vector3 vec = OW::GetVector3aim2(OW::Config::Prediction2);
             c_entity target{};
-            if (!IsZeroVector(vec) && CurrentTarget(target, true) &&
+            if (!IsZeroVector(vec) && CurrentTarget(target) &&
                 !(target.skill2act && target.HeroID == OW::eHero::HERO_GENJI)) {
                 AimData aim{};
                 if (OW::Config::Tracking2)

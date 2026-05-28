@@ -65,11 +65,11 @@ namespace OW {
 
         // Visibility/data flag resolver (forum p331 full disassembly, IDA RVA 0x58C880).
         // OLD (0521): static constexpr auto VisibilityGlobalKeyPtr_RVA = 0x3B76970;
-        static constexpr auto VisibilityGlobalKeyPtr_RVA = 0x3A92E70; // verified 0527: key ptr RIP ref
+        static constexpr auto VisibilityGlobalKeyPtr_RVA = 0x3B76970; // forum p330 verified; IDA 0x3A92E70 produced garbage
         // OLD (0521): static constexpr auto VisibilityQwordOffset = 0x1B1;
-        static constexpr auto VisibilityQwordOffset      = 0x16A;     // verified 0527: [keyPtr+0x16A]
+        static constexpr auto VisibilityQwordOffset      = 0x1B1;     // forum p330 verified; IDA 0x16A produced garbage
         // OLD (0521): static constexpr auto VisibilityValueOffset = 0x98;
-        static constexpr auto VisibilityValueOffset      = 0x2D8;     // verified 0527: mov rax,[rcx+2D8h]
+        static constexpr auto VisibilityValueOffset      = 0x98;     // reverted from 0x2D8 — IDA 0527 chain produced garbage
         static constexpr auto VisibilityMagicByte_RVA    = 0x377DFE9; // verified 0527: magic byte RIP ref
         static constexpr auto Visibility_Add1            = 0x1B69BE8B4ADCEA02; // verified 0527
         static constexpr auto Visibility_Ror1            = 15;        // verified 0527

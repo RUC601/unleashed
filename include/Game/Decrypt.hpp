@@ -13,7 +13,6 @@
 #include <unordered_set>
 #include <emmintrin.h>
 
-// Fallback for modern Windows SDK where HIDWORD/LODWORD are removed
 #ifndef HIDWORD
 #define HIDWORD(_ui64) ((DWORD)(((DWORDLONG)(_ui64) >> 32) & 0xFFFFFFFF))
 #endif
@@ -31,10 +30,6 @@
 
 namespace OW {
 
-    // =========================================================================
-    // Global key management
-    // =========================================================================
-
     static inline uint64_t ROR64(uint64_t x, int bits) {
         bits &= 63;
         if (bits == 0) return x;
@@ -47,16 +42,6 @@ namespace OW {
         return (x << bits) | (x >> (64 - bits));
     }
 
-    /**
-     * Resolve the older global key pair used by legacy probes.
-     *
-     * Current May 2026 component and visibility decrypt paths read their key
-     * material directly from ComponentXorQword/ComponentXorByte, so startup no
-     * longer depends on this function. It is retained as an optional diagnostic
-     * helper: first try the old RIGEL pattern, then decode the IDA-derived
-     * GetGlobalKey function at offset::GetGlobalKey_RVA by extracting the LEA,
-     * MOV-immediate constants, and RIP-relative global store from live code.
-     */
     inline bool GetGlobalKey() {
         Diagnostics::SetKeyStatus(Diagnostics::KeyStatus::Resolving);
         Diagnostics::Info("GetGlobalKey resolution started.");
@@ -73,7 +58,6 @@ namespace OW {
             return true;
         };
 
-        // ---- Method 1: Pattern scan (RIGEL-2411 key_sig, may not exist in May2026) ----
         static const uint8_t key_sig[] =
             "\x00\x00\x00\x00\x21\x00\x00\x00\x00\x00\x00\x00\x24\x00\x00\x00"
             "\x01\x00\x00\x00\x29\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
@@ -82,7 +66,6 @@ namespace OW {
 
         int pattern_attempts = 0;
         while (true) {
-            // --- Try pattern scan first (3 attempts, then fall back to IDA method) ---
             if (pattern_attempts < 3) {
                 uint64_t Key = SDK->FindPatternExReg(
                     reinterpret_cast<const uint8_t*>(key_sig),
@@ -101,22 +84,11 @@ namespace OW {
                 pattern_attempts++;
             }
 
-            // ---- Method 2: IDA-derived direct decode (May 2026 GetGlobalKey at RVA 0x581D20) ----
-            // The function computes an obfuscated pointer via:
-            //   lea rax, [rip+disp]          -> base address
-            //   ror rax, 0x0A                -> rotate right by 10
-            //   mov rcx, const1; add rcx, rax
-            //   mov rax, const2; xor rcx, rax
-            //   mov rax, const3; sub rcx, rax
-            //   mov [rsp+0x30], rcx          -> decoded pointer stored on stack
-            // Then reads the key structure at decoded+0x38 (Key1) and decoded+0xB8 (Key2)
-            // OR stores to a global: mov [rip+disp], rax (computed key value)
             {
                 uint64_t gk_addr = SDK->dwGameBase + offset::GetGlobalKey_RVA;
                 uint8_t code[128] = {};
                 SDK->read_buf(gk_addr, (char*)code, sizeof(code));
 
-                // Find LEA instruction: 48 8D 05/0D/15/1D/25/2D/35/3D disp32
                 uint64_t lea_target = 0;
                 for (int i = 0; i < 120; i++) {
                     if (code[i] == 0x48 && code[i+1] == 0x8D &&
@@ -127,7 +99,6 @@ namespace OW {
                     }
                 }
 
-                // Extract obfuscation constants: mov rcx,imm64 (48 B9) and mov rax,imm64 (48 B8)
                 uint64_t const1 = 0, const2 = 0, const3 = 0;
                 for (int i = 0; i < 120; i++) {
                     if (code[i] == 0x48 && code[i+1] == 0xB9 && !const1) {
@@ -150,11 +121,9 @@ namespace OW {
                     printf("[Decrypt] IDA method: decoded struct ptr = 0x%llX (RVA 0x%llX)\n",
                            decoded, decoded - SDK->dwGameBase);
 
-                    // Check if decoded points within game memory
                     bool decoded_in_range = (decoded >= SDK->dwGameBase &&
                                              decoded < SDK->dwGameBase + 0x4000000);
 
-                    // Try reading keys from decoded structure at +0x38 and +0xB8
                     if (decoded_in_range || decoded > 0x10000) {
                         uint64_t k1 = SDK->RPM<uint64_t>(decoded + 0x38);
                         uint64_t k2 = SDK->RPM<uint64_t>(decoded + 0xB8);
@@ -167,7 +136,6 @@ namespace OW {
                             return markResolved("decoded struct");
                         }
 
-                        // If not at +0x38/+0xB8, scan the decoded structure for key-like values
                         int found = 0;
                         for (int64_t off = -0x200; off <= 0x200 && found < 2; off += 8) {
                             uint64_t v = SDK->RPM<uint64_t>(decoded + off);
@@ -181,11 +149,9 @@ namespace OW {
                             printf("[Decrypt] GlobalKey2: 0x%llX (scanned struct)\n", SDK->GlobalKey2);
                             return markResolved("struct scan");
                         }
-                        SDK->GlobalKey1 = SDK->GlobalKey2 = 0; // reset
+                        SDK->GlobalKey1 = SDK->GlobalKey2 = 0;
                     }
 
-                    // Try: the global storage approach (GetGlobalKey stores to a global var)
-                    // The function code contains: mov [rip+disp], rax  (48 89 05 disp32)
                     for (int i = 0; i < 120; i++) {
                         if (code[i] == 0x48 && code[i+1] == 0x89 && code[i+2] == 0x05) {
                             int32_t disp = *(int32_t*)&code[i+3];
@@ -195,9 +161,7 @@ namespace OW {
                                    global_rva, global_val);
 
                             if (global_val > 0x1000000000000000) {
-                                // May be XOR'd with 0xF5 or similar small constant
                                 SDK->GlobalKey1 = global_val;
-                                // Search nearby for Key2
                                 for (int64_t d = -0x1000; d <= 0x1000; d += 8) {
                                     if (d == 0) continue;
                                     uint64_t v = SDK->RPM<uint64_t>(SDK->dwGameBase + global_rva + d);
@@ -222,36 +186,19 @@ namespace OW {
         }
     }
 
-    // =========================================================================
-    // Parent decryption helper
-    // =========================================================================
-
-    /**
-     * Decode an encrypted parent/entity pointer.
-     *
-     * The caller passes the qword already read from the parent field (commonly
-     * parent+0x30 in the entity relation chain). The May 2026 chain rotates the
-     * value right by 32, XORs/subtracts the two current constants, rotates right
-     * by 35, then adds the final bias. The result is the resolved parent pointer.
-     */
     inline uint64_t GetParent(uint64_t encrypted) {
         __try {
             auto result = encrypted;
-            // New decryption chain (verified May 2026)
-            result = (result >> 0x20) | (result << 0x20);  // ROR64 by 32
+            result = (result >> 0x20) | (result << 0x20);
             result ^= 0x4B920A7072A077C5;
             result -= 0x107816B001CA79C8;
-            result = (result >> 0x23) | (result << 0x1D);  // ROR64 by 35
+            result = (result >> 0x23) | (result << 0x1D);
             result += 0xFD2150D0AEF24514;
             return result;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return 0;
         }
     }
-
-    // =========================================================================
-    // Component decryption
-    // =========================================================================
 
     inline void sub_E8D1A0(uint64_t* bit_mask, uint64_t* lower_mask,
                            uint32_t* shift, uint32_t* bucket,
@@ -288,21 +235,6 @@ namespace OW {
         }
     };
 
-    /**
-     * Resolve a component pointer from a component parent and component id.
-     *
-     * Flow:
-     *  1. Split the component id into a 64-bit bitmap bucket and bit position.
-     *  2. Read the presence bitmap at parent+0x110+(bucket*8). If the bit is
-     *     clear, the component is absent and the function returns 0.
-     *  3. Popcount bits below the requested bit and add the per-bucket base byte
-     *     at parent+0x130+bucket to get the component-table index.
-     *  4. Read parent+0x80 as the component table, then read the encrypted qword.
-     *  5. Apply the UC p331 / IDA 0527 component transform:
-     *     XOR key material, XOR fixed constant, ROR32, ADD, XOR byte key,
-     *     SUB fixed constant, ROR60, then ROR57.
-     *  6. Mask the decoded pointer with the presence bit and return it.
-     */
     inline uintptr_t DecryptComponent(uintptr_t parent, uint32_t idx,
                                       const EntityHeaderSnapshot* parent_snapshot) {
         if (!parent)
@@ -370,18 +302,6 @@ namespace OW {
             return 0;
         }
 
-#if 0
-        // 0521: old add/xor/add/xor/xor/xor/net-ROR3 tail retained for audit.
-        component += 0x4C8675CDE55BA1B2;
-        component ^= component_key_material_1;
-        component += 0x7BE57670994040F6;
-        component ^= static_cast<uint64_t>(component_key_byte);
-        component ^= 0x3864150DB528414C;
-        component ^= 0xA4764E53CD34159B;
-        component = (component << 0x2A) | (component >> 0x16);
-        component = ROR64(component, 0x2D);
-#endif
-
         component ^= component_key_material_1;
         component ^= offset::Component_Xor1;
         component = ROR64(component, offset::Component_Ror1);
@@ -407,65 +327,22 @@ namespace OW {
         return DecryptComponent(parent, idx, active_snapshot);
     }
 
-    // =========================================================================
-    // Visibility decryption - 2026-05-27 (UC p331 + IDA sub_7FF7BD68C880)
-    //
-    // Replaces the old table-walk approach that used DEAD VisFN/Vis_Key.
-    // New chain reads from VisBase+0x2D8, uses key material at
-    // RPM(base+0x3A92E70)+0x16A, and finishes with a magic byte from .data.
-    // =========================================================================
-
-    /**
-     * Decode the visibility flag from a visibility component.
-     *
-     * This replaces the old VisFN/Vis_Key table walk and the 0521 p330
-     * VisBase+0x98 helper. The decoded value is expected to be non-zero for
-     * visible and zero for occluded.
-     */
     inline uint64_t DecryptVis(uint64_t visBase) {
-        uint64_t value = SDK->RPM<uint64_t>(visBase + offset::VisibilityValueOffset);
-
-#if 0
-        // 0521: old p330 VisBase+0x98 chain retained for audit.
-        uint64_t enc = SDK->RPM<uint64_t>(visBase + 0x98);
-        enc = ROR64(enc, 3) ^ 0x53DB07B6B873760C;
-        uint64_t var_qword = 0;
-        uint64_t unused_material = 0;
-        uint8_t var_byte = 0;
-        SDK->GetCachedComponentKeyMaterial(
-            SDK->dwGameBase + 0x3A86E30,
-            0x10C,
-            SDK->dwGameBase + 0x3772769,
-            var_qword,
-            unused_material,
-            var_byte);
-        uint64_t dec = (var_byte ^ (enc - 0x7A7DB4DE6CD03BBC)) + 0x5CE60F50EA1D337F;
-        dec = ROR64(dec + 0x78D75198F1D34D38, 0xC);
-        dec = SDK->RPM<uint64_t>(var_qword + 0x6A) ^ ((2 * dec) | (dec >> 0x3F));
-        return dec;
-#endif
-
-        value += offset::Visibility_Add1;
-        value = ROR64(value, offset::Visibility_Ror1);
-        value += offset::Visibility_Add2;
-        value = ROR64(value, offset::Visibility_Ror2);
-
-        const uint64_t key_ptr =
-            SDK->RPM<uint64_t>(SDK->dwGameBase + offset::VisibilityGlobalKeyPtr_RVA);
-        if (!key_ptr) {
-            Diagnostics::RecordDecryptFailure();
-            return 0;
+        const uint64_t enc = SDK->RPM<uint64_t>(visBase + offset::VisibilityValueOffset);
+        const bool visible = (enc & 0x800) == 0;
+        const uint64_t result = visible ? 1 : 0;
+        {
+            static uint32_t sampleCount = 0;
+            if (sampleCount < 50) {
+                Diagnostics::Aim("visibility.decrypt sample=%u raw=0x%llX visible=%d visbase=0x%llX",
+                    sampleCount,
+                    static_cast<unsigned long long>(enc),
+                    visible ? 1 : 0,
+                    static_cast<unsigned long long>(visBase));
+                ++sampleCount;
+            }
         }
-
-        value ^= SDK->RPM<uint64_t>(key_ptr + offset::VisibilityQwordOffset);
-        value = ROL64(value, offset::Visibility_Rol1);
-        value ^= offset::Visibility_Xor1;
-        value -= offset::Visibility_Sub1;
-
-        const uint64_t magic =
-            static_cast<uint64_t>(
-                SDK->RPM<uint8_t>(SDK->dwGameBase + offset::VisibilityMagicByte_RVA));
-        return magic ^ ROR64(value, offset::Visibility_FinalRor);
+        return result;
     }
 
     // =========================================================================
@@ -508,9 +385,6 @@ namespace OW {
         if (cached)
             return cached;
 
-        // Reads the raw global input.MouseScaleX float (for example 3.16).
-        // If the game applies per-hero sensitivity elsewhere, this global read
-        // does not include that per-hero override.
         const uintptr_t mouse_scale_x =
             SDK->dwGameBase + offset::InputMouseScaleX_RVA;
         if (IsPlausibleSensitivity(SDK->RPM<float>(mouse_scale_x))) {
@@ -518,8 +392,6 @@ namespace OW {
             return cached;
         }
 
-        // Last-resort slot-relative probe for older dumps. Current IDA evidence
-        // prefers the input.MouseScaleX/Y globals above.
         const uintptr_t input_system =
             GetHeapManager(offset::HeapSlotIndex_InputSystem);
         if (input_system) {
@@ -534,16 +406,306 @@ namespace OW {
     }
 
     // =========================================================================
-    // Outline — REMOVED 2026-05-25
+    // GameAdmin LocalUID probe — local player via GameAdmin chain
     //
-    // DMA external cheats CANNOT render outlines on the host machine, and
-    // outlines must NEVER be drawn on the host.  This is a fundamental
-    // limitation of the DMA architecture — the FPGA reads memory but has no
-    // path to inject D3D11 draw calls into the game's rendering pipeline.
-    // Outline decryption (GetOutlineStruct, DecryptOutline, SetBorderLine)
-    // has been deleted.  If needed later for read-only analysis, recover
-    // from git history or the UC audit at uc/0525/viewmatrix_audit.md.
+    // Chain: root = RPM(base + Address_game_admin_root)
+    //        enc  = RPM(root + GameAdmin_RootPtr)
+    //        dec  = ROR34(ROR17((enc+Add1)^Xor1)+Add2)
+    //        admin = RPM(dec + 8*79)
+    //        uid  = RPM<uint32_t>(admin + LocalUID_offset)
+    //
+    // Match: entity.MatchId(+0x138) == LocalUID => local player
+    //
+    // LocalUID offset TBD via live DMA probing. UC p327 says 0x2F0;
+    // p329 tried 0x4E4.
     // =========================================================================
+
+    static constexpr uint8_t  kGameAdminLocalPlayerSlot = 79;
+
+    static constexpr uint64_t kGameAdminLocalUID_Offsets[] = {
+        0x2F0, 0x4E4,
+        0x2E0, 0x2E4, 0x2E8, 0x2EC, 0x2F4, 0x2F8, 0x2FC,
+        0x4E0, 0x4E8, 0x4EC, 0x4F0,
+        0x100, 0x104, 0x108, 0x10C,
+        0x138,
+        0x200, 0x208, 0x210,
+        0x300, 0x308, 0x310,
+        0x500, 0x508,
+        0xE0, 0xE4, 0xE8
+    };
+    static constexpr size_t kGameAdminProbeCount =
+        sizeof(kGameAdminLocalUID_Offsets) / sizeof(kGameAdminLocalUID_Offsets[0]);
+
+    struct GameAdminProbeResult {
+        uintptr_t adminPtr = 0;
+        bool adminValid = false;
+        uint64_t decryptedSlotTable = 0;
+        uint64_t enc = 0;
+        uintptr_t root = 0;
+        struct Entry {
+            uint64_t offset = 0;
+            uint32_t u32 = 0;
+            uint64_t u64 = 0;
+        };
+        Entry entries[kGameAdminProbeCount];
+        uint8_t header[0x80] = {};
+        bool headerValid = false;
+    };
+
+    inline GameAdminProbeResult ProbeGameAdminLocalPlayer() {
+        GameAdminProbeResult probe{};
+
+        if (!SDK->dwGameBase) {
+            Diagnostics::Info("[GAMEADMIN] SKIP: SDK base null.");
+            return probe;
+        }
+
+        probe.root = SDK->RPM<uintptr_t>(
+            SDK->dwGameBase + offset::Address_game_admin_root);
+        if (!probe.root) {
+            Diagnostics::Info("[GAMEADMIN] FAIL: root null at RVA 0x%llX.",
+                static_cast<unsigned long long>(offset::Address_game_admin_root));
+            return probe;
+        }
+
+        probe.enc = SDK->RPM<uint64_t>(probe.root + offset::GameAdmin_RootPtr);
+        if (!probe.enc) {
+            Diagnostics::Info("[GAMEADMIN] FAIL: enc null at root=0x%llX+0x%llX.",
+                static_cast<unsigned long long>(probe.root),
+                static_cast<unsigned long long>(offset::GameAdmin_RootPtr));
+            return probe;
+        }
+
+        probe.decryptedSlotTable = probe.enc + offset::GameAdmin_Add1;
+        probe.decryptedSlotTable ^= offset::GameAdmin_Xor1;
+        probe.decryptedSlotTable = ROR64(probe.decryptedSlotTable, offset::GameAdmin_Ror1);
+        probe.decryptedSlotTable += offset::GameAdmin_Add2;
+        probe.decryptedSlotTable = ROR64(probe.decryptedSlotTable, offset::GameAdmin_Ror2);
+
+        if (!probe.decryptedSlotTable) {
+            Diagnostics::Info("[GAMEADMIN] FAIL: decrypted table null. enc=0x%llX.",
+                static_cast<unsigned long long>(probe.enc));
+            return probe;
+        }
+
+        probe.adminPtr = SDK->RPM<uintptr_t>(
+            probe.decryptedSlotTable + 8ull * kGameAdminLocalPlayerSlot);
+        if (!probe.adminPtr) {
+            Diagnostics::Info("[GAMEADMIN] FAIL: admin[%u] null. table=0x%llX.",
+                static_cast<unsigned int>(kGameAdminLocalPlayerSlot),
+                static_cast<unsigned long long>(probe.decryptedSlotTable));
+            return probe;
+        }
+
+        probe.adminValid = true;
+        probe.headerValid = SDK->read_range(
+            probe.adminPtr, probe.header, sizeof(probe.header));
+
+        for (size_t i = 0; i < kGameAdminProbeCount; ++i) {
+            const uint64_t off = kGameAdminLocalUID_Offsets[i];
+            probe.entries[i].offset = off;
+            probe.entries[i].u32 = SDK->RPM<uint32_t>(probe.adminPtr + off);
+            probe.entries[i].u64 = SDK->RPM<uint64_t>(probe.adminPtr + off);
+        }
+
+        return probe;
+    }
+
+    inline void LogGameAdminProbe(const GameAdminProbeResult& probe) {
+        if (!probe.adminValid) {
+            Diagnostics::Info("[GAMEADMIN] Cannot log: admin not valid.");
+            return;
+        }
+
+        Diagnostics::Info("[GAMEADMIN] === PROBE START ===");
+        Diagnostics::Info("[GAMEADMIN] root=0x%llX enc=0x%llX table=0x%llX adminPtr=0x%llX.",
+            static_cast<unsigned long long>(probe.root),
+            static_cast<unsigned long long>(probe.enc),
+            static_cast<unsigned long long>(probe.decryptedSlotTable),
+            static_cast<unsigned long long>(probe.adminPtr));
+
+        if (probe.headerValid) {
+            char hex[400] = {};
+            int pos = 0;
+            for (int row = 0; row < 4 && pos < 370; ++row) {
+                pos += _snprintf_s(hex + pos, sizeof(hex) - pos, _TRUNCATE,
+                    "%02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X  ",
+                    probe.header[row*16+0], probe.header[row*16+1],
+                    probe.header[row*16+2], probe.header[row*16+3],
+                    probe.header[row*16+4], probe.header[row*16+5],
+                    probe.header[row*16+6], probe.header[row*16+7],
+                    probe.header[row*16+8], probe.header[row*16+9],
+                    probe.header[row*16+10], probe.header[row*16+11],
+                    probe.header[row*16+12], probe.header[row*16+13],
+                    probe.header[row*16+14], probe.header[row*16+15]);
+            }
+            Diagnostics::Info("[GAMEADMIN] Header[0:64]: %s", hex);
+        }
+
+        for (size_t i = 0; i < kGameAdminProbeCount; ++i) {
+            const auto& e = probe.entries[i];
+            if (e.u32 != 0 || e.u64 != 0) {
+                Diagnostics::Info("[GAMEADMIN] off=+0x%03llX u32=0x%08X(%u) u64=0x%016llX.",
+                    static_cast<unsigned long long>(e.offset),
+                    static_cast<unsigned int>(e.u32),
+                    static_cast<unsigned int>(e.u32),
+                    static_cast<unsigned long long>(e.u64));
+            }
+        }
+        Diagnostics::Info("[GAMEADMIN] === PROBE END ===");
+    }
+
+    // Scan ALL GameAdmin slots (0..255) to find which ones have valid pointers.
+    inline void ScanGameAdminSlots() {
+        if (!SDK->dwGameBase) {
+            Diagnostics::Info("[GAMEADMIN-SCAN] SDK base null.");
+            return;
+        }
+
+        const uintptr_t root = SDK->RPM<uintptr_t>(
+            SDK->dwGameBase + offset::Address_game_admin_root);
+        if (!root) {
+            Diagnostics::Info("[GAMEADMIN-SCAN] root null.");
+            return;
+        }
+
+        const uint64_t enc = SDK->RPM<uint64_t>(root + offset::GameAdmin_RootPtr);
+        if (!enc) {
+            Diagnostics::Info("[GAMEADMIN-SCAN] enc null.");
+            return;
+        }
+
+        uint64_t slot_table = enc + offset::GameAdmin_Add1;
+        slot_table ^= offset::GameAdmin_Xor1;
+        slot_table = ROR64(slot_table, offset::GameAdmin_Ror1);
+        slot_table += offset::GameAdmin_Add2;
+        slot_table = ROR64(slot_table, offset::GameAdmin_Ror2);
+
+        if (!slot_table) {
+            Diagnostics::Info("[GAMEADMIN-SCAN] decrypted table null. enc=0x%llX.",
+                static_cast<unsigned long long>(enc));
+            return;
+        }
+
+        Diagnostics::Info("[GAMEADMIN-SCAN] root=0x%llX enc=0x%llX table=0x%llX.",
+            static_cast<unsigned long long>(root),
+            static_cast<unsigned long long>(enc),
+            static_cast<unsigned long long>(slot_table));
+
+        // Read all 256 slot entries (256 * 8 = 2048 bytes)
+        uint8_t slotBlock[2048] = {};
+        if (!SDK->read_range(slot_table, slotBlock, sizeof(slotBlock))) {
+            Diagnostics::Info("[GAMEADMIN-SCAN] FAIL: cannot read slot table at 0x%llX.",
+                static_cast<unsigned long long>(slot_table));
+            return;
+        }
+
+        // Dump first 64 bytes of slot table for hex analysis
+        char hex[512] = {};
+        int pos = 0;
+        for (int i = 0; i < 64 && pos < 480; ++i) {
+            pos += _snprintf_s(hex + pos, sizeof(hex) - pos, _TRUNCATE,
+                "%02X ", static_cast<unsigned int>(slotBlock[i]));
+        }
+        Diagnostics::Info("[GAMEADMIN-SCAN] SlotTable[0:64]: %s", hex);
+
+        // Scan all 256 slots: read pointer, try to read admin struct
+        int validStructs = 0;
+        int populatedSlots = 0;
+        for (int slot = 0; slot < 256; ++slot) {
+            uint64_t entry = 0;
+            std::memcpy(&entry, slotBlock + slot * 8, sizeof(entry));
+            if (entry == 0) continue;
+            populatedSlots++;
+
+            // Try to read first 8 bytes of the struct
+            uint64_t entryHeader = SDK->RPM<uint64_t>(entry);
+            if (entryHeader == 0) continue;
+            validStructs++;
+
+            // For valid structs, scan large range for LocalUID (0x80000XXX pattern)
+            if (validStructs <= 32) {
+                // Read up to 0x1000 bytes of the admin struct
+                uint8_t adminBytes[0x1000] = {};
+                bool ok = SDK->read_range(entry, adminBytes, sizeof(adminBytes));
+
+                // Scan ALL uint32_t values in [0x80000000, 0x8000FFFF] range
+                // This is the LocalUID/MatchId range observed in entities
+                uint32_t foundUids[16] = {};
+                int foundCount = 0;
+                if (ok) {
+                    for (int off = 0; off < static_cast<int>(sizeof(adminBytes)) - 4 && foundCount < 16; off += 4) {
+                        uint32_t val = *reinterpret_cast<uint32_t*>(adminBytes + off);
+                        if ((val & 0xFFFF0000) == 0x80000000) {
+                            foundUids[foundCount++] = val;
+                        }
+                    }
+                }
+
+                char uidStr[512] = {};
+                int uidPos = 0;
+                for (int j = 0; j < foundCount && uidPos < 480; ++j) {
+                    uidPos += _snprintf_s(uidStr + uidPos, sizeof(uidStr) - uidPos, _TRUNCATE,
+                        "off=unknown u32=0x%X ", static_cast<unsigned int>(foundUids[j]));
+                }
+
+                if (foundCount > 0) {
+                    Diagnostics::Info("[GAMEADMIN-SCAN] slot[%d]=0x%llX 0x80000XXX_UIDS=%s",
+                        slot,
+                        static_cast<unsigned long long>(entry),
+                        uidStr);
+                }
+
+                // Also look for the specific local player MatchId 0x8000028F
+                if (ok) {
+                    for (int off = 0; off < static_cast<int>(sizeof(adminBytes)) - 4; off += 4) {
+                        uint32_t val = *reinterpret_cast<uint32_t*>(adminBytes + off);
+                        if (val == 0x8000028F) {
+                            Diagnostics::Info("[GAMEADMIN-SCAN] FOUND LOCAL UID! slot[%d]=0x%llX offset=+0x%X value=0x8000028F.",
+                                slot,
+                                static_cast<unsigned long long>(entry),
+                                off);
+                        }
+                    }
+                }
+            }
+        }
+        Diagnostics::Info("[GAMEADMIN-SCAN] populated=%d/256 valid=%d.",
+            populatedSlots, validStructs);
+    }
+
+    inline uint32_t GetGameAdminLocalUID() {
+        static uint64_t s_lastTick = 0;
+        static uint32_t s_cached = 0;
+        static bool s_logged = false;
+        static bool s_slotScanDone = false;
+
+        const uint64_t now = GetTickCount64();
+        if (s_cached && now - s_lastTick < 2000)
+            return s_cached;
+        s_lastTick = now;
+
+        if (!s_slotScanDone) {
+            ScanGameAdminSlots();
+            s_slotScanDone = true;
+        }
+
+        const GameAdminProbeResult probe = ProbeGameAdminLocalPlayer();
+        if (!probe.adminValid)
+            return 0;
+
+        if (!s_logged) {
+            LogGameAdminProbe(probe);
+            s_logged = true;
+        }
+
+        const uint32_t a = SDK->RPM<uint32_t>(probe.adminPtr + 0x2F0);
+        const uint32_t b = SDK->RPM<uint32_t>(probe.adminPtr + 0x4E4);
+
+        if (a != 0) { s_cached = a; return a; }
+        if (b != 0) { s_cached = b; return b; }
+        return 0;
+    }
 
     // =========================================================================
     // Entity list scanning
@@ -687,10 +849,6 @@ namespace OW {
         return result;
     }
 
-    // =========================================================================
-    // Hero name helpers
-    // =========================================================================
-
     inline std::string GetHeroEngNames(uint64_t HeroID, uint64_t LinkBase) {
         if (HeroID == eHero::HERO_DVA) {
             return SDK->RPM<uint16_t>(LinkBase + 0xD4) != SDK->RPM<uint16_t>(LinkBase + 0xD8)
@@ -708,10 +866,6 @@ namespace OW {
             default:             return "Unknown";
         }
     }
-
-    // =========================================================================
-    // Skill system helpers
-    // =========================================================================
 
     inline bool IsSkillActive(uint64_t base, uint16_t index, uint16_t id) {
         if (id == 0) return false;
