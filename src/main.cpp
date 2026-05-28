@@ -178,10 +178,15 @@ namespace {
         drawLine(snapshot.lastScanEntityCount > 0 && snapshot.entityProcess.raw == 0 ? warnColor :
             snapshot.lastScanEntityCount > 0 ? okColor : warnColor, line);
 
-        std::snprintf(line, sizeof(line), "Entity Hz: %.1f cyc %llu",
-            snapshot.entityProcessHz,
-            static_cast<unsigned long long>(snapshot.entityProcessCycles));
+        std::snprintf(line, sizeof(line), "Entity Hz: scan %.1f proc %.1f",
+            snapshot.entityScanHz,
+            snapshot.entityProcessHz);
         drawLine(snapshot.entityProcessHz >= 30.0 ? okColor : warnColor, line);
+
+        std::snprintf(line, sizeof(line), "Entity cycles: scan %llu proc %llu",
+            static_cast<unsigned long long>(snapshot.entityScanCycles),
+            static_cast<unsigned long long>(snapshot.entityProcessCycles));
+        drawLine(textColor, line);
 
         std::snprintf(line, sizeof(line), "Validated: %zu", snapshot.entityProcess.validated);
         drawLine(snapshot.entityCount > 0 ? okColor : warnColor, line);
@@ -549,6 +554,7 @@ void RenderCallback()
         Diagnostics::SetPlayerInfoStats(emptyPlayerInfoStats);
     }
 
+    DrawAimTriggerStatusPanel();
     DrawHealthPacks();
     DrawFovCircle();
     DrawCrosshair();

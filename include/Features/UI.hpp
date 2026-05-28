@@ -10,7 +10,8 @@ namespace UI {
         Tab   activeTab      = TAB_AIMING;
         int   aimingSubTab   = 0;   // 0 = Aimbot, 1 = Trigger, 2 = Skills
         int   visualsSubTab  = 0;   // 0 = Players
-        int   heroSegActive  = 0;   // Hero config slot (0-6)
+        int   aimHeroSegActive = 0;     // Current hero Aim config slot (0-11)
+        int   triggerHeroSegActive = 0; // Current hero Trigger config slot (0-11)
         int   selectedTypeIndex = 0; // Shared hero/type selection, 0 = All
         bool  initialized    = false;
     };

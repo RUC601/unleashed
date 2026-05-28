@@ -7,6 +7,14 @@ $packageName = 'Unleashed-test'
 $stageDir = Join-Path $distDir $packageName
 $zipPath = Join-Path $distDir ($packageName + '.zip')
 
+$forbiddenPackagePatterns = @(
+    '(^|\\)(src|include|vendor|\.git|build)(\\|$)',
+    '\.(pdb|ilk|obj|tlog|vcxproj|slnx|lib|h|hpp|cpp|cxx|cc|rc)$',
+    '(^|\\)unleashed_.*\.log$',
+    '(^|\\)(Scanner|DmaVerify|DecryptDump|DecryptEmu|FinalProbe|HeroProbe|PerkProbe|KeyScan|HostMouseHold|AngleMathTest|CNServerScanner)\.exe$',
+    '(^|\\)unicorn\.dll$'
+)
+
 function Require-File {
     param(
         [Parameter(Mandatory = $true)][string]$Path
@@ -24,6 +32,36 @@ function Require-Directory {
 
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         throw "Required directory is missing: $Path"
+    }
+}
+
+function Assert-CleanPackage {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $rootFullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\') + '\'
+    $blockedFiles = New-Object System.Collections.Generic.List[string]
+
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -File | ForEach-Object {
+        $fullPath = [System.IO.Path]::GetFullPath($_.FullName)
+        if (-not $fullPath.StartsWith($rootFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unexpected file outside package folder: $fullPath"
+        }
+
+        $relativePath = $fullPath.Substring($rootFullPath.Length)
+        foreach ($pattern in $forbiddenPackagePatterns) {
+            if ($relativePath -match $pattern) {
+                $blockedFiles.Add($relativePath)
+                break
+            }
+        }
+    }
+
+    if ($blockedFiles.Count -gt 0) {
+        $message = "Refusing to create package because blocked files were staged:`n" +
+            ($blockedFiles | Sort-Object | ForEach-Object { "  - $_" }) -join "`n"
+        throw $message
     }
 }
 
@@ -92,15 +130,20 @@ try {
 Unleashed test package
 
 Run Unleashed.exe from this folder. Keep the DLL files, assets folder, and config folder next to the EXE.
+config.ini is included from the local Release build.
 
 If Windows reports missing VCRUNTIME or MSVCP DLLs, install the Microsoft Visual C++ Redistributable for x64.
 '@ | Set-Content -LiteralPath (Join-Path $stageDir 'README.txt') -Encoding ASCII
 
+    Assert-CleanPackage $stageDir
+
     Write-Host '[4/4] Creating zip...'
     Compress-Archive -LiteralPath $stageDir -DestinationPath $zipPath -CompressionLevel Optimal
+    $zipHash = Get-FileHash -LiteralPath $zipPath -Algorithm SHA256
 
     Write-Host ''
     Write-Host "Done: $zipPath"
+    Write-Host "SHA256: $($zipHash.Hash)"
     Write-Host "Staging folder: $stageDir"
 }
 finally {

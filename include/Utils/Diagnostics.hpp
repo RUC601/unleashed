@@ -212,6 +212,7 @@ struct StatusSnapshot {
     size_t lastScanEntityCount = 0;
     uint64_t entityScanCycles = 0;
     uint64_t entityProcessCycles = 0;
+    double entityScanHz = 0.0;
     double entityProcessHz = 0.0;
     double fps = 0.0;
     DmaReadStats dmaReads{};
@@ -280,7 +281,7 @@ void SetRenderThread();
 // milliseconds.  Scans a lock-free ring buffer — O(capacity) but intended
 // for diagnostic sampling, not per-frame use.
 DmaWindowStats GetDmaWindowStats(uint64_t windowMs);
-void RecordEntityScanCycle(size_t entityCount);
+void RecordEntityScanCycle(size_t entityCount, double measuredHz = -1.0);
 void RecordEntityProcessCycle(double measuredHz);
 
 void SetEntityCount(size_t entityCount);

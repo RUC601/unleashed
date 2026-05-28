@@ -46,6 +46,7 @@ set(GAME_HEADERS
     include/Renderer/Renderer.hpp
     include/Utils/Config.hpp
     include/Utils/Diagnostics.hpp
+    include/Utils/InputLabels.hpp
     include/Utils/Types.hpp
     include/Features/UI.hpp
 )
@@ -87,6 +88,7 @@ target_include_directories(Unleashed PRIVATE
     vendor/leechcore
     vendor/imgui
     vendor/imgui/backends
+    vendor/rapidjson
     vendor/stb
 )
 

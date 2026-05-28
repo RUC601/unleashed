@@ -61,7 +61,8 @@ namespace Render {
 
     void DrawFilledRect(const Vector2& pos, float width, float height, const ImColor& color);
 
-    void DrawCorneredBox(float x, float y, float w, float h, ImU32 color, float thickness = 1.0f);
+    void DrawCorneredBox(float x, float y, float w, float h, ImU32 color,
+                         float thickness = 1.0f, ImU32 outlineColor = IM_COL32(0, 0, 0, 255));
 
     void DrawCircle(const Vector2& center, float radius, const Color& color, int segments = 32, float thickness = 1.0f);
 

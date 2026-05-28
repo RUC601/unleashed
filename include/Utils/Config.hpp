@@ -25,6 +25,8 @@ namespace OW { namespace Config {
     inline std::string configFileName = "config.ini";
     inline std::string lastConfigProfile = "config.ini";
     std::string ConfigPath();
+    std::string HeroConfigPath();
+    std::string HeroConfigPath(const std::string& configPath);
 
     // ---- Synchronisation ----
     inline std::mutex mutex;
@@ -44,6 +46,7 @@ namespace OW { namespace Config {
     inline float triggerbotShotInterval = 0.0f;   // scaled 0-100 → 0-500ms (slider value)
     inline bool  triggerbotChargeAware  = false;  // wait for charge before firing
     inline float triggerbotMinCharge    = 30.0f;  // minimum charge % (0-100, for charge-aware)
+    inline bool  triggerbotIgnoreInvisible = true;
 
     // ---- Triggerbot (secondary / triggerbot2) ----
     inline int   triggerbotMode2 = 0;
@@ -51,6 +54,7 @@ namespace OW { namespace Config {
     inline float triggerbotShotInterval2 = 0.0f;
     inline bool  triggerbotChargeAware2  = false;
     inline float triggerbotMinCharge2    = 30.0f;
+    inline bool  triggerbotIgnoreInvisible2 = true;
 
     // ---- Triggerbot runtime state (not persisted) ----
     inline bool  triggerbotToggleActive  = false;  // current toggle state (mode=Toggle)
@@ -84,7 +88,6 @@ namespace OW { namespace Config {
     inline float minFov1    = 200.f;
     inline float minFov2    = 200.f;
     inline float Smooth     = 5.0f;
-    inline bool  fov360     = false;
     inline bool  autoscalefov = false;
     inline float hitbox     = 0.13f;
     inline float hitbox2    = 0.13f;
@@ -143,13 +146,13 @@ namespace OW { namespace Config {
     inline float aimbotMaxAim = 100.0f;
     inline float aimbotMinCharge = 5.0f;
     inline float aimbotMaxCharge = 100.0f;
-    inline bool  aimbotIgnoreInvisible = false;
+    inline bool  aimbotIgnoreInvisible = true;
     inline int   aimbotTrace = 0; // 0=Strict, 1=Relaxed, 2=Off
     inline int   aimbotUnlock = 0; // 0=Anytime, 1=On Release, 2=Never
     inline float aimbotLockTime = 20.0f;
     inline float aimbotMaxDist = 100.0f;
     inline float aimbotMinDist = 0.0f;
-    inline int   aimbotAttack = 0; // 0=Shoot, 1=Ability1, 2=Ability2
+    inline int   aimbotAttack = 0; // action profile: primary/secondary/scoped/unscoped/ability/ultimate
     inline int   aimbotTeam = 0; // 0=Enemies, 1=Allies, 2=All
     inline int   aimbotPriority = 0; // 0=FOV, 1=HP, 2=Distance
 
@@ -229,13 +232,11 @@ namespace OW { namespace Config {
     inline ImVec4 enargb        = ImVec4(1.f, 0.f, 0.f, 0.4f);
     inline ImVec4 invisnenargb  = ImVec4(1.f, 0.f, 0.f, 0.4f);
     inline ImVec4 targetargb    = ImVec4(0.f, 1.f, 0.f, 0.8f);
-    inline ImVec4 targetargb2   = ImVec4(0.f, 1.f, 0.f, 0.8f);
     inline ImVec4 allyargb      = ImVec4(0.f, 0.f, 1.f, 0.4f);
 
     // ---- Box/fov colours ----
     inline ImVec4 EnemyCol   = ImVec4(1.f, 1.f, 1.f, 1.f);
     inline ImVec4 fovcol     = ImVec4(1.f, 1.f, 1.f, 1.f);
-    inline ImVec4 fovcol2    = ImVec4(1.f, 1.f, 1.f, 1.f);
 
     // ---- Targeting state ----
     inline int  Targetenemyi    = -1;
@@ -284,7 +285,21 @@ namespace OW { namespace Config {
     inline int moveSplitMaxPixels = 4;         // Max pixels per micro-move chunk (1-20)
     inline int moveSplitDelayUs = 800;         // Microsecond delay between chunks (100-5000)
 
-    // ---- Per-hero aimbot presets ----
+    // ---- Per-hero aim/trigger presets ----
+    inline constexpr int kMaxHeroPresetSlots = 12;
+
+    struct TriggerPreset {
+        bool enabled = false;
+        int action = 0;          // 0=Primary, 1=Secondary, 2=Scoped, 3=Unscoped, 4-6=Abilities, 7=Ultimate
+        int mode = 0;            // 0=Hold, 1=Toggle, 2=Always
+        int key = 1;             // key index (reuses aim_key VK list 0-12)
+        float shotInterval = 0.0f;
+        bool chargeAware = false;
+        float minCharge = 30.0f;
+        bool ignoreInvisible = true;
+        bool drawHitbox = false;
+    };
+
     struct HeroPreset {
         float fov = 200.f;       // FOV circle size
         float smooth = 5.0f;     // aim smoothing, 0-100
@@ -294,14 +309,19 @@ namespace OW { namespace Config {
         int aimMode = 0;         // 0=Tracking, 1=Flick
         bool prediction = false; // movement prediction
         int priority = 0;        // 0=FOV, 1=HP, 2=Distance
+        int targetTeam = 0;      // 0=Enemies, 1=Allies, 2=All
+        TriggerPreset trigger{};
     };
 
     struct HeroSlotPreset {
         std::string name = "Preset";
+        bool present = false;
+        bool enabled = false;
         HeroPreset preset{};
     };
 
-    inline std::unordered_map<uint64_t, std::array<HeroSlotPreset, 7>> heroPresets;
+    inline std::unordered_map<uint64_t, std::array<HeroSlotPreset, kMaxHeroPresetSlots>> heroAimPresets;
+    inline std::unordered_map<uint64_t, std::array<HeroSlotPreset, kMaxHeroPresetSlots>> heroTriggerPresets;
     inline int targetPriority = 0;
 
     // UI-only placeholders for heroes not present in the current local eHero enum.
@@ -319,14 +339,46 @@ namespace OW { namespace Config {
 
     // ---- Persistence ----
     HeroPreset MakeHeroPresetFromCurrent();
+    HeroPreset MakeHeroAimPresetFromCurrent();
+    HeroPreset MakeHeroTriggerPresetFromCurrent();
     bool TryGetHeroPreset(uint64_t heroId, HeroPreset& outPreset);
+    bool TryGetHeroAimPreset(uint64_t heroId, HeroPreset& outPreset);
+    bool TryGetHeroTriggerPreset(uint64_t heroId, HeroPreset& outPreset);
     bool HasHeroPreset(uint64_t heroId);
+    bool HasHeroAimPreset(uint64_t heroId);
+    bool HasHeroTriggerPreset(uint64_t heroId);
     HeroPreset GetHeroPresetOrDefault(uint64_t heroId);
     HeroPreset GetHeroPresetOrDefault(uint64_t heroId, int slotIndex);
+    HeroPreset GetHeroAimPresetOrDefault(uint64_t heroId, int slotIndex);
+    HeroPreset GetHeroTriggerPresetOrDefault(uint64_t heroId, int slotIndex);
     void SetHeroPreset(uint64_t heroId, const HeroPreset& preset);
     void SetHeroPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset);
+    void SetHeroAimPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset);
+    void SetHeroTriggerPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset);
     std::string GetHeroSlotName(uint64_t heroId, int slotIndex);
+    std::string GetHeroAimSlotName(uint64_t heroId, int slotIndex);
+    std::string GetHeroTriggerSlotName(uint64_t heroId, int slotIndex);
+    bool TryGetHeroAimSlot(uint64_t heroId, int slotIndex, HeroSlotPreset& outSlot);
+    bool TryGetHeroTriggerSlot(uint64_t heroId, int slotIndex, HeroSlotPreset& outSlot);
+    bool IsHeroSlotEnabled(uint64_t heroId, int slotIndex);
+    bool IsHeroAimSlotEnabled(uint64_t heroId, int slotIndex);
+    bool IsHeroTriggerSlotEnabled(uint64_t heroId, int slotIndex);
+    void SetHeroSlotEnabled(uint64_t heroId, int slotIndex, bool enabled);
+    void SetHeroAimSlotEnabled(uint64_t heroId, int slotIndex, bool enabled);
+    void SetHeroTriggerSlotEnabled(uint64_t heroId, int slotIndex, bool enabled);
+    int GetHeroAimSlotCount(uint64_t heroId);
+    int GetHeroTriggerSlotCount(uint64_t heroId);
+    int AddHeroAimSlot(uint64_t heroId, const HeroPreset& seedPreset);
+    int AddHeroTriggerSlot(uint64_t heroId, const HeroPreset& seedPreset);
+    bool DeleteHeroAimSlot(uint64_t heroId, int slotIndex);
+    bool DeleteHeroTriggerSlot(uint64_t heroId, int slotIndex);
+    void NormalizeHeroPresets();
     void ApplyHeroPresetToGlobals(const HeroPreset& preset);
+    void ApplyHeroAimPresetToGlobals(const HeroPreset& preset);
+    void ApplyHeroTriggerPresetToGlobals(const HeroPreset& preset);
+    void SaveHeroConfig(const std::string& path);
+    void SaveHeroConfigForHero(const std::string& path, uint64_t heroId);
+    void LoadHeroConfig(const std::string& path);
     void SaveHeroPresets(const std::string& path);
     void LoadHeroPresets(const std::string& path);
     void SaveConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);

@@ -1,7 +1,22 @@
+#ifndef _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING
+#define _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING
+#endif
+
 #include "Utils/Config.hpp"
 
 #include "Game/Target.hpp"
 #include "Utils/Diagnostics.hpp"
+
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
+#include <rapidjson/document.h>
+#include <rapidjson/prettywriter.h>
+#include <rapidjson/stringbuffer.h>
 
 #include <algorithm>
 #include <cctype>
@@ -29,7 +44,7 @@
 
 namespace OW { namespace Config {
 
-    int config_version = 3;
+    int config_version = 4;
     bool draw_edge = false;
     bool drawbox3d = false;
     bool manualsave = false;
@@ -37,6 +52,23 @@ namespace OW { namespace Config {
     std::string ConfigPath()
     {
         return ".\\" + configFileName;
+    }
+
+    std::string HeroConfigPath(const std::string& configPath)
+    {
+        const size_t slash = configPath.find_last_of("\\/");
+        const size_t dot = configPath.find_last_of('.');
+        const bool hasExtension = dot != std::string::npos &&
+            (slash == std::string::npos || dot > slash);
+        const std::string stem = hasExtension
+            ? configPath.substr(0, dot)
+            : configPath;
+        return stem + ".heroes.json";
+    }
+
+    std::string HeroConfigPath()
+    {
+        return HeroConfigPath(ConfigPath());
     }
 
     int NormalizeAimBone(int aimBone)
@@ -63,7 +95,7 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 3;
+        constexpr int kCurrentConfigVersion = 4;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
@@ -194,6 +226,13 @@ namespace OW { namespace Config {
             } else {
                 std::printf("[CONFIG] [%s] %s\n", LevelName(level), message);
             }
+        }
+
+        bool FileExists(const std::string& path)
+        {
+            const DWORD attributes = GetFileAttributesA(path.c_str());
+            return attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
         }
 
         std::string HeroSectionName(uint64_t heroId, uint64_t linkBase)
@@ -566,6 +605,17 @@ namespace OW { namespace Config {
             return true;
         }
 
+        bool DeleteSection(const std::string& path, const char* section)
+        {
+            if (!WritePrivateProfileStringA(section, nullptr, nullptr, path.c_str())) {
+                LogConfig(Diagnostics::LogLevel::Warn,
+                    "Failed to delete [%s] from %s (GetLastError=%lu).",
+                    section, path.c_str(), static_cast<unsigned long>(GetLastError()));
+                return false;
+            }
+            return true;
+        }
+
         void WriteIntValue(const std::string& path, const char* section, const char* key, int value)
         {
             char buffer[64] = {};
@@ -616,7 +666,30 @@ namespace OW { namespace Config {
             return ini.sections.find(IniFile::Normalize(section)) != ini.sections.end();
         }
 
-        constexpr int kHeroPresetSlotCount = 7;
+        bool KeyExists(const IniFile& ini, const char* section, const char* key)
+        {
+            std::string value;
+            return ini.TryGet(section, key, value);
+        }
+
+        constexpr int kHeroPresetSlotCount = kMaxHeroPresetSlots;
+
+        enum class HeroPresetSlotKind {
+            Aim,
+            Trigger
+        };
+
+        using HeroPresetStore = std::unordered_map<uint64_t, std::array<HeroSlotPreset, kMaxHeroPresetSlots>>;
+
+        HeroPresetStore& PresetStore(HeroPresetSlotKind kind)
+        {
+            return kind == HeroPresetSlotKind::Aim ? heroAimPresets : heroTriggerPresets;
+        }
+
+        const HeroPresetStore& PresetStoreConst(HeroPresetSlotKind kind)
+        {
+            return kind == HeroPresetSlotKind::Aim ? heroAimPresets : heroTriggerPresets;
+        }
 
         int ClampHeroPresetSlotIndex(int slotIndex)
         {
@@ -625,14 +698,45 @@ namespace OW { namespace Config {
 
         std::string DefaultHeroSlotName(int slotIndex)
         {
-            return std::string("Preset ") + std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
+            const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+            return std::string("Slot ") + std::to_string(clampedSlotIndex + 1);
+        }
+
+        bool IsNumberedDefaultHeroSlotName(const std::string& name)
+        {
+            static constexpr const char* kPrefix = "Slot ";
+            if (name.rfind(kPrefix, 0) != 0)
+                return false;
+
+            const std::string number = name.substr(std::char_traits<char>::length(kPrefix));
+            if (number.empty())
+                return false;
+
+            return std::all_of(number.begin(), number.end(),
+                [](unsigned char ch) { return std::isdigit(ch) != 0; });
         }
 
         std::string NormalizeHeroSlotName(const std::string& name, int slotIndex)
         {
             const std::string trimmed = IniFile::Trim(name);
-            if (trimmed.empty() || trimmed == "Preset")
+            if (trimmed.empty() || trimmed == "Preset" || IsNumberedDefaultHeroSlotName(trimmed))
                 return DefaultHeroSlotName(slotIndex);
+            static constexpr const char* kLegacyActionSlotNames[] = {
+                "Primary Fire",
+                "Secondary Fire",
+                "Scoped",
+                "Unscoped",
+                "Ability 1",
+                "Ability 2 / Ability 3",
+                "Ultimate"
+            };
+            const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+            constexpr int legacyNameCount =
+                static_cast<int>(sizeof(kLegacyActionSlotNames) / sizeof(kLegacyActionSlotNames[0]));
+            for (int legacyIndex = 0; legacyIndex < legacyNameCount; ++legacyIndex) {
+                if (trimmed == kLegacyActionSlotNames[legacyIndex])
+                    return DefaultHeroSlotName(clampedSlotIndex);
+            }
             return trimmed;
         }
 
@@ -644,6 +748,18 @@ namespace OW { namespace Config {
         std::string HeroPresetSlotSectionName(const char* presetName, int slotIndex)
         {
             return HeroPresetSectionName(presetName) + "_" +
+                std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
+        }
+
+        const char* HeroPresetKindSectionToken(HeroPresetSlotKind kind)
+        {
+            return kind == HeroPresetSlotKind::Aim ? "Aim" : "Trigger";
+        }
+
+        std::string HeroPresetSlotSectionName(const char* presetName, HeroPresetSlotKind kind, int slotIndex)
+        {
+            return HeroPresetSectionName(presetName) + "_" +
+                HeroPresetKindSectionToken(kind) + "_" +
                 std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
         }
 
@@ -662,11 +778,31 @@ namespace OW { namespace Config {
                 std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
         }
 
+        std::string HeroPresetSlotSectionName(uint64_t heroId, HeroPresetSlotKind kind, int slotIndex)
+        {
+            return HeroPresetSectionName(heroId) + "_" +
+                HeroPresetKindSectionToken(kind) + "_" +
+                std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
+        }
+
         int LegacyPresetBoneToAimBone(int presetBone)
         {
             if (presetBone == 0) return kAimBoneHead;
             if (presetBone == 1) return kAimBoneNeck;
             return kAimBoneChest;
+        }
+
+        TriggerPreset ValidateTriggerPresetValue(TriggerPreset preset)
+        {
+            if (!std::isfinite(preset.shotInterval)) preset.shotInterval = 0.0f;
+            if (!std::isfinite(preset.minCharge)) preset.minCharge = 30.0f;
+
+            preset.action = std::clamp(preset.action, 0, 7);
+            preset.mode = std::clamp(preset.mode, 0, 2);
+            preset.key = std::clamp(preset.key, 0, 12);
+            preset.shotInterval = std::clamp(preset.shotInterval, 0.0f, 100.0f);
+            preset.minCharge = std::clamp(preset.minCharge, 0.0f, 100.0f);
+            return preset;
         }
 
         HeroPreset ValidateHeroPresetValue(HeroPreset preset)
@@ -681,18 +817,86 @@ namespace OW { namespace Config {
             preset.hitbox = std::clamp(preset.hitbox, 0.0f, 5.0f);
             preset.aimMode = std::clamp(preset.aimMode, 0, 1);
             preset.priority = std::clamp(preset.priority, 0, 2);
+            preset.targetTeam = std::clamp(preset.targetTeam, 0, 2);
+            preset.trigger = ValidateTriggerPresetValue(preset.trigger);
             return preset;
+        }
+
+        void ResetHeroPresetSlot(HeroSlotPreset& slot, int slotIndex)
+        {
+            slot = HeroSlotPreset{};
+            slot.name = DefaultHeroSlotName(slotIndex);
+            slot.present = false;
+            slot.enabled = false;
+            slot.preset = ValidateHeroPresetValue(slot.preset);
+        }
+
+        void InitializeHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                       int presentCount,
+                                       bool enabled,
+                                       bool autoBone = false)
+        {
+            presentCount = std::clamp(presentCount, 0, kHeroPresetSlotCount);
+            for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
+                ResetHeroPresetSlot(slot, slotIndex);
+                slot.preset.autoBone = autoBone;
+                if (slotIndex < presentCount) {
+                    slot.present = true;
+                    slot.enabled = enabled;
+                }
+            }
+        }
+
+        int CountHeroPresetSlots(const std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots)
+        {
+            int count = 0;
+            for (const HeroSlotPreset& slot : slots) {
+                if (slot.present)
+                    ++count;
+            }
+            return count;
+        }
+
+        void NormalizeHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots)
+        {
+            std::array<HeroSlotPreset, kHeroPresetSlotCount> normalized{};
+            InitializeHeroPresetSlots(normalized, 0, false);
+
+            int writeIndex = 0;
+            for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount && writeIndex < kHeroPresetSlotCount; ++slotIndex) {
+                const HeroSlotPreset& source = slots[static_cast<size_t>(slotIndex)];
+                if (!source.present)
+                    continue;
+
+                HeroSlotPreset slot = source;
+                slot.present = true;
+                slot.name = NormalizeHeroSlotName(slot.name, writeIndex);
+                slot.preset = ValidateHeroPresetValue(slot.preset);
+                normalized[static_cast<size_t>(writeIndex)] = slot;
+                ++writeIndex;
+            }
+
+            if (writeIndex == 0) {
+                HeroSlotPreset& firstSlot = normalized[0];
+                firstSlot.present = true;
+                firstSlot.enabled = true;
+                firstSlot.name = DefaultHeroSlotName(0);
+                firstSlot.preset = ValidateHeroPresetValue(firstSlot.preset);
+            }
+
+            slots = normalized;
         }
 
         void ValidateHeroPresetsUnlocked()
         {
-            for (auto& item : heroPresets) {
-                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
-                    HeroSlotPreset& slot = item.second[static_cast<size_t>(slotIndex)];
-                    slot.name = NormalizeHeroSlotName(slot.name, slotIndex);
-                    slot.preset = ValidateHeroPresetValue(slot.preset);
+            auto validateStore = [](HeroPresetStore& store) {
+                for (auto& item : store) {
+                    NormalizeHeroPresetSlots(item.second);
                 }
-            }
+            };
+            validateStore(heroAimPresets);
+            validateStore(heroTriggerPresets);
         }
 
         void ResetHeroDefaultsUnlocked()
@@ -725,7 +929,6 @@ namespace OW { namespace Config {
             minFov1 = 200.0f;             // default: 200
             minFov2 = 200.0f;             // default: 200
             Smooth = 5.0f;                // default: 5
-            fov360 = false;               // default: false
             autoscalefov = false;         // default: false
             hitbox = 0.13f;               // default: 0.13
             hitbox2 = 0.13f;              // default: 0.13
@@ -812,7 +1015,7 @@ namespace OW { namespace Config {
             aimbotMaxAim = 100.0f;
             aimbotMinCharge = 5.0f;
             aimbotMaxCharge = 100.0f;
-            aimbotIgnoreInvisible = false;
+            aimbotIgnoreInvisible = true;
             aimbotTrace = 0;
             aimbotUnlock = 0;
             aimbotLockTime = 20.0f;
@@ -825,6 +1028,18 @@ namespace OW { namespace Config {
             aimDryRun = false;
             aimVerboseLog = false;
             aimDryRunLogIntervalMs = 100;
+            triggerbotMode = 0;
+            triggerbotKey = 1;
+            triggerbotShotInterval = 0.0f;
+            triggerbotChargeAware = false;
+            triggerbotMinCharge = 30.0f;
+            triggerbotIgnoreInvisible = true;
+            triggerbotMode2 = 0;
+            triggerbotKey2 = 1;
+            triggerbotShotInterval2 = 0.0f;
+            triggerbotChargeAware2 = false;
+            triggerbotMinCharge2 = 30.0f;
+            triggerbotIgnoreInvisible2 = true;
         }
 
         void ResetAimMethodDefaultsUnlocked()
@@ -874,11 +1089,9 @@ namespace OW { namespace Config {
             enargb = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);       // default: 1,0,0,0.4
             invisnenargb = ImVec4(1.0f, 0.0f, 0.0f, 0.4f); // default: 1,0,0,0.4
             targetargb = ImVec4(0.0f, 1.0f, 0.0f, 0.8f);   // default: 0,1,0,0.8
-            targetargb2 = ImVec4(0.0f, 1.0f, 0.0f, 0.8f);  // default: 0,1,0,0.8
             allyargb = ImVec4(0.0f, 0.0f, 1.0f, 0.4f);     // default: 0,0,1,0.4
             EnemyCol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);     // default: 1,1,1,1
             fovcol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);       // default: 1,1,1,1
-            fovcol2 = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);      // default: 1,1,1,1
 
             kmboxEnabled = false;         // default: disabled
             kmboxDeviceType = 0;          // default: Network/UDP
@@ -940,10 +1153,29 @@ namespace OW { namespace Config {
                 preset.aimMode = 0;
             preset.prediction = Prediction;
             preset.priority = aimbotPriority;
+            preset.targetTeam = aimbotTeam;
+            preset.trigger.enabled = triggerbot;
+            preset.trigger.action = aimbotAttack;
+            preset.trigger.mode = triggerbotMode;
+            preset.trigger.key = triggerbotKey;
+            preset.trigger.shotInterval = triggerbotShotInterval;
+            preset.trigger.chargeAware = triggerbotChargeAware;
+            preset.trigger.minCharge = triggerbotMinCharge;
+            preset.trigger.ignoreInvisible = triggerbotIgnoreInvisible;
             return ValidateHeroPresetValue(preset);
         }
 
-        void ApplyHeroPresetUnlocked(const HeroPreset& rawPreset)
+        HeroPreset MakeHeroAimPresetFromCurrentUnlocked()
+        {
+            return MakeHeroPresetFromCurrentUnlocked();
+        }
+
+        HeroPreset MakeHeroTriggerPresetFromCurrentUnlocked()
+        {
+            return MakeHeroPresetFromCurrentUnlocked();
+        }
+
+        void ApplyHeroAimPresetUnlocked(const HeroPreset& rawPreset)
         {
             const HeroPreset preset = ValidateHeroPresetValue(rawPreset);
             Fov = preset.fov;
@@ -958,7 +1190,34 @@ namespace OW { namespace Config {
             hitbox = preset.hitbox;
             Prediction = preset.prediction;
             aimbotPriority = preset.priority;
+            aimbotTeam = preset.targetTeam;
+            aimbotAttack = preset.trigger.action;
             ApplyAimMode(preset.aimMode);
+        }
+
+        void ApplyHeroTriggerPresetUnlocked(const HeroPreset& rawPreset)
+        {
+            const HeroPreset preset = ValidateHeroPresetValue(rawPreset);
+            triggerbot = preset.trigger.enabled;
+            aimbotAttack = preset.trigger.action;
+            triggerbotMode = preset.trigger.mode;
+            triggerbotKey = preset.trigger.key;
+            triggerbotShotInterval = preset.trigger.shotInterval;
+            triggerbotChargeAware = preset.trigger.chargeAware;
+            triggerbotMinCharge = preset.trigger.minCharge;
+            triggerbotIgnoreInvisible = preset.trigger.ignoreInvisible;
+            triggerbot2 = false;
+            triggerbotToggleActive2 = false;
+            hitbox = preset.hitbox;
+            Prediction = preset.prediction;
+            aimbotPriority = preset.priority;
+            aimbotTeam = preset.targetTeam;
+        }
+
+        void ApplyHeroPresetUnlocked(const HeroPreset& rawPreset)
+        {
+            ApplyHeroAimPresetUnlocked(rawPreset);
+            ApplyHeroTriggerPresetUnlocked(rawPreset);
         }
 
         HeroSlotPreset ReadHeroPresetSectionUnlocked(const IniFile& ini, const char* section,
@@ -969,6 +1228,11 @@ namespace OW { namespace Config {
             slot.name = NormalizeHeroSlotName(
                 ReadString(ini, section, "name", DefaultHeroSlotName(slotIndex).c_str()),
                 slotIndex);
+            const bool hasPresentKey = KeyExists(ini, section, "present");
+            slot.enabled = ReadBool(ini, section, "enabled", slot.enabled);
+            slot.present = hasPresentKey
+                ? ReadBool(ini, section, "present", slot.present)
+                : slot.enabled;
             slot.preset.fov = ReadFov2Compat(ini, section, "fov", slot.preset.fov);
             slot.preset.smooth = ReadFov2Compat(ini, section, "smooth", slot.preset.smooth);
             slot.preset.bone = ReadInt(ini, section, "bone", slot.preset.bone);
@@ -979,6 +1243,16 @@ namespace OW { namespace Config {
             slot.preset.aimMode = ReadInt(ini, section, "aimMode", slot.preset.aimMode);
             slot.preset.prediction = ReadBool(ini, section, "prediction", slot.preset.prediction);
             slot.preset.priority = ReadInt(ini, section, "priority", slot.preset.priority);
+            slot.preset.targetTeam = ReadInt(ini, section, "targetTeam", slot.preset.targetTeam);
+            slot.preset.trigger.enabled = ReadBool(ini, section, "triggerEnabled", slot.preset.trigger.enabled);
+            slot.preset.trigger.action = ReadInt(ini, section, "triggerAction", slot.preset.trigger.action);
+            slot.preset.trigger.mode = ReadInt(ini, section, "triggerMode", slot.preset.trigger.mode);
+            slot.preset.trigger.key = ReadInt(ini, section, "triggerKey", slot.preset.trigger.key);
+            slot.preset.trigger.shotInterval = ReadFixedFloat(ini, section, "triggerShotInterval", slot.preset.trigger.shotInterval);
+            slot.preset.trigger.chargeAware = ReadBool(ini, section, "triggerChargeAware", slot.preset.trigger.chargeAware);
+            slot.preset.trigger.minCharge = ReadFixedFloat(ini, section, "triggerMinCharge", slot.preset.trigger.minCharge);
+            slot.preset.trigger.ignoreInvisible = ReadBool(ini, section, "triggerIgnoreInvisible", slot.preset.trigger.ignoreInvisible);
+            slot.preset.trigger.drawHitbox = ReadBool(ini, section, "triggerDrawHitbox", slot.preset.trigger.drawHitbox);
             slot.preset = ValidateHeroPresetValue(slot.preset);
             return slot;
         }
@@ -996,6 +1270,10 @@ namespace OW { namespace Config {
             preset.hitbox = ReadFixedFloat(ini, section, "hitbox", preset.hitbox);
             preset.aimMode = aimMode;
             preset.prediction = ReadBool(ini, section, "predictdec", preset.prediction);
+            preset.targetTeam = ReadInt(ini, section, "aimbotTeam", preset.targetTeam);
+            preset.trigger.enabled = ReadBool(ini, section, "triggerbot", preset.trigger.enabled);
+            preset.trigger.action = ReadInt(ini, section, "aimbotAttack", preset.trigger.action);
+            preset.trigger.ignoreInvisible = ReadBool(ini, section, "triggerIgnoreInvisible", preset.trigger.ignoreInvisible);
             return ValidateHeroPresetValue(preset);
         }
 
@@ -1004,7 +1282,9 @@ namespace OW { namespace Config {
         {
             const std::string name = NormalizeHeroSlotName(rawSlot.name, slotIndex);
             const HeroPreset preset = ValidateHeroPresetValue(rawSlot.preset);
+            WriteBoolValue(path, section, "present", rawSlot.present);
             WriteStringValue(path, section, "name", name.c_str());
+            WriteBoolValue(path, section, "enabled", rawSlot.enabled);
             WritePlainFloatValue(path, section, "fov", preset.fov);
             WritePlainFloatValue(path, section, "smooth", preset.smooth);
             WriteIntValue(path, section, "bone", preset.bone);
@@ -1014,20 +1294,319 @@ namespace OW { namespace Config {
             const std::string prediction = ToText(preset.prediction);
             WriteStringValue(path, section, "prediction", prediction.c_str());
             WriteIntValue(path, section, "priority", preset.priority);
+            WriteIntValue(path, section, "targetTeam", preset.targetTeam);
+            WriteBoolValue(path, section, "triggerEnabled", preset.trigger.enabled);
+            WriteIntValue(path, section, "triggerAction", preset.trigger.action);
+            WriteIntValue(path, section, "triggerMode", preset.trigger.mode);
+            WriteIntValue(path, section, "triggerKey", preset.trigger.key);
+            WriteFixedFloatValue(path, section, "triggerShotInterval", preset.trigger.shotInterval);
+            WriteBoolValue(path, section, "triggerChargeAware", preset.trigger.chargeAware);
+            WriteFixedFloatValue(path, section, "triggerMinCharge", preset.trigger.minCharge);
+            WriteBoolValue(path, section, "triggerIgnoreInvisible", preset.trigger.ignoreInvisible);
+            WriteBoolValue(path, section, "triggerDrawHitbox", preset.trigger.drawHitbox);
         }
 
-        void SaveHeroPresetsUnlocked(const std::string& path)
+        template <typename Allocator>
+        void AddJsonString(rapidjson::Value& object, const char* key, const std::string& value, Allocator& allocator)
+        {
+            rapidjson::Value jsonKey;
+            jsonKey.SetString(key, allocator);
+            rapidjson::Value jsonValue;
+            jsonValue.SetString(value.c_str(), static_cast<rapidjson::SizeType>(value.size()), allocator);
+            object.AddMember(jsonKey, jsonValue, allocator);
+        }
+
+        template <typename Allocator>
+        void AddJsonBool(rapidjson::Value& object, const char* key, bool value, Allocator& allocator)
+        {
+            rapidjson::Value jsonKey;
+            jsonKey.SetString(key, allocator);
+            object.AddMember(jsonKey, value, allocator);
+        }
+
+        template <typename Allocator>
+        void AddJsonInt(rapidjson::Value& object, const char* key, int value, Allocator& allocator)
+        {
+            rapidjson::Value jsonKey;
+            jsonKey.SetString(key, allocator);
+            object.AddMember(jsonKey, value, allocator);
+        }
+
+        template <typename Allocator>
+        void AddJsonFloat(rapidjson::Value& object, const char* key, float value, Allocator& allocator)
+        {
+            rapidjson::Value jsonKey;
+            jsonKey.SetString(key, allocator);
+            object.AddMember(jsonKey, value, allocator);
+        }
+
+        template <typename Allocator>
+        rapidjson::Value TriggerPresetToJson(const TriggerPreset& rawPreset, Allocator& allocator)
+        {
+            const TriggerPreset preset = ValidateTriggerPresetValue(rawPreset);
+            rapidjson::Value value(rapidjson::kObjectType);
+            AddJsonBool(value, "enabled", preset.enabled, allocator);
+            AddJsonInt(value, "action", preset.action, allocator);
+            AddJsonInt(value, "mode", preset.mode, allocator);
+            AddJsonInt(value, "key", preset.key, allocator);
+            AddJsonFloat(value, "shotInterval", preset.shotInterval, allocator);
+            AddJsonBool(value, "chargeAware", preset.chargeAware, allocator);
+            AddJsonFloat(value, "minCharge", preset.minCharge, allocator);
+            AddJsonBool(value, "ignoreInvisible", preset.ignoreInvisible, allocator);
+            AddJsonBool(value, "drawHitbox", preset.drawHitbox, allocator);
+            return value;
+        }
+
+        template <typename Allocator>
+        rapidjson::Value HeroPresetToJson(const HeroPreset& rawPreset, Allocator& allocator)
+        {
+            const HeroPreset preset = ValidateHeroPresetValue(rawPreset);
+            rapidjson::Value value(rapidjson::kObjectType);
+            AddJsonFloat(value, "fov", preset.fov, allocator);
+            AddJsonFloat(value, "smooth", preset.smooth, allocator);
+            AddJsonInt(value, "bone", preset.bone, allocator);
+            AddJsonBool(value, "autoBone", preset.autoBone, allocator);
+            AddJsonFloat(value, "hitbox", preset.hitbox, allocator);
+            AddJsonInt(value, "aimMode", preset.aimMode, allocator);
+            AddJsonBool(value, "prediction", preset.prediction, allocator);
+            AddJsonInt(value, "priority", preset.priority, allocator);
+            AddJsonInt(value, "targetTeam", preset.targetTeam, allocator);
+            rapidjson::Value trigger = TriggerPresetToJson(preset.trigger, allocator);
+            rapidjson::Value triggerKey;
+            triggerKey.SetString("trigger", allocator);
+            value.AddMember(triggerKey, trigger, allocator);
+            return value;
+        }
+
+        template <typename Allocator>
+        rapidjson::Value HeroSlotToJson(const HeroSlotPreset& rawSlot, int slotIndex, Allocator& allocator)
+        {
+            HeroSlotPreset slot = rawSlot;
+            slot.name = NormalizeHeroSlotName(slot.name, slotIndex);
+            slot.preset = ValidateHeroPresetValue(slot.preset);
+
+            rapidjson::Value value(rapidjson::kObjectType);
+            AddJsonString(value, "name", slot.name, allocator);
+            AddJsonBool(value, "present", slot.present, allocator);
+            AddJsonBool(value, "enabled", slot.enabled, allocator);
+            rapidjson::Value preset = HeroPresetToJson(slot.preset, allocator);
+            rapidjson::Value presetKey;
+            presetKey.SetString("preset", allocator);
+            value.AddMember(presetKey, preset, allocator);
+            return value;
+        }
+
+        template <typename Allocator>
+        rapidjson::Value HeroSlotsToJson(const std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                         Allocator& allocator)
+        {
+            rapidjson::Value heroObject(rapidjson::kObjectType);
+            rapidjson::Value slotArray(rapidjson::kArrayType);
+            for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                rapidjson::Value slot = HeroSlotToJson(
+                    slots[static_cast<size_t>(slotIndex)],
+                    slotIndex,
+                    allocator);
+                slotArray.PushBack(slot, allocator);
+            }
+
+            rapidjson::Value slotsKey;
+            slotsKey.SetString("slots", allocator);
+            heroObject.AddMember(slotsKey, slotArray, allocator);
+            return heroObject;
+        }
+
+        template <typename Allocator>
+        rapidjson::Value HeroPresetStoreToJson(const HeroPresetStore& store, Allocator& allocator)
+        {
+            rapidjson::Value value(rapidjson::kObjectType);
+            for (const auto& item : store) {
+                const std::string heroKeyText = ToText(item.first);
+                rapidjson::Value heroKey;
+                heroKey.SetString(heroKeyText.c_str(),
+                                  static_cast<rapidjson::SizeType>(heroKeyText.size()),
+                                  allocator);
+                rapidjson::Value heroSlots = HeroSlotsToJson(item.second, allocator);
+                value.AddMember(heroKey, heroSlots, allocator);
+            }
+            return value;
+        }
+
+        bool WriteJsonDocument(const std::string& path, const rapidjson::Document& document)
+        {
+            rapidjson::StringBuffer buffer;
+            rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+            writer.SetIndent(' ', 2);
+            if (!document.Accept(writer)) {
+                LogConfig(Diagnostics::LogLevel::Warn,
+                    "Failed to serialize hero config JSON for %s.", path.c_str());
+                return false;
+            }
+
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            if (!file.is_open()) {
+                LogConfig(Diagnostics::LogLevel::Warn,
+                    "Failed to open hero config JSON for write: %s.", path.c_str());
+                return false;
+            }
+
+            file.write(buffer.GetString(), static_cast<std::streamsize>(buffer.GetSize()));
+            return file.good();
+        }
+
+        bool LoadJsonDocument(const std::string& path, rapidjson::Document& document)
+        {
+            std::ifstream file(path, std::ios::binary);
+            if (!file.is_open())
+                return false;
+
+            std::ostringstream buffer;
+            buffer << file.rdbuf();
+            const std::string text = buffer.str();
+            document.Parse(text.c_str(), text.size());
+            if (document.HasParseError() || !document.IsObject()) {
+                LogConfig(Diagnostics::LogLevel::Warn,
+                    "Ignoring malformed hero config JSON: %s.", path.c_str());
+                return false;
+            }
+            return true;
+        }
+
+        rapidjson::Value* FindOrAddObjectMember(rapidjson::Document& document, const char* key)
+        {
+            auto& allocator = document.GetAllocator();
+            auto member = document.FindMember(key);
+            if (member != document.MemberEnd()) {
+                if (!member->value.IsObject())
+                    member->value.SetObject();
+                return &member->value;
+            }
+
+            rapidjson::Value jsonKey;
+            jsonKey.SetString(key, allocator);
+            rapidjson::Value value(rapidjson::kObjectType);
+            document.AddMember(jsonKey, value, allocator);
+            member = document.FindMember(key);
+            return member != document.MemberEnd() ? &member->value : nullptr;
+        }
+
+        void UpsertJsonMember(rapidjson::Value& object,
+                              const std::string& keyText,
+                              rapidjson::Value&& value,
+                              rapidjson::Document::AllocatorType& allocator)
+        {
+            rapidjson::Value key;
+            key.SetString(keyText.c_str(), static_cast<rapidjson::SizeType>(keyText.size()), allocator);
+            auto member = object.FindMember(key);
+            if (member != object.MemberEnd()) {
+                member->value = value;
+                return;
+            }
+            object.AddMember(key, value, allocator);
+        }
+
+        void AddHeroConfigMetadata(rapidjson::Document& document)
+        {
+            auto& allocator = document.GetAllocator();
+            auto version = document.FindMember("version");
+            if (version != document.MemberEnd())
+                version->value.SetInt(1);
+            else
+                AddJsonInt(document, "version", 1, allocator);
+
+            auto profile = document.FindMember("profile");
+            if (profile != document.MemberEnd()) {
+                profile->value.SetString(configFileName.c_str(),
+                                         static_cast<rapidjson::SizeType>(configFileName.size()),
+                                         allocator);
+            } else {
+                AddJsonString(document, "profile", configFileName, allocator);
+            }
+        }
+
+        void SaveHeroPresetsUnlocked(const std::string& heroConfigPath)
         {
             ValidateHeroPresetsUnlocked();
-            WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
-            for (const auto& item : heroPresets) {
-                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
-                    const std::string section = HeroPresetSlotSectionName(item.first, slotIndex);
-                    WriteHeroPresetSection(path, section.c_str(),
-                                           item.second[static_cast<size_t>(slotIndex)],
-                                           slotIndex);
+
+            rapidjson::Document document;
+            document.SetObject();
+            auto& allocator = document.GetAllocator();
+            AddHeroConfigMetadata(document);
+
+            rapidjson::Value aimStore = HeroPresetStoreToJson(heroAimPresets, allocator);
+            rapidjson::Value triggerStore = HeroPresetStoreToJson(heroTriggerPresets, allocator);
+            rapidjson::Value aimKey;
+            aimKey.SetString("heroAimPresets", allocator);
+            rapidjson::Value triggerKey;
+            triggerKey.SetString("heroTriggerPresets", allocator);
+            document.AddMember(aimKey, aimStore, allocator);
+            document.AddMember(triggerKey, triggerStore, allocator);
+
+            WriteJsonDocument(heroConfigPath, document);
+        }
+
+        void EnsureCurrentHeroEntryForSaveUnlocked(uint64_t heroId)
+        {
+            if (heroId == 0)
+                return;
+
+            auto ensureStore = [&](HeroPresetSlotKind kind) {
+                auto& store = PresetStore(kind);
+                auto item = store.find(heroId);
+                if (item != store.end()) {
+                    NormalizeHeroPresetSlots(item->second);
+                    return;
+                }
+
+                auto& slots = store[heroId];
+                InitializeHeroPresetSlots(slots, 1, true);
+                slots[0].preset = kind == HeroPresetSlotKind::Aim
+                    ? MakeHeroAimPresetFromCurrentUnlocked()
+                    : MakeHeroTriggerPresetFromCurrentUnlocked();
+                NormalizeHeroPresetSlots(slots);
+            };
+
+            ensureStore(HeroPresetSlotKind::Aim);
+            ensureStore(HeroPresetSlotKind::Trigger);
+        }
+
+        void SaveHeroConfigForHeroUnlocked(const std::string& heroConfigPath, uint64_t heroId)
+        {
+            if (heroId == 0) {
+                SaveHeroPresetsUnlocked(heroConfigPath);
+                return;
+            }
+
+            EnsureCurrentHeroEntryForSaveUnlocked(heroId);
+            ValidateHeroPresetsUnlocked();
+
+            rapidjson::Document document;
+            if (!LoadJsonDocument(heroConfigPath, document))
+                document.SetObject();
+            AddHeroConfigMetadata(document);
+
+            auto& allocator = document.GetAllocator();
+            rapidjson::Value* aimObject = FindOrAddObjectMember(document, "heroAimPresets");
+            rapidjson::Value* triggerObject = FindOrAddObjectMember(document, "heroTriggerPresets");
+            const std::string heroKey = ToText(heroId);
+
+            if (aimObject) {
+                const auto item = heroAimPresets.find(heroId);
+                if (item != heroAimPresets.end()) {
+                    rapidjson::Value heroSlots = HeroSlotsToJson(item->second, allocator);
+                    UpsertJsonMember(*aimObject, heroKey, std::move(heroSlots), allocator);
                 }
             }
+
+            if (triggerObject) {
+                const auto item = heroTriggerPresets.find(heroId);
+                if (item != heroTriggerPresets.end()) {
+                    rapidjson::Value heroSlots = HeroSlotsToJson(item->second, allocator);
+                    UpsertJsonMember(*triggerObject, heroKey, std::move(heroSlots), allocator);
+                }
+            }
+
+            WriteJsonDocument(heroConfigPath, document);
         }
 
         bool TryLoadLegacyPresetForDefinition(const IniFile& ini, const HeroPresetDefinition& def, HeroPreset defaults, HeroPreset& outPreset)
@@ -1043,62 +1622,248 @@ namespace OW { namespace Config {
             return false;
         }
 
+        bool ReadJsonBool(const rapidjson::Value& object, const char* key, bool def)
+        {
+            const auto item = object.FindMember(key);
+            return item != object.MemberEnd() && item->value.IsBool()
+                ? item->value.GetBool()
+                : def;
+        }
+
+        int ReadJsonInt(const rapidjson::Value& object, const char* key, int def)
+        {
+            const auto item = object.FindMember(key);
+            return item != object.MemberEnd() && item->value.IsInt()
+                ? item->value.GetInt()
+                : def;
+        }
+
+        float ReadJsonFloat(const rapidjson::Value& object, const char* key, float def)
+        {
+            const auto item = object.FindMember(key);
+            return item != object.MemberEnd() && item->value.IsNumber()
+                ? item->value.GetFloat()
+                : def;
+        }
+
+        std::string ReadJsonString(const rapidjson::Value& object, const char* key, const std::string& def)
+        {
+            const auto item = object.FindMember(key);
+            return item != object.MemberEnd() && item->value.IsString()
+                ? std::string(item->value.GetString(), item->value.GetStringLength())
+                : def;
+        }
+
+        TriggerPreset ReadTriggerPresetJson(const rapidjson::Value& value, TriggerPreset defaults)
+        {
+            if (!value.IsObject())
+                return ValidateTriggerPresetValue(defaults);
+
+            defaults.enabled = ReadJsonBool(value, "enabled", defaults.enabled);
+            defaults.action = ReadJsonInt(value, "action", defaults.action);
+            defaults.mode = ReadJsonInt(value, "mode", defaults.mode);
+            defaults.key = ReadJsonInt(value, "key", defaults.key);
+            defaults.shotInterval = ReadJsonFloat(value, "shotInterval", defaults.shotInterval);
+            defaults.chargeAware = ReadJsonBool(value, "chargeAware", defaults.chargeAware);
+            defaults.minCharge = ReadJsonFloat(value, "minCharge", defaults.minCharge);
+            defaults.ignoreInvisible = ReadJsonBool(value, "ignoreInvisible", defaults.ignoreInvisible);
+            defaults.drawHitbox = ReadJsonBool(value, "drawHitbox", defaults.drawHitbox);
+            return ValidateTriggerPresetValue(defaults);
+        }
+
+        HeroPreset ReadHeroPresetJson(const rapidjson::Value& value, HeroPreset defaults)
+        {
+            if (!value.IsObject())
+                return ValidateHeroPresetValue(defaults);
+
+            defaults.fov = ReadJsonFloat(value, "fov", defaults.fov);
+            defaults.smooth = ReadJsonFloat(value, "smooth", defaults.smooth);
+            defaults.bone = ReadJsonInt(value, "bone", defaults.bone);
+            defaults.autoBone = ReadJsonBool(value, "autoBone", defaults.autoBone);
+            defaults.hitbox = ReadJsonFloat(value, "hitbox", defaults.hitbox);
+            defaults.aimMode = ReadJsonInt(value, "aimMode", defaults.aimMode);
+            defaults.prediction = ReadJsonBool(value, "prediction", defaults.prediction);
+            defaults.priority = ReadJsonInt(value, "priority", defaults.priority);
+            defaults.targetTeam = ReadJsonInt(value, "targetTeam", defaults.targetTeam);
+            const auto trigger = value.FindMember("trigger");
+            if (trigger != value.MemberEnd())
+                defaults.trigger = ReadTriggerPresetJson(trigger->value, defaults.trigger);
+            return ValidateHeroPresetValue(defaults);
+        }
+
+        HeroSlotPreset ReadHeroSlotJson(const rapidjson::Value& value, HeroSlotPreset defaults, int slotIndex)
+        {
+            if (!value.IsObject())
+                return defaults;
+
+            defaults.name = NormalizeHeroSlotName(
+                ReadJsonString(value, "name", DefaultHeroSlotName(slotIndex)),
+                slotIndex);
+            defaults.present = ReadJsonBool(value, "present", defaults.present);
+            defaults.enabled = ReadJsonBool(value, "enabled", defaults.enabled);
+            const auto preset = value.FindMember("preset");
+            if (preset != value.MemberEnd())
+                defaults.preset = ReadHeroPresetJson(preset->value, defaults.preset);
+            defaults.preset = ValidateHeroPresetValue(defaults.preset);
+            return defaults;
+        }
+
+        void LoadHeroPresetStoreJson(const rapidjson::Value& storeObject, HeroPresetStore& store)
+        {
+            if (!storeObject.IsObject())
+                return;
+
+            for (auto hero = storeObject.MemberBegin(); hero != storeObject.MemberEnd(); ++hero) {
+                if (!hero->name.IsString() || !hero->value.IsObject())
+                    continue;
+
+                uint64_t heroId = 0;
+                if (!ParseStrictUint64(hero->name.GetString(), heroId) || heroId == 0)
+                    continue;
+
+                std::array<HeroSlotPreset, kHeroPresetSlotCount> slots{};
+                InitializeHeroPresetSlots(slots, 0, false);
+
+                const auto slotArray = hero->value.FindMember("slots");
+                if (slotArray != hero->value.MemberEnd() && slotArray->value.IsArray()) {
+                    const rapidjson::SizeType count = (std::min)(
+                        slotArray->value.Size(),
+                        static_cast<rapidjson::SizeType>(kHeroPresetSlotCount));
+                    for (rapidjson::SizeType index = 0; index < count; ++index) {
+                        slots[static_cast<size_t>(index)] = ReadHeroSlotJson(
+                            slotArray->value[index],
+                            slots[static_cast<size_t>(index)],
+                            static_cast<int>(index));
+                    }
+                }
+
+                NormalizeHeroPresetSlots(slots);
+                store[heroId] = slots;
+            }
+        }
+
+        bool LoadHeroConfigUnlocked(const std::string& heroConfigPath)
+        {
+            rapidjson::Document document;
+            if (!LoadJsonDocument(heroConfigPath, document))
+                return false;
+
+            heroAimPresets.clear();
+            heroTriggerPresets.clear();
+
+            const auto aimStore = document.FindMember("heroAimPresets");
+            if (aimStore != document.MemberEnd())
+                LoadHeroPresetStoreJson(aimStore->value, heroAimPresets);
+
+            const auto triggerStore = document.FindMember("heroTriggerPresets");
+            if (triggerStore != document.MemberEnd())
+                LoadHeroPresetStoreJson(triggerStore->value, heroTriggerPresets);
+
+            ValidateHeroPresetsUnlocked();
+            LogConfig(Diagnostics::LogLevel::Info,
+                "Loaded hero config JSON from %s.", heroConfigPath.c_str());
+            return true;
+        }
+
         void LoadHeroPresetsUnlocked(const IniFile& ini)
         {
-            heroPresets.clear();
+            heroAimPresets.clear();
+            heroTriggerPresets.clear();
             const HeroPreset presetDefaults{};
             const int fileVersion = ReadInt(ini, kMetaSection, kVersionKey, 0);
             const bool storedBoneUsesLegacyPresetIndex =
                 fileVersion < kPresetBonesStoredAsAimBonesVersion;
 
             for (const HeroPresetDefinition& def : kHeroPresetDefinitions) {
-                std::array<HeroSlotPreset, kHeroPresetSlotCount> slots{};
                 bool legacyAutoBone = false;
                 if (def.legacyName && SectionExists(ini, def.legacyName))
                     legacyAutoBone = ReadBool(ini, def.legacyName, "autobone", false);
                 else if (def.legacyAlias && SectionExists(ini, def.legacyAlias))
                     legacyAutoBone = ReadBool(ini, def.legacyAlias, "autobone", false);
 
-                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
-                    slots[static_cast<size_t>(slotIndex)].name = DefaultHeroSlotName(slotIndex);
-                    slots[static_cast<size_t>(slotIndex)].preset.autoBone = legacyAutoBone;
-                }
+                auto makeDefaultSlots = [&]() {
+                    std::array<HeroSlotPreset, kHeroPresetSlotCount> slots{};
+                    InitializeHeroPresetSlots(slots, 7, true, legacyAutoBone);
+                    return slots;
+                };
 
-                bool loadedAnySlot = false;
-                for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
-                    const std::string presetSection = HeroPresetSlotSectionName(def.presetName, slotIndex);
-                    if (SectionExists(ini, presetSection.c_str())) {
-                        slots[static_cast<size_t>(slotIndex)] = ReadHeroPresetSectionUnlocked(
-                            ini,
-                            presetSection.c_str(),
-                            slots[static_cast<size_t>(slotIndex)],
-                            slotIndex,
-                            storedBoneUsesLegacyPresetIndex);
-                        loadedAnySlot = true;
+                auto loadSlots = [&](HeroPresetSlotKind kind, std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots) {
+                    bool loadedAnySlot = false;
+                    bool hasScopedSlots = false;
+                    for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                        const std::string scopedSection = HeroPresetSlotSectionName(def.presetName, kind, slotIndex);
+                        if (SectionExists(ini, scopedSection.c_str())) {
+                            hasScopedSlots = true;
+                            break;
+                        }
                     }
-                }
 
-                if (!loadedAnySlot) {
-                    const std::string legacyPresetSection = HeroPresetSectionName(def.presetName);
-                    if (SectionExists(ini, legacyPresetSection.c_str())) {
-                        slots[0] = ReadHeroPresetSectionUnlocked(
-                            ini, legacyPresetSection.c_str(), slots[0], 0,
-                            storedBoneUsesLegacyPresetIndex);
-                        loadedAnySlot = true;
-                    } else {
-                        HeroPreset legacyPreset{};
-                        if (TryLoadLegacyPresetForDefinition(ini, def, presetDefaults, legacyPreset)) {
-                            slots[0].preset = legacyPreset;
+                    for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                        const std::string scopedSection = HeroPresetSlotSectionName(def.presetName, kind, slotIndex);
+                        const std::string legacySlotSection = HeroPresetSlotSectionName(def.presetName, slotIndex);
+                        const char* sectionToRead = nullptr;
+                        if (SectionExists(ini, scopedSection.c_str()))
+                            sectionToRead = scopedSection.c_str();
+                        else if (!hasScopedSlots && SectionExists(ini, legacySlotSection.c_str()))
+                            sectionToRead = legacySlotSection.c_str();
+
+                        if (sectionToRead) {
+                            slots[static_cast<size_t>(slotIndex)] = ReadHeroPresetSectionUnlocked(
+                                ini,
+                                sectionToRead,
+                                slots[static_cast<size_t>(slotIndex)],
+                                slotIndex,
+                                storedBoneUsesLegacyPresetIndex);
                             loadedAnySlot = true;
                         }
                     }
-                }
 
-                if (loadedAnySlot)
-                    heroPresets[def.heroId] = slots;
+                    if (!loadedAnySlot) {
+                        const std::string legacyPresetSection = HeroPresetSectionName(def.presetName);
+                        if (SectionExists(ini, legacyPresetSection.c_str())) {
+                            slots[0] = ReadHeroPresetSectionUnlocked(
+                                ini, legacyPresetSection.c_str(), slots[0], 0,
+                                storedBoneUsesLegacyPresetIndex);
+                            loadedAnySlot = true;
+                        } else {
+                            HeroPreset legacyPreset{};
+                            if (TryLoadLegacyPresetForDefinition(ini, def, presetDefaults, legacyPreset)) {
+                                slots[0].preset = legacyPreset;
+                                loadedAnySlot = true;
+                            }
+                        }
+                    }
+
+                    return loadedAnySlot;
+                };
+
+                auto aimSlots = makeDefaultSlots();
+                auto triggerSlots = makeDefaultSlots();
+                if (loadSlots(HeroPresetSlotKind::Aim, aimSlots))
+                    heroAimPresets[def.heroId] = aimSlots;
+                if (loadSlots(HeroPresetSlotKind::Trigger, triggerSlots))
+                    heroTriggerPresets[def.heroId] = triggerSlots;
             }
 
             ValidateHeroPresetsUnlocked();
+        }
+
+        bool LoadHeroConfigOrMigrateUnlocked(const std::string& heroConfigPath, const IniFile* legacyIni)
+        {
+            if (FileExists(heroConfigPath) && LoadHeroConfigUnlocked(heroConfigPath))
+                return true;
+
+            if (legacyIni) {
+                LoadHeroPresetsUnlocked(*legacyIni);
+                SaveHeroPresetsUnlocked(heroConfigPath);
+                LogConfig(Diagnostics::LogLevel::Info,
+                    "Migrated legacy INI hero presets to %s.", heroConfigPath.c_str());
+                return true;
+            }
+
+            heroAimPresets.clear();
+            heroTriggerPresets.clear();
+            return false;
         }
 
         void LoadColor(const IniFile& ini, const char* section, const char* prefix, ImVec4& color)
@@ -1157,7 +1922,9 @@ namespace OW { namespace Config {
             AutoRMBhealth = ReadFixedFloat(ini, section, "AutoRMBhealth", AutoRMBhealth);
             secondaim = ReadBool(ini, section, "secondaim", secondaim);
             triggerbot = ReadBool(ini, section, "triggerbot", triggerbot);
+            triggerbotIgnoreInvisible = ReadBool(ini, section, "triggerbotIgnoreInvisible", triggerbotIgnoreInvisible);
             triggerbot2 = ReadBool(ini, section, "triggerbot2", triggerbot2);
+            triggerbotIgnoreInvisible2 = ReadBool(ini, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
             Tracking2 = ReadBool(ini, section, "Tracking2", Tracking2);
             Flick2 = ReadBool(ini, section, "Flick2", Flick2);
             Prediction2 = ReadBool(ini, section, "Prediction2", Prediction2);
@@ -1225,12 +1992,14 @@ namespace OW { namespace Config {
             triggerbotShotInterval = ReadFixedFloat(ini, section, "triggerbotShotInterval", triggerbotShotInterval);
             triggerbotChargeAware = ReadBool(ini, section, "triggerbotChargeAware", triggerbotChargeAware);
             triggerbotMinCharge = ReadFixedFloat(ini, section, "triggerbotMinCharge", triggerbotMinCharge);
+            triggerbotIgnoreInvisible = ReadBool(ini, section, "triggerbotIgnoreInvisible", triggerbotIgnoreInvisible);
 
             triggerbotMode2 = ReadInt(ini, section, "triggerbotMode2", triggerbotMode2);
             triggerbotKey2 = ReadInt(ini, section, "triggerbotKey2", triggerbotKey2);
             triggerbotShotInterval2 = ReadFixedFloat(ini, section, "triggerbotShotInterval2", triggerbotShotInterval2);
             triggerbotChargeAware2 = ReadBool(ini, section, "triggerbotChargeAware2", triggerbotChargeAware2);
             triggerbotMinCharge2 = ReadFixedFloat(ini, section, "triggerbotMinCharge2", triggerbotMinCharge2);
+            triggerbotIgnoreInvisible2 = ReadBool(ini, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
 
             triggerbotToggleActive = false;
             triggerbotToggleActive2 = false;
@@ -1286,12 +2055,14 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "triggerbotShotInterval", triggerbotShotInterval);
             WriteBoolValue(path, section, "triggerbotChargeAware", triggerbotChargeAware);
             WriteFixedFloatValue(path, section, "triggerbotMinCharge", triggerbotMinCharge);
+            WriteBoolValue(path, section, "triggerbotIgnoreInvisible", triggerbotIgnoreInvisible);
 
             WriteIntValue(path, section, "triggerbotMode2", triggerbotMode2);
             WriteIntValue(path, section, "triggerbotKey2", triggerbotKey2);
             WriteFixedFloatValue(path, section, "triggerbotShotInterval2", triggerbotShotInterval2);
             WriteBoolValue(path, section, "triggerbotChargeAware2", triggerbotChargeAware2);
             WriteFixedFloatValue(path, section, "triggerbotMinCharge2", triggerbotMinCharge2);
+            WriteBoolValue(path, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
         }
 
         void SaveAimMethodSettingsUnlocked(const std::string& path)
@@ -1346,11 +2117,9 @@ namespace OW { namespace Config {
 
             LoadColor(ini, section, "EnemyCol", EnemyCol);
             LoadColor(ini, section, "fovcol", fovcol);
-            LoadColor(ini, section, "fovcol2", fovcol2);
             LoadColor(ini, section, "invisenargb", invisnenargb);
             LoadColor(ini, section, "enargb", enargb);
             LoadColor(ini, section, "targetargb", targetargb);
-            LoadColor(ini, section, "targetargb2", targetargb2);
             LoadColor(ini, section, "allyargb", allyargb);
         }
 
@@ -1570,7 +2339,7 @@ namespace OW { namespace Config {
             ClampSetting("aimBezierControlPoints", aimBezierControlPoints, 2, 6, 2);
             ClampSetting("aimbotTrace", aimbotTrace, 0, 2, 0);
             ClampSetting("aimbotUnlock", aimbotUnlock, 0, 2, 0);
-            ClampSetting("aimbotAttack", aimbotAttack, 0, 2, 0);
+            ClampSetting("aimbotAttack", aimbotAttack, 0, 7, 0);
             ClampSetting("aimbotTeam", aimbotTeam, 0, 2, 0);
             ClampSetting("aimbotPriority", aimbotPriority, 0, 2, 0);
             ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 1, 0);
@@ -1619,11 +2388,9 @@ namespace OW { namespace Config {
             ClampColor("enargb", enargb);
             ClampColor("invisnenargb", invisnenargb);
             ClampColor("targetargb", targetargb);
-            ClampColor("targetargb2", targetargb2);
             ClampColor("allyargb", allyargb);
             ClampColor("EnemyCol", EnemyCol);
             ClampColor("fovcol", fovcol);
-            ClampColor("fovcol2", fovcol2);
         }
 
         std::string ColorText(const ImVec4& value)
@@ -1637,8 +2404,9 @@ namespace OW { namespace Config {
         void DumpUnlocked(Diagnostics::LogLevel level)
         {
             LogConfig(level, "Dump: config_version=%d", config_version);
-            LogConfig(level, "Dump: aim modes enableAimbot=%s triggerbot=%s triggerbot2=%s Tracking=%s Tracking2=%s Flick=%s Flick2=%s",
+            LogConfig(level, "Dump: aim modes enableAimbot=%s triggerbot=%s triggerbot2=%s triggerIgnoreInvisible=%s triggerIgnoreInvisible2=%s Tracking=%s Tracking2=%s Flick=%s Flick2=%s",
                 ToText(enableAimbot).c_str(), ToText(triggerbot).c_str(), ToText(triggerbot2).c_str(),
+                ToText(triggerbotIgnoreInvisible).c_str(), ToText(triggerbotIgnoreInvisible2).c_str(),
                 ToText(Tracking).c_str(), ToText(Tracking2).c_str(), ToText(Flick).c_str(),
                 ToText(Flick2).c_str());
             LogConfig(level, "Dump: prediction projectile_arc=%s Prediction=%s Prediction2=%s Gravitypredit=%s Gravitypredit2=%s predit_level=%.3f predit_level2=%.3f hanzoautospeed=%s",
@@ -1647,8 +2415,8 @@ namespace OW { namespace Config {
                 ToText(hanzoautospeed).c_str());
             LogConfig(level, "Dump: keys AimKey=%d aim_key=%d aim_key2=%d togglekey=%d MenuToggleKey=%d",
                 AimKey, aim_key, aim_key2, togglekey, MenuToggleKey);
-            LogConfig(level, "Dump: aim Fov=%.3f Fov2=%.3f minFov1=%.3f minFov2=%.3f Smooth=%.3f fov360=%s autoscalefov=%s hitbox=%.3f hitbox2=%.3f missbox=%.3f",
-                Fov, Fov2, minFov1, minFov2, Smooth, ToText(fov360).c_str(), ToText(autoscalefov).c_str(),
+            LogConfig(level, "Dump: aim Fov=%.3f Fov2=%.3f minFov1=%.3f minFov2=%.3f Smooth=%.3f autoscalefov=%s hitbox=%.3f hitbox2=%.3f missbox=%.3f",
+                Fov, Fov2, minFov1, minFov2, Smooth, ToText(autoscalefov).c_str(),
                 hitbox, hitbox2, missbox);
             LogConfig(level, "Dump: smoothing Tracking_smooth=%.3f Tracking_smooth2=%.3f Flick_smooth=%.3f Flick_smooth2=%.3f accvalue=%.3f accvalue2=%.3f bladespeed=%.3f",
                 Tracking_smooth, Tracking_smooth2, Flick_smooth, Flick_smooth2, accvalue, accvalue2, bladespeed);
@@ -1699,10 +2467,10 @@ namespace OW { namespace Config {
                 ToText(radar).c_str(), ToText(radarline).c_str(),
                 ToText(drawline).c_str(), ToText(draw_fov).c_str(), ToText(draw_hp_pack).c_str(),
                 ToText(crosscircle).c_str(), ToText(eyeray).c_str());
-            LogConfig(level, "Dump: colors EnemyCol=%s fovcol=%s fovcol2=%s enargb=%s invisnenargb=%s targetargb=%s targetargb2=%s allyargb=%s",
-                ColorText(EnemyCol).c_str(), ColorText(fovcol).c_str(), ColorText(fovcol2).c_str(),
+            LogConfig(level, "Dump: colors EnemyCol=%s fovcol=%s enargb=%s invisnenargb=%s targetargb=%s allyargb=%s",
+                ColorText(EnemyCol).c_str(), ColorText(fovcol).c_str(),
                 ColorText(enargb).c_str(), ColorText(invisnenargb).c_str(), ColorText(targetargb).c_str(),
-                ColorText(targetargb2).c_str(), ColorText(allyargb).c_str());
+                ColorText(allyargb).c_str());
             LogConfig(level, "Dump: state Targetenemyi=%d Targetenemyifov=%d health=%.3f doingentity=%d lastheroid=%d Menu=%s nowhero=%s locx=%d locy=%d therad=%d pon=%d crss=%d",
                 Targetenemyi, Targetenemyifov, health, doingentity, lastheroid, ToText(Menu).c_str(),
                 nowhero.c_str(), locx, locy, therad, pon, crss);
@@ -1735,21 +2503,76 @@ namespace OW { namespace Config {
         return MakeHeroPresetFromCurrentUnlocked();
     }
 
+    HeroPreset MakeHeroAimPresetFromCurrent()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return MakeHeroAimPresetFromCurrentUnlocked();
+    }
+
+    HeroPreset MakeHeroTriggerPresetFromCurrent()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return MakeHeroTriggerPresetFromCurrentUnlocked();
+    }
+
+    static bool TryGetHeroPresetFromStore(HeroPresetSlotKind kind, uint64_t heroId, HeroPreset& outPreset)
+    {
+        const auto& store = PresetStoreConst(kind);
+        const auto item = store.find(heroId);
+        if (item == store.end())
+            return false;
+
+        for (const HeroSlotPreset& slot : item->second) {
+            if (slot.present && slot.enabled) {
+                outPreset = ValidateHeroPresetValue(slot.preset);
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool TryGetHeroPreset(uint64_t heroId, HeroPreset& outPreset)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const auto item = heroPresets.find(heroId);
-        if (item == heroPresets.end())
-            return false;
+        return TryGetHeroPresetFromStore(HeroPresetSlotKind::Aim, heroId, outPreset);
+    }
 
-        outPreset = ValidateHeroPresetValue(item->second[0].preset);
-        return true;
+    bool TryGetHeroAimPreset(uint64_t heroId, HeroPreset& outPreset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return TryGetHeroPresetFromStore(HeroPresetSlotKind::Aim, heroId, outPreset);
+    }
+
+    bool TryGetHeroTriggerPreset(uint64_t heroId, HeroPreset& outPreset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return TryGetHeroPresetFromStore(HeroPresetSlotKind::Trigger, heroId, outPreset);
+    }
+
+    static bool HasHeroPresetInStore(HeroPresetSlotKind kind, uint64_t heroId)
+    {
+        const auto& store = PresetStoreConst(kind);
+        const auto item = store.find(heroId);
+        return item != store.end() && CountHeroPresetSlots(item->second) > 0;
     }
 
     bool HasHeroPreset(uint64_t heroId)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        return heroPresets.find(heroId) != heroPresets.end();
+        return HasHeroPresetInStore(HeroPresetSlotKind::Aim, heroId) ||
+            HasHeroPresetInStore(HeroPresetSlotKind::Trigger, heroId);
+    }
+
+    bool HasHeroAimPreset(uint64_t heroId)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return HasHeroPresetInStore(HeroPresetSlotKind::Aim, heroId);
+    }
+
+    bool HasHeroTriggerPreset(uint64_t heroId)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return HasHeroPresetInStore(HeroPresetSlotKind::Trigger, heroId);
     }
 
     HeroPreset GetHeroPresetOrDefault(uint64_t heroId)
@@ -1757,14 +2580,35 @@ namespace OW { namespace Config {
         return GetHeroPresetOrDefault(heroId, 0);
     }
 
+    static HeroPreset GetHeroPresetOrDefaultFromStore(HeroPresetSlotKind kind, uint64_t heroId, int slotIndex)
+    {
+        const auto& store = PresetStoreConst(kind);
+        const auto item = store.find(heroId);
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        if (item != store.end() &&
+            item->second[static_cast<size_t>(clampedSlotIndex)].present)
+            return ValidateHeroPresetValue(item->second[static_cast<size_t>(clampedSlotIndex)].preset);
+        return kind == HeroPresetSlotKind::Aim
+            ? MakeHeroAimPresetFromCurrentUnlocked()
+            : MakeHeroTriggerPresetFromCurrentUnlocked();
+    }
+
     HeroPreset GetHeroPresetOrDefault(uint64_t heroId, int slotIndex)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const auto item = heroPresets.find(heroId);
-        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
-        if (item != heroPresets.end())
-            return ValidateHeroPresetValue(item->second[static_cast<size_t>(clampedSlotIndex)].preset);
-        return MakeHeroPresetFromCurrentUnlocked();
+        return GetHeroPresetOrDefaultFromStore(HeroPresetSlotKind::Aim, heroId, slotIndex);
+    }
+
+    HeroPreset GetHeroAimPresetOrDefault(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return GetHeroPresetOrDefaultFromStore(HeroPresetSlotKind::Aim, heroId, slotIndex);
+    }
+
+    HeroPreset GetHeroTriggerPresetOrDefault(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return GetHeroPresetOrDefaultFromStore(HeroPresetSlotKind::Trigger, heroId, slotIndex);
     }
 
     void SetHeroPreset(uint64_t heroId, const HeroPreset& preset)
@@ -1772,28 +2616,286 @@ namespace OW { namespace Config {
         SetHeroPreset(heroId, 0, preset);
     }
 
-    void SetHeroPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset)
+    static std::array<HeroSlotPreset, kHeroPresetSlotCount>& EnsureHeroPresetSlotsInStore(
+        HeroPresetSlotKind kind,
+        uint64_t heroId)
+    {
+        auto& store = PresetStore(kind);
+        auto [item, inserted] = store.try_emplace(heroId);
+        if (inserted)
+            InitializeHeroPresetSlots(item->second, 1, true);
+        NormalizeHeroPresetSlots(item->second);
+        return item->second;
+    }
+
+    static void EnsureHeroPresetSlotRange(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                          int slotIndex)
+    {
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        const int presentCount = CountHeroPresetSlots(slots);
+        for (int index = presentCount; index <= clampedSlotIndex; ++index) {
+            HeroSlotPreset& slot = slots[static_cast<size_t>(index)];
+            ResetHeroPresetSlot(slot, index);
+            slot.present = true;
+            slot.enabled = true;
+        }
+    }
+
+    static void SetHeroPresetInStore(HeroPresetSlotKind kind, uint64_t heroId, int slotIndex, const HeroPreset& preset)
     {
         if (heroId == 0)
             return;
 
-        std::lock_guard<std::mutex> lock(mutex);
         const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
-        auto& slots = heroPresets[heroId];
-        for (int i = 0; i < kHeroPresetSlotCount; ++i)
-            slots[static_cast<size_t>(i)].name = NormalizeHeroSlotName(slots[static_cast<size_t>(i)].name, i);
+        auto& slots = EnsureHeroPresetSlotsInStore(kind, heroId);
+        EnsureHeroPresetSlotRange(slots, clampedSlotIndex);
         slots[static_cast<size_t>(clampedSlotIndex)].preset = ValidateHeroPresetValue(preset);
+        NormalizeHeroPresetSlots(slots);
+    }
+
+    void SetHeroPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SetHeroPresetInStore(HeroPresetSlotKind::Aim, heroId, slotIndex, preset);
+    }
+
+    void SetHeroAimPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SetHeroPresetInStore(HeroPresetSlotKind::Aim, heroId, slotIndex, preset);
+    }
+
+    void SetHeroTriggerPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SetHeroPresetInStore(HeroPresetSlotKind::Trigger, heroId, slotIndex, preset);
+    }
+
+    static std::string GetHeroSlotNameFromStore(HeroPresetSlotKind kind, uint64_t heroId, int slotIndex)
+    {
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        const auto& store = PresetStoreConst(kind);
+        const auto item = store.find(heroId);
+        if (item == store.end() ||
+            !item->second[static_cast<size_t>(clampedSlotIndex)].present)
+            return DefaultHeroSlotName(clampedSlotIndex);
+
+        return NormalizeHeroSlotName(item->second[static_cast<size_t>(clampedSlotIndex)].name, clampedSlotIndex);
+    }
+
+    static bool TryGetHeroSlotFromStore(HeroPresetSlotKind kind, uint64_t heroId, int slotIndex, HeroSlotPreset& outSlot)
+    {
+        if (heroId == 0)
+            return false;
+
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        const auto& store = PresetStoreConst(kind);
+        const auto item = store.find(heroId);
+        if (item == store.end())
+            return false;
+
+        const HeroSlotPreset& slot = item->second[static_cast<size_t>(clampedSlotIndex)];
+        if (!slot.present)
+            return false;
+
+        outSlot = slot;
+        outSlot.name = NormalizeHeroSlotName(outSlot.name, clampedSlotIndex);
+        outSlot.preset = ValidateHeroPresetValue(outSlot.preset);
+        outSlot.present = true;
+        return true;
     }
 
     std::string GetHeroSlotName(uint64_t heroId, int slotIndex)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
-        const auto item = heroPresets.find(heroId);
-        if (item == heroPresets.end())
-            return DefaultHeroSlotName(clampedSlotIndex);
+        return GetHeroSlotNameFromStore(HeroPresetSlotKind::Aim, heroId, slotIndex);
+    }
 
-        return NormalizeHeroSlotName(item->second[static_cast<size_t>(clampedSlotIndex)].name, clampedSlotIndex);
+    std::string GetHeroAimSlotName(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return GetHeroSlotNameFromStore(HeroPresetSlotKind::Aim, heroId, slotIndex);
+    }
+
+    std::string GetHeroTriggerSlotName(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return GetHeroSlotNameFromStore(HeroPresetSlotKind::Trigger, heroId, slotIndex);
+    }
+
+    bool TryGetHeroAimSlot(uint64_t heroId, int slotIndex, HeroSlotPreset& outSlot)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return TryGetHeroSlotFromStore(HeroPresetSlotKind::Aim, heroId, slotIndex, outSlot);
+    }
+
+    bool TryGetHeroTriggerSlot(uint64_t heroId, int slotIndex, HeroSlotPreset& outSlot)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return TryGetHeroSlotFromStore(HeroPresetSlotKind::Trigger, heroId, slotIndex, outSlot);
+    }
+
+    static bool IsHeroSlotEnabledInStore(HeroPresetSlotKind kind, uint64_t heroId, int slotIndex)
+    {
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        const auto& store = PresetStoreConst(kind);
+        const auto item = store.find(heroId);
+        if (item == store.end())
+            return clampedSlotIndex == 0;
+
+        const HeroSlotPreset& slot = item->second[static_cast<size_t>(clampedSlotIndex)];
+        return slot.present && slot.enabled;
+    }
+
+    bool IsHeroSlotEnabled(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return IsHeroSlotEnabledInStore(HeroPresetSlotKind::Aim, heroId, slotIndex);
+    }
+
+    bool IsHeroAimSlotEnabled(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return IsHeroSlotEnabledInStore(HeroPresetSlotKind::Aim, heroId, slotIndex);
+    }
+
+    bool IsHeroTriggerSlotEnabled(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return IsHeroSlotEnabledInStore(HeroPresetSlotKind::Trigger, heroId, slotIndex);
+    }
+
+    static void SetHeroSlotEnabledInStore(HeroPresetSlotKind kind, uint64_t heroId, int slotIndex, bool enabled)
+    {
+        if (heroId == 0)
+            return;
+
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        auto& slots = EnsureHeroPresetSlotsInStore(kind, heroId);
+        EnsureHeroPresetSlotRange(slots, clampedSlotIndex);
+        slots[static_cast<size_t>(clampedSlotIndex)].enabled = enabled;
+        NormalizeHeroPresetSlots(slots);
+    }
+
+    void SetHeroSlotEnabled(uint64_t heroId, int slotIndex, bool enabled)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SetHeroSlotEnabledInStore(HeroPresetSlotKind::Aim, heroId, slotIndex, enabled);
+    }
+
+    void SetHeroAimSlotEnabled(uint64_t heroId, int slotIndex, bool enabled)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SetHeroSlotEnabledInStore(HeroPresetSlotKind::Aim, heroId, slotIndex, enabled);
+    }
+
+    void SetHeroTriggerSlotEnabled(uint64_t heroId, int slotIndex, bool enabled)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SetHeroSlotEnabledInStore(HeroPresetSlotKind::Trigger, heroId, slotIndex, enabled);
+    }
+
+    static int GetHeroSlotCountInStore(HeroPresetSlotKind kind, uint64_t heroId)
+    {
+        if (heroId == 0)
+            return 7;
+
+        auto& store = PresetStore(kind);
+        auto item = store.find(heroId);
+        if (item == store.end())
+            return 1;
+
+        NormalizeHeroPresetSlots(item->second);
+        return (std::max)(1, CountHeroPresetSlots(item->second));
+    }
+
+    int GetHeroAimSlotCount(uint64_t heroId)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return GetHeroSlotCountInStore(HeroPresetSlotKind::Aim, heroId);
+    }
+
+    int GetHeroTriggerSlotCount(uint64_t heroId)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return GetHeroSlotCountInStore(HeroPresetSlotKind::Trigger, heroId);
+    }
+
+    static int AddHeroSlotInStore(HeroPresetSlotKind kind, uint64_t heroId, const HeroPreset& seedPreset)
+    {
+        if (heroId == 0)
+            return -1;
+
+        auto& slots = EnsureHeroPresetSlotsInStore(kind, heroId);
+        const int presentCount = CountHeroPresetSlots(slots);
+        if (presentCount >= kHeroPresetSlotCount)
+            return -1;
+
+        HeroSlotPreset& slot = slots[static_cast<size_t>(presentCount)];
+        ResetHeroPresetSlot(slot, presentCount);
+        slot.present = true;
+        slot.enabled = true;
+        slot.name = DefaultHeroSlotName(presentCount);
+        slot.preset = ValidateHeroPresetValue(seedPreset);
+        NormalizeHeroPresetSlots(slots);
+        return presentCount;
+    }
+
+    int AddHeroAimSlot(uint64_t heroId, const HeroPreset& seedPreset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return AddHeroSlotInStore(HeroPresetSlotKind::Aim, heroId, seedPreset);
+    }
+
+    int AddHeroTriggerSlot(uint64_t heroId, const HeroPreset& seedPreset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return AddHeroSlotInStore(HeroPresetSlotKind::Trigger, heroId, seedPreset);
+    }
+
+    static bool DeleteHeroSlotInStore(HeroPresetSlotKind kind, uint64_t heroId, int slotIndex)
+    {
+        if (heroId == 0)
+            return false;
+
+        auto& store = PresetStore(kind);
+        auto item = store.find(heroId);
+        if (item == store.end())
+            return false;
+
+        NormalizeHeroPresetSlots(item->second);
+        const int presentCount = CountHeroPresetSlots(item->second);
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        if (presentCount <= 1 || clampedSlotIndex >= presentCount)
+            return false;
+
+        for (int index = clampedSlotIndex; index < presentCount - 1; ++index) {
+            HeroSlotPreset slot = item->second[static_cast<size_t>(index + 1)];
+            slot.name = NormalizeHeroSlotName(slot.name, index);
+            item->second[static_cast<size_t>(index)] = slot;
+        }
+
+        ResetHeroPresetSlot(item->second[static_cast<size_t>(presentCount - 1)], presentCount - 1);
+        NormalizeHeroPresetSlots(item->second);
+        return true;
+    }
+
+    bool DeleteHeroAimSlot(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return DeleteHeroSlotInStore(HeroPresetSlotKind::Aim, heroId, slotIndex);
+    }
+
+    bool DeleteHeroTriggerSlot(uint64_t heroId, int slotIndex)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return DeleteHeroSlotInStore(HeroPresetSlotKind::Trigger, heroId, slotIndex);
+    }
+
+    void NormalizeHeroPresets()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        ValidateHeroPresetsUnlocked();
     }
 
     void ApplyHeroPresetToGlobals(const HeroPreset& preset)
@@ -1802,10 +2904,123 @@ namespace OW { namespace Config {
         ApplyHeroPresetUnlocked(preset);
     }
 
-    void SaveHeroPresets(const std::string& path)
+    void ApplyHeroAimPresetToGlobals(const HeroPreset& preset)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        SaveHeroPresetsUnlocked(path);
+        ApplyHeroAimPresetUnlocked(preset);
+    }
+
+    void ApplyHeroTriggerPresetToGlobals(const HeroPreset& preset)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        ApplyHeroTriggerPresetUnlocked(preset);
+    }
+
+    namespace {
+
+        std::string ResolveHeroConfigPath(const std::string& path)
+        {
+            std::string lowered = path;
+            std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            return lowered.size() >= 5 &&
+                lowered.substr(lowered.size() - 5) == ".json"
+                ? path
+                : HeroConfigPath(path);
+        }
+
+        void SaveSystemConfigUnlocked(const std::string& path)
+        {
+            WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
+            SaveAimbotSettingsUnlocked(path);
+            SaveAimMethodSettingsUnlocked(path);
+            SaveKmboxSettingsUnlocked(path);
+
+            WriteBoolValue(path, "Global", "draw_hp_pack", draw_hp_pack);
+            WriteBoolValue(path, "Global", "crosscircle", crosscircle);
+            WriteBoolValue(path, "Global", "eyeray", eyeray);
+            WriteBoolValue(path, "Global", "draw_info", draw_info);
+            WriteBoolValue(path, "Global", "drawbattletag", drawbattletag);
+            WriteBoolValue(path, "Global", "drawhealth", drawhealth);
+            WriteBoolValue(path, "Global", "healthbar", healthbar);
+            WriteBoolValue(path, "Global", "healthbar2", healthbar2);
+            WriteFixedFloatValue(path, "Global", "healthbartextsize", healthbartextsize);
+            WriteBoolValue(path, "Global", "dist", dist);
+            WriteFixedFloatValue(path, "Global", "visualMaxDist", visualMaxDist);
+            WriteBoolValue(path, "Global", "name", name);
+            WriteBoolValue(path, "Global", "ult", ult);
+            WriteBoolValue(path, "Global", "draw_skel", draw_skel);
+            WriteBoolValue(path, "Global", "skillinfo", skillinfo);
+            WriteIntValue(path, "Global", "ultimateDisplayMode", ultimateDisplayMode);
+            WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
+            WriteIntValue(path, "Global", "radarCorner", radarCorner);
+            WriteBoolValue(path, "Global", "radar", radar);
+            WriteBoolValue(path, "Global", "radarline", radarline);
+            WriteBoolValue(path, "Global", "drawline", drawline);
+            WriteBoolValue(path, "Global", "draw_fov", draw_fov);
+            WriteIntValue(path, "Global", "targetPriority", targetPriority);
+            WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);
+            WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
+            WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
+            WriteIntValue(path, "Global", "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
+            WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
+            WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
+            WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);
+            WriteColor(path, "Global", "EnemyCol", EnemyCol);
+            WriteColor(path, "Global", "fovcol", fovcol);
+            WriteColor(path, "Global", "invisenargb", invisnenargb);
+            WriteColor(path, "Global", "enargb", enargb);
+            WriteColor(path, "Global", "targetargb", targetargb);
+            WriteColor(path, "Global", "allyargb", allyargb);
+        }
+
+        void LoadSystemConfigUnlocked(const IniFile& ini)
+        {
+            LoadAimbotSettingsUnlocked(ini);
+            LoadAimMethodSettingsUnlocked(ini);
+            LoadGlobalSettingsUnlocked(ini);
+            LoadKmboxSettingsUnlocked(ini);
+        }
+
+        void ApplyLoadedHeroPresetsUnlocked(uint64_t heroId)
+        {
+            if (heroId == 0)
+                return;
+
+            HeroPreset preset{};
+            if (TryGetHeroPresetFromStore(HeroPresetSlotKind::Aim, heroId, preset))
+                ApplyHeroAimPresetUnlocked(preset);
+            if (TryGetHeroPresetFromStore(HeroPresetSlotKind::Trigger, heroId, preset))
+                ApplyHeroTriggerPresetUnlocked(preset);
+        }
+
+    } // anonymous namespace
+
+    void SaveHeroConfig(const std::string& path)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SaveHeroPresetsUnlocked(ResolveHeroConfigPath(path));
+    }
+
+    void SaveHeroConfigForHero(const std::string& path, uint64_t heroId)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        SaveHeroConfigForHeroUnlocked(ResolveHeroConfigPath(path), heroId);
+    }
+
+    void LoadHeroConfig(const std::string& path)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!LoadHeroConfigOrMigrateUnlocked(ResolveHeroConfigPath(path), nullptr)) {
+            LogConfig(Diagnostics::LogLevel::Warn,
+                "%s is missing or unreadable; no hero presets were loaded.",
+                path.c_str());
+        }
+    }
+
+    void SaveHeroPresets(const std::string& path)
+    {
+        SaveHeroConfig(path);
     }
 
     void LoadHeroPresets(const std::string& path)
@@ -1813,160 +3028,30 @@ namespace OW { namespace Config {
         std::lock_guard<std::mutex> lock(mutex);
 
         IniFile ini;
-        if (!LoadIniFile(path, ini)) {
-            heroPresets.clear();
+        const bool hasIni = LoadIniFile(path, ini);
+        if (!LoadHeroConfigOrMigrateUnlocked(ResolveHeroConfigPath(path), hasIni ? &ini : nullptr)) {
             LogConfig(Diagnostics::LogLevel::Warn,
                 "%s is missing or unreadable; no hero presets were loaded.",
                 path.c_str());
-            return;
         }
-
-        LoadHeroPresetsUnlocked(ini);
     }
 
     void SaveConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase)
     {
         std::lock_guard<std::mutex> lock(mutex);
         ValidateUnlocked();
-
         if (heroId == 0) {
-            WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
-            SaveAimbotSettingsUnlocked(path);
-            SaveAimMethodSettingsUnlocked(path);
-            SaveKmboxSettingsUnlocked(path);
-            WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
-            WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
-            WriteIntValue(path, "Global", "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
-            WriteIntValue(path, "Global", "ultimateDisplayMode", ultimateDisplayMode);
-            WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
-            WriteIntValue(path, "Global", "radarCorner", radarCorner);
-            WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
-            WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
-            WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);
+            SaveSystemConfigUnlocked(path);
             LogConfig(Diagnostics::LogLevel::Info,
-                "Saved global config to %s without a current hero.", path.c_str());
+                "Saved system config to %s without a current hero.", path.c_str());
             return;
         }
 
         const std::string heroName = HeroSectionName(heroId, linkBase);
-        const char* section = heroName.c_str();
-
-        WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
-        SaveAimbotSettingsUnlocked(path);
-        SaveAimMethodSettingsUnlocked(path);
-
-        WriteBoolValue(path, section, "highPriority", highPriority);
-        WriteBoolValue(path, section, "aiaim", aiaim);
-        WriteBoolValue(path, section, "hanzoautospeed", hanzoautospeed);
-        WriteBoolValue(path, section, "autoscalefov", autoscalefov);
-        WriteBoolValue(path, section, "lockontarget", lockontarget);
-        WriteBoolValue(path, section, "trackc", trackcompensate);
-        WriteFixedFloatValue(path, section, "comarea", comarea);
-        WriteFixedFloatValue(path, section, "comspeed", comspeed);
-        WriteIntValue(path, section, "FOV", static_cast<int>(Fov));
-        WriteFixedFloatValue(path, section, "hitbox", hitbox);
-        WriteFixedFloatValue(path, section, "missbox", missbox);
-        WriteFixedFloatValue(path, section, "Tracking_smooth", Tracking_smooth);
-        WriteFixedFloatValue(path, section, "Flick_smooth", Flick_smooth);
-        WriteIntValue(path, section, "AutoShootTime", Shoottime);
-        WriteIntValue(path, section, "predit_level", static_cast<int>(predit_level));
-        WriteIntValue(path, section, "aim_key", aim_key);
-        WriteBoolValue(path, section, "Gravitypredit", Gravitypredit);
-        WriteIntValue(path, section, "SkillHealth", static_cast<int>(SkillHealth));
-        WriteBoolValue(path, section, "AutoSkill", AutoSkill);
-        WriteBoolValue(path, section, "AntiAFK", AntiAFK);
-        WriteIntValue(path, section, "Aim Mode", CurrentAimMode());
-        WriteBoolValue(path, section, "autoshootonoff", AutoShoot);
-        WriteBoolValue(path, section, "predictdec", Prediction);
-        WriteBoolValue(path, section, "dontshot", dontshot);
-        WriteBoolValue(path, section, "targetdelay", targetdelay);
-        WriteIntValue(path, section, "targetdelaytime", targetdelaytime);
-        WriteIntValue(path, section, "dontmanyshot", shotmanydont);
-        WriteBoolValue(path, section, "hitboxdelayshoot", hitboxdelayshoot);
-        WriteIntValue(path, section, "hitboxdelaytime", hiboxdelaytime);
-        WriteFixedFloatValue(path, section, "accvalue", accvalue);
-        WriteBoolValue(path, section, "switch_team", switch_team);
-        WriteBoolValue(path, section, "switch_team2", switch_team2);
-        WriteIntValue(path, section, "Bone", Bone);
-        WriteBoolValue(path, section, "autobone", autobone);
-        WriteIntValue(path, section, "Bone2", Bone2);
-        WriteBoolValue(path, section, "autobone2", autobone2);
-        WriteBoolValue(path, section, "AutoMelee", AutoMelee);
-        WriteFixedFloatValue(path, section, "meleedistance", meleedistance);
-        WriteFixedFloatValue(path, section, "meleehealth", meleehealth);
-        WriteBoolValue(path, section, "AutoRMB", AutoRMB);
-        WriteFixedFloatValue(path, section, "AutoRMBdistance", AutoRMBdistance);
-        WriteFixedFloatValue(path, section, "AutoRMBhealth", AutoRMBhealth);
-        WriteBoolValue(path, section, "secondaim", secondaim);
-        WriteBoolValue(path, section, "triggerbot", triggerbot);
-        WriteBoolValue(path, section, "triggerbot2", triggerbot2);
-        WriteBoolValue(path, section, "Tracking2", Tracking2);
-        WriteBoolValue(path, section, "Flick2", Flick2);
-        WriteBoolValue(path, section, "Prediction2", Prediction2);
-        WriteBoolValue(path, section, "Gravitypredit2", Gravitypredit2);
-        WriteIntValue(path, section, "aim_key2", aim_key2);
-        WriteIntValue(path, section, "togglekey", togglekey);
-        WriteFixedFloatValue(path, section, "predit_level2", predit_level2);
-        WriteFixedFloatValue(path, section, "Tracking_smooth2", Tracking_smooth2);
-        WriteFixedFloatValue(path, section, "Flick_smooth2", Flick_smooth2);
-        WriteFixedFloatValue(path, section, "accvalue2", accvalue2);
-        WriteFixedFloatValue(path, section, "hitbox2", hitbox2);
-        WriteFixedFloatValue(path, section, "Fov2", Fov2);
-
-        if (heroId == OW::eHero::HERO_GENJI) {
-            WriteBoolValue(path, section, "GenjiBlade", GenjiBlade);
-            WriteBoolValue(path, section, "AutoShiftGenji", AutoShiftGenji);
-            WriteFixedFloatValue(path, section, "bladespeed", bladespeed);
-        }
-        if (heroId == OW::eHero::HERO_WIDOWMAKER) {
-            WriteBoolValue(path, section, "widowautounscope", widowautounscope);
-        }
-
-        WriteBoolValue(path, "Global", "draw_hp_pack", draw_hp_pack);
-        WriteBoolValue(path, "Global", "crosscircle", crosscircle);
-        WriteBoolValue(path, "Global", "eyeray", eyeray);
-        WriteBoolValue(path, "Global", "draw_info", draw_info);
-        WriteBoolValue(path, "Global", "drawbattletag", drawbattletag);
-        WriteBoolValue(path, "Global", "drawhealth", drawhealth);
-        WriteBoolValue(path, "Global", "healthbar", healthbar);
-        WriteBoolValue(path, "Global", "healthbar2", healthbar2);
-        WriteFixedFloatValue(path, "Global", "healthbartextsize", healthbartextsize);
-        WriteBoolValue(path, "Global", "dist", dist);
-        WriteFixedFloatValue(path, "Global", "visualMaxDist", visualMaxDist);
-        WriteBoolValue(path, "Global", "name", name);
-        WriteBoolValue(path, "Global", "ult", ult);
-        WriteBoolValue(path, "Global", "draw_skel", draw_skel);
-        WriteBoolValue(path, "Global", "skillinfo", skillinfo);
-        WriteIntValue(path, "Global", "ultimateDisplayMode", ultimateDisplayMode);
-        WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
-        WriteIntValue(path, "Global", "radarCorner", radarCorner);
-        WriteBoolValue(path, "Global", "radar", radar);
-        WriteBoolValue(path, "Global", "radarline", radarline);
-        WriteBoolValue(path, "Global", "drawline", drawline);
-        WriteBoolValue(path, "Global", "draw_fov", draw_fov);
-        WriteIntValue(path, "Global", "targetPriority", targetPriority);
-        WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);
-        WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
-        WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
-        WriteIntValue(path, "Global", "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
-        WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
-        WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
-        WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);
-        WriteColor(path, "Global", "EnemyCol", EnemyCol);
-        WriteColor(path, "Global", "fovcol", fovcol);
-        WriteColor(path, "Global", "fovcol2", fovcol2);
-        WriteColor(path, "Global", "invisenargb", invisnenargb);
-        WriteColor(path, "Global", "enargb", enargb);
-        WriteColor(path, "Global", "targetargb", targetargb);
-        WriteColor(path, "Global", "targetargb2", targetargb2);
-        WriteColor(path, "Global", "allyargb", allyargb);
-
-        SaveKmboxSettingsUnlocked(path);
-
-        SaveHeroPresetsUnlocked(path);
+        SaveHeroConfigForHeroUnlocked(HeroConfigPath(path), heroId);
 
         LogConfig(Diagnostics::LogLevel::Info,
-            "Saved config for hero %s to %s.", heroName.c_str(), path.c_str());
+            "Saved hero config for %s to %s.", heroName.c_str(), HeroConfigPath(path).c_str());
     }
 
     void LoadConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase)
@@ -1982,10 +3067,11 @@ namespace OW { namespace Config {
         IniFile ini;
         if (!LoadIniFile(path, ini)) {
             config_version = kCurrentConfigVersion;
-            heroPresets.clear();
+            LoadHeroConfigOrMigrateUnlocked(HeroConfigPath(path), nullptr);
             LogConfig(Diagnostics::LogLevel::Warn,
                 "%s is missing or unreadable; using all documented defaults.",
                 path.c_str());
+            ApplyLoadedHeroPresetsUnlocked(heroId);
             ValidateUnlocked();
             DumpUnlocked(Diagnostics::LogLevel::Debug);
             return;
@@ -1998,6 +3084,8 @@ namespace OW { namespace Config {
                 "Config version %d is newer than supported version %d; resetting to defaults.",
                 fileVersion, kCurrentConfigVersion);
             WriteIntValue(path, kMetaSection, kVersionKey, kCurrentConfigVersion);
+            LoadHeroConfigOrMigrateUnlocked(HeroConfigPath(path), nullptr);
+            ApplyLoadedHeroPresetsUnlocked(heroId);
             ValidateUnlocked();
             DumpUnlocked(Diagnostics::LogLevel::Debug);
             return;
@@ -2011,15 +3099,12 @@ namespace OW { namespace Config {
         }
         config_version = kCurrentConfigVersion;
 
-        LoadHeroSettingsUnlocked(ini, heroName.c_str(), heroId);
-        LoadAimbotSettingsUnlocked(ini);
-        LoadAimMethodSettingsUnlocked(ini);
-        LoadGlobalSettingsUnlocked(ini);
-        LoadKmboxSettingsUnlocked(ini);
-        LoadHeroPresetsUnlocked(ini);
+        LoadSystemConfigUnlocked(ini);
+        LoadHeroConfigOrMigrateUnlocked(HeroConfigPath(path), &ini);
+        ApplyLoadedHeroPresetsUnlocked(heroId);
         ValidateUnlocked();
         if (needsMigration)
-            SaveHeroPresetsUnlocked(path);
+            SaveSystemConfigUnlocked(path);
         DumpUnlocked(Diagnostics::LogLevel::Debug);
 
         LogConfig(Diagnostics::LogLevel::Info,
@@ -2028,10 +3113,11 @@ namespace OW { namespace Config {
 
     void SaveConfig(const std::string& path)
     {
-        const uint64_t heroId = lastheroid > 0
-            ? static_cast<uint64_t>(lastheroid)
-            : OW::local_entity.HeroID;
-        SaveConfigForHero(path, heroId, OW::local_entity.LinkBase);
+        std::lock_guard<std::mutex> lock(mutex);
+        ValidateUnlocked();
+        SaveSystemConfigUnlocked(path);
+        LogConfig(Diagnostics::LogLevel::Info,
+            "Saved system config to %s.", path.c_str());
     }
 
     void LoadConfig(const std::string& path)

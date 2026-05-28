@@ -118,7 +118,7 @@ namespace Render {
     // ---- DrawCorneredBox ----
     // Only draws the four corners (each corner is lineW / lineH long).
 
-    void DrawCorneredBox(float x, float y, float w, float h, ImU32 color, float thickness) {
+    void DrawCorneredBox(float x, float y, float w, float h, ImU32 color, float thickness, ImU32 outlineColor) {
         ImDrawList* d = DL();
         if (!d) return;
 
@@ -131,17 +131,16 @@ namespace Render {
         float lineW = w / 3.0f;
         float lineH = h / 3.0f;
 
-        // Black outline (3px) for visibility against any background
-        const float alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
-        ImU32 black = ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.0f, 0.0f, alpha));
-        d->AddLine(ImVec2(x, y), ImVec2(x, y + lineH), black, 3.0f);
-        d->AddLine(ImVec2(x, y), ImVec2(x + lineW, y), black, 3.0f);
-        d->AddLine(ImVec2(x + w - lineW, y), ImVec2(x + w, y), black, 3.0f);
-        d->AddLine(ImVec2(x + w, y), ImVec2(x + w, y + lineH), black, 3.0f);
-        d->AddLine(ImVec2(x, y + h - lineH), ImVec2(x, y + h), black, 3.0f);
-        d->AddLine(ImVec2(x, y + h), ImVec2(x + lineW, y + h), black, 3.0f);
-        d->AddLine(ImVec2(x + w - lineW, y + h), ImVec2(x + w, y + h), black, 3.0f);
-        d->AddLine(ImVec2(x + w, y + h - lineH), ImVec2(x + w, y + h), black, 3.0f);
+        if (((outlineColor >> IM_COL32_A_SHIFT) & 0xFF) != 0) {
+            d->AddLine(ImVec2(x, y), ImVec2(x, y + lineH), outlineColor, 3.0f);
+            d->AddLine(ImVec2(x, y), ImVec2(x + lineW, y), outlineColor, 3.0f);
+            d->AddLine(ImVec2(x + w - lineW, y), ImVec2(x + w, y), outlineColor, 3.0f);
+            d->AddLine(ImVec2(x + w, y), ImVec2(x + w, y + lineH), outlineColor, 3.0f);
+            d->AddLine(ImVec2(x, y + h - lineH), ImVec2(x, y + h), outlineColor, 3.0f);
+            d->AddLine(ImVec2(x, y + h), ImVec2(x + lineW, y + h), outlineColor, 3.0f);
+            d->AddLine(ImVec2(x + w - lineW, y + h), ImVec2(x + w, y + h), outlineColor, 3.0f);
+            d->AddLine(ImVec2(x + w, y + h - lineH), ImVec2(x + w, y + h), outlineColor, 3.0f);
+        }
 
         // Colour corners
         d->AddLine(ImVec2(x, y), ImVec2(x, y + lineH), color, thickness);

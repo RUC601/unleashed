@@ -23,6 +23,7 @@
 #include "Renderer/Renderer.hpp"
 #include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
+#include "Utils/InputLabels.hpp"
 #include "Memory/KeyState.hpp"
 
 using namespace OW;
@@ -115,6 +116,12 @@ namespace OW {
     // ---- Scan coordination ----
     inline int abletotread = 0;
     inline int howbigentitysize = 0;
+    inline constexpr DWORD kEntityScanIntervalMs = 250;
+    inline constexpr DWORD kEntityEmptyScanIntervalMs = 50;
+    inline constexpr DWORD kEntityProcessIntervalMs = 16;
+    inline constexpr DWORD kEntitySlowFieldIntervalMs = 500;
+    inline constexpr DWORD kEntityHealthIntervalMs = kEntityProcessIntervalMs;
+    inline constexpr DWORD kEntityScannerIdleSleepMs = 5;
 
     inline Vector2 ResolveScreenSize()
     {
@@ -248,27 +255,49 @@ inline std::mutex g_mutex;
 
 inline void entity_scan_thread() {
     Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::EntityScan);
-    Diagnostics::Info("Entity scan thread started.");
+    Diagnostics::Info("Entity scan thread started. scan_interval_ms=%lu empty_interval_ms=%lu.",
+        static_cast<unsigned long>(OW::kEntityScanIntervalMs),
+        static_cast<unsigned long>(OW::kEntityEmptyScanIntervalMs));
     size_t lastLoggedScanCount = static_cast<size_t>(-1);
     DWORD lastScanLogTick = 0;
+    DWORD lastScanTick = 0;
+    DWORD lastScanCycleTick = 0;
+    double entityScanHz = 0.0;
     while (OW::Config::doingentity == 1) {
-        bool should_scan = false;
+        const DWORD now = GetTickCount();
+        bool pending_scan = false;
+        bool known_entities_empty = true;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
-            should_scan = OW::abletotread == 0;
+            pending_scan = OW::abletotread != 0;
+            known_entities_empty = OW::ow_entities.empty() && OW::ow_entities_scan.empty();
         }
 
-        if (should_scan) {
+        const DWORD scanInterval = known_entities_empty
+            ? OW::kEntityEmptyScanIntervalMs
+            : OW::kEntityScanIntervalMs;
+        const bool scanDue = lastScanTick == 0 || now - lastScanTick >= scanInterval;
+        if (!pending_scan && scanDue) {
+            if (lastScanCycleTick != 0) {
+                const DWORD elapsed = now - lastScanCycleTick;
+                entityScanHz = elapsed > 0 ? (1000.0 / static_cast<double>(elapsed)) : 0.0;
+            }
+            lastScanCycleTick = now;
+            lastScanTick = now;
+
             std::vector<std::pair<uint64_t, uint64_t>> scanned = OW::get_ow_entities();
-            Diagnostics::RecordEntityScanCycle(scanned.size());
+            Diagnostics::RecordEntityScanCycle(scanned.size(), entityScanHz);
             Diagnostics::Trace("Entity scan cycle found %zu raw entities.", scanned.size());
             if (OW::PipelineDebugEnabled()) {
-                const DWORD now = GetTickCount();
+                const DWORD logNow = GetTickCount();
                 if (lastLoggedScanCount != scanned.size() || lastScanLogTick == 0 ||
-                    now - lastScanLogTick >= 1000) {
-                    Diagnostics::Info("[PIPELINE] Stage 3 entity scan raw=%zu", scanned.size());
+                    logNow - lastScanLogTick >= 1000) {
+                    Diagnostics::Info("[PIPELINE] Stage 3 entity scan raw=%zu scan_hz=%.1f interval_ms=%lu",
+                        scanned.size(),
+                        entityScanHz,
+                        static_cast<unsigned long>(scanInterval));
                     lastLoggedScanCount = scanned.size();
-                    lastScanLogTick = now;
+                    lastScanLogTick = logNow;
                 }
             }
             {
@@ -279,7 +308,7 @@ inline void entity_scan_thread() {
                 }
             }
         }
-        Sleep(10);
+        Sleep(OW::kEntityScannerIdleSleepMs);
     }
     Diagnostics::Info("Entity scan thread stopping.");
 }
@@ -290,8 +319,11 @@ inline void entity_scan_thread() {
 
 inline void entity_thread() {
     Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::EntityDecrypt);
-    constexpr DWORD kEntityExchangeIntervalMs = 16;
-    DWORD entitytime = 0;
+    Diagnostics::Info("Entity processing thread started. process_interval_ms=%lu health_interval_ms=%lu slow_field_interval_ms=%lu visibility=per_process.",
+        static_cast<unsigned long>(OW::kEntityProcessIntervalMs),
+        static_cast<unsigned long>(OW::kEntityHealthIntervalMs),
+        static_cast<unsigned long>(OW::kEntitySlowFieldIntervalMs));
+    DWORD lastProcessTick = 0;
     Vector3 lastpos{};
     size_t lastLoggedRawCount = static_cast<size_t>(-1);
     size_t lastLoggedValidatedCount = static_cast<size_t>(-1);
@@ -372,15 +404,20 @@ inline void entity_thread() {
     };
 
     while (OW::Config::doingentity == 1) {
+        const DWORD cycleNow = GetTickCount();
+        if (lastProcessTick != 0 && cycleNow - lastProcessTick < OW::kEntityProcessIntervalMs) {
+            Sleep(1);
+            continue;
+        }
+        lastProcessTick = cycleNow;
+
         SDK->BeginFrame();
 
-        if (entitytime == 0) entitytime = GetTickCount();
-        if (GetTickCount() - entitytime >= kEntityExchangeIntervalMs) {
+        {
             std::lock_guard<std::mutex> lock(g_mutex);
             if (OW::abletotread) {
                 OW::ow_entities = OW::ow_entities_scan;
                 OW::abletotread = 0;
-                entitytime = GetTickCount();
             }
         }
 
@@ -536,7 +573,7 @@ inline void entity_thread() {
                 DynamicEntityCache& cachedDynamic = dynamicCacheIt->second;
                 if (cachedDynamic.meshBase &&
                     (cachedDynamic.updateTick == 0 ||
-                     processLoopTick - cachedDynamic.updateTick >= 250)) {
+                     processLoopTick - cachedDynamic.updateTick >= OW::kEntityProcessIntervalMs)) {
                     OW::velocity_compo_t hpdyVelocity{};
                     if (SDK->read_range(cachedDynamic.meshBase, &hpdyVelocity, sizeof(hpdyVelocity))) {
                         cachedDynamic.pos = hpdyVelocity.location;
@@ -692,7 +729,7 @@ inline void entity_thread() {
                 ComponentBaseCache& componentCache = cacheIt->second;
                 const bool refreshHealth =
                     !componentCache.healthValid ||
-                    processLoopTick - componentCache.healthUpdateTick >= 100;
+                    processLoopTick - componentCache.healthUpdateTick >= OW::kEntityHealthIntervalMs;
                 if (refreshHealth) {
                     OW::health_compo_t health_compo{};
                     if (!SDK->read_range(entity.HealthBase, &health_compo, sizeof(health_compo))) {
@@ -944,7 +981,8 @@ inline void entity_thread() {
             ComponentBaseCache& slowCache = cacheIt->second;
             const DWORD slowNow = GetTickCount();
             const bool refreshSlowFields =
-                !slowCache.slowValid || slowNow - slowCache.slowUpdateTick >= 500;
+                !slowCache.slowValid ||
+                slowNow - slowCache.slowUpdateTick >= OW::kEntitySlowFieldIntervalMs;
             std::string name = refreshSlowFields
                 ? OW::GetHeroEngNames(entity.HeroID, entity.LinkBase)
                 : slowCache.heroName;
@@ -1038,16 +1076,16 @@ inline void entity_thread() {
                 slowCache.skill1act = entity.skill1act;
                 slowCache.skill2act = entity.skill2act;
                 slowCache.ultimate = entity.ultimate;
-
-                // Sombra stealth: treat as invisible when translocated
-                if (entity.HeroID == OW::eHero::HERO_SOMBRA && entity.Team &&
-                    !OW::Config::fov360) {
-                    entity.Vis = (entity.Vis && !OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x7C5));
-                    slowCache.vis = entity.Vis;
-                }
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu skill_done.", i);
                 }
+            }
+
+            // Sombra stealth affects the effective visibility state, so keep it
+            // on the per-process path with DecryptVis instead of the slow cache.
+            if (entity.HeroID == OW::eHero::HERO_SOMBRA && entity.Team && entity.SkillBase) {
+                entity.Vis = (entity.Vis && !OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x7C5));
+                slowCache.vis = entity.Vis;
             }
 
             // ---- Player controller / local entity detection ----
@@ -1242,6 +1280,11 @@ inline void entity_thread() {
             if (changed || now - lastProcessLogTick >= 1000) {
                 Diagnostics::Info("[PIPELINE] Stage 4 entity processing raw=%zu validated=%zu hp_dynamic=%zu.",
                     raw_entities.size(), valid_count, dynamic_count);
+                Diagnostics::Info("[PIPELINE] Stage 4 timing scan_ms=%lu process_ms=%lu health_ms=%lu slow_ms=%lu visibility=per_process.",
+                    static_cast<unsigned long>(OW::kEntityScanIntervalMs),
+                    static_cast<unsigned long>(OW::kEntityProcessIntervalMs),
+                    static_cast<unsigned long>(OW::kEntityHealthIntervalMs),
+                    static_cast<unsigned long>(OW::kEntitySlowFieldIntervalMs));
                 Diagnostics::Info("[PIPELINE] Stage 4 detail null=%zu duplicate=%zu health_base_fail=%zu link_base_fail=%zu hero_missing=%zu hero_fallback_fail=%zu name_unknown=%zu.",
                     processStats.nullPair,
                     processStats.duplicate,
@@ -1831,6 +1874,12 @@ namespace OverlayRenderDetail {
         return EntityColor(entity, index, opacity);
     }
 
+    inline ImU32 BoxOutlineColor(float opacity) {
+        ImVec4 color = OW::Config::EnemyCol;
+        color.w = Clamp01(color.w * opacity);
+        return ToImU32(color);
+    }
+
     inline Render::Color EntityRenderColor(const OW::c_entity& entity, size_t index, float opacity = 1.0f) {
         return ToRenderColor(ApplyVisualState(EntityBaseColor(entity, index), entity, opacity));
     }
@@ -2221,7 +2270,228 @@ namespace OverlayRenderDetail {
         Render::DrawFilledCircle(center, 1.2f, color, 12);
     }
 
+    struct AimTriggerStatusRow {
+        std::string text;
+        ImU32 color = IM_COL32_WHITE;
+        float fontSize = 11.5f;
+    };
+
+    inline const char* YesNo(bool value) {
+        return value ? "Y" : "N";
+    }
+
+    inline uint64_t CurrentLocalHeroId(const OW::c_entity& local) {
+        if (local.HeroID != 0)
+            return local.HeroID;
+        if (OW::Config::lastheroid > 0)
+            return static_cast<uint64_t>(OW::Config::lastheroid);
+        return 0;
+    }
+
+    inline std::string CurrentLocalHeroName(uint64_t heroId, const OW::c_entity& local) {
+        if (heroId == 0)
+            return "Unknown";
+
+        std::string heroName = OW::GetHeroEngNames(heroId, local.LinkBase);
+        if (heroName.empty() || heroName == "Unknown") {
+            char fallback[64]{};
+            std::snprintf(fallback, sizeof(fallback), "Hero 0x%llX",
+                          static_cast<unsigned long long>(heroId));
+            return fallback;
+        }
+        return heroName;
+    }
+
+    inline std::vector<AimTriggerStatusRow> BuildAimTriggerStatusRows() {
+        std::vector<AimTriggerStatusRow> rows;
+        const OW::c_entity local = OW::TargetingDetail::SnapshotLocalEntity();
+        const uint64_t heroId = CurrentLocalHeroId(local);
+        if (heroId == 0 && !OW::Config::secondaim && !OW::Config::triggerbot2)
+            return rows;
+
+        rows.push_back({
+            "Hero: " + CurrentLocalHeroName(heroId, local),
+            ImU32WithAlpha(255, 255, 255, 0.96f),
+            13.5f
+        });
+
+        std::vector<std::pair<int, OW::Config::HeroSlotPreset>> aimSlots;
+        std::vector<std::pair<int, OW::Config::HeroSlotPreset>> triggerSlots;
+        aimSlots.reserve(OW::Config::kMaxHeroPresetSlots);
+        triggerSlots.reserve(OW::Config::kMaxHeroPresetSlots);
+
+        for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
+            OW::Config::HeroSlotPreset slot{};
+            if (OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot))
+                aimSlots.emplace_back(slotIndex, slot);
+            if (OW::Config::TryGetHeroTriggerSlot(heroId, slotIndex, slot))
+                triggerSlots.emplace_back(slotIndex, slot);
+        }
+
+        auto firstEnabledSlot = [](const std::vector<std::pair<int, OW::Config::HeroSlotPreset>>& slots) {
+            for (const auto& item : slots) {
+                if (item.second.enabled)
+                    return item.first;
+            }
+            return -1;
+        };
+
+        const int activeAimSlot = firstEnabledSlot(aimSlots);
+        const int runtimeTriggerSlot = firstEnabledSlot(triggerSlots);
+
+        if (!aimSlots.empty()) {
+            rows.push_back({ "Aim active slots", ImU32WithAlpha(126, 220, 255, 0.94f), 11.5f });
+            for (const auto& item : aimSlots) {
+                const int slotIndex = item.first;
+                const OW::Config::HeroSlotPreset& slot = item.second;
+                const bool active = slot.enabled && slotIndex == activeAimSlot;
+                char line[192]{};
+                std::snprintf(line, sizeof(line),
+                              "#%d %s | %s | Hold | enabled:%s%s",
+                              slotIndex + 1,
+                              OW::Labels::AimModeName(slot.preset.aimMode),
+                              OW::Labels::AimActivationKeyName(OW::Config::aim_key),
+                              YesNo(slot.enabled),
+                              active ? " | active" : "");
+                rows.push_back({
+                    line,
+                    active
+                        ? ImU32WithAlpha(162, 255, 188, 0.96f)
+                        : ImU32WithAlpha(226, 232, 240, slot.enabled ? 0.90f : 0.58f),
+                    11.2f
+                });
+            }
+        }
+
+        if (!triggerSlots.empty()) {
+            rows.push_back({ "Trigger active slots", ImU32WithAlpha(255, 204, 118, 0.95f), 11.5f });
+            for (const auto& item : triggerSlots) {
+                const int slotIndex = item.first;
+                const OW::Config::HeroSlotPreset& slot = item.second;
+                const OW::Config::TriggerPreset& trigger = slot.preset.trigger;
+                const bool active = slot.enabled && trigger.enabled && slotIndex == runtimeTriggerSlot;
+                char line[240]{};
+                std::snprintf(line, sizeof(line),
+                              "#%d %s | %s | %s | charge:%s | invis:%s | slot:%s trig:%s%s",
+                              slotIndex + 1,
+                              OW::Labels::AttackActionCompactName(trigger.action),
+                              OW::Labels::TriggerbotModeName(trigger.mode),
+                              OW::Labels::AimActivationKeyName(trigger.key),
+                              YesNo(trigger.chargeAware),
+                              YesNo(trigger.ignoreInvisible),
+                              YesNo(slot.enabled),
+                              YesNo(trigger.enabled),
+                              active ? " | active" : "");
+                rows.push_back({
+                    line,
+                    active
+                        ? ImU32WithAlpha(255, 232, 161, 0.97f)
+                        : ImU32WithAlpha(226, 232, 240, (slot.enabled && trigger.enabled) ? 0.90f : 0.58f),
+                    10.8f
+                });
+            }
+        }
+
+        if (OW::Config::secondaim || OW::Config::triggerbot2) {
+            rows.push_back({ "Secondary", ImU32WithAlpha(190, 168, 255, 0.95f), 11.5f });
+            if (OW::Config::secondaim) {
+                const int secondaryAimMode = OW::Config::Flick2 ? 1 : 0;
+                char line[192]{};
+                std::snprintf(line, sizeof(line),
+                              "Secondary Aim | %s | %s | Hold | enabled:Y",
+                              OW::Labels::AimModeName(secondaryAimMode),
+                              OW::Labels::AimActivationKeyName(OW::Config::aim_key2));
+                rows.push_back({ line, ImU32WithAlpha(204, 194, 255, 0.96f), 11.0f });
+            }
+            if (OW::Config::triggerbot2) {
+                char line[224]{};
+                std::snprintf(line, sizeof(line),
+                              "Triggerbot2 | Primary | %s | %s | charge:%s | invis:%s | enabled:Y",
+                              OW::Labels::TriggerbotModeName(OW::Config::triggerbotMode2),
+                              OW::Labels::AimActivationKeyName(OW::Config::triggerbotKey2),
+                              YesNo(OW::Config::triggerbotChargeAware2),
+                              YesNo(OW::Config::triggerbotIgnoreInvisible2));
+                rows.push_back({ line, ImU32WithAlpha(204, 194, 255, 0.96f), 10.8f });
+            }
+        }
+
+        if (rows.size() == 1)
+            rows.push_back({ "No hero Aim/Trigger slots", ImU32WithAlpha(176, 184, 196, 0.78f), 11.0f });
+
+        return rows;
+    }
+
+    inline float ScaledTextWidth(const std::string& text, float fontSize) {
+        ImVec2 size = ImGui::CalcTextSize(text.c_str());
+        const float baseFontSize = ImGui::GetFontSize();
+        if (baseFontSize > 0.0f)
+            size.x *= fontSize / baseFontSize;
+        return size.x;
+    }
+
+    inline float AimTriggerStatusPanelWidth(const std::vector<AimTriggerStatusRow>& rows) {
+        float width = 0.0f;
+        for (const AimTriggerStatusRow& row : rows)
+            width = (std::max)(width, ScaledTextWidth(row.text, row.fontSize));
+        return std::clamp(width + 18.0f, 260.0f, 360.0f);
+    }
+
+    inline float AimTriggerStatusPanelHeight(const std::vector<AimTriggerStatusRow>& rows) {
+        if (rows.empty())
+            return 0.0f;
+
+        constexpr float paddingY = 7.0f;
+        constexpr float lineGap = 2.0f;
+        float height = paddingY * 2.0f;
+        for (const AimTriggerStatusRow& row : rows)
+            height += row.fontSize + lineGap;
+        return height - lineGap;
+    }
+
+    inline float AimTriggerStatusPanelHeight() {
+        return AimTriggerStatusPanelHeight(BuildAimTriggerStatusRows());
+    }
+
+    inline float AimTriggerStatusPanelReservedBottomY() {
+        const float height = AimTriggerStatusPanelHeight();
+        return height > 0.0f ? 10.0f + height + 8.0f : 10.0f;
+    }
+
+    inline float DrawAimTriggerStatusPanel() {
+        const std::vector<AimTriggerStatusRow> rows = BuildAimTriggerStatusRows();
+        if (rows.empty())
+            return 0.0f;
+
+        constexpr float panelX = 10.0f;
+        constexpr float panelY = 10.0f;
+        constexpr float paddingX = 9.0f;
+        constexpr float paddingY = 7.0f;
+        constexpr float lineGap = 2.0f;
+        const float panelWidth = AimTriggerStatusPanelWidth(rows);
+        const float panelHeight = AimTriggerStatusPanelHeight(rows);
+
+        Render::DrawFilledRect(Vector2(panelX, panelY), panelWidth, panelHeight,
+                               ImColorWithAlpha(6, 9, 13, 0.74f));
+        Render::DrawFilledRect(Vector2(panelX, panelY), 3.0f, panelHeight,
+                               ImColorWithAlpha(80, 190, 255, 0.88f));
+        Render::DrawRect(Vector2(panelX, panelY), panelWidth, panelHeight,
+                         Render::Color(255, 255, 255, ToByte(0.14f)), 1.0f);
+
+        float textY = panelY + paddingY;
+        for (const AimTriggerStatusRow& row : rows) {
+            Render::DrawText(ImVec2(panelX + paddingX, textY), row.color,
+                             row.text.c_str(), row.fontSize);
+            textY += row.fontSize + lineGap;
+        }
+
+        return panelY + panelHeight;
+    }
+
 } // namespace OverlayRenderDetail
+
+inline float DrawAimTriggerStatusPanel() {
+    return OverlayRenderDetail::DrawAimTriggerStatusPanel();
+}
 
 inline void PlayerInfo() {
     auto entity_snapshot = OW::TargetingDetail::SnapshotEntities();
@@ -2323,6 +2593,7 @@ inline void PlayerInfo() {
 
         ImU32 color = OverlayRenderDetail::EntityColor(entity, index, distanceOpacity);
         ImU32 boxColor = OverlayRenderDetail::EntityBoxColor(entity, index, distanceOpacity);
+        ImU32 boxOutlineColor = OverlayRenderDetail::BoxOutlineColor(distanceOpacity);
         Render::Color lineColor = OverlayRenderDetail::EntityRenderColor(entity, index, distanceOpacity);
         const float visualOpacity = OverlayRenderDetail::VisibilityAlpha(entity, distanceOpacity);
         const float outlineThickness = entity.Vis ? 1.8f : 1.2f;
@@ -2350,7 +2621,7 @@ inline void PlayerInfo() {
         }
 
         if (OW::Config::draw_info || OW::Config::draw_edge || OW::Config::drawbox3d) {
-            Render::DrawCorneredBox(left, top, width, bottom - top, boxColor, outlineThickness);
+            Render::DrawCorneredBox(left, top, width, bottom - top, boxColor, outlineThickness, boxOutlineColor);
             drewAny = true;
         }
 
@@ -2746,6 +3017,8 @@ inline void skillinfo() {
         float y = (OW::WY - totalHeight) * 0.5f;
         if (y < 10.0f)
             y = 10.0f;
+        if (!isRight)
+            y = (std::max)(y, OverlayRenderDetail::AimTriggerStatusPanelReservedBottomY());
 
         auto renderRoster = [&](float startY, bool rowUltimate, bool rowCooldowns) {
             float rowY = startY;
@@ -2810,15 +3083,39 @@ namespace AimbotDetail {
                 return;
 
             OW::Config::HeroPreset preset{};
-            if (!OW::Config::TryGetHeroPreset(local.HeroID, preset))
+            if (!OW::Config::TryGetHeroAimPreset(local.HeroID, preset))
                 return;
 
             original = OW::Config::MakeHeroPresetFromCurrent();
-            OW::Config::ApplyHeroPresetToGlobals(preset);
+            OW::Config::ApplyHeroAimPresetToGlobals(preset);
             active = true;
         }
 
         ~ScopedHeroPresetOverride() {
+            if (active)
+                OW::Config::ApplyHeroPresetToGlobals(original);
+        }
+    };
+
+    struct ScopedHeroTriggerPresetOverride {
+        bool active = false;
+        OW::Config::HeroPreset original{};
+
+        ScopedHeroTriggerPresetOverride() {
+            const OW::c_entity local = LocalEntity();
+            if (local.HeroID == 0)
+                return;
+
+            OW::Config::HeroPreset preset{};
+            if (!OW::Config::TryGetHeroTriggerPreset(local.HeroID, preset))
+                return;
+
+            original = OW::Config::MakeHeroPresetFromCurrent();
+            OW::Config::ApplyHeroTriggerPresetToGlobals(preset);
+            active = true;
+        }
+
+        ~ScopedHeroTriggerPresetOverride() {
             if (active)
                 OW::Config::ApplyHeroPresetToGlobals(original);
         }
@@ -2948,6 +3245,31 @@ namespace AimbotDetail {
         return pressed;
     }
 
+    inline void LogKmBoxMonitorFallback(int keySetting, int vk) {
+        static DWORD lastFallbackLogTick = 0;
+        const DWORD now = GetTickCount();
+        if (lastFallbackLogTick != 0 && now - lastFallbackLogTick < 1000)
+            return;
+
+        Diagnostics::Aim("hotkey fallback reason=kmbox_monitor_unavailable keySetting=%d vk=0x%X configuredSource=kmbox kmboxEnabled=%d deviceType=%d monitorRunning=%d dmaReady=%d dmaAddr=0x%llX",
+            keySetting,
+            vk,
+            OW::Config::kmboxEnabled ? 1 : 0,
+            OW::Config::kmboxDeviceType,
+            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0,
+            (KeyState::initialized.load() && KeyState::gafAsyncKeyStateAddr.load() != 0) ? 1 : 0,
+            static_cast<unsigned long long>(KeyState::gafAsyncKeyStateAddr.load()));
+        lastFallbackLogTick = now;
+    }
+
+    inline bool ReadDmaThenLocalVk(int vk, int keySetting) {
+        const bool dmaPressed = ReadDmaKeyStateVk(vk, keySetting, false);
+        if (dmaPressed)
+            return true;
+
+        return ReadLocalAsyncKeyStateVk(vk, keySetting);
+    }
+
     inline bool IsInputVkDown(int vk, int keySetting = -1) {
         if (vk <= 0) {
             LogAimKeyState(keySetting, vk, 0, false);
@@ -2957,7 +3279,8 @@ namespace AimbotDetail {
         if (OW::Config::inputSource == 1) {
             if (!IsKmBoxMonitorAvailable()) {
                 LogAimKeyState(keySetting, vk, 1, false);
-                return false;
+                LogKmBoxMonitorFallback(keySetting, vk);
+                return ReadDmaThenLocalVk(vk, keySetting);
             }
             return ReadKmBoxMonitorVk(vk, keySetting);
         }
@@ -2973,11 +3296,7 @@ namespace AimbotDetail {
         if (IsKmBoxMonitorAvailable())
             return ReadKmBoxMonitorVk(vk, keySetting);
 
-        const bool dmaPressed = ReadDmaKeyStateVk(vk, keySetting, false);
-        if (dmaPressed)
-            return true;
-
-        return ReadLocalAsyncKeyStateVk(vk, keySetting);
+        return ReadDmaThenLocalVk(vk, keySetting);
     }
 
     inline bool IsConfiguredAimKeyPressed(int keySetting) {
@@ -3023,8 +3342,11 @@ namespace AimbotDetail {
         (void)origin_sens;
     }
 
-    inline void MoveAimDelta(const Vector3& current_angle, const Vector3& target_angle, int move_time_ms = 5) {
+    inline void MoveAimDelta(const Vector3& current_angle, const Vector3& target_angle, int move_time_ms = -1) {
         const Vector3 delta = target_angle - current_angle;
+        const int effective_move_time_ms = move_time_ms < 0
+            ? OW::Config::kmboxInputDelayMs
+            : move_time_ms;
         Diagnostics::Aim("move.delta current=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) delta=(%.9f,%.9f,%.9f) delta_len=%.9f moveTimeMs=%d",
             current_angle.X,
             current_angle.Y,
@@ -3036,8 +3358,8 @@ namespace AimbotDetail {
             delta.Y,
             delta.Z,
             delta.Size(),
-            move_time_ms);
-        OW::SendMouseMove(delta, move_time_ms);
+            effective_move_time_ms);
+        OW::SendMouseMove(delta, effective_move_time_ms);
     }
 
     inline void ClickMouseButton(int button, DWORD sleep_ms = 10) {
@@ -3306,7 +3628,6 @@ namespace AimbotDetail {
             if (OW::Config::minFov2 > 500.f) OW::Config::minFov2 = 500.f;
             if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
         }
-        if (OW::Config::fov360) OW::Config::fov360 = false;
     }
 
     inline bool TargetDelayReady(RuntimeState* state, bool stampHitDelay, bool resetWhenDisabled) {
@@ -3447,6 +3768,7 @@ namespace AimbotDetail {
         const float shotInterval = secondary ? OW::Config::triggerbotShotInterval2 : OW::Config::triggerbotShotInterval;
         const bool chargeAware = secondary ? OW::Config::triggerbotChargeAware2 : OW::Config::triggerbotChargeAware;
         const float minCharge = secondary ? OW::Config::triggerbotMinCharge2 : OW::Config::triggerbotMinCharge;
+        const bool ignoreInvisible = secondary ? OW::Config::triggerbotIgnoreInvisible2 : OW::Config::triggerbotIgnoreInvisible;
         bool& toggleActive = secondary ? OW::Config::triggerbotToggleActive2 : OW::Config::triggerbotToggleActive;
         DWORD& lastFireTick = secondary ? OW::Config::triggerbotLastFireTick2 : OW::Config::triggerbotLastFireTick;
 
@@ -3486,7 +3808,7 @@ namespace AimbotDetail {
 
         // 3. Find target
         const bool predit = secondary ? OW::Config::Prediction2 : OW::Config::Prediction;
-        const Vector3 vec = secondary ? OW::GetVector3aim2(predit) : OW::GetVector3(predit);
+        const Vector3 vec = secondary ? OW::GetVector3aim2(predit, ignoreInvisible) : OW::GetVector3(predit, ignoreInvisible);
         if (IsZeroVector(vec) || !IsTriggerTargetActionable()) return;
 
         // 4. Check crosshair proximity
@@ -3997,8 +4319,11 @@ namespace AimbotDetail {
 
         MaintainSensitivity(origin_sens);
 
-        if (OW::Config::triggerbot) RunTriggerbot(false, origin_sens);
-        if (OW::Config::triggerbot2) RunTriggerbot(true, origin_sens);
+        {
+            ScopedHeroTriggerPresetOverride triggerPresetOverride;
+            if (OW::Config::triggerbot) RunTriggerbot(false, origin_sens);
+            if (OW::Config::triggerbot2) RunTriggerbot(true, origin_sens);
+        }
 
         if (OW::Config::Tracking) RunTracking(origin_sens);
         else if (OW::Config::Flick) RunFlick(state, origin_sens);
@@ -4155,6 +4480,7 @@ inline void configsavenloadthread() {
 
                 saveHero(sec, "secondaim",    OW::Config::secondaim);
                 saveHero(sec, "triggerbot2",  OW::Config::triggerbot2);
+                saveHero(sec, "triggerbotIgnoreInvisible2", OW::Config::triggerbotIgnoreInvisible2);
                 saveHero(sec, "Tracking2",    OW::Config::Tracking2);
                 saveHero(sec, "Flick2",       OW::Config::Flick2);
                 saveHero(sec, "Prediction2",  OW::Config::Prediction2);
@@ -4223,11 +4549,9 @@ inline void configsavenloadthread() {
                 };
                 saveColor("Global", "EnemyCol",    OW::Config::EnemyCol);
                 saveColor("Global", "fovcol",      OW::Config::fovcol);
-                saveColor("Global", "fovcol2",     OW::Config::fovcol2);
                 saveColor("Global", "invisenargb", OW::Config::invisnenargb);
                 saveColor("Global", "enargb",      OW::Config::enargb);
                 saveColor("Global", "targetargb",  OW::Config::targetargb);
-                saveColor("Global", "targetargb2", OW::Config::targetargb2);
                 saveColor("Global", "allyargb",    OW::Config::allyargb);
 
                 std::string saveMsg = "Saved: " + heroName;
@@ -4286,6 +4610,7 @@ inline void configsavenloadthread() {
 
             OW::Config::secondaim       = loadHero(sec, "secondaim", 0);
             OW::Config::triggerbot2     = loadHero(sec, "triggerbot2", 0);
+            OW::Config::triggerbotIgnoreInvisible2 = loadHero(sec, "triggerbotIgnoreInvisible2", 1);
             OW::Config::Tracking2       = loadHero(sec, "Tracking2", 0);
             OW::Config::Flick2          = loadHero(sec, "Flick2", 0);
             OW::Config::Prediction2     = loadHero(sec, "Prediction2", 0);
@@ -4347,11 +4672,9 @@ inline void configsavenloadthread() {
 
             loadColor("Global", "EnemyCol",    OW::Config::EnemyCol,    1.f, 1.f, 1.f, 1.f);
             loadColor("Global", "fovcol",      OW::Config::fovcol,      1.f, 0.9f, 0.f, 1.f);
-            loadColor("Global", "fovcol2",     OW::Config::fovcol2,     0.855f, 0.439f, 0.839f, 0.5f);
             loadColor("Global", "invisenargb", OW::Config::invisnenargb, 0.4f, 0.37f, 0.91f, 1.f);
             loadColor("Global", "enargb",      OW::Config::enargb,      1.f, 0.3f, 0.f, 1.f);
             loadColor("Global", "targetargb",  OW::Config::targetargb,  1.f, 1.f, 0.f, 0.8f);
-            loadColor("Global", "targetargb2", OW::Config::targetargb2, 1.f, 1.f, 0.4f, 0.8f);
             loadColor("Global", "allyargb",    OW::Config::allyargb,    0.4f, 1.f, 1.f, 0.4f);
 
             // Restore aim mode

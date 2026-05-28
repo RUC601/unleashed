@@ -20,6 +20,7 @@
 #include "Kmbox/KmboxB.h"
 #include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
+#include "Utils/InputLabels.hpp"
 
 extern std::mutex g_mutex;
 
@@ -73,13 +74,34 @@ namespace OW {
         }
     }
 
+    inline int ClampKmboxAutomoveRuntimeMs(int moveTimeMs) {
+        return std::clamp(moveTimeMs, 0, 20);
+    }
+
+    inline int EnqueueKmboxPixelMove(int pixelX, int pixelY, int automoveRuntimeMs) {
+        if (Config::kmboxDeviceType == 0) {
+            return automoveRuntimeMs > 0
+                ? kmbox::KmBoxMgr.Mouse.Move_Auto(pixelX, pixelY, automoveRuntimeMs)
+                : kmbox::KmBoxMgr.Mouse.Move(pixelX, pixelY);
+        }
+
+        if (automoveRuntimeMs > 0)
+            kmbox::kmBoxBMgr.km_move_auto(pixelX, pixelY, automoveRuntimeMs);
+        else
+            kmbox::kmBoxBMgr.km_move(pixelX, pixelY);
+
+        return success;
+    }
+
     inline void SendMouseMove(const Vector3& delta, int moveTimeMs = -1) {
         if (moveTimeMs < 0) moveTimeMs = Config::kmboxInputDelayMs;
-        Diagnostics::Aim("mouse.move request delta_rad=(%.9f,%.9f,%.9f) moveTimeMs=%d enabled=%d deviceType=%d",
+        const int automoveRuntimeMs = ClampKmboxAutomoveRuntimeMs(moveTimeMs);
+        Diagnostics::Aim("mouse.move request delta_rad=(%.9f,%.9f,%.9f) moveTimeMs=%d automoveRuntimeMs=%d enabled=%d deviceType=%d",
             delta.X,
             delta.Y,
             delta.Z,
             moveTimeMs,
+            automoveRuntimeMs,
             Config::kmboxEnabled ? 1 : 0,
             Config::kmboxDeviceType);
         if (!Config::kmboxEnabled) {
@@ -190,19 +212,24 @@ namespace OW {
                 : 1;
 
             if (steps <= 1) {
-                // Single command (original behavior)
-                if (Config::kmboxDeviceType == 0) {
-                    const int status = kmbox::KmBoxMgr.Mouse.Move(pixelX, pixelY);
-                    Diagnostics::Aim("mouse.enqueue network pixel=(%d,%d) status=%d",
-                        pixelX, pixelY, status);
-                } else {
-                    kmbox::kmBoxBMgr.km_move(pixelX, pixelY);
-                    Diagnostics::Aim("mouse.enqueue serial pixel=(%d,%d)", pixelX, pixelY);
-                }
+                const int status = EnqueueKmboxPixelMove(pixelX, pixelY, automoveRuntimeMs);
+                Diagnostics::Aim("mouse.enqueue transport=%s command=%s pixel=(%d,%d) runtimeMs=%d status=%d",
+                    Config::kmboxDeviceType == 0 ? "network" : "serial",
+                    automoveRuntimeMs > 0 ? "automove" : "move",
+                    pixelX,
+                    pixelY,
+                    automoveRuntimeMs,
+                    status);
             } else {
                 // Split into micro-movements
-                Diagnostics::Aim("mouse.move.split total_pixels=(%d,%d) steps=%d max_pixels_per_step=%d delay_us=%d",
-                    pixelX, pixelY, steps, maxPixels, delayUs);
+                Diagnostics::Aim("mouse.move.split total_pixels=(%d,%d) steps=%d max_pixels_per_step=%d delay_us=%d runtimeMs=%d command=%s",
+                    pixelX,
+                    pixelY,
+                    steps,
+                    maxPixels,
+                    delayUs,
+                    automoveRuntimeMs,
+                    automoveRuntimeMs > 0 ? "automove" : "move");
                 int remainingX = pixelX;
                 int remainingY = pixelY;
                 for (int i = 0; i < steps; i++) {
@@ -211,15 +238,16 @@ namespace OW {
                     remainingX -= curX;
                     remainingY -= curY;
 
-                    if (Config::kmboxDeviceType == 0) {
-                        const int status = kmbox::KmBoxMgr.Mouse.Move(curX, curY);
-                        Diagnostics::Aim("mouse.enqueue.split network step=%d/%d cur=(%d,%d) status=%d",
-                            i + 1, steps, curX, curY, status);
-                    } else {
-                        kmbox::kmBoxBMgr.km_move(curX, curY);
-                        Diagnostics::Aim("mouse.enqueue.split serial step=%d/%d cur=(%d,%d)",
-                            i + 1, steps, curX, curY);
-                    }
+                    const int status = EnqueueKmboxPixelMove(curX, curY, automoveRuntimeMs);
+                    Diagnostics::Aim("mouse.enqueue.split transport=%s command=%s step=%d/%d cur=(%d,%d) runtimeMs=%d status=%d",
+                        Config::kmboxDeviceType == 0 ? "network" : "serial",
+                        automoveRuntimeMs > 0 ? "automove" : "move",
+                        i + 1,
+                        steps,
+                        curX,
+                        curY,
+                        automoveRuntimeMs,
+                        status);
 
                     if (i < steps - 1 && delayUs > 0) {
                         std::this_thread::sleep_for(std::chrono::microseconds(delayUs));
@@ -404,24 +432,7 @@ namespace OW {
     }
 
     inline int get_bind_id(int setting) {
-        int vk = 0;
-        switch (setting) {
-        case 0: vk = VK_RBUTTON; break;
-        case 1: vk = VK_LBUTTON; break;
-        case 2: vk = VK_XBUTTON1; break;
-        case 3: vk = VK_XBUTTON2; break;
-        case 4: vk = VK_LSHIFT; break;
-        case 5: vk = VK_LMENU; break;
-        case 6: vk = 0x56; break;          // 'V'
-        case 7: vk = VK_LCONTROL; break;
-        case 8: vk = VK_TAB; break;
-        case 9: vk = 0x45; break;          // 'E'
-        case 10: vk = 0x51; break;         // 'Q'
-        case 11: vk = 0x46; break;         // 'F'
-        case 12: vk = VK_CAPITAL; break;
-        default: break;
-        }
-        return vk;
+        return Labels::AimActivationKeyVk(setting);
     }
 
     inline unsigned int convertToHex(const ImVec4& color) {
@@ -784,8 +795,7 @@ namespace OW {
             return position;
         }
 
-        inline float CandidateScore(const Vector3& position, const Vector2& crosshair, bool useFov360) {
-            if (useFov360) return CameraPosition().DistTo(position);
+        inline float CandidateScore(const Vector3& position, const Vector2& crosshair) {
             return crosshair.Distance(viewMatrix.WorldToScreen(position));
         }
 
@@ -795,8 +805,7 @@ namespace OW {
                                                         bool secondary,
                                                         int teamMode,
                                                         int boneSetting,
-                                                        float fov,
-                                                        bool useFov360) {
+                                                        float fov) {
             SelectionResult result{};
             const Vector2 crosshair = CrosshairCenter();
 
@@ -808,9 +817,9 @@ namespace OW {
                 if (IsZeroVector(rootPosition)) continue;
 
                 Vector3 aimPosition = ApplyPrediction(entity, rootPosition, predit, secondary);
-                const float score = CandidateScore(aimPosition, crosshair, useFov360);
+                const float score = CandidateScore(aimPosition, crosshair);
                 if (score >= result.score) continue;
-                if (!useFov360 && score > fov) continue;
+                if (score > fov) continue;
 
                 result.index = static_cast<int>(i);
                 result.target = aimPosition;
@@ -915,7 +924,7 @@ namespace OW {
     // Main target selection (GetVector3)
     // =========================================================================
 
-    inline Vector3 GetVector3(bool predit = false) {
+    inline Vector3 GetVector3(bool predit = false, bool ignoreInvisible = Config::aimbotIgnoreInvisible) {
         int TarGetIndex = -1;
         Vector3 target{};
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
@@ -927,14 +936,13 @@ namespace OW {
         size_t selectableCandidates = 0;
         float selectedCrossDist = 0.0f;
         bool targetFromBob = false;
-        Diagnostics::Aim("target.primary start prediction=%d entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fov=%.6f fov360=%d bone=%d autobone=%d teamMode=%d crosshair=(%.3f,%.3f)",
+        Diagnostics::Aim("target.primary start prediction=%d entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fov=%.6f bone=%d autobone=%d teamMode=%d crosshair=(%.3f,%.3f)",
             predit ? 1 : 0,
             entities.size(),
             hp_dy_entities.size(),
             static_cast<unsigned long long>(local_entity.address),
             static_cast<unsigned long long>(local_entity.HeroID),
             Config::Fov,
-            Config::fov360 ? 1 : 0,
             Config::Bone,
             Config::autobone ? 1 : 0,
             Config::aimbotTeam,
@@ -952,6 +960,8 @@ namespace OW {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
                 if (entities[i].Alive && teamPass) {
+                    if (ignoreInvisible && !entities[i].Vis)
+                        continue;
                     ++selectableCandidates;
                     if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                     else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
@@ -965,28 +975,18 @@ namespace OW {
                     }
                     Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
-                    if (!Config::fov360) {
-                        if (CrossDist <= Config::Fov) {
-                            float score;
-                            if (Config::aimbotPriority == 0) {
-                                score = CrossDist;
-                            } else if (Config::aimbotPriority == 1) {
-                                score = entities[i].PlayerHealth;
-                            } else {
-                                score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            }
-                            if (score < origin) {
-                                target = predit ? PreditPos : RootPos;
-                                origin = score;
-                                selectedCrossDist = CrossDist;
-                                TarGetIndex = i;
-                            }
+                    if (CrossDist <= Config::Fov) {
+                        float score;
+                        if (Config::aimbotPriority == 0) {
+                            score = CrossDist;
+                        } else if (Config::aimbotPriority == 1) {
+                            score = entities[i].PlayerHealth;
+                        } else {
+                            score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                         }
-                    } else {
-                        float worldDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                        if (worldDist < origin) {
+                        if (score < origin) {
                             target = predit ? PreditPos : RootPos;
-                            origin = worldDist;
+                            origin = score;
                             selectedCrossDist = CrossDist;
                             TarGetIndex = i;
                         }
@@ -1058,9 +1058,6 @@ namespace OW {
                         origin = CrossDist;
                         selectedCrossDist = CrossDist;
                         targetFromBob = true;
-                    } else if (Config::fov360) {
-                        target = Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z);
-                        targetFromBob = true;
                     }
                     break;
                 }
@@ -1126,27 +1123,18 @@ namespace OW {
                     }
                     Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
-                    if (!Config::fov360) {
-                        if (CrossDist <= Config::Fov) {
-                            float score;
-                            if (Config::aimbotPriority == 0) {
-                                score = CrossDist;
-                            } else if (Config::aimbotPriority == 1) {
-                                score = entities[i].PlayerHealth;
-                            } else {
-                                score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            }
-                            if (score < origin) {
-                                target = predit ? PreditPos : RootPos;
-                                origin = score;
-                                TarGetIndex = i;
-                            }
+                    if (CrossDist <= Config::Fov) {
+                        float score;
+                        if (Config::aimbotPriority == 0) {
+                            score = CrossDist;
+                        } else if (Config::aimbotPriority == 1) {
+                            score = entities[i].PlayerHealth;
+                        } else {
+                            score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                         }
-                    } else {
-                        float worldDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                        if (worldDist < origin) {
+                        if (score < origin) {
                             target = predit ? PreditPos : RootPos;
-                            origin = worldDist;
+                            origin = score;
                             TarGetIndex = i;
                         }
                     }
@@ -1269,7 +1257,7 @@ namespace OW {
     // GetVector3 for secondary aim
     // =========================================================================
 
-    inline Vector3 GetVector3aim2(bool predit = false) {
+    inline Vector3 GetVector3aim2(bool predit = false, bool ignoreInvisible = Config::aimbotIgnoreInvisible) {
         int TarGetIndex = -1;
         Vector3 target{};
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
@@ -1283,6 +1271,8 @@ namespace OW {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
                 if (entities[i].Alive && teamPass) {
+                    if (ignoreInvisible && !entities[i].Vis)
+                        continue;
                     if (entities[i].Team) {
                         if (Config::Bone2 == 1)      { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                         else if (Config::Bone2 == 2) { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
@@ -1300,29 +1290,18 @@ namespace OW {
                     }
                     Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
-                    if (Config::fov360)
-                        CrossDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                    if (!Config::fov360) {
-                        if (CrossDist <= Config::Fov) {
-                            float score;
-                            if (Config::aimbotPriority == 0) {
-                                score = CrossDist;
-                            } else if (Config::aimbotPriority == 1) {
-                                score = entities[i].PlayerHealth;
-                            } else {
-                                score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                            }
-                            if (score < origin) {
-                                target = predit ? PreditPos : RootPos;
-                                origin = score;
-                                TarGetIndex = i;
-                            }
+                    if (CrossDist <= Config::Fov) {
+                        float score;
+                        if (Config::aimbotPriority == 0) {
+                            score = CrossDist;
+                        } else if (Config::aimbotPriority == 1) {
+                            score = entities[i].PlayerHealth;
+                        } else {
+                            score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                         }
-                    } else {
-                        float worldDist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
-                        if (worldDist < origin) {
+                        if (score < origin) {
                             target = predit ? PreditPos : RootPos;
-                            origin = worldDist;
+                            origin = score;
                             TarGetIndex = i;
                         }
                     }
@@ -1581,7 +1560,7 @@ namespace OW {
         deltaTime = AimSmoothingDetail::ClampDeltaTime(deltaTime);
 
         const Vector3 error = target - current;
-        const float deadzone = std::clamp(Config::aimPidDeadzone, 0.0f, 10.0f);
+        const float deadzone = std::clamp(Config::aimPidDeadzone * (M_PI_F / 180.0f), 0.0f, M_PI_F / 2.0f);
         const float errorLength = error.Size();
 
         if (errorLength < deadzone) {

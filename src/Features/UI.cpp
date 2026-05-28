@@ -15,6 +15,7 @@
 #include "Renderer/Overlay.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Utils/Diagnostics.hpp"
+#include "Utils/InputLabels.hpp"
 #include "resource.h"
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -399,6 +400,19 @@ struct HeroOption {
 
 static const HeroOption kHeroOptions[] = {
     { "All", 0, "Global" },
+    { "Reinhardt", OW::eHero::HERO_REINHARDT, "Tank" },
+    { "Winston", OW::eHero::HERO_WINSTON, "Tank" },
+    { "Zarya", OW::eHero::HERO_ZARYA, "Tank" },
+    { "DVa", OW::eHero::HERO_DVA, "Tank" },
+    { "Roadhog", OW::eHero::HERO_ROADHOG, "Tank" },
+    { "Orisa", OW::eHero::HERO_ORISA, "Tank" },
+    { "WreckingBall", OW::eHero::HERO_WRECKINGBALL, "Tank" },
+    { "Sigma", OW::eHero::HERO_SIGMA, "Tank" },
+    { "Doomfist", OW::eHero::HERO_DOOMFIST, "Tank" },
+    { "Ramattra", OW::eHero::HERO_RAMATTRA, "Tank" },
+    { "JunkerQueen", OW::eHero::HERO_JUNKERQUEEN, "Tank" },
+    { "Mauga", OW::eHero::HERO_MAUGA, "Tank" },
+    { "Hazard", OW::eHero::HERO_HAZARD, "Tank" },
     { "Tracer", OW::eHero::HERO_TRACER, "Damage" },
     { "Widowmaker", OW::eHero::HERO_WIDOWMAKER, "Damage" },
     { "Soldier76", OW::eHero::HERO_SOLDIER76, "Damage" },
@@ -418,19 +432,6 @@ static const HeroOption kHeroOptions[] = {
     { "Venture", OW::eHero::HERO_VENTURE, "Damage" },
     { "Echo", OW::eHero::HERO_ECHO, "Damage" },
     { "Freja", OW::eHero::HERO_FREJA, "Damage" },
-    { "Reinhardt", OW::eHero::HERO_REINHARDT, "Tank" },
-    { "Winston", OW::eHero::HERO_WINSTON, "Tank" },
-    { "Zarya", OW::eHero::HERO_ZARYA, "Tank" },
-    { "DVa", OW::eHero::HERO_DVA, "Tank" },
-    { "Roadhog", OW::eHero::HERO_ROADHOG, "Tank" },
-    { "Orisa", OW::eHero::HERO_ORISA, "Tank" },
-    { "WreckingBall", OW::eHero::HERO_WRECKINGBALL, "Tank" },
-    { "Sigma", OW::eHero::HERO_SIGMA, "Tank" },
-    { "Doomfist", OW::eHero::HERO_DOOMFIST, "Tank" },
-    { "Ramattra", OW::eHero::HERO_RAMATTRA, "Tank" },
-    { "JunkerQueen", OW::eHero::HERO_JUNKERQUEEN, "Tank" },
-    { "Mauga", OW::eHero::HERO_MAUGA, "Tank" },
-    { "Hazard", OW::eHero::HERO_HAZARD, "Tank" },
     { "Mercy", OW::eHero::HERO_MERCY, "Support" },
     { "Lucio", OW::eHero::HERO_LUCIO, "Support" },
     { "Zenyatta", OW::eHero::HERO_ZENYATTA, "Support" },
@@ -445,16 +446,11 @@ static const HeroOption kHeroOptions[] = {
     { "Wuyang", OW::eHero::HERO_WUYANG, "Support" },
     { "JetpackCat", OW::eHero::HERO_JETPACKCAT, "Support" },
 };
-static const char* kAimActivationKey[] = {
-    "Right Mouse", "Left Mouse", "Mouse 4", "Mouse 5", "Left Shift", "Left Alt",
-    "V Key", "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock"
-};
 static const char* kInputSource[] = {
     "KMBox Monitor (Primary)", "Auto (KMBox > DMA > Local)",
     "DMA KeyState (Diagnostic)", "Local GetAsyncKeyState (Diagnostic)"
 };
 static constexpr int kInputSourceConfigOrder[] = { 1, 0, 3, 2 };
-static const char* kAttack[]       = { "Shoot", "Ability 1", "Ability 2" };
 static const char* kBonePreference[] = { "Head", "Neck", "Chest", "Closest" };
 static constexpr int kBonePreferenceAimBones[] = {
     OW::Config::kAimBoneHead,
@@ -462,15 +458,12 @@ static constexpr int kBonePreferenceAimBones[] = {
     OW::Config::kAimBoneChest
 };
 static constexpr int kBonePreferenceClosestIndex = 3;
-static const char* kAimMode[]      = { "Tracking", "Flick" };
-static const char* kTriggerbotMode[] = { "Hold", "Toggle", "Always" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPriority[]     = { "Lowest FOV", "Lowest HP", "Distance" };
 static const char* kTeam[]         = { "Enemies", "Allies", "All" };
 static const char* kTrace[]        = { "Strict", "Relaxed", "Off" };
 static const char* kUnlock[]       = { "Anytime", "On Release", "Never" };
-static const char* kSlotNums[]     = { "1", "2", "3", "4", "5", "6", "7" };
 static const char* kKmBoxDeviceTypes[] = { "Network", "Serial" };
 static const char* kMenuToggleKeys[] = {
     "Home", "Insert", "End", "Delete",
@@ -520,9 +513,7 @@ static bool IsAimMouseActivationVk(int vk) {
 static void DrawAimHotkeyProbe() {
     const int keySetting = OW::Config::aim_key;
     const int vk = OW::get_bind_id(keySetting);
-    const char* keyLabel = (keySetting >= 0 && keySetting < IM_ARRAYSIZE(kAimActivationKey))
-        ? kAimActivationKey[keySetting]
-        : "Invalid";
+    const char* keyLabel = OW::Labels::AimActivationKeyName(keySetting);
 
     ImGui::Text("Hotkey Probe: %s  vk=0x%02X", keyLabel, vk > 0 ? vk : 0);
     if (vk <= 0) {
@@ -559,12 +550,94 @@ static void DrawAimHotkeyProbe() {
 }
 
 static int ClampHeroPresetSlotIndex(int slotIndex) {
-    return ImClamp(slotIndex, 0, IM_ARRAYSIZE(kSlotNums) - 1);
+    return ImClamp(slotIndex, 0, OW::Config::kMaxHeroPresetSlots - 1);
 }
 
-static int ActiveHeroPresetSlotIndex() {
-    UI::state.heroSegActive = ClampHeroPresetSlotIndex(UI::state.heroSegActive);
-    return UI::state.heroSegActive;
+enum class ActionSlotKind {
+    Aim,
+    Trigger
+};
+
+static int& ActiveHeroPresetSlotRef(ActionSlotKind kind) {
+    return kind == ActionSlotKind::Aim
+        ? UI::state.aimHeroSegActive
+        : UI::state.triggerHeroSegActive;
+}
+
+static int ActiveHeroPresetSlotIndex(ActionSlotKind kind) {
+    int& activeSlot = ActiveHeroPresetSlotRef(kind);
+    activeSlot = ClampHeroPresetSlotIndex(activeSlot);
+    return activeSlot;
+}
+
+static bool IsHeroActionSlotEnabled(ActionSlotKind kind, uint64_t heroId, int slotIndex) {
+    return kind == ActionSlotKind::Aim
+        ? OW::Config::IsHeroAimSlotEnabled(heroId, slotIndex)
+        : OW::Config::IsHeroTriggerSlotEnabled(heroId, slotIndex);
+}
+
+static void SetHeroActionSlotEnabled(ActionSlotKind kind, uint64_t heroId, int slotIndex, bool enabled) {
+    if (kind == ActionSlotKind::Aim)
+        OW::Config::SetHeroAimSlotEnabled(heroId, slotIndex, enabled);
+    else
+        OW::Config::SetHeroTriggerSlotEnabled(heroId, slotIndex, enabled);
+}
+
+static int GetHeroActionSlotCount(ActionSlotKind kind, uint64_t heroId) {
+    return kind == ActionSlotKind::Aim
+        ? OW::Config::GetHeroAimSlotCount(heroId)
+        : OW::Config::GetHeroTriggerSlotCount(heroId);
+}
+
+static OW::Config::HeroPreset MakeCurrentHeroActionPreset(ActionSlotKind kind) {
+    return kind == ActionSlotKind::Aim
+        ? OW::Config::MakeHeroAimPresetFromCurrent()
+        : OW::Config::MakeHeroTriggerPresetFromCurrent();
+}
+
+static bool HasHeroActionPreset(ActionSlotKind kind, uint64_t heroId) {
+    return kind == ActionSlotKind::Aim
+        ? OW::Config::HasHeroAimPreset(heroId)
+        : OW::Config::HasHeroTriggerPreset(heroId);
+}
+
+static OW::Config::HeroPreset GetHeroActionPresetOrDefault(ActionSlotKind kind,
+                                                           uint64_t heroId,
+                                                           int slotIndex) {
+    return kind == ActionSlotKind::Aim
+        ? OW::Config::GetHeroAimPresetOrDefault(heroId, slotIndex)
+        : OW::Config::GetHeroTriggerPresetOrDefault(heroId, slotIndex);
+}
+
+static void SetHeroActionPreset(ActionSlotKind kind,
+                                uint64_t heroId,
+                                int slotIndex,
+                                const OW::Config::HeroPreset& preset) {
+    if (kind == ActionSlotKind::Aim)
+        OW::Config::SetHeroAimPreset(heroId, slotIndex, preset);
+    else
+        OW::Config::SetHeroTriggerPreset(heroId, slotIndex, preset);
+}
+
+static int AddHeroActionSlot(ActionSlotKind kind,
+                             uint64_t heroId,
+                             const OW::Config::HeroPreset& seedPreset) {
+    return kind == ActionSlotKind::Aim
+        ? OW::Config::AddHeroAimSlot(heroId, seedPreset)
+        : OW::Config::AddHeroTriggerSlot(heroId, seedPreset);
+}
+
+static bool DeleteHeroActionSlot(ActionSlotKind kind, uint64_t heroId, int slotIndex) {
+    return kind == ActionSlotKind::Aim
+        ? OW::Config::DeleteHeroAimSlot(heroId, slotIndex)
+        : OW::Config::DeleteHeroTriggerSlot(heroId, slotIndex);
+}
+
+static void ApplyHeroActionPresetToGlobals(ActionSlotKind kind, const OW::Config::HeroPreset& preset) {
+    if (kind == ActionSlotKind::Aim)
+        OW::Config::ApplyHeroAimPresetToGlobals(preset);
+    else
+        OW::Config::ApplyHeroTriggerPresetToGlobals(preset);
 }
 
 static bool IsConcreteHeroSelection(const HeroOption& hero) {
@@ -574,8 +647,8 @@ static bool IsConcreteHeroSelection(const HeroOption& hero) {
 static void ShowAimSlotSummaryTooltip(bool hasSpecificHero) {
     ImGui::SetItemTooltip("%s",
         hasSpecificHero
-            ? "The 1-7 selector is an aim slot summary only. Save Config writes the complete INI config."
-            : "All uses the current local hero or global config fallback. The 1-7 selector is only an aim slot summary.");
+            ? "Aim and Trigger have separate slot lists for the selected hero. Save Config writes the complete INI config."
+            : "All uses the current local hero or global config fallback. Aim and Trigger slot lists are separate.");
 }
 
 static void ShowSaveConfigTooltip(bool savesSelectedHero) {
@@ -773,6 +846,7 @@ static std::string HeroDisplayNameForId(uint64_t heroId) {
 static std::string SaveSelectedConfig() {
     const HeroOption& selectedHero = CurrentHeroOption();
     const std::string path = OW::Config::ConfigPath();
+    OW::Config::NormalizeHeroPresets();
 
     if (IsConcreteHeroSelection(selectedHero)) {
         OW::Config::SaveConfigForHero(path, selectedHero.heroId, OW::local_entity.LinkBase);
@@ -807,10 +881,19 @@ static void ApplySelectedTypePreset() {
     if (hero.heroId == 0)
         return;
 
-    const int slotIndex = ActiveHeroPresetSlotIndex();
-    const OW::Config::HeroPreset preset =
-        OW::Config::GetHeroPresetOrDefault(hero.heroId, slotIndex);
-    OW::Config::ApplyHeroPresetToGlobals(preset);
+    const int aimSlotIndex = ActiveHeroPresetSlotIndex(ActionSlotKind::Aim);
+    if (IsHeroActionSlotEnabled(ActionSlotKind::Aim, hero.heroId, aimSlotIndex)) {
+        const OW::Config::HeroPreset preset =
+            GetHeroActionPresetOrDefault(ActionSlotKind::Aim, hero.heroId, aimSlotIndex);
+        ApplyHeroActionPresetToGlobals(ActionSlotKind::Aim, preset);
+    }
+
+    const int triggerSlotIndex = ActiveHeroPresetSlotIndex(ActionSlotKind::Trigger);
+    if (IsHeroActionSlotEnabled(ActionSlotKind::Trigger, hero.heroId, triggerSlotIndex)) {
+        const OW::Config::HeroPreset preset =
+            GetHeroActionPresetOrDefault(ActionSlotKind::Trigger, hero.heroId, triggerSlotIndex);
+        ApplyHeroActionPresetToGlobals(ActionSlotKind::Trigger, preset);
+    }
 }
 
 static bool SelectTypeIndex(int index) {
@@ -844,10 +927,10 @@ static bool SaveSelectedTypePreset() {
     if (hero.heroId == 0)
         return false;
 
-    const int slotIndex = ActiveHeroPresetSlotIndex();
-    const OW::Config::HeroPreset preset = OW::Config::MakeHeroPresetFromCurrent();
-    OW::Config::SetHeroPreset(hero.heroId, slotIndex, preset);
-    OW::Config::SaveHeroPresets(OW::Config::ConfigPath());
+    const int slotIndex = ActiveHeroPresetSlotIndex(ActionSlotKind::Aim);
+    const OW::Config::HeroPreset preset = MakeCurrentHeroActionPreset(ActionSlotKind::Aim);
+    SetHeroActionPreset(ActionSlotKind::Aim, hero.heroId, slotIndex, preset);
+    OW::Config::SaveHeroConfigForHero(OW::Config::ConfigPath(), hero.heroId);
     return true;
 }
 
@@ -856,8 +939,9 @@ static bool LoadSelectedTypePreset() {
     if (hero.heroId == 0)
         return false;
 
-    ActiveHeroPresetSlotIndex();
-    OW::Config::LoadHeroPresets(OW::Config::ConfigPath());
+    ActiveHeroPresetSlotIndex(ActionSlotKind::Aim);
+    ActiveHeroPresetSlotIndex(ActionSlotKind::Trigger);
+    OW::Config::LoadHeroConfig(OW::Config::ConfigPath());
     ApplySelectedTypePreset();
     return true;
 }
@@ -891,8 +975,7 @@ static const char* PresetBoneName(const OW::Config::HeroPreset& preset) {
 }
 
 static const char* PresetAimModeName(int mode) {
-    mode = ImClamp(mode, 0, IM_ARRAYSIZE(kAimMode) - 1);
-    return kAimMode[mode];
+    return OW::Labels::AimModeName(mode);
 }
 
 static const char* PresetAimMethodName(int method) {
@@ -902,17 +985,29 @@ static const char* PresetAimMethodName(int method) {
 
 static void DrawPresetSummary(const HeroOption& hero,
                               const OW::Config::HeroPreset& preset,
-                              bool hasStoredPreset) {
+                              bool hasStoredPreset,
+                              ActionSlotKind kind) {
     char summary[320] = {};
     const char* scope = hero.heroId == 0
         ? "Global defaults"
         : (hasStoredPreset ? "Stored preset" : "Using global defaults");
-    std::snprintf(summary, sizeof(summary),
-                  "%s - %s | Method %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f | %s",
-                  hero.label, scope, PresetAimMethodName(OW::Config::aimMethod),
-                  preset.fov, preset.smooth,
-                  PresetBoneName(preset), preset.hitbox,
-                  PresetAimModeName(preset.aimMode));
+    if (kind == ActionSlotKind::Aim) {
+        std::snprintf(summary, sizeof(summary),
+                      "%s - %s | Method %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f | %s",
+                      hero.label, scope, PresetAimMethodName(OW::Config::aimMethod),
+                      preset.fov, preset.smooth,
+                      PresetBoneName(preset), preset.hitbox,
+                      PresetAimModeName(preset.aimMode));
+    } else {
+        std::snprintf(summary, sizeof(summary),
+                      "%s - %s | Trigger %s | %s | %s | Hitbox %.2f | %s",
+                      hero.label, scope,
+                      preset.trigger.enabled ? "On" : "Off",
+                      OW::Labels::AttackActionName(preset.trigger.action),
+                      OW::Labels::TriggerbotModeName(preset.trigger.mode),
+                      preset.hitbox,
+                      PresetAimModeName(preset.aimMode));
+    }
     ImGui::TextUnformatted(summary);
 }
 
@@ -1000,7 +1095,7 @@ static bool TypePickerPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, kColPanelSoft);
 
-    const char* categories[] = { "Global", "Damage", "Tank", "Support" };
+    const char* categories[] = { "Global", "Tank", "Damage", "Support" };
     constexpr float itemW = 76.0f;
     constexpr float itemH = 76.0f;
     constexpr float iconSize = 42.0f;
@@ -1078,18 +1173,6 @@ static bool TypePickerPanel() {
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
     ImGui::EndPopup();
-    return changed;
-}
-
-static bool DrawSelectedTypeSelector(float labelWidth, const char* id) {
-    SettingRow("Selected", labelWidth);
-
-    ImGui::PushID(id);
-    bool changed = false;
-    if (TypeSelectorButton(CurrentHeroOption(), ImVec2(220.0f, 28.0f)))
-        ImGui::OpenPopup("TypePickerPopup");
-    changed |= TypePickerPanel();
-    ImGui::PopID();
     return changed;
 }
 
@@ -1643,7 +1726,7 @@ static bool UISlider(const char* label, int* value, float v_min, float v_max,
 // UISelect  --  Custom-styled dropdown using ImGui BeginCombo.
 //               Dropdown items get a red #e41143 background on hover/active.
 // =====================================================================
-static bool UISelect(const char* label, int* current, const char* items[], int itemCount) {
+static bool UISelect(const char* label, int* current, const char* const items[], int itemCount) {
     if (*current < 0 || *current >= itemCount)
         *current = 0;
 
@@ -1776,6 +1859,141 @@ static int UISegmented(const char* items[], int itemCount, int active) {
     return result;
 }
 
+static std::string ActionSlotTabLabel(int slotIndex) {
+    return std::to_string(ClampHeroPresetSlotIndex(slotIndex) + 1);
+}
+
+static std::string ActionSlotReadoutLabel(int slotIndex) {
+    return std::string("Slot ") + ActionSlotTabLabel(slotIndex);
+}
+
+static bool UIActionSlotSelector(ActionSlotKind kind, uint64_t heroId) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return false;
+
+    int& activeSlot = ActiveHeroPresetSlotRef(kind);
+    const int slotCount = heroId == 0
+        ? 7
+        : ImClamp(GetHeroActionSlotCount(kind, heroId), 1, OW::Config::kMaxHeroPresetSlots);
+    activeSlot = ImClamp(activeSlot, 0, slotCount - 1);
+
+    std::vector<int> slotIndices;
+    std::vector<std::string> slotLabels;
+    slotIndices.reserve(slotCount);
+    slotLabels.reserve(slotCount);
+
+    for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex) {
+        slotIndices.push_back(slotIndex);
+        slotLabels.emplace_back(ActionSlotTabLabel(slotIndex));
+    }
+
+    const int visibleActive = activeSlot;
+    const bool canAdd = heroId != 0 && slotCount < OW::Config::kMaxHeroPresetSlots;
+    const bool canDelete = heroId != 0 && slotCount > 1;
+    const float addW = canAdd ? 24.0f : 0.0f;
+    const float deleteW = canDelete ? 24.0f : 0.0f;
+    const float addGap = canAdd ? 6.0f : 0.0f;
+    const float deleteGap = canDelete ? 6.0f : 0.0f;
+    const float height = (slotIndices.size() <= 5) ? 21.0f : 17.0f;
+    const float availW = ImGui::GetContentRegionAvail().x;
+    const float width = MaxFloat(1.0f, availW - addW - addGap - deleteW - deleteGap);
+    const ImVec2 pos = window->DC.CursorPos;
+
+    window->DrawList->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height),
+                                    kColControl, kControlRounding);
+    window->DrawList->AddRect(pos, ImVec2(pos.x + width, pos.y + height),
+                              kColStrokeDark, kControlRounding, 0, 1.0f);
+
+    bool changed = false;
+    const float segW = width / static_cast<float>(slotIndices.size());
+    for (int i = 0; i < static_cast<int>(slotIndices.size()); ++i) {
+        const int slotIndex = slotIndices[static_cast<size_t>(i)];
+        const bool slotEnabled = heroId == 0 || IsHeroActionSlotEnabled(kind, heroId, slotIndex);
+        const bool isActive = i == visibleActive;
+        const ImVec2 segMin(pos.x + i * segW, pos.y);
+        const ImVec2 segMax(pos.x + (i + 1) * segW, pos.y + height);
+
+        ImGui::SetCursorScreenPos(segMin);
+        ImGui::PushID(slotIndex);
+        ImGui::InvisibleButton("##actionSlot", ImVec2(segW, height));
+        const bool hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) {
+            activeSlot = slotIndex;
+            changed = true;
+        }
+        ImGui::PopID();
+
+        const float hoverT = VisualTransition(window->GetID(slotLabels[static_cast<size_t>(i)].c_str()) ^ 0x327a, hovered, 16.0f);
+        if (hovered && !isActive) {
+            window->DrawList->AddRectFilled(ImVec2(segMin.x + 1.0f, segMin.y + 1.0f),
+                                            ImVec2(segMax.x - 1.0f, segMax.y - 1.0f),
+                                            MixColor(IM_COL32(0x00, 0x00, 0x00, 0x00),
+                                                     kColControlHover, hoverT),
+                                            kControlRounding);
+        }
+        if (isActive) {
+            window->DrawList->AddRectFilled(ImVec2(segMin.x + 1.0f, segMin.y + 1.0f),
+                                            ImVec2(segMax.x - 1.0f, segMax.y - 1.0f),
+                                            slotEnabled ? kColAccent : kColControlHot,
+                                            kControlRounding);
+            window->DrawList->AddLine(ImVec2(segMin.x + 5.0f, segMin.y + 1.0f),
+                                      ImVec2(segMax.x - 5.0f, segMin.y + 1.0f),
+                                      IM_COL32(0xff, 0xff, 0xff, 0x28), 1.0f);
+        }
+
+        const char* txt = slotLabels[static_cast<size_t>(i)].c_str();
+        const ImVec2 tsz = ImGui::CalcTextSize(txt);
+        const ImVec2 txtPos(segMin.x + (segW - tsz.x) * 0.5f,
+                            segMin.y + (height - tsz.y) * 0.5f);
+        const ImU32 txtCol = isActive
+            ? IM_COL32(0xff, 0xff, 0xff, 0xFF)
+            : (slotEnabled ? MixColor(kColTextMuted, kColText, hoverT) : kColTextDim);
+        window->DrawList->AddText(txtPos, txtCol, txt);
+    }
+
+    float actionX = pos.x + width;
+    if (canAdd) {
+        actionX += addGap;
+        const ImVec2 addPos(actionX, pos.y);
+        ImGui::SetCursorScreenPos(addPos);
+        ImGui::PushID("AddActionSlot");
+        if (ImGui::Button("+", ImVec2(addW, height))) {
+            const OW::Config::HeroPreset seedPreset =
+                GetHeroActionPresetOrDefault(kind, heroId, activeSlot);
+            const int addedSlot = AddHeroActionSlot(kind, heroId, seedPreset);
+            if (addedSlot >= 0) {
+                activeSlot = addedSlot;
+                changed = true;
+            }
+        }
+        ImGui::SetItemTooltip("Add a slot page at the end.");
+        ImGui::PopID();
+        actionX += addW;
+    }
+
+    if (canDelete) {
+        actionX += deleteGap;
+        const ImVec2 deletePos(actionX, pos.y);
+        ImGui::SetCursorScreenPos(deletePos);
+        ImGui::PushID("DeleteActionSlot");
+        if (ImGui::Button("-", ImVec2(deleteW, height))) {
+            const int deletedSlot = activeSlot;
+            if (DeleteHeroActionSlot(kind, heroId, deletedSlot)) {
+                const int nextCount = ImClamp(GetHeroActionSlotCount(kind, heroId), 1, OW::Config::kMaxHeroPresetSlots);
+                activeSlot = ImClamp(deletedSlot, 0, nextCount - 1);
+                changed = true;
+            }
+        }
+        ImGui::SetItemTooltip("Delete this slot page and shift later slots forward.");
+        ImGui::PopID();
+    }
+
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::Dummy(ImVec2(availW, height + 8.0f));
+    return changed;
+}
+
 // =====================================================================
 // UITwoColumns  --  Two equal-width columns.
 // =====================================================================
@@ -1802,6 +2020,26 @@ static void SettingRow(const char* label, float labelWidthPx) {
         kColText, label);
     ImGui::SetCursorPosX(startX + labelWidthPx);
     ImGui::SetCursorPosY(startY);
+}
+
+static bool UIActionSlotEnabledCheckbox(ActionSlotKind kind,
+                                        const HeroOption& hero,
+                                        const char* checkboxId,
+                                        float labelWidthPx) {
+    SettingRow("Slot Enabled", labelWidthPx);
+    if (hero.heroId == 0) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Always");
+        return false;
+    }
+
+    const int slotIndex = ActiveHeroPresetSlotIndex(kind);
+    bool slotEnabled = IsHeroActionSlotEnabled(kind, hero.heroId, slotIndex);
+    if (!UICheckbox(checkboxId, &slotEnabled))
+        return false;
+
+    SetHeroActionSlotEnabled(kind, hero.heroId, slotIndex, slotEnabled);
+    return true;
 }
 
 static bool UIColorEdit(const char* label, ImVec4* value,
@@ -2059,46 +2297,48 @@ void UI::InitStyle() {
 // UI::AimbotPage
 // =====================================================================
 void UI::AimbotPage() {
-    // ---- 7-slot preset selector for the current hero ----
-    const int previousSlot = state.heroSegActive;
-    state.heroSegActive = UISegmented(kSlotNums, IM_ARRAYSIZE(kSlotNums), state.heroSegActive);
-    state.heroSegActive = ActiveHeroPresetSlotIndex();
-    if (previousSlot != state.heroSegActive)
+    state.selectedTypeIndex = ClampHeroSelectionIndex(state.selectedTypeIndex);
+    const HeroOption* selectedHero = &kHeroOptions[state.selectedTypeIndex];
+    constexpr ActionSlotKind slotKind = ActionSlotKind::Aim;
+
+    // ---- Enabled action-slot selector for the current hero ----
+    const int previousSlot = state.aimHeroSegActive;
+    const bool slotSelectorChanged = UIActionSlotSelector(slotKind, selectedHero->heroId);
+    state.aimHeroSegActive = ActiveHeroPresetSlotIndex(slotKind);
+    if (slotSelectorChanged || previousSlot != state.aimHeroSegActive)
         ApplySelectedTypePreset();
 
     bool presetChanged = false;
-    const HeroOption* selectedHero = &CurrentHeroOption();
+    bool slotEnabledChanged = false;
     bool hasStoredPreset = false;
-    std::string activeSlotName;
+    std::string activeSlotLabel;
     OW::Config::HeroPreset activePreset{};
 
     auto refreshActivePreset = [&]() {
         state.selectedTypeIndex = ClampHeroSelectionIndex(state.selectedTypeIndex);
         selectedHero = &kHeroOptions[state.selectedTypeIndex];
         const bool isGlobal = selectedHero->heroId == 0;
-        hasStoredPreset = !isGlobal && OW::Config::HasHeroPreset(selectedHero->heroId);
-        activeSlotName = OW::Config::GetHeroSlotName(selectedHero->heroId, state.heroSegActive);
+        hasStoredPreset = !isGlobal && HasHeroActionPreset(slotKind, selectedHero->heroId);
+        activeSlotLabel = ActionSlotReadoutLabel(state.aimHeroSegActive);
         activePreset = isGlobal
-            ? OW::Config::MakeHeroPresetFromCurrent()
-            : OW::Config::GetHeroPresetOrDefault(selectedHero->heroId, state.heroSegActive);
+            ? MakeCurrentHeroActionPreset(slotKind)
+            : GetHeroActionPresetOrDefault(slotKind, selectedHero->heroId, state.aimHeroSegActive);
     };
     refreshActivePreset();
 
-    // ---- Type Context ----
-    UIGroupBox("Type Context");
+    UIGroupBox("Action Slot");
     {
+        SettingRow("Slot", kAimbotHeroLabelWidth);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(activeSlotLabel.c_str());
+
+        slotEnabledChanged |= UIActionSlotEnabledCheckbox(slotKind, *selectedHero, "##aimSlotEnabled", kAimbotHeroLabelWidth);
+
         SettingRow("Detected", kAimbotHeroLabelWidth);
         DrawDetectedTypeReadout();
 
-        if (DrawSelectedTypeSelector(kAimbotHeroLabelWidth, "AimbotSelectedType"))
-            refreshActivePreset();
-
-        SettingRow("Aim Slot", kAimbotHeroLabelWidth);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(activeSlotName.c_str());
-
         SettingRow("Aim Summary", kAimbotHeroLabelWidth);
-        DrawPresetSummary(*selectedHero, activePreset, hasStoredPreset);
+        DrawPresetSummary(*selectedHero, activePreset, hasStoredPreset, slotKind);
     }
     CloseGroupBox();
 
@@ -2110,7 +2350,8 @@ void UI::AimbotPage() {
             // Aim Mode
             SettingRow("Aim Mode", kAimbotLeftLabelWidth);
             PushControlWidth();
-            presetChanged |= UISelect("##aimMode", &activePreset.aimMode, kAimMode, IM_ARRAYSIZE(kAimMode));
+            presetChanged |= UISelect("##aimMode", &activePreset.aimMode,
+                                      OW::Labels::kAimModes, OW::Labels::AimModeCount());
             ImGui::PopItemWidth();
 
             // Aim Method
@@ -2171,13 +2412,14 @@ void UI::AimbotPage() {
             SettingRow("Aim Activation Key", kAimbotLeftLabelWidth);
             PushControlWidth();
             UISelect("##aimActivationKey", &OW::Config::aim_key,
-                     kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
+                     OW::Labels::kAimActivationKeys, OW::Labels::AimActivationKeyCount());
             ImGui::PopItemWidth();
 
             // Attack
             SettingRow("Attack", kAimbotLeftLabelWidth);
             PushControlWidth();
-            UISelect("##aimAttack", &OW::Config::aimbotAttack, kAttack, IM_ARRAYSIZE(kAttack));
+            presetChanged |= UISelect("##aimAttack", &activePreset.trigger.action,
+                                      OW::Labels::kAttackActions, OW::Labels::AttackActionCount());
             ImGui::PopItemWidth();
 
             // Autoshot
@@ -2236,7 +2478,7 @@ void UI::AimbotPage() {
             // Target Team
             SettingRow("Target Team", kAimbotLeftLabelWidth);
             PushControlWidth();
-            UISelect("##aimTeam", &OW::Config::aimbotTeam, kTeam, IM_ARRAYSIZE(kTeam));
+            presetChanged |= UISelect("##aimTeam", &activePreset.targetTeam, kTeam, IM_ARRAYSIZE(kTeam));
             ImGui::PopItemWidth();
         }
         CloseGroupBox();
@@ -2307,11 +2549,14 @@ void UI::AimbotPage() {
 
     if (selectedHero->heroId == 0) {
         if (presetChanged)
-            OW::Config::ApplyHeroPresetToGlobals(activePreset);
+            ApplyHeroActionPresetToGlobals(slotKind, activePreset);
     } else {
         if (presetChanged) {
-            OW::Config::SetHeroPreset(selectedHero->heroId, state.heroSegActive, activePreset);
-            OW::Config::ApplyHeroPresetToGlobals(activePreset);
+            SetHeroActionPreset(slotKind, selectedHero->heroId, state.aimHeroSegActive, activePreset);
+            ApplyHeroActionPresetToGlobals(slotKind, activePreset);
+        } else if (slotEnabledChanged &&
+                   IsHeroActionSlotEnabled(slotKind, selectedHero->heroId, state.aimHeroSegActive)) {
+            ApplyHeroActionPresetToGlobals(slotKind, activePreset);
         }
     }
 }
@@ -2320,100 +2565,134 @@ void UI::AimbotPage() {
 // UI::TriggerPage
 // =====================================================================
 void UI::TriggerPage() {
-    UIGroupBox("Triggerbot \342\200\224 Primary");
+    state.selectedTypeIndex = ClampHeroSelectionIndex(state.selectedTypeIndex);
+    const HeroOption* selectedHero = &kHeroOptions[state.selectedTypeIndex];
+    constexpr ActionSlotKind slotKind = ActionSlotKind::Trigger;
+
+    const int previousSlot = state.triggerHeroSegActive;
+    const bool slotSelectorChanged = UIActionSlotSelector(slotKind, selectedHero->heroId);
+    state.triggerHeroSegActive = ActiveHeroPresetSlotIndex(slotKind);
+    if (slotSelectorChanged || previousSlot != state.triggerHeroSegActive)
+        ApplySelectedTypePreset();
+
+    bool presetChanged = false;
+    bool slotEnabledChanged = false;
+    bool hasStoredPreset = false;
+    std::string activeSlotLabel;
+    OW::Config::HeroPreset activePreset{};
+
+    auto refreshActivePreset = [&]() {
+        state.selectedTypeIndex = ClampHeroSelectionIndex(state.selectedTypeIndex);
+        selectedHero = &kHeroOptions[state.selectedTypeIndex];
+        const bool isGlobal = selectedHero->heroId == 0;
+        hasStoredPreset = !isGlobal && HasHeroActionPreset(slotKind, selectedHero->heroId);
+        activeSlotLabel = ActionSlotReadoutLabel(state.triggerHeroSegActive);
+        activePreset = isGlobal
+            ? MakeCurrentHeroActionPreset(slotKind)
+            : GetHeroActionPresetOrDefault(slotKind, selectedHero->heroId, state.triggerHeroSegActive);
+    };
+    refreshActivePreset();
+
+    UIGroupBox("Action Slot");
     {
-        UICheckbox("##triggerEnable", &OW::Config::triggerbot);
+        SettingRow("Slot", kAimbotHeroLabelWidth);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(activeSlotLabel.c_str());
 
-        SettingRow("Mode", kDefaultLabelWidth);
-        PushControlWidth();
-        UISelect("##triggerMode", &OW::Config::triggerbotMode,
-                 kTriggerbotMode, IM_ARRAYSIZE(kTriggerbotMode));
-        ImGui::PopItemWidth();
+        slotEnabledChanged |= UIActionSlotEnabledCheckbox(slotKind, *selectedHero, "##triggerSlotEnabled", kAimbotHeroLabelWidth);
 
-        SettingRow("Activation Key", kDefaultLabelWidth);
-        PushControlWidth();
-        UISelect("##triggerKey", &OW::Config::triggerbotKey,
-                 kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
-        ImGui::PopItemWidth();
-
-        SettingRow("Shot Interval", kDefaultLabelWidth);
-        PushControlWidth();
-        UISlider("##triggerShotInterval", &OW::Config::triggerbotShotInterval, 0.0f, 100.0f, "500 ms");
-        ImGui::PopItemWidth();
-
-        SettingRow("Charge Aware", kDefaultLabelWidth);
-        UICheckbox("##triggerChargeAware", &OW::Config::triggerbotChargeAware);
-
-        if (OW::Config::triggerbotChargeAware) {
-            SettingRow("Min Charge", kDefaultLabelWidth);
-            PushControlWidth();
-            UISlider("##triggerMinCharge", &OW::Config::triggerbotMinCharge, 0.0f, 100.0f, "50.00 %");
-            ImGui::PopItemWidth();
-        }
-
-        SettingRow("Detection Range", kDefaultLabelWidth);
-        PushControlWidth();
-        UISlider("##triggerHitbox", &OW::Config::hitbox, 0.0f, 5.0f, "0.13");
-        ImGui::PopItemWidth();
-
-        SettingRow("Target Filter", kDefaultLabelWidth);
-        PushControlWidth();
-        UISelect("##triggerTargetFilter", &OW::Config::aimbotTeam, kTeam, IM_ARRAYSIZE(kTeam));
-        ImGui::PopItemWidth();
-
-        SettingRow("Priority", kDefaultLabelWidth);
-        PushControlWidth();
-        UISelect("##triggerPriority", &OW::Config::aimbotPriority, kPriority, IM_ARRAYSIZE(kPriority));
-        ImGui::PopItemWidth();
-    }
-    CloseGroupBox();
-
-    UIGroupBox("Triggerbot \342\200\224 Secondary");
-    {
-        UICheckbox("##trigger2Enable", &OW::Config::triggerbot2);
-
-        SettingRow("Mode", kDefaultLabelWidth);
-        PushControlWidth();
-        UISelect("##triggerMode2", &OW::Config::triggerbotMode2,
-                 kTriggerbotMode, IM_ARRAYSIZE(kTriggerbotMode));
-        ImGui::PopItemWidth();
-
-        SettingRow("Activation Key", kDefaultLabelWidth);
-        PushControlWidth();
-        UISelect("##triggerKey2", &OW::Config::triggerbotKey2,
-                 kAimActivationKey, IM_ARRAYSIZE(kAimActivationKey));
-        ImGui::PopItemWidth();
-
-        SettingRow("Shot Interval", kDefaultLabelWidth);
-        PushControlWidth();
-        UISlider("##triggerShotInterval2", &OW::Config::triggerbotShotInterval2, 0.0f, 100.0f, "500 ms");
-        ImGui::PopItemWidth();
-
-        SettingRow("Charge Aware", kDefaultLabelWidth);
-        UICheckbox("##triggerChargeAware2", &OW::Config::triggerbotChargeAware2);
-
-        if (OW::Config::triggerbotChargeAware2) {
-            SettingRow("Min Charge", kDefaultLabelWidth);
-            PushControlWidth();
-            UISlider("##triggerMinCharge2", &OW::Config::triggerbotMinCharge2, 0.0f, 100.0f, "50.00 %");
-            ImGui::PopItemWidth();
-        }
-
-        SettingRow("Detection Range", kDefaultLabelWidth);
-        PushControlWidth();
-        UISlider("##triggerHitbox2", &OW::Config::hitbox2, 0.0f, 5.0f, "0.13");
-        ImGui::PopItemWidth();
-    }
-    CloseGroupBox();
-
-    UIGroupBox("Runtime Type");
-    {
-        SettingRow("Detected", kDefaultLabelWidth);
+        SettingRow("Detected", kAimbotHeroLabelWidth);
         DrawDetectedTypeReadout();
 
-        DrawSelectedTypeSelector(kDefaultLabelWidth, "TriggerSelectedType");
+        SettingRow("Slot Summary", kAimbotHeroLabelWidth);
+        DrawPresetSummary(*selectedHero, activePreset, hasStoredPreset, slotKind);
     }
     CloseGroupBox();
+
+    UITwoColumns([&]() {
+        UIGroupBox("Trigger Slot");
+        {
+            SettingRow("Enabled", kAimbotLeftLabelWidth);
+            presetChanged |= UICheckbox("##triggerSlotEnable", &activePreset.trigger.enabled);
+
+            SettingRow("Action", kAimbotLeftLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISelect("##triggerSlotAction", &activePreset.trigger.action,
+                                      OW::Labels::kAttackActions, OW::Labels::AttackActionCount());
+            ImGui::PopItemWidth();
+
+            SettingRow("Mode", kAimbotLeftLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISelect("##triggerSlotMode", &activePreset.trigger.mode,
+                                      OW::Labels::kTriggerbotModes, OW::Labels::TriggerbotModeCount());
+            ImGui::PopItemWidth();
+
+            SettingRow("Activation Key", kAimbotLeftLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISelect("##triggerSlotKey", &activePreset.trigger.key,
+                                      OW::Labels::kAimActivationKeys, OW::Labels::AimActivationKeyCount());
+            ImGui::PopItemWidth();
+        }
+        CloseGroupBox();
+    }, [&]() {
+        UIGroupBox("Trigger Conditions");
+        {
+            SettingRow("Shot Interval", kAimbotRightLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISlider("##triggerSlotInterval", &activePreset.trigger.shotInterval,
+                                      0.0f, 100.0f, "500 ms");
+            ImGui::PopItemWidth();
+
+            SettingRow("Charge Aware", kAimbotRightLabelWidth);
+            presetChanged |= UICheckbox("##triggerSlotChargeAware", &activePreset.trigger.chargeAware);
+
+            if (activePreset.trigger.chargeAware) {
+                SettingRow("Min Charge", kAimbotRightLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##triggerSlotMinCharge", &activePreset.trigger.minCharge,
+                                          0.0f, 100.0f, "50.00 %");
+                ImGui::PopItemWidth();
+            }
+
+            SettingRow("Detection Range", kAimbotRightLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISlider("##triggerSlotHitbox", &activePreset.hitbox,
+                                      0.0f, 5.0f, "0.13");
+            ImGui::PopItemWidth();
+
+            SettingRow("Target Filter", kAimbotRightLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISelect("##triggerSlotTeam", &activePreset.targetTeam,
+                                      kTeam, IM_ARRAYSIZE(kTeam));
+            ImGui::PopItemWidth();
+
+            SettingRow("Priority", kAimbotRightLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISelect("##triggerSlotPriority", &activePreset.priority,
+                                      kPriority, IM_ARRAYSIZE(kPriority));
+            ImGui::PopItemWidth();
+
+            SettingRow("Ignore Invisible Targets", kAimbotRightLabelWidth);
+            presetChanged |= UICheckbox("##triggerSlotIgnoreInvis", &activePreset.trigger.ignoreInvisible);
+
+            SettingRow("Draw Hitbox", kAimbotRightLabelWidth);
+            presetChanged |= UICheckbox("##triggerSlotDrawHitbox", &activePreset.trigger.drawHitbox);
+        }
+        CloseGroupBox();
+    });
+
+    if (selectedHero->heroId == 0) {
+        if (presetChanged)
+            ApplyHeroActionPresetToGlobals(slotKind, activePreset);
+    } else {
+        if (presetChanged) {
+            SetHeroActionPreset(slotKind, selectedHero->heroId, state.triggerHeroSegActive, activePreset);
+            ApplyHeroActionPresetToGlobals(slotKind, activePreset);
+        } else if (slotEnabledChanged &&
+                   IsHeroActionSlotEnabled(slotKind, selectedHero->heroId, state.triggerHeroSegActive)) {
+            ApplyHeroActionPresetToGlobals(slotKind, activePreset);
+        }
+    }
 }
 
 // =====================================================================
@@ -2564,13 +2843,11 @@ void UI::ThemePage() {
 
     UIGroupBox("Overlay Colors");
     {
-        UIColorEdit("Enemy Box", &OW::Config::EnemyCol);
+        UIColorEdit("Box Outline", &OW::Config::EnemyCol);
         UIColorEdit("FOV Circle", &OW::Config::fovcol);
-        UIColorEdit("FOV Alt", &OW::Config::fovcol2);
         UIColorEdit("Visible Fill", &OW::Config::enargb);
         UIColorEdit("Hidden Fill", &OW::Config::invisnenargb);
         UIColorEdit("Target Fill", &OW::Config::targetargb);
-        UIColorEdit("Target Alt", &OW::Config::targetargb2);
         UIColorEdit("Ally Fill", &OW::Config::allyargb);
     }
     CloseGroupBox();
@@ -2763,8 +3040,9 @@ void UI::MiscPage() {
 
         SettingRow("Aim Sensitivity");
         PushControlWidth();
-        kmboxSaveRequested |= ImGui::SliderFloat("##AimSensitivity", &OW::Config::kmboxAimSensitivity,
-                                                 0.1f, 5.0f, "%.2f");
+        ImGui::SliderFloat("##AimSensitivity", &OW::Config::kmboxAimSensitivity,
+                           0.1f, 5.0f, "%.2f");
+        kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::PopItemWidth();
 
         SettingRow("Game Sens (DMA)");
@@ -2785,8 +3063,9 @@ void UI::MiscPage() {
 
         SettingRow("Mouse DPI");
         PushControlWidth();
-        kmboxSaveRequested |= ImGui::InputFloat("##MouseDpi", &OW::Config::hostMouseDpi,
-                                                0.0f, 0.0f, "%.0f");
+        ImGui::InputFloat("##MouseDpi", &OW::Config::hostMouseDpi,
+                          0.0f, 0.0f, "%.0f");
+        kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::PopItemWidth();
 
         SettingRow("Reference Sens");
@@ -2796,8 +3075,9 @@ void UI::MiscPage() {
             80.0f,
             ImGui::GetContentRegionAvail().x - useDmaButtonWidth - useDmaSpacing);
         ImGui::PushItemWidth(referenceWidth);
-        kmboxSaveRequested |= ImGui::InputFloat("##ReferenceSens", &OW::Config::sensReference,
-                                                0.0f, 0.0f, "%.2f");
+        ImGui::InputFloat("##ReferenceSens", &OW::Config::sensReference,
+                          0.0f, 0.0f, "%.2f");
+        kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::PopItemWidth();
         ImGui::SameLine();
         if (ImGui::Button("Use DMA", ImVec2(useDmaButtonWidth, kControlHeight))) {
@@ -2810,8 +3090,9 @@ void UI::MiscPage() {
 
         SettingRow("Input Delay (ms)");
         PushControlWidth();
-        kmboxSaveRequested |= ImGui::SliderInt("##InputDelay", &OW::Config::kmboxInputDelayMs,
-                                               0, 20, "%d ms");
+        ImGui::SliderInt("##InputDelay", &OW::Config::kmboxInputDelayMs,
+                         0, 20, "%d ms");
+        kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::PopItemWidth();
 
         SettingRow("Debug Logging");

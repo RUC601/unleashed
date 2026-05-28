@@ -514,16 +514,22 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
                 Command.length);
         }
 
-        if (Command.type == KmBoxCommandType::MouseMove && !commandQueue.empty()) {
+        if ((Command.type == KmBoxCommandType::MouseMove ||
+             Command.type == KmBoxCommandType::MouseAutoMove) &&
+            !commandQueue.empty()) {
             KmBoxQueuedNetCommand& back = commandQueue.back();
-            if (back.type == KmBoxCommandType::MouseMove) {
+            if (back.type == Command.type) {
                 back.data.cmd_mouse.x += Command.data.cmd_mouse.x;
                 back.data.cmd_mouse.y += Command.data.cmd_mouse.y;
-                Diagnostics::Trace("[KMBOX-NET] coalesced mouse_move dx=%d dy=%d",
-                    back.data.cmd_mouse.x, back.data.cmd_mouse.y);
-                Diagnostics::Aim("udp.enqueue coalesced type=mouse_move merged_x=%d merged_y=%d queue_size=%zu",
+                if (Command.type == KmBoxCommandType::MouseAutoMove)
+                    back.data.head.rand = Command.data.head.rand;
+                Diagnostics::Trace("[KMBOX-NET] coalesced %s dx=%d dy=%d",
+                    ToString(Command.type), back.data.cmd_mouse.x, back.data.cmd_mouse.y);
+                Diagnostics::Aim("udp.enqueue coalesced type=%s merged_x=%d merged_y=%d runtimeMs=%u queue_size=%zu",
+                    ToString(Command.type),
                     back.data.cmd_mouse.x,
                     back.data.cmd_mouse.y,
+                    Command.type == KmBoxCommandType::MouseAutoMove ? back.data.head.rand : 0,
                     commandQueue.size());
                 return success;
             }
