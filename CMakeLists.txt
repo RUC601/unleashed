@@ -29,14 +29,18 @@ set(IMGUI_SOURCES
 set(GAME_HEADERS
     include/resource.h
     include/Game/AbilityIcons.hpp
+    include/Game/AimArchitecture.hpp
     include/Game/Decrypt.hpp
     include/Game/Entity.hpp
+    include/Game/HeroGeometrySpec.hpp
     include/Game/HeroSkills.hpp
+    include/Game/InputOrchestrator.hpp
     include/Game/Offsets.hpp
     include/Game/Overwatch.hpp
     include/Game/SDK.hpp
     include/Game/Structs.hpp
     include/Game/Target.hpp
+    include/Game/WeaponSpec.hpp
     include/Kmbox/KmboxB.h
     include/Kmbox/KmboxMoveTest.h
     include/Kmbox/KmboxTimerResolution.h
@@ -67,8 +71,10 @@ set(UNLEASHED_SOURCES
     src/Utils/Types.cpp
     src/Utils/Config.cpp
     src/Features/UI.cpp
+    src/Game/HeroGeometrySpec.cpp
     src/Game/HeroSkills.cpp
     src/Game/Offsets.cpp
+    src/Game/WeaponSpec.cpp
     src/Kmbox/KmboxB.cpp
     src/Kmbox/KmboxMoveTest.cpp
     src/Kmbox/KmboxTimerResolution.cpp

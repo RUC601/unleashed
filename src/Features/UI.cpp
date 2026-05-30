@@ -393,7 +393,7 @@ namespace {
         if (OW::Config::kmboxDeviceType != 0)
             return { false, "Network mode only" };
 
-        const int monitorPort = OW::Config::kmboxPort + 1;
+        const int monitorPort = OW::Config::kmboxMonitorPort;
         if (monitorPort <= 0 || monitorPort > 65535)
             return { false, "Invalid monitor port" };
 
@@ -615,7 +615,7 @@ namespace {
                 return { false, message };
             }
 
-            const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxPort + 1);
+            const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxMonitorPort);
             const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
             if (monitorStatus != success) {
                 char message[96] = {};
@@ -790,8 +790,13 @@ static constexpr int kBonePreferenceAimBones[] = {
     OW::Config::kAimBoneChest
 };
 static constexpr int kBonePreferenceClosestIndex = 3;
-static const char* kAimMethod[]    = { "Linear", "PID", "Bezier" };
+static const char* kAimBehavior[]  = { "Tracking", "Flick", "FlickClamp", "FlickDelay", "Reacquire" };
+static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
+static const char* kPredictionMode[] = { "Auto", "Force On", "Force Off" };
+static const char* kFirePolicy[] = {
+    "Manual", "Hold Tracking", "Tap Hit Window", "Release Delay", "Timed Burst", "Charge Release"
+};
 static const char* kPriority[]     = { "Lowest FOV", "Lowest HP", "Distance" };
 static const char* kTeam[]         = { "Enemies", "Allies", "All" };
 static const char* kTrace[]        = { "Strict", "Relaxed", "Off" };
@@ -1321,8 +1326,9 @@ static const char* PresetBoneName(const OW::Config::HeroPreset& preset) {
     return preset.autoBone ? "Closest" : OW::Config::AimBoneName(preset.bone);
 }
 
-static const char* PresetAimModeName(int mode) {
-    return OW::Labels::AimModeName(mode);
+static const char* PresetAimBehaviorName(int behavior) {
+    behavior = ImClamp(behavior, 0, IM_ARRAYSIZE(kAimBehavior) - 1);
+    return kAimBehavior[behavior];
 }
 
 static const char* PresetAimMethodName(int method) {
@@ -1340,11 +1346,11 @@ static void DrawPresetSummary(const HeroOption& hero,
         : (hasStoredPreset ? "Stored preset" : "Using global defaults");
     if (kind == ActionSlotKind::Aim) {
         std::snprintf(summary, sizeof(summary),
-                      "%s - %s | Method %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f | %s",
-                      hero.label, scope, PresetAimMethodName(preset.aimMethod),
+                      "%s - %s | %s | Smoothing %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f",
+                      hero.label, scope, PresetAimBehaviorName(preset.aimBehavior),
+                      PresetAimMethodName(preset.aimMethod),
                       preset.fov, preset.smooth,
-                      PresetBoneName(preset), preset.hitbox,
-                      PresetAimModeName(preset.aimMode));
+                      PresetBoneName(preset), preset.hitbox);
     } else {
         std::snprintf(summary, sizeof(summary),
                       "%s - %s | Trigger %s | %s | %s | Hitbox %.2f | %s",
@@ -1353,7 +1359,7 @@ static void DrawPresetSummary(const HeroOption& hero,
                       OW::Labels::AttackActionName(preset.trigger.action),
                       OW::Labels::TriggerbotModeName(preset.trigger.mode),
                       preset.hitbox,
-                      PresetAimModeName(preset.aimMode));
+                      OW::Labels::AimModeName(preset.aimMode));
     }
     ImGui::TextUnformatted(summary);
 }
@@ -2761,26 +2767,28 @@ void UI::AimbotPage() {
         // LEFT: Aimbot Hero Basic Options
         UIGroupBox("Aim Hero Basic Options");
         {
-            // Aim Mode
-            SettingRow("Aim Mode", kAimbotLeftLabelWidth);
+            // Aim Behavior
+            SettingRow("Aim Behavior", kAimbotLeftLabelWidth);
             PushControlWidth();
-            presetChanged |= UISelect("##aimMode", &activePreset.aimMode,
-                                      OW::Labels::kAimModes, OW::Labels::AimModeCount());
+            if (UISelect("##aimBehavior", &activePreset.aimBehavior,
+                         kAimBehavior, IM_ARRAYSIZE(kAimBehavior))) {
+                activePreset.aimMode = activePreset.aimBehavior == 0 ? 0 : 1;
+                if (activePreset.firePolicy == 0 || activePreset.firePolicy == 1 || activePreset.firePolicy == 2) {
+                    activePreset.firePolicy = activePreset.aimBehavior == 0 ? 1 : 2;
+                    activePreset.keepFiring = activePreset.firePolicy == 1;
+                    activePreset.autoshot = activePreset.firePolicy >= 2;
+                }
+                presetChanged = true;
+            }
             ImGui::PopItemWidth();
 
-            // Aim Method
-            SettingRow("Aim Method", kAimbotLeftLabelWidth);
+            // Smoothing controller
+            SettingRow("Smoothing", kAimbotLeftLabelWidth);
             PushControlWidth();
             presetChanged |= UISelect("##aimMethod", &activePreset.aimMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod));
             ImGui::PopItemWidth();
 
-            if (activePreset.aimMethod == 0) {
-                SettingRow("Smooth Type", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISelect("##aimSmoothType", &activePreset.smoothType,
-                                          kAimSmoothType, IM_ARRAYSIZE(kAimSmoothType));
-                ImGui::PopItemWidth();
-            } else if (activePreset.aimMethod == 1) {
+            if (activePreset.aimMethod == 1) {
                 SettingRow("P Gain", kAimbotLeftLabelWidth);
                 PushControlWidth();
                 presetChanged |= UISlider("##aimPidP", &activePreset.pidP, 0.0f, 2.0f, "0.50");
@@ -2836,13 +2844,16 @@ void UI::AimbotPage() {
                                       OW::Labels::kAttackActions, OW::Labels::AttackActionCount());
             ImGui::PopItemWidth();
 
-            // Autoshot
-            SettingRow("Autoshot", kAimbotLeftLabelWidth);
-            presetChanged |= UICheckbox("##aimAutoshot", &activePreset.autoshot);
-
-            // Keep Firing
-            SettingRow("Keep Firing", kAimbotLeftLabelWidth);
-            presetChanged |= UICheckbox("##aimKeepFire", &activePreset.keepFiring);
+            // Fire Policy
+            SettingRow("Fire Policy", kAimbotLeftLabelWidth);
+            PushControlWidth();
+            if (UISelect("##aimFirePolicy", &activePreset.firePolicy,
+                         kFirePolicy, IM_ARRAYSIZE(kFirePolicy))) {
+                activePreset.keepFiring = activePreset.firePolicy == 1;
+                activePreset.autoshot = activePreset.firePolicy >= 2;
+                presetChanged = true;
+            }
+            ImGui::PopItemWidth();
 
             // Bone Preference combines fixed aim bones and the dynamic closest-bone mode.
             SettingRow("Bone Preference", kAimbotLeftLabelWidth);
@@ -2857,7 +2868,13 @@ void UI::AimbotPage() {
 
             // Prediction
             SettingRow("Prediction", kAimbotLeftLabelWidth);
-            presetChanged |= UICheckbox("##aimPrediction", &activePreset.prediction);
+            PushControlWidth();
+            if (UISelect("##aimPredictionMode", &activePreset.predictionMode,
+                         kPredictionMode, IM_ARRAYSIZE(kPredictionMode))) {
+                activePreset.prediction = activePreset.predictionMode == 1;
+                presetChanged = true;
+            }
+            ImGui::PopItemWidth();
 
             // Max Head Distance
             SettingRow("Max Head Distance", kAimbotLeftLabelWidth);
@@ -2865,8 +2882,8 @@ void UI::AimbotPage() {
             presetChanged |= UISlider("##aimMaxHead", &activePreset.maxHeadDistance, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
-            // Stickiness
-            SettingRow("Stickiness", kAimbotLeftLabelWidth);
+            // Retarget hysteresis
+            SettingRow("Retarget Hysteresis", kAimbotLeftLabelWidth);
             PushControlWidth();
             presetChanged |= UISlider("##aimStick", &activePreset.stickiness, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
@@ -3555,19 +3572,23 @@ void UI::VisualsPage() {
     UIGroupBox("Player Visual Features");
     {
         const char* labels[] = {
-            "Box", "Skeleton", "Radar",
+            "Box", "Hero Name", "BattleTag",
+            "Health Color", "Health Bar", "Health Bar 2",
             "Distance", "Ultimate", "Skill Info",
-            "FOV Circle", "Health Packs", "Radar Lines",
-            "Healthbar Style 2", nullptr, nullptr
+            "Skeleton", "Snapline", "Eye Ray",
+            "Radar", "Radar Lines", "FOV Circle",
+            "Crosshair", "Health Packs", nullptr
         };
         bool* values[] = {
-            &OW::Config::draw_info, &OW::Config::draw_skel, &OW::Config::radar,
+            &OW::Config::draw_info, &OW::Config::name, &OW::Config::drawbattletag,
+            &OW::Config::drawhealth, &OW::Config::healthbar, &OW::Config::healthbar2,
             &OW::Config::dist, &OW::Config::ult, &OW::Config::skillinfo,
-            &OW::Config::draw_fov, &OW::Config::draw_hp_pack, &OW::Config::radarline,
-            &OW::Config::healthbar2, nullptr, nullptr
+            &OW::Config::draw_skel, &OW::Config::drawline, &OW::Config::eyeray,
+            &OW::Config::radar, &OW::Config::radarline, &OW::Config::draw_fov,
+            &OW::Config::crosscircle, &OW::Config::draw_hp_pack, nullptr
         };
         const float ratios[] = { 1.0f, 1.0f, 1.2f };
-        DrawCheckboxGrid3(labels, values, 4, 26.0f, ratios);
+        DrawCheckboxGrid3(labels, values, 6, 26.0f, ratios);
     }
     CloseGroupBox();
 
@@ -3762,6 +3783,106 @@ void UI::MiscPage() {
     }
     CloseGroupBox();
 
+    UIGroupBox("Smoothing Controller");
+    {
+        SettingRow("Controller");
+        PushControlWidth();
+        UISelect("##miscSmoothingController", &OW::Config::aimMethod,
+                 kAimMethod, IM_ARRAYSIZE(kAimMethod));
+        ImGui::PopItemWidth();
+
+        if (OW::Config::aimMethod == 1) {
+            SettingRow("P Gain");
+            PushControlWidth();
+            UISlider("##miscPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
+            ImGui::PopItemWidth();
+
+            SettingRow("I Gain");
+            PushControlWidth();
+            UISlider("##miscPidI", &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
+            ImGui::PopItemWidth();
+
+            SettingRow("D Gain");
+            PushControlWidth();
+            UISlider("##miscPidD", &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
+            ImGui::PopItemWidth();
+
+            SettingRow("Max Integral");
+            PushControlWidth();
+            UISlider("##miscPidMaxI", &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
+            ImGui::PopItemWidth();
+
+            SettingRow("Deadzone");
+            PushControlWidth();
+            UISlider("##miscPidDz", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
+            ImGui::PopItemWidth();
+        } else if (OW::Config::aimMethod == 2) {
+            SettingRow("Control Points");
+            PushControlWidth();
+            UISlider("##miscBezCP", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
+            ImGui::PopItemWidth();
+
+            SettingRow("Curvature");
+            PushControlWidth();
+            UISlider("##miscBezCurve", &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
+            ImGui::PopItemWidth();
+
+            SettingRow("Speed");
+            PushControlWidth();
+            UISlider("##miscBezSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
+            ImGui::PopItemWidth();
+        } else if (OW::Config::aimMethod == 4) {
+            SettingRow("Acceleration");
+            PushControlWidth();
+            UISlider("##miscAcceleration", &OW::Config::accvalue, 0.0f, 20.0f, "0.10");
+            ImGui::PopItemWidth();
+        }
+
+        SettingRow("Pitch Scale");
+        PushControlWidth();
+        UISlider("##miscPitchScale", &OW::Config::aimbotPitchScale, 0.1f, 3.0f, "1.00");
+        ImGui::PopItemWidth();
+
+        SettingRow("Two Stage Aim");
+        UICheckbox("##miscTwoStageAim", &OW::Config::aimbotTwoStage);
+
+        if (OW::Config::aimbotTwoStage) {
+            SettingRow("Trigger Gate");
+            UICheckbox("##miscTwoStageTriggerGate", &OW::Config::aimbotTwoStageTriggerGate);
+
+            SettingRow("Box Padding");
+            PushControlWidth();
+            UISlider("##miscTwoStageBoxPadding", &OW::Config::aimbotTwoStageBoxPadding, 0.0f, 80.0f, "8 px");
+            ImGui::PopItemWidth();
+
+            SettingRow("Inner Radius");
+            PushControlWidth();
+            UISlider("##miscTwoStageInnerRadius", &OW::Config::aimbotTwoStageInnerRadius, 0.0f, 250.0f, "34 px");
+            ImGui::PopItemWidth();
+
+            SettingRow("Inner Smooth");
+            PushControlWidth();
+            UISlider("##miscTwoStageInnerSmooth", &OW::Config::aimbotTwoStageInnerSmoothScale, 0.1f, 1.0f, "0.55x");
+            ImGui::PopItemWidth();
+        }
+
+        SettingRow("Overshoot Curve");
+        UICheckbox("##miscOvershootCurve", &OW::Config::aimOvershootCurve);
+
+        if (OW::Config::aimOvershootCurve) {
+            SettingRow("Overshoot Gain");
+            PushControlWidth();
+            UISlider("##miscOvershootGain", &OW::Config::aimOvershootGain, 0.0f, 1.0f, "0.25");
+            ImGui::PopItemWidth();
+
+            SettingRow("Overshoot Reset");
+            PushControlWidth();
+            UISlider("##miscOvershootReset", &OW::Config::aimOvershootResetPixels, 1.0f, 250.0f, "56 px");
+            ImGui::PopItemWidth();
+        }
+    }
+    CloseGroupBox();
+
     UIGroupBox("Application");
     {
         SettingRow("Unleashed");
@@ -3822,6 +3943,12 @@ void UI::MiscPage() {
             SettingRow("Port");
             PushControlWidth();
             ImGui::InputInt("##Port", &OW::Config::kmboxPort, 0, 0);
+            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+            ImGui::PopItemWidth();
+
+            SettingRow("Monitor Port");
+            PushControlWidth();
+            ImGui::InputInt("##MonitorPort", &OW::Config::kmboxMonitorPort, 0, 0);
             kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
 

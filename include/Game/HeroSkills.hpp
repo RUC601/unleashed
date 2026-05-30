@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Utils/Config.hpp"
+#include "Game/InputOrchestrator.hpp"
 #include "Game/Structs.hpp"
 
 #include <cstddef>
@@ -118,6 +119,8 @@ void RunInputSequence(const std::string& skillId,
 HeroSkillRunState RunViewpointController(const std::string& skillId,
                                          const Config::HeroSkillSettings& params);
 bool AnyInputSequenceActive();
+ExecutionToken ActiveInputSequenceToken();
+bool ShouldBlockForActiveSequence(ExecutionSource requester);
 void CancelActiveSkill();
 void ProcessHeroSkills();
 

@@ -630,7 +630,7 @@ static void InitializeKmBoxFromConfig()
                 OW::Config::kmboxIp,
                 OW::Config::kmboxPort);
 
-            const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxPort + 1);
+            const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxMonitorPort);
             const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
             if (monitorStatus == success) {
                 std::printf("[KMBOX] Monitor started on port %u.\n", monitorPort);
@@ -734,13 +734,14 @@ int main()
     OW::Config::LoadConfig(OW::Config::ConfigPath());
     OW::RefreshHostMouseDpi();
     OW::RefreshScreenSizeFromConfig();
-    Diagnostics::Aim("main.config_loaded screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d hostMouseDpi=%.6f hostDpiDetected=%d",
+    Diagnostics::Aim("main.config_loaded screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d hostMouseDpi=%.6f hostDpiDetected=%d",
         OW::WX,
         OW::WY,
         OW::Config::kmboxEnabled ? 1 : 0,
         OW::Config::kmboxDeviceType,
         OW::Config::kmboxIp,
         OW::Config::kmboxPort,
+        OW::Config::kmboxMonitorPort,
         OW::Config::kmboxAimSensitivity,
         OW::Config::gameMouseSensitivity,
         OW::Config::sensReference,

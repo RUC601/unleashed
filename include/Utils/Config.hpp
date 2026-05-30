@@ -130,9 +130,12 @@ namespace OW { namespace Config {
     // ---- Aimbot UI options ----
     inline bool  aimbotAutoshot = false;
     inline bool  aimbotKeepFiring = true;
+    inline int   aimbotPredictionMode = 0; // 0=Auto, 1=Force On, 2=Force Off
+    inline int   aimBehavior = 0;          // 0=Tracking, 1=Flick, 2=FlickClamp, 3=FlickDelay, 4=ReacquireAtApex
+    inline int   aimbotFirePolicy = 1;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
     inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
     inline float aimbotMaxHead = 100.0f;
-    inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier
+    inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited
     inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
     inline float aimPidP = 0.5f;
     inline float aimPidI = 0.01f;
@@ -144,6 +147,7 @@ namespace OW { namespace Config {
     inline float aimBezierSpeed = 50.0f;
     inline float aimbotStickiness = 100.0f;
     inline float aimbotSmoothY = 50.0f;
+    inline float aimbotPitchScale = 1.0f;
     inline float aimbotMaxAim = 100.0f;
     inline float aimbotMinCharge = 5.0f;
     inline float aimbotMaxCharge = 100.0f;
@@ -156,6 +160,15 @@ namespace OW { namespace Config {
     inline int   aimbotAttack = 0; // action profile: primary/secondary/scoped/unscoped/ability/ultimate
     inline int   aimbotTeam = 0; // 0=Enemies, 1=Allies, 2=All
     inline int   aimbotPriority = 0; // 0=FOV, 1=HP, 2=Distance
+    inline float aimbotEffectiveHitWindow = 0.13f; // runtime-only TargetCandidate resolved window
+    inline bool  aimbotTwoStage = false;
+    inline bool  aimbotTwoStageTriggerGate = true;
+    inline float aimbotTwoStageBoxPadding = 8.0f;
+    inline float aimbotTwoStageInnerRadius = 34.0f;
+    inline float aimbotTwoStageInnerSmoothScale = 0.55f;
+    inline bool  aimOvershootCurve = false;
+    inline float aimOvershootGain = 0.25f;
+    inline float aimOvershootResetPixels = 56.0f;
 
     // ---- Hero-specific ----
     inline bool GenjiBlade       = false;
@@ -256,6 +269,7 @@ namespace OW { namespace Config {
     inline int  kmboxDeviceType = 0; // 0=Network/UDP, 1=Serial/COM
     inline char kmboxIp[32] = "192.168.2.188";
     inline int  kmboxPort = 8808;
+    inline int  kmboxMonitorPort = 8809;
     inline char kmboxMac[32] = "12525C53";
     inline char kmboxComPort[16] = "COM3";
     inline float kmboxAimSensitivity = 100.0f;
@@ -308,7 +322,8 @@ namespace OW { namespace Config {
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         float hitbox = 0.13f;    // hitbox radius/size
         int aimMode = 0;         // 0=Tracking, 1=Flick
-        int aimMethod = 0;       // 0=Linear, 1=PID, 2=Bezier
+        int aimBehavior = 0;     // 0=Tracking, 1=Flick, 2=FlickClamp, 3=FlickDelay, 4=ReacquireAtApex
+        int aimMethod = 0;       // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited
         int smoothType = 0;      // 0=Constant Speed, 1=Linear, 2=Bezier
         float pidP = 0.5f;
         float pidI = 0.01f;
@@ -322,8 +337,11 @@ namespace OW { namespace Config {
         bool autoshot = false;
         bool keepFiring = true;
         bool prediction = false; // movement prediction
+        int predictionMode = 0;   // 0=Auto, 1=Force On, 2=Force Off
+        int firePolicy = 1;       // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
         float maxHeadDistance = 100.0f;
         float stickiness = 100.0f;
+        float pitchScale = 1.0f;
         int priority = 0;        // 0=FOV, 1=HP, 2=Distance
         int targetTeam = 0;      // 0=Enemies, 1=Allies, 2=All
         float maxAimTime = 100.0f;

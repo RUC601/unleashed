@@ -2099,6 +2099,19 @@ bool AnyInputSequenceActive()
     return g_anyInputSequenceActive.load(std::memory_order_acquire);
 }
 
+ExecutionToken ActiveInputSequenceToken()
+{
+    return MakeExecutionToken(ExecutionSource::SequenceInternal, AnyInputSequenceActive());
+}
+
+bool ShouldBlockForActiveSequence(ExecutionSource requester)
+{
+    if (requester == ExecutionSource::SequenceInternal)
+        return false;
+
+    return ShouldYieldToExecution(MakeExecutionToken(requester), ActiveInputSequenceToken());
+}
+
 void RunInputSequence(const std::string& skillId,
                       const std::vector<Config::HeroSkillSequenceStep>& steps,
                       int key,

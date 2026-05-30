@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdio>
+#include <limits>
 #include <unordered_map>
 #include <windows.h>
 #include "Utils/Diagnostics.hpp"
@@ -1196,7 +1197,7 @@ inline void entity_thread() {
             }
 
             // ---- BattleTag (optional) ----
-            if (OW::Config::draw_info && OW::Config::drawbattletag) {
+            if (OW::Config::drawbattletag) {
                 entity.statcombase = OW::DecryptComponent(LinkParent, OW::TYPE_STAT, linkSnapshot);
                 if (entity.statcombase && entity != OW::local_entity) {
                     uintptr_t off = SDK->RPM<uintptr_t>(entity.statcombase + 0xE0);
@@ -2824,7 +2825,7 @@ inline void PlayerInfo() {
         std::string heroName;
         const bool showAboveHeadUltimate = OW::Config::ult && OW::Config::ultimateDisplayMode == 0;
         const bool showAboveHeadSkillCooldowns = OW::Config::skillinfo && OW::Config::skillDisplayMode == 0;
-        if (OW::Config::skillinfo || OW::Config::healthbar2 || showAboveHeadUltimate)
+        if (OW::Config::skillinfo || OW::Config::healthbar2 || showAboveHeadUltimate || OW::Config::name)
             heroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
 
         ID3D11ShaderResourceView* heroIcon = nullptr;
@@ -2842,6 +2843,19 @@ inline void PlayerInfo() {
 
         if (OW::Config::draw_info || OW::Config::draw_edge || OW::Config::drawbox3d) {
             Render::DrawCorneredBox(left, top, width, bottom - top, boxColor, outlineThickness, boxOutlineColor);
+            drewAny = true;
+        }
+
+        float labelY = heroIcon
+            ? (top - iconSize - 24.0f)
+            : (showAboveHeadUltimate ? top - 45.0f : top - 18.0f);
+        if (OW::Config::name && !specialEntity && heroName != "Unknown" && heroName != "Bot" && !heroName.empty()) {
+            OverlayRenderDetail::DrawCenteredText(ImVec2(centerX, labelY), color, heroName, 13.0f);
+            labelY += 13.0f;
+            drewAny = true;
+        }
+        if (OW::Config::drawbattletag && !entity.battletag.empty()) {
+            OverlayRenderDetail::DrawCenteredText(ImVec2(centerX, labelY), color, entity.battletag, 12.0f);
             drewAny = true;
         }
 
@@ -3315,6 +3329,177 @@ namespace AimbotDetail {
     };
 
     inline OW::c_entity LocalEntity();
+    inline bool IsConfiguredActivationKeyPressedForSelection(int keySetting);
+
+    struct RuntimePresetSelection {
+        OW::Config::HeroPreset preset{};
+        int slotIndex = -1;
+        bool matchedInput = false;
+    };
+
+    inline void LogRuntimePresetSelection(const char* kind,
+                                          uint64_t heroId,
+                                          const RuntimePresetSelection& selection) {
+        struct LastState {
+            bool initialized = false;
+            uint64_t heroId = 0;
+            int slotIndex = -2;
+            bool matchedInput = false;
+            int key = -1;
+            int aimMethod = -1;
+            int aimBehavior = -1;
+            int triggerMode = -1;
+            int triggerKey = -1;
+            bool triggerEnabled = false;
+        };
+
+        static LastState aimState{};
+        static LastState triggerState{};
+        LastState& state = (kind && std::strcmp(kind, "trigger") == 0) ? triggerState : aimState;
+
+        const OW::Config::HeroPreset& preset = selection.preset;
+        const bool changed = !state.initialized ||
+            state.heroId != heroId ||
+            state.slotIndex != selection.slotIndex ||
+            state.matchedInput != selection.matchedInput ||
+            state.key != preset.key ||
+            state.aimMethod != preset.aimMethod ||
+            state.aimBehavior != preset.aimBehavior ||
+            state.triggerMode != preset.trigger.mode ||
+            state.triggerKey != preset.trigger.key ||
+            state.triggerEnabled != preset.trigger.enabled;
+
+        if (!changed)
+            return;
+
+        Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d aimMode=%d aimBehavior=%d aimMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+            kind ? kind : "unknown",
+            static_cast<unsigned long long>(heroId),
+            selection.slotIndex + 1,
+            selection.matchedInput ? 1 : 0,
+            preset.key,
+            preset.aimMode,
+            preset.aimBehavior,
+            preset.aimMethod,
+            preset.trigger.enabled ? 1 : 0,
+            preset.trigger.mode,
+            preset.trigger.key);
+
+        state.initialized = true;
+        state.heroId = heroId;
+        state.slotIndex = selection.slotIndex;
+        state.matchedInput = selection.matchedInput;
+        state.key = preset.key;
+        state.aimMethod = preset.aimMethod;
+        state.aimBehavior = preset.aimBehavior;
+        state.triggerMode = preset.trigger.mode;
+        state.triggerKey = preset.trigger.key;
+        state.triggerEnabled = preset.trigger.enabled;
+    }
+
+    inline bool TrySelectRuntimeAimPreset(uint64_t heroId, RuntimePresetSelection& selection) {
+        RuntimePresetSelection fallback{};
+        bool hasFallback = false;
+
+        for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
+            OW::Config::HeroSlotPreset slot{};
+            if (!OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot) || !slot.enabled)
+                continue;
+
+            if (!hasFallback) {
+                fallback.preset = slot.preset;
+                fallback.slotIndex = slotIndex;
+                fallback.matchedInput = false;
+                hasFallback = true;
+            }
+
+            if (IsConfiguredActivationKeyPressedForSelection(slot.preset.key)) {
+                selection.preset = slot.preset;
+                selection.slotIndex = slotIndex;
+                selection.matchedInput = true;
+                return true;
+            }
+        }
+
+        if (!hasFallback)
+            return false;
+
+        selection = fallback;
+        return true;
+    }
+
+    inline bool TrySelectRuntimeTriggerPreset(uint64_t heroId, RuntimePresetSelection& selection) {
+        static uint64_t stickyHeroId = 0;
+        static int stickyToggleSlotIndex = -1;
+        if (stickyHeroId != heroId) {
+            stickyHeroId = heroId;
+            stickyToggleSlotIndex = -1;
+        }
+
+        RuntimePresetSelection fallback{};
+        RuntimePresetSelection alwaysCandidate{};
+        bool hasFallback = false;
+        bool hasAlwaysCandidate = false;
+
+        for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
+            OW::Config::HeroSlotPreset slot{};
+            if (!OW::Config::TryGetHeroTriggerSlot(heroId, slotIndex, slot) || !slot.enabled)
+                continue;
+
+            if (!hasFallback) {
+                fallback.preset = slot.preset;
+                fallback.slotIndex = slotIndex;
+                fallback.matchedInput = false;
+                hasFallback = true;
+            }
+
+            const OW::Config::TriggerPreset& trigger = slot.preset.trigger;
+            if (!trigger.enabled)
+                continue;
+
+            if ((trigger.mode == 0 || trigger.mode == 1) &&
+                IsConfiguredActivationKeyPressedForSelection(trigger.key)) {
+                stickyToggleSlotIndex = trigger.mode == 1 ? slotIndex : -1;
+                selection.preset = slot.preset;
+                selection.slotIndex = slotIndex;
+                selection.matchedInput = true;
+                return true;
+            }
+
+            if (trigger.mode == 2 && !hasAlwaysCandidate) {
+                alwaysCandidate.preset = slot.preset;
+                alwaysCandidate.slotIndex = slotIndex;
+                alwaysCandidate.matchedInput = true;
+                hasAlwaysCandidate = true;
+            }
+        }
+
+        if (stickyToggleSlotIndex >= 0 && OW::Config::triggerbotToggleActive) {
+            OW::Config::HeroSlotPreset stickySlot{};
+            if (OW::Config::TryGetHeroTriggerSlot(heroId, stickyToggleSlotIndex, stickySlot) &&
+                stickySlot.enabled &&
+                stickySlot.preset.trigger.enabled &&
+                stickySlot.preset.trigger.mode == 1) {
+                selection.preset = stickySlot.preset;
+                selection.slotIndex = stickyToggleSlotIndex;
+                selection.matchedInput = true;
+                return true;
+            }
+            stickyToggleSlotIndex = -1;
+        }
+
+        if (hasAlwaysCandidate) {
+            stickyToggleSlotIndex = -1;
+            selection = alwaysCandidate;
+            return true;
+        }
+
+        if (!hasFallback)
+            return false;
+
+        selection = fallback;
+        return true;
+    }
 
     struct ScopedHeroPresetOverride {
         bool active = false;
@@ -3325,12 +3510,13 @@ namespace AimbotDetail {
             if (local.HeroID == 0)
                 return;
 
-            OW::Config::HeroPreset preset{};
-            if (!OW::Config::TryGetHeroAimPreset(local.HeroID, preset))
+            RuntimePresetSelection selection{};
+            if (!TrySelectRuntimeAimPreset(local.HeroID, selection))
                 return;
 
             original = OW::Config::MakeHeroPresetFromCurrent();
-            OW::Config::ApplyHeroAimPresetToGlobals(preset);
+            OW::Config::ApplyHeroAimPresetToGlobals(selection.preset);
+            LogRuntimePresetSelection("aim", local.HeroID, selection);
             active = true;
         }
 
@@ -3349,12 +3535,13 @@ namespace AimbotDetail {
             if (local.HeroID == 0)
                 return;
 
-            OW::Config::HeroPreset preset{};
-            if (!OW::Config::TryGetHeroTriggerPreset(local.HeroID, preset))
+            RuntimePresetSelection selection{};
+            if (!TrySelectRuntimeTriggerPreset(local.HeroID, selection))
                 return;
 
             original = OW::Config::MakeHeroPresetFromCurrent();
-            OW::Config::ApplyHeroTriggerPresetToGlobals(preset);
+            OW::Config::ApplyHeroTriggerPresetToGlobals(selection.preset);
+            LogRuntimePresetSelection("trigger", local.HeroID, selection);
             active = true;
         }
 
@@ -3545,6 +3732,53 @@ namespace AimbotDetail {
         return ReadDmaThenLocalVk(vk, keySetting);
     }
 
+    inline bool ReadKmBoxMonitorVkQuiet(int vk) {
+        if (IsMouseActivationKey(vk))
+            return kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
+        return kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
+    }
+
+    inline bool ReadDmaKeyStateVkQuiet(int vk) {
+        const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
+        if (!KeyState::initialized.load() || keyStateAddress == 0)
+            return false;
+        return KeyState::IsKeyDown(static_cast<uint32_t>(vk));
+    }
+
+    inline bool ReadLocalAsyncKeyStateVkQuiet(int vk) {
+        return (GetAsyncKeyState(vk) & 0x8000) != 0;
+    }
+
+    inline bool ReadDmaThenLocalVkQuiet(int vk) {
+        return ReadDmaKeyStateVkQuiet(vk) || ReadLocalAsyncKeyStateVkQuiet(vk);
+    }
+
+    inline bool IsInputVkDownQuiet(int vk) {
+        if (vk <= 0)
+            return false;
+
+        if (OW::Config::inputSource == 1) {
+            if (IsKmBoxMonitorAvailable())
+                return ReadKmBoxMonitorVkQuiet(vk);
+            return ReadDmaThenLocalVkQuiet(vk);
+        }
+
+        if (OW::Config::inputSource == 3)
+            return ReadDmaKeyStateVkQuiet(vk);
+
+        if (OW::Config::inputSource == 2)
+            return ReadLocalAsyncKeyStateVkQuiet(vk);
+
+        if (IsKmBoxMonitorAvailable())
+            return ReadKmBoxMonitorVkQuiet(vk);
+
+        return ReadDmaThenLocalVkQuiet(vk);
+    }
+
+    inline bool IsConfiguredActivationKeyPressedForSelection(int keySetting) {
+        return IsInputVkDownQuiet(OW::get_bind_id(keySetting));
+    }
+
     inline bool IsConfiguredAimKeyPressed(int keySetting) {
         const int vk = OW::get_bind_id(keySetting);
         if (vk <= 0) {
@@ -3614,6 +3848,24 @@ namespace AimbotDetail {
         OW::SendMouseButton(button, false);
     }
 
+    inline int MouseButtonForAttackAction(int action) {
+        switch (action) {
+        case 1: // Secondary Fire
+        case 2: // Scoped
+            return 1;
+        case 0: // Primary Fire
+        case 3: // Unscoped
+            return 0;
+        default:
+            return -1;
+        }
+    }
+
+    inline bool ShouldHoldFireWhileTracking() {
+        return ClampFirePolicy(OW::Config::aimbotFirePolicy) == FirePolicyType::HoldWhileTracking ||
+            (OW::Config::aimbotKeepFiring && OW::Config::Tracking);
+    }
+
     inline void ClickDmaMouseKey(uint32_t key, DWORD sleep_ms = 10) {
         int button = -1;
         if (OW::DmaKeyToMouseButton(key, button)) {
@@ -3655,7 +3907,257 @@ namespace AimbotDetail {
         return true;
     }
 
-    inline AimData BuildAimData(const Vector3& world_target, bool accelerated, float smooth, float acceleration) {
+    struct TwoStageScreenBox {
+        float left = 0.0f;
+        float top = 0.0f;
+        float right = 0.0f;
+        float bottom = 0.0f;
+        int points = 0;
+    };
+
+    struct TwoStageRuntime {
+        uint64_t entityKey = 0;
+        bool torsoReached = false;
+    };
+
+    struct TwoStageAimPlan {
+        Vector3 target{};
+        bool active = false;
+        bool triggerOpen = true;
+        bool innerStage = false;
+        int methodOverride = -1;
+        float smoothScale = 1.0f;
+        float bezierSpeed = -1.0f;
+    };
+
+    inline TwoStageRuntime& TwoStageState() {
+        static TwoStageRuntime state{};
+        return state;
+    }
+
+    inline uint64_t TwoStageEntityKey(const c_entity& target) {
+        return target.address ? target.address : target.LinkBase;
+    }
+
+    inline void ResetTwoStageState() {
+        TwoStageState() = TwoStageRuntime{};
+    }
+
+    inline bool ProjectAimPoint(const Vector3& world, Vector2& screen) {
+        if (IsZeroVector(world))
+            return false;
+        return OW::viewMatrix.WorldToScreen(world, &screen, Vector2(OW::WX, OW::WY), false);
+    }
+
+    inline void ExpandTwoStageBox(TwoStageScreenBox& box, const Vector2& point) {
+        if (box.points == 0) {
+            box.left = box.right = point.X;
+            box.top = box.bottom = point.Y;
+        } else {
+            box.left = (std::min)(box.left, point.X);
+            box.right = (std::max)(box.right, point.X);
+            box.top = (std::min)(box.top, point.Y);
+            box.bottom = (std::max)(box.bottom, point.Y);
+        }
+        ++box.points;
+    }
+
+    inline bool AddWorldPointToTwoStageBox(TwoStageScreenBox& box, const Vector3& world) {
+        Vector2 screen{};
+        if (!ProjectAimPoint(world, screen))
+            return false;
+        ExpandTwoStageBox(box, screen);
+        return true;
+    }
+
+    inline bool TryBuildUpperBodyBox(c_entity target, TwoStageScreenBox& box) {
+        box = TwoStageScreenBox{};
+        AddWorldPointToTwoStageBox(box, target.head_pos);
+        AddWorldPointToTwoStageBox(box, target.neck_pos);
+        AddWorldPointToTwoStageBox(box, target.chest_pos);
+        AddWorldPointToTwoStageBox(box, target.GetBonePos(OW::BONE_R_SHOULDER));
+        AddWorldPointToTwoStageBox(box, target.GetBonePos(OW::BONE_L_SHOULDER));
+        AddWorldPointToTwoStageBox(box, target.GetBonePos(OW::BONE_PELVIS));
+
+        if (box.points < 2)
+            return false;
+
+        const float padding = std::clamp(OW::Config::aimbotTwoStageBoxPadding, 0.0f, 80.0f);
+        box.left -= padding;
+        box.top -= padding;
+        box.right += padding;
+        box.bottom += padding;
+        return box.left <= box.right && box.top <= box.bottom;
+    }
+
+    inline bool PointInsideTwoStageBox(const TwoStageScreenBox& box, const Vector2& point) {
+        return box.points >= 2 &&
+            point.X >= box.left &&
+            point.X <= box.right &&
+            point.Y >= box.top &&
+            point.Y <= box.bottom;
+    }
+
+    inline float DistanceToTwoStageBox(const TwoStageScreenBox& box, const Vector2& point) {
+        const float clampedX = std::clamp(point.X, box.left, box.right);
+        const float clampedY = std::clamp(point.Y, box.top, box.bottom);
+        const float dx = point.X - clampedX;
+        const float dy = point.Y - clampedY;
+        return sqrtf(dx * dx + dy * dy);
+    }
+
+    inline void ConsiderTwoStagePoint(const Vector3& world,
+                                      const Vector2& crosshair,
+                                      Vector3& bestWorld,
+                                      float& bestDistance) {
+        Vector2 screen{};
+        if (!ProjectAimPoint(world, screen))
+            return;
+        const float distance = crosshair.Distance(screen);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestWorld = world;
+        }
+    }
+
+    inline bool TryNearestUpperBodyPoint(c_entity target,
+                                         bool prediction,
+                                         Vector3& outTarget,
+                                         float& outScreenDistance) {
+        const Vector2 crosshair = OW::TargetingDetail::CrosshairCenter();
+        Vector3 bestWorld{};
+        float bestDistance = (std::numeric_limits<float>::max)();
+
+        ConsiderTwoStagePoint(target.head_pos, crosshair, bestWorld, bestDistance);
+        ConsiderTwoStagePoint(target.neck_pos, crosshair, bestWorld, bestDistance);
+        ConsiderTwoStagePoint(target.chest_pos, crosshair, bestWorld, bestDistance);
+        ConsiderTwoStagePoint(target.GetBonePos(OW::BONE_R_SHOULDER), crosshair, bestWorld, bestDistance);
+        ConsiderTwoStagePoint(target.GetBonePos(OW::BONE_L_SHOULDER), crosshair, bestWorld, bestDistance);
+        ConsiderTwoStagePoint(target.GetBonePos(OW::BONE_PELVIS), crosshair, bestWorld, bestDistance);
+
+        if (IsZeroVector(bestWorld))
+            return false;
+
+        outTarget = OW::TargetingDetail::ApplyPrediction(target, bestWorld, prediction, false);
+        outScreenDistance = bestDistance;
+        return true;
+    }
+
+    inline Vector3 ResolveHeadAimPoint(c_entity target, bool prediction, const Vector3& fallback) {
+        Vector3 head = !IsZeroVector(target.head_pos) ? target.head_pos : target.neck_pos;
+        if (IsZeroVector(head))
+            head = fallback;
+        return OW::TargetingDetail::ApplyPrediction(target, head, prediction, false);
+    }
+
+    inline bool TwoStageTriggerOpenForTarget(c_entity target) {
+        if (!OW::Config::aimbotTwoStage || !OW::Config::aimbotTwoStageTriggerGate)
+            return true;
+
+        const uint64_t entityKey = TwoStageEntityKey(target);
+        if (entityKey == 0)
+            return false;
+
+        TwoStageRuntime& state = TwoStageState();
+        if (state.entityKey != entityKey) {
+            state.entityKey = entityKey;
+            state.torsoReached = false;
+        }
+
+        TwoStageScreenBox box{};
+        const Vector2 crosshair = OW::TargetingDetail::CrosshairCenter();
+        if (!TryBuildUpperBodyBox(target, box))
+            return true;
+
+        if (PointInsideTwoStageBox(box, crosshair))
+            state.torsoReached = true;
+
+        return state.torsoReached;
+    }
+
+    inline TwoStageAimPlan ResolveTwoStageAimPlan(const Vector3& defaultTarget,
+                                                  c_entity target,
+                                                  bool prediction) {
+        TwoStageAimPlan plan{};
+        plan.target = defaultTarget;
+        if (!OW::Config::aimbotTwoStage)
+            return plan;
+
+        const uint64_t entityKey = TwoStageEntityKey(target);
+        if (entityKey == 0)
+            return plan;
+
+        TwoStageRuntime& state = TwoStageState();
+        if (state.entityKey != entityKey) {
+            state.entityKey = entityKey;
+            state.torsoReached = false;
+        }
+
+        const Vector2 crosshair = OW::TargetingDetail::CrosshairCenter();
+        TwoStageScreenBox box{};
+        const bool hasBox = TryBuildUpperBodyBox(target, box);
+        if (!hasBox) {
+            Diagnostics::Aim("two_stage fallback key=0x%llX reason=no_upper_body_box",
+                static_cast<unsigned long long>(entityKey));
+            return plan;
+        }
+
+        const bool insideBox = hasBox && PointInsideTwoStageBox(box, crosshair);
+        if (insideBox)
+            state.torsoReached = true;
+
+        Vector2 headScreen{};
+        const bool hasHeadScreen = ProjectAimPoint(target.head_pos, headScreen);
+        const float headDistance = hasHeadScreen
+            ? crosshair.Distance(headScreen)
+            : (std::numeric_limits<float>::max)();
+        const float innerRadius = std::clamp(OW::Config::aimbotTwoStageInnerRadius, 0.0f, 250.0f);
+        const bool innerStage = state.torsoReached || headDistance <= innerRadius;
+
+        plan.active = true;
+        plan.triggerOpen = !OW::Config::aimbotTwoStageTriggerGate || state.torsoReached;
+        plan.innerStage = innerStage;
+        plan.methodOverride = innerStage ? 2 : 0;
+        plan.smoothScale = innerStage
+            ? std::clamp(OW::Config::aimbotTwoStageInnerSmoothScale, 0.1f, 1.0f)
+            : 1.0f;
+        plan.bezierSpeed = innerStage
+            ? (std::max)(1.0f, OW::Config::aimBezierSpeed * plan.smoothScale)
+            : -1.0f;
+
+        float bodyDistance = 0.0f;
+        Vector3 bodyTarget{};
+        const bool hasBodyTarget = TryNearestUpperBodyPoint(target, prediction, bodyTarget, bodyDistance);
+        plan.target = innerStage
+            ? ResolveHeadAimPoint(target, prediction, defaultTarget)
+            : (hasBodyTarget ? bodyTarget : defaultTarget);
+
+        const float boxDistance = hasBox
+            ? DistanceToTwoStageBox(box, crosshair)
+            : (std::numeric_limits<float>::max)();
+        Diagnostics::Aim("two_stage plan key=0x%llX active=1 insideBox=%d torsoReached=%d triggerOpen=%d inner=%d boxDist=%.3f headDist=%.3f bodyDist=%.3f method=%d smoothScale=%.3f target=(%.9f,%.9f,%.9f)",
+            static_cast<unsigned long long>(entityKey),
+            insideBox ? 1 : 0,
+            state.torsoReached ? 1 : 0,
+            plan.triggerOpen ? 1 : 0,
+            plan.innerStage ? 1 : 0,
+            boxDistance,
+            headDistance,
+            hasBodyTarget ? bodyDistance : -1.0f,
+            plan.methodOverride,
+            plan.smoothScale,
+            plan.target.X,
+            plan.target.Y,
+            plan.target.Z);
+        return plan;
+    }
+
+    inline AimData BuildAimData(const Vector3& world_target,
+                                bool accelerated,
+                                float smooth,
+                                float acceleration,
+                                int methodOverride = -1,
+                                float bezierSpeedOverride = -1.0f) {
         AimData data{};
         const uint64_t playerControllerBase = SDK->g_player_controller;
         if (!playerControllerBase) {
@@ -3830,11 +4332,13 @@ namespace AimbotDetail {
                 data.target_angle.Z);
         }
         const float dispatchAcceleration = accelerated ? acceleration : 0.0f;
-        data.smoothed_angle = OW::SmoothDispatch(
+        data.smoothed_angle = OW::SmoothDispatchWithMethod(
             data.local_angle,
             data.target_angle,
             smooth,
-            dispatchAcceleration
+            dispatchAcceleration,
+            methodOverride >= 0 ? methodOverride : std::clamp(OW::Config::aimMethod, 0, 4),
+            bezierSpeedOverride > 0.0f ? bezierSpeedOverride : OW::Config::aimBezierSpeed
         );
         const Vector3 rawDelta = data.target_angle - data.local_angle;
         const Vector3 smoothDelta = data.smoothed_angle - data.local_angle;
@@ -4008,8 +4512,9 @@ namespace AimbotDetail {
         return IsConfiguredAimKeyPressed(keySetting);
     }
 
-    inline bool InputSequenceBlocksAim(const char* caller) {
-        if (!OW::AnyInputSequenceActive())
+    inline bool InputSequenceBlocksAim(const char* caller,
+                                       ExecutionSource requester = ExecutionSource::GlobalAim) {
+        if (!OW::ShouldBlockForActiveSequence(requester))
             return false;
 
         static DWORD lastLogTick = 0;
@@ -4023,7 +4528,7 @@ namespace AimbotDetail {
     }
 
     inline void RunTriggerbot(bool secondary, float origin_sens) {
-        if (InputSequenceBlocksAim(secondary ? "triggerbot2" : "triggerbot"))
+        if (InputSequenceBlocksAim(secondary ? "triggerbot2" : "triggerbot", ExecutionSource::Trigger))
             return;
 
         const int mode = secondary ? OW::Config::triggerbotMode2 : OW::Config::triggerbotMode;
@@ -4072,15 +4577,21 @@ namespace AimbotDetail {
         // 3. Find target
         const bool predit = secondary ? OW::Config::Prediction2 : OW::Config::Prediction;
         const Vector3 vec = secondary ? OW::GetVector3aim2(predit, ignoreInvisible) : OW::GetVector3(predit, ignoreInvisible);
-        if (IsZeroVector(vec) || !IsTriggerTargetActionable()) return;
+        c_entity target{};
+        if (IsZeroVector(vec) || !IsTriggerTargetActionable() || !CurrentTarget(target)) return;
 
         // 4. Check crosshair proximity
         AimData aim = BuildAimData(vec, false, 1.0f, 0.0f);
-        const float hitbox = secondary ? OW::Config::hitbox2 : OW::Config::hitbox;
-        if (!OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox))
+        const float hitbox = secondary
+            ? OW::Config::hitbox2
+            : (std::max)(OW::Config::hitbox, OW::Config::aimbotEffectiveHitWindow);
+        const bool triggerReady = (!secondary && OW::Config::aimbotTwoStage)
+            ? TwoStageTriggerOpenForTarget(target)
+            : OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox);
+        if (!triggerReady)
             return;
 
-        if (InputSequenceBlocksAim(secondary ? "triggerbot2_fire" : "triggerbot_fire"))
+        if (InputSequenceBlocksAim(secondary ? "triggerbot2_fire" : "triggerbot_fire", ExecutionSource::Trigger))
             return;
 
         // 5. Charge awareness
@@ -4111,6 +4622,22 @@ namespace AimbotDetail {
 
     inline bool ShouldYieldToSecondaryAim() {
         return OW::Config::highPriority && IsSecondAimKeyPressed();
+    }
+
+    inline bool AimSessionTimedOut(DWORD sessionStartedTick, const char* caller) {
+        const DWORD timeoutMs = OW::TargetingDetail::ResolveAimSessionTimeoutMs();
+        if (timeoutMs == 0)
+            return false;
+        const DWORD elapsed = GetTickCount() - sessionStartedTick;
+        if (elapsed < timeoutMs)
+            return false;
+
+        Diagnostics::Aim("aim_session timeout caller=%s elapsedMs=%lu timeoutMs=%lu",
+            caller ? caller : "unknown",
+            static_cast<unsigned long>(elapsed),
+            static_cast<unsigned long>(timeoutMs));
+        OW::TargetingDetail::ResetTargetLockRuntime();
+        return true;
     }
 
     inline void RunTracking(float origin_sens) {
@@ -4155,22 +4682,54 @@ namespace AimbotDetail {
             return; // Don't actually move cursor
         }
 
-        while (IsAimKeyPressed() && !OW::Config::reloading && !OW::AnyInputSequenceActive()) {
+        bool fireHeld = false;
+        const int holdFireButton = MouseButtonForAttackAction(OW::Config::aimbotAttack);
+        const DWORD sessionStartedTick = GetTickCount();
+        auto releaseHeldFire = [&]() {
+            if (fireHeld && holdFireButton >= 0) {
+                OW::SendMouseButton(holdFireButton, false);
+                fireHeld = false;
+            }
+        };
+
+        while (IsAimKeyPressed() &&
+               !OW::Config::reloading &&
+               !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
+            if (AimSessionTimedOut(sessionStartedTick, "tracking"))
+                break;
+            bool holdThisTick = false;
             const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
             c_entity target{};
             if (IsZeroVector(vec)) {
                 Diagnostics::Aim("tracking no_move reason=no_target_vector targetIndex=%d entities=%zu",
                     OW::Config::Targetenemyi,
                     OW::TargetingDetail::SnapshotEntities().size());
+                releaseHeldFire();
             } else if (!IsPrimaryTargetActionable(target)) {
                 Diagnostics::Aim("tracking no_move reason=target_not_actionable targetIndex=%d vec=(%.9f,%.9f,%.9f)",
                     OW::Config::Targetenemyi,
                     vec.X,
                     vec.Y,
                     vec.Z);
+                releaseHeldFire();
             } else {
-                AimData aim = BuildAimData(vec, false, OW::Config::Tracking_smooth / 10.f, 0.0f);
+                const TwoStageAimPlan twoStagePlan = ResolveTwoStageAimPlan(vec, target, OW::Config::Prediction);
+                const Vector3 aimTarget = twoStagePlan.active ? twoStagePlan.target : vec;
+                const float smoothInput = (OW::Config::Tracking_smooth / 10.f) * twoStagePlan.smoothScale;
+                AimData aim = BuildAimData(
+                    aimTarget,
+                    false,
+                    smoothInput,
+                    0.0f,
+                    twoStagePlan.methodOverride,
+                    twoStagePlan.bezierSpeed);
                 ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
+                holdThisTick = ShouldHoldFireWhileTracking() &&
+                    (!twoStagePlan.active || twoStagePlan.triggerOpen);
+                if (holdThisTick && !fireHeld && holdFireButton >= 0) {
+                    OW::SendMouseButton(holdFireButton, true);
+                    fireHeld = true;
+                }
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     if (!TargetDelayReady(nullptr, false, false)) continue;
@@ -4180,9 +4739,9 @@ namespace AimbotDetail {
                         Diagnostics::Aim("tracking.tick moved=1 delta_px_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) target_dist=%.1f",
                             -(aim.smoothed_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
                             (aim.smoothed_angle.X - aim.local_angle.X) * OW::Config::kmboxAimSensitivity,
-                            CameraPosition().DistTo(vec));
+                            CameraPosition().DistTo(aimTarget));
                     }
-                    RunCloseRangeActions(vec);
+                    RunCloseRangeActions(aimTarget);
                 } else {
                     Diagnostics::Aim("tracking no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
                         aim.local_angle.X,
@@ -4196,10 +4755,14 @@ namespace AimbotDetail {
                 if (LocalEntity().PlayerHealth < OW::Config::SkillHealth) break;
             }
 
+            if (!holdThisTick)
+                releaseHeldFire();
+
             Sleep(1);
             RunAutoScaleFov();
             if (ShouldYieldToSecondaryAim()) break;
         }
+        releaseHeldFire();
     }
 
     inline void RunFlick(RuntimeState& state, float origin_sens) {
@@ -4226,13 +4789,14 @@ namespace AimbotDetail {
                 const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
                 if (!IsZeroVector(vec)) {
                     AimData aim = BuildAimData(vec, true, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
-                    const bool wouldHit = OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox);
+                    const float hitWindow = (std::max)(OW::Config::hitbox, OW::Config::aimbotEffectiveHitWindow);
+                    const bool wouldHit = OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
                     Diagnostics::Aim("dryrun.flick local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) "
                         "delta_deg=(%.4f,%.4f) hitbox=%.4f would_hit=%d target_pos=(%.1f,%.1f,%.1f)",
                         RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
                         RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
                         RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
-                        OW::Config::hitbox, wouldHit ? 1 : 0,
+                        hitWindow, wouldHit ? 1 : 0,
                         vec.X, vec.Y, vec.Z);
                 } else {
                     Diagnostics::Aim("dryrun.flick no_target_vector targetIndex=%d entities=%zu",
@@ -4245,11 +4809,14 @@ namespace AimbotDetail {
         }
 
         ArmDelayedShot(state);
+        const DWORD sessionStartedTick = GetTickCount();
 
         while (IsAimKeyPressed() &&
                !OW::Config::shooted &&
                !OW::Config::reloading &&
-               !OW::AnyInputSequenceActive()) {
+               !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
+            if (AimSessionTimedOut(sessionStartedTick, "flick"))
+                break;
             if (LocalEntity().HeroID == OW::eHero::HERO_WIDOWMAKER && !IsInputVkDown(VK_RBUTTON)) {
                 Diagnostics::Aim("flick no_move reason=widow_scope_not_held");
                 Sleep(1);
@@ -4269,8 +4836,18 @@ namespace AimbotDetail {
                 if (!TargetDelayReady(&state, true, true)) continue;
                 PrimeDelayedShot(state);
 
-                AimData aim = BuildAimData(vec, true, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
+                const TwoStageAimPlan twoStagePlan = ResolveTwoStageAimPlan(vec, target, OW::Config::Prediction);
+                const Vector3 aimTarget = twoStagePlan.active ? twoStagePlan.target : vec;
+                const float smoothInput = (OW::Config::Flick_smooth / 10.f) * twoStagePlan.smoothScale;
+                AimData aim = BuildAimData(
+                    aimTarget,
+                    true,
+                    smoothInput,
+                    OW::Config::accvalue,
+                    twoStagePlan.methodOverride,
+                    twoStagePlan.bezierSpeed);
                 ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
+                const float hitWindow = (std::max)(OW::Config::hitbox, OW::Config::aimbotEffectiveHitWindow);
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     if (DelayedShotTimedOut(state)) {
@@ -4289,9 +4866,9 @@ namespace AimbotDetail {
                         const float deltaDegX = RAD2DEG(aim.target_angle.X - aim.local_angle.X);
                         const float deltaDegY = RAD2DEG(aim.target_angle.Y - aim.local_angle.Y);
                         Diagnostics::Aim("flick.tick delta_deg=(%.4f,%.4f) hitbox=%.4f missbox=%.4f",
-                            deltaDegX, deltaDegY, OW::Config::hitbox, OW::Config::missbox);
+                            deltaDegX, deltaDegY, hitWindow, OW::Config::missbox);
                     }
-                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox)) {
+                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow)) {
                         if (OW::Config::aimVerboseLog) {
                             Diagnostics::Aim("flick.fire hitbox_check=passed");
                         }
@@ -4306,7 +4883,7 @@ namespace AimbotDetail {
 
                     if (OW::Config::dontshot &&
                         OW::Config::shotcount >= OW::Config::shotmanydont &&
-                        OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::missbox)) {
+                        OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, OW::Config::missbox)) {
                         const int previousShotCount = OW::Config::shotcount;
                         OW::Config::shotcount = 0;
                         const c_entity local = LocalEntity();
@@ -4517,6 +5094,8 @@ namespace AimbotDetail {
             OW::Config::shooted = false;
         }
         OW::Config::Targetenemyi = -1;
+        OW::TargetingDetail::ResetTargetLockRuntime();
+        ResetTwoStageState();
     }
 
     inline void RunReaperReloadCancel() {
@@ -4532,7 +5111,13 @@ namespace AimbotDetail {
         if (InputSequenceBlocksAim("secondaim"))
             return;
 
-        while (IsSecondAimKeyPressed() && !OW::Config::shooted2 && !OW::AnyInputSequenceActive()) {
+        const DWORD sessionStartedTick = GetTickCount();
+        while (IsSecondAimKeyPressed() &&
+               !OW::Config::shooted2 &&
+               !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
+            if (AimSessionTimedOut(sessionStartedTick, "secondaim")) {
+                break;
+            }
             const Vector3 vec = OW::GetVector3aim2(OW::Config::Prediction2);
             c_entity target{};
             if (!IsZeroVector(vec) && CurrentTarget(target) &&
@@ -4567,6 +5152,9 @@ namespace AimbotDetail {
             }
             Sleep(1);
         }
+
+        if (!IsSecondAimKeyPressed())
+            OW::TargetingDetail::ResetTargetLockRuntime();
 
         if (OW::Config::shooted2 && !IsSecondAimKeyPressed())
             OW::Config::shooted2 = false;

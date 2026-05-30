@@ -16,6 +16,8 @@
 
 #include "Game/Decrypt.hpp"
 #include "Game/Entity.hpp"
+#include "Game/HeroGeometrySpec.hpp"
+#include "Game/WeaponSpec.hpp"
 #include "Kmbox/KmBoxNetManager.h"
 #include "Kmbox/KmboxB.h"
 #include "Utils/Config.hpp"
@@ -159,7 +161,8 @@ namespace OW {
             // delta.X = pitch (vertical), delta.Y = yaw (horizontal).
             // Positive KMBox X drives the measured yaw negative, so yaw correction is inverted here.
             const float scaledYaw   = -delta.Y * sensitivity;         // yaw -> horizontal X
-            const float scaledPitch = delta.X * pitchSensitivity;     // pitch -> vertical Y
+            const float pitchScale = std::clamp(Config::aimbotPitchScale, 0.1f, 3.0f);
+            const float scaledPitch = delta.X * pitchSensitivity * pitchScale; // pitch -> vertical Y
             const float accumBeforeX = accumX;
             const float accumBeforeY = accumY;
             accumX += scaledYaw;
@@ -170,7 +173,7 @@ namespace OW {
             accumY -= static_cast<float>(pixelY);
 
             ++callCount;
-            Diagnostics::Aim("mouse.convert call=%d delta_rad_pitch=%.9f delta_rad_yaw=%.9f baseSensitivity=%.6f effectiveSensitivity=%.6f autoSync=%d syncScale=%.6f scaled_pixels=(yaw=%.9f,pitch=%.9f) accum_before=(%.9f,%.9f) pixel=(%d,%d) accum_after=(%.9f,%.9f)",
+            Diagnostics::Aim("mouse.convert call=%d delta_rad_pitch=%.9f delta_rad_yaw=%.9f baseSensitivity=%.6f effectiveSensitivity=%.6f autoSync=%d syncScale=%.6f pitchScale=%.6f scaled_pixels=(yaw=%.9f,pitch=%.9f) accum_before=(%.9f,%.9f) pixel=(%d,%d) accum_after=(%.9f,%.9f)",
                 callCount,
                 delta.X,
                 delta.Y,
@@ -178,6 +181,7 @@ namespace OW {
                 sensitivity,
                 Config::autoSyncSensitivity ? 1 : 0,
                 syncScale,
+                pitchScale,
                 scaledYaw,
                 scaledPitch,
                 accumBeforeX,
@@ -672,6 +676,18 @@ namespace OW {
         inline std::mutex velocity_history_mutex;
         inline std::unordered_map<uint64_t, VelocitySample> velocity_history;
 
+        struct TargetLockRuntime {
+            uint64_t entityKey = 0;
+            int entityIndex = -1;
+            DWORD lockStartedTick = 0;
+            DWORD lastSeenTick = 0;
+            float lastScore = kNoTargetScore;
+            bool active = false;
+        };
+
+        inline std::mutex target_lock_mutex;
+        inline TargetLockRuntime target_lock_runtime;
+
         inline bool IsZeroVector(const Vector3& value) {
             return value == Vector3(0, 0, 0);
         }
@@ -758,6 +774,165 @@ namespace OW {
             if (boneSetting == 1) return entity.head_pos;
             if (boneSetting == 2) return entity.neck_pos;
             return entity.chest_pos;
+        }
+
+        inline int ResolveAimBoneForDistance(int configuredBone, float distance) {
+            const int normalized = Config::NormalizeAimBone(configuredBone);
+            const bool headRequested = normalized == Config::kAimBoneHead;
+            const float headGate = std::clamp(Config::aimbotMaxHead, 0.0f, 500.0f);
+            if (headRequested && headGate > 0.0f && distance > headGate)
+                return Config::kAimBoneNeck;
+            return normalized;
+        }
+
+        inline bool DistancePassesAimFilter(float distance) {
+            const float minDistance = std::clamp(Config::aimbotMinDist, 0.0f, 500.0f);
+            const float maxDistance = std::clamp(Config::aimbotMaxDist, 0.0f, 500.0f);
+            if (minDistance > 0.0f && distance < minDistance)
+                return false;
+            if (maxDistance > 0.0f && distance > maxDistance)
+                return false;
+            return true;
+        }
+
+        inline DWORD ResolvePolicySliderMs(float value) {
+            return static_cast<DWORD>(std::clamp(value, 0.0f, 5000.0f) * 10.0f);
+        }
+
+        inline DWORD ResolveAimSessionTimeoutMs() {
+            const float value = std::clamp(Config::aimbotMaxAim, 0.0f, 100.0f);
+            if (value <= 0.0f || value >= 100.0f)
+                return 0;
+            return static_cast<DWORD>(value * 10.0f);
+        }
+
+        inline TargetLockPolicy ResolveTargetLockPolicy() {
+            TargetLockPolicy policy{};
+            policy.traceMode = ClampTraceMode(Config::aimbotTrace);
+            policy.unlockMode = ClampUnlockMode(Config::aimbotUnlock);
+            policy.minLockMs = static_cast<float>(ResolvePolicySliderMs(Config::aimbotLockTime));
+            policy.maxLockMs = static_cast<float>(ResolveAimSessionTimeoutMs());
+            policy.retargetHysteresis = std::clamp(Config::aimbotStickiness, 0.0f, 100.0f);
+            return policy;
+        }
+
+        inline TargetLockRuntime SnapshotTargetLockRuntime() {
+            std::lock_guard<std::mutex> lock(target_lock_mutex);
+            return target_lock_runtime;
+        }
+
+        inline void ResetTargetLockRuntime() {
+            std::lock_guard<std::mutex> lock(target_lock_mutex);
+            target_lock_runtime = TargetLockRuntime{};
+        }
+
+        inline bool TargetLockExpired(const TargetLockRuntime& state,
+                                      const TargetLockPolicy& policy,
+                                      DWORD now) {
+            if (!state.active || state.entityKey == 0)
+                return true;
+            if (policy.maxLockMs <= 0.0f)
+                return false;
+            return now - state.lockStartedTick >= static_cast<DWORD>(policy.maxLockMs);
+        }
+
+        inline bool CandidateCanBypassTrace(const TargetLockPolicy& policy,
+                                            const TargetLockRuntime& state,
+                                            uint64_t candidateKey) {
+            if (policy.traceMode == TraceMode::Off)
+                return true;
+            if (policy.traceMode == TraceMode::Relaxed &&
+                state.active &&
+                candidateKey != 0 &&
+                candidateKey == state.entityKey) {
+                return true;
+            }
+            return false;
+        }
+
+        inline bool CandidateBlockedByMinLock(const TargetLockPolicy& policy,
+                                              const TargetLockRuntime& state,
+                                              uint64_t candidateKey,
+                                              DWORD now) {
+            if (!state.active || state.entityKey == 0 || candidateKey == 0 ||
+                candidateKey == state.entityKey) {
+                return false;
+            }
+            const DWORD minLockMs = static_cast<DWORD>(policy.minLockMs);
+            return minLockMs > 0 && now - state.lockStartedTick < minLockMs;
+        }
+
+        inline float ApplyRetargetHysteresis(float score,
+                                             const TargetLockPolicy& policy,
+                                             const TargetLockRuntime& state,
+                                             uint64_t candidateKey) {
+            if (!state.active || state.entityKey == 0 || candidateKey == state.entityKey)
+                return score;
+            const float multiplier = 1.0f + std::clamp(policy.retargetHysteresis, 0.0f, 100.0f) * 0.01f;
+            return score * multiplier;
+        }
+
+        inline void CommitTargetLockRuntime(const TargetCandidate& candidate,
+                                            float selectedScore,
+                                            const TargetLockPolicy& policy,
+                                            DWORD now) {
+            std::lock_guard<std::mutex> lock(target_lock_mutex);
+            if (!candidate.valid || candidate.entityKey == 0) {
+                if (policy.unlockMode == UnlockMode::Anytime ||
+                    (target_lock_runtime.active && TargetLockExpired(target_lock_runtime, policy, now))) {
+                    target_lock_runtime = TargetLockRuntime{};
+                }
+                return;
+            }
+
+            if (!target_lock_runtime.active ||
+                target_lock_runtime.entityKey != candidate.entityKey ||
+                TargetLockExpired(target_lock_runtime, policy, now)) {
+                target_lock_runtime.entityKey = candidate.entityKey;
+                target_lock_runtime.entityIndex = candidate.entityIndex;
+                target_lock_runtime.lockStartedTick = now;
+                target_lock_runtime.active = true;
+            }
+
+            target_lock_runtime.lastSeenTick = now;
+            target_lock_runtime.lastScore = selectedScore;
+            target_lock_runtime.entityIndex = candidate.entityIndex;
+        }
+
+        inline EntityMotionState EstimateMotionState(const c_entity& entity, const Vector2& screenPoint) {
+            (void)screenPoint;
+
+            EntityMotionState state{};
+            state.worldVelocity = entity.velocity;
+            state.verticalVelocity = entity.velocity.Y;
+
+            const float horizontalSpeed = sqrtf(
+                entity.velocity.X * entity.velocity.X +
+                entity.velocity.Z * entity.velocity.Z);
+            const float verticalSpeed = entity.velocity.Y;
+
+            if (!std::isfinite(horizontalSpeed) || !std::isfinite(verticalSpeed) ||
+                horizontalSpeed > 250.0f || fabsf(verticalSpeed) > 250.0f) {
+                state.kind = EntityMotionState::Kind::TeleportOrInvalid;
+                state.confidence = 0.25f;
+                return state;
+            }
+
+            if (verticalSpeed > 1.0f) {
+                state.kind = EntityMotionState::Kind::AirborneRising;
+                state.confidence = 0.55f;
+            } else if (verticalSpeed < -1.0f) {
+                state.kind = EntityMotionState::Kind::AirborneFalling;
+                state.confidence = 0.55f;
+            } else if (horizontalSpeed > 2.0f) {
+                state.kind = EntityMotionState::Kind::Strafing;
+                state.confidence = 0.45f;
+            } else {
+                state.kind = EntityMotionState::Kind::Grounded;
+                state.confidence = 0.35f;
+            }
+
+            return state;
         }
 
         inline Vector3 ClampMagnitude(const Vector3& value, float maxLength) {
@@ -936,20 +1111,32 @@ namespace OW {
     // Main target selection (GetVector3)
     // =========================================================================
 
-    inline Vector3 GetVector3(bool predit = false, bool ignoreInvisible = Config::aimbotIgnoreInvisible) {
+    inline TargetCandidate AcquireTarget(bool predit = false, bool ignoreInvisible = Config::aimbotIgnoreInvisible) {
+        TargetCandidate best{};
         int TarGetIndex = -1;
-        Vector3 target{};
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         auto entities = TargetingDetail::SnapshotEntities();
         auto hp_dy_entities = TargetingDetail::SnapshotDynamicEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
+        const WeaponSpec* weaponSpec = ResolveWeaponSpec(local_entity.HeroID, Config::aimbotAttack);
+        const TargetLockPolicy lockPolicy = TargetingDetail::ResolveTargetLockPolicy();
+        const DWORD now = GetTickCount();
+        TargetingDetail::TargetLockRuntime activeLock = TargetingDetail::SnapshotTargetLockRuntime();
+        if (TargetingDetail::TargetLockExpired(activeLock, lockPolicy, now))
+            activeLock.active = false;
+        const bool resolvedPrediction = ResolvePredictionEnabled(
+            ClampPredictionOverride(Config::aimbotPredictionMode),
+            weaponSpec,
+            predit);
 
         float origin = 100000.f;
         size_t selectableCandidates = 0;
         float selectedCrossDist = 0.0f;
         bool targetFromBob = false;
-        Diagnostics::Aim("target.primary start prediction=%d entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fov=%.6f bone=%d autobone=%d teamMode=%d crosshair=(%.3f,%.3f)",
-            predit ? 1 : 0,
+        Diagnostics::Aim("target.primary start prediction=%d predictionMode=%d weapon=%s entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fov=%.6f bone=%d autobone=%d teamMode=%d distance=(%.2f,%.2f) lock=(active=%d key=0x%llX minMs=%.0f maxMs=%.0f hysteresis=%.1f trace=%d unlock=%d) crosshair=(%.3f,%.3f)",
+            resolvedPrediction ? 1 : 0,
+            Config::aimbotPredictionMode,
+            weaponSpec ? weaponSpec->weaponId.data() : "none",
             entities.size(),
             hp_dy_entities.size(),
             static_cast<unsigned long long>(local_entity.address),
@@ -958,6 +1145,15 @@ namespace OW {
             Config::Bone,
             Config::autobone ? 1 : 0,
             Config::aimbotTeam,
+            Config::aimbotMinDist,
+            Config::aimbotMaxDist,
+            activeLock.active ? 1 : 0,
+            static_cast<unsigned long long>(activeLock.entityKey),
+            lockPolicy.minLockMs,
+            lockPolicy.maxLockMs,
+            lockPolicy.retargetHysteresis,
+            static_cast<int>(lockPolicy.traceMode),
+            static_cast<int>(lockPolicy.unlockMode),
             CrossHair.X,
             CrossHair.Y);
         if (entities.size() > 0) {
@@ -972,35 +1168,68 @@ namespace OW {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
                 if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
-                    if (ignoreInvisible && !entities[i].Vis)
+                    const uint64_t candidateKey = entities[i].address ? entities[i].address : entities[i].LinkBase;
+                    if (ignoreInvisible && !entities[i].Vis &&
+                        !TargetingDetail::CandidateCanBypassTrace(lockPolicy, activeLock, candidateKey)) {
+                        continue;
+                    }
+                    if (TargetingDetail::CandidateBlockedByMinLock(lockPolicy, activeLock, candidateKey, now))
                         continue;
                     ++selectableCandidates;
-                    if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
-                    else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
-                    else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
+                    const float initialDistance = TargetingDetail::CameraPosition().DistTo(entities[i].chest_pos);
+                    if (!TargetingDetail::DistancePassesAimFilter(initialDistance))
+                        continue;
+
+                    const int resolvedAimBone = TargetingDetail::ResolveAimBoneForDistance(Config::Bone, initialDistance);
+                    PreditPos = TargetingDetail::ConfiguredBonePosition(entities[i], resolvedAimBone);
+                    RootPos = PreditPos;
 
                     Vel = entities[i].velocity;
-                    if (predit) {
+                    if (resolvedPrediction) {
                         float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                         Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
                         AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                     }
-                    Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
+                    Vector2 Vec2 = resolvedPrediction ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
                     if (CrossDist <= Config::Fov) {
+                        const float distance = TargetingDetail::CameraPosition().DistTo(RootPos);
+                        if (!TargetingDetail::DistancePassesAimFilter(distance))
+                            continue;
+
                         float score;
                         if (Config::aimbotPriority == 0) {
                             score = CrossDist;
                         } else if (Config::aimbotPriority == 1) {
                             score = entities[i].PlayerHealth;
                         } else {
-                            score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            score = distance;
                         }
+                        score = TargetingDetail::ApplyRetargetHysteresis(score, lockPolicy, activeLock, candidateKey);
                         if (score < origin) {
-                            target = predit ? PreditPos : RootPos;
                             origin = score;
                             selectedCrossDist = CrossDist;
                             TarGetIndex = i;
+                            best.valid = true;
+                            best.entityIndex = static_cast<int>(i);
+                            best.entityKey = candidateKey;
+                            best.entitySnapshot = entities[i];
+                            best.boneId = AimBoneToSkeletonBoneId(resolvedAimBone);
+                            best.rawAimPoint = RootPos;
+                            best.predictedAimPoint = PreditPos;
+                            best.aimPoint = resolvedPrediction ? PreditPos : RootPos;
+                            best.screenPoint = Vec2;
+                            best.distance = distance;
+                            best.fovScore = CrossDist;
+                            best.motion = TargetingDetail::EstimateMotionState(entities[i], Vec2);
+                            best.lockPolicy = lockPolicy;
+                            best.weaponSpec = weaponSpec;
+                            best.effectiveHitWindow = ResolveEffectiveHitWindow(
+                                entities[i].HeroID,
+                                best.boneId,
+                                weaponSpec,
+                                Config::hitbox,
+                                Config::hitbox);
                         }
                     }
                 }
@@ -1026,14 +1255,26 @@ namespace OW {
                         int m = (int)(std::min_element(distbone, distbone + 5) - distbone);
                         RootPos = entities[TarGetIndex].GetBonePos(index[m]);
                         PreditPos = RootPos;
-                        target = RootPos;
-                        if (predit) {
+                        best.boneId = index[m];
+                        best.rawAimPoint = RootPos;
+                        best.aimPoint = RootPos;
+                        if (resolvedPrediction) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
                             Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
-                            target = PreditPos;
+                            best.predictedAimPoint = PreditPos;
+                            best.aimPoint = PreditPos;
                         }
+                        best.screenPoint = viewMatrix.WorldToScreen(best.aimPoint);
+                        best.fovScore = CrossHair.Distance(best.screenPoint);
+                        best.distance = TargetingDetail::CameraPosition().DistTo(RootPos);
+                        best.effectiveHitWindow = ResolveEffectiveHitWindow(
+                            entities[TarGetIndex].HeroID,
+                            best.boneId,
+                            weaponSpec,
+                            Config::hitbox,
+                            Config::hitbox);
                     } else {
                         float distbone[12] = { 0 };
                         Vector3 bonerootpos{};
@@ -1046,14 +1287,26 @@ namespace OW {
                         int m = (int)(std::min_element(distbone, distbone + 12) - distbone);
                         RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
                         PreditPos = RootPos;
-                        target = RootPos;
-                        if (predit) {
+                        best.boneId = entities[TarGetIndex].GetSkel()[m];
+                        best.rawAimPoint = RootPos;
+                        best.aimPoint = RootPos;
+                        if (resolvedPrediction) {
                             float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
                             Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
-                            target = PreditPos;
+                            best.predictedAimPoint = PreditPos;
+                            best.aimPoint = PreditPos;
                         }
+                        best.screenPoint = viewMatrix.WorldToScreen(best.aimPoint);
+                        best.fovScore = CrossHair.Distance(best.screenPoint);
+                        best.distance = TargetingDetail::CameraPosition().DistTo(RootPos);
+                        best.effectiveHitWindow = ResolveEffectiveHitWindow(
+                            entities[TarGetIndex].HeroID,
+                            best.boneId,
+                            weaponSpec,
+                            Config::hitbox,
+                            Config::hitbox);
                     }
                 }
             }
@@ -1063,11 +1316,32 @@ namespace OW {
         if (local_entity.HeroID == eHero::HERO_ASHE) {
             for (hpanddy hppack : hp_dy_entities) {
                 if (hppack.entityid == 0x400000000002533) {
+                    if (TargetingDetail::CandidateBlockedByMinLock(lockPolicy, activeLock, hppack.entityid, now))
+                        continue;
                     Vector2 Vec2 = viewMatrix.WorldToScreen(Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z));
                     float CrossDist = CrossHair.Distance(Vec2);
-                    if (CrossDist < origin && CrossDist <= Config::Fov) {
-                        target = Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z);
-                        origin = CrossDist;
+                    const float lockAdjustedScore = TargetingDetail::ApplyRetargetHysteresis(CrossDist, lockPolicy, activeLock, hppack.entityid);
+                    if (lockAdjustedScore < origin && CrossDist <= Config::Fov) {
+                        best = TargetCandidate{};
+                        best.valid = true;
+                        best.entityIndex = -1;
+                        best.entityKey = hppack.entityid;
+                        best.boneId = BONE_CHEST;
+                        best.rawAimPoint = Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z);
+                        best.predictedAimPoint = best.rawAimPoint;
+                        best.aimPoint = best.rawAimPoint;
+                        best.screenPoint = Vec2;
+                        best.distance = TargetingDetail::CameraPosition().DistTo(best.rawAimPoint);
+                        best.fovScore = CrossDist;
+                        best.lockPolicy = lockPolicy;
+                        best.weaponSpec = weaponSpec;
+                        best.effectiveHitWindow = ResolveEffectiveHitWindow(
+                            local_entity.HeroID,
+                            best.boneId,
+                            weaponSpec,
+                            Config::hitbox,
+                            Config::hitbox);
+                        origin = lockAdjustedScore;
                         selectedCrossDist = CrossDist;
                         targetFromBob = true;
                     }
@@ -1075,7 +1349,12 @@ namespace OW {
                 }
             }
         }
-        if (target == Vector3(0, 0, 0)) {
+        Config::aimbotEffectiveHitWindow = best.valid
+            ? (std::max)(Config::hitbox, best.effectiveHitWindow)
+            : Config::hitbox;
+        TargetingDetail::CommitTargetLockRuntime(best, origin, lockPolicy, now);
+
+        if (!best.valid) {
             Diagnostics::Aim("target.primary result none reason=no_selectable_target entities=%zu candidates=%zu fov=%.6f targetIndex=%d",
                 entities.size(),
                 selectableCandidates,
@@ -1083,27 +1362,35 @@ namespace OW {
                 TarGetIndex);
         } else if (targetFromBob) {
             Diagnostics::Aim("target.primary result source=ashe_bob target=(%.9f,%.9f,%.9f) score=%.9f crossDist=%.9f",
-                target.X,
-                target.Y,
-                target.Z,
+                best.aimPoint.X,
+                best.aimPoint.Y,
+                best.aimPoint.Z,
                 origin,
                 selectedCrossDist);
         } else if (TarGetIndex >= 0 && static_cast<size_t>(TarGetIndex) < entities.size()) {
             const c_entity& selected = entities[static_cast<size_t>(TarGetIndex)];
-            Diagnostics::Aim("target.primary result index=%d target=(%.9f,%.9f,%.9f) score=%.9f crossDist=%.9f health=%.3f hero=0x%llX address=0x%llX vis=%d team=%d",
+            Diagnostics::Aim("target.primary result index=%d target=(%.9f,%.9f,%.9f) score=%.9f crossDist=%.9f distance=%.3f bone=%d hitWindow=%.4f health=%.3f hero=0x%llX address=0x%llX vis=%d team=%d",
                 TarGetIndex,
-                target.X,
-                target.Y,
-                target.Z,
+                best.aimPoint.X,
+                best.aimPoint.Y,
+                best.aimPoint.Z,
                 origin,
                 selectedCrossDist,
+                best.distance,
+                best.boneId,
+                best.effectiveHitWindow,
                 selected.PlayerHealth,
                 static_cast<unsigned long long>(selected.HeroID),
                 static_cast<unsigned long long>(selected.address),
                 selected.Vis ? 1 : 0,
                 selected.Team ? 1 : 0);
         }
-        return target;
+        return best;
+    }
+
+    inline Vector3 GetVector3(bool predit = false, bool ignoreInvisible = Config::aimbotIgnoreInvisible) {
+        const TargetCandidate candidate = AcquireTarget(predit, ignoreInvisible);
+        return candidate.valid ? candidate.aimPoint : Vector3{};
     }
 
     // =========================================================================
@@ -1440,6 +1727,12 @@ namespace OW {
             bool initialized = false;
         };
 
+        struct OvershootState {
+            Vector3 offset{};
+            Vector3 lastTarget{};
+            bool initialized = false;
+        };
+
         inline PIDState& GetPIDState() {
             static PIDState state;
             return state;
@@ -1450,12 +1743,21 @@ namespace OW {
             return state;
         }
 
+        inline OvershootState& GetOvershootState() {
+            static OvershootState state;
+            return state;
+        }
+
         inline void ResetPIDState() {
             GetPIDState() = PIDState{};
         }
 
         inline void ResetBezierState() {
             GetBezierState() = BezierState{};
+        }
+
+        inline void ResetOvershootState() {
+            GetOvershootState() = OvershootState{};
         }
 
         inline float ClampDeltaTime(float deltaTime) {
@@ -1480,6 +1782,80 @@ namespace OW {
 
         inline bool IsRetarget(const Vector3& target, const Vector3& lastTarget) {
             return target.DistTo(lastTarget) > kRetargetAngleThreshold;
+        }
+
+        inline float EstimateMovePixels(const Vector3& angleDelta) {
+            const float sensitivity = std::clamp(
+                Config::calibratedPixelsPerRadian > 0.0f
+                    ? Config::calibratedPixelsPerRadian
+                    : Config::kmboxAimSensitivity,
+                0.1f,
+                20000.0f);
+            const float pitchSensitivity = Config::calibratedPixelsPerRadianPitch > 0.0f
+                ? Config::calibratedPixelsPerRadianPitch
+                : sensitivity;
+            const float pitchScale = std::clamp(Config::aimbotPitchScale, 0.1f, 3.0f);
+            const float pixelX = -angleDelta.Y * sensitivity;
+            const float pixelY = angleDelta.X * pitchSensitivity * pitchScale;
+            return sqrtf(pixelX * pixelX + pixelY * pixelY);
+        }
+
+        inline Vector3 ApplyOvershootCurveTarget(const Vector3& local, const Vector3& target) {
+            if (!Config::aimOvershootCurve)
+                return target;
+
+            OvershootState& state = GetOvershootState();
+            if (!state.initialized || IsRetarget(target, state.lastTarget)) {
+                state = OvershootState{};
+                state.initialized = true;
+            }
+
+            state.lastTarget = target;
+            const float resetPixels = std::clamp(Config::aimOvershootResetPixels, 1.0f, 250.0f);
+            if (EstimateMovePixels(state.offset) > resetPixels)
+                state.offset = Vector3{};
+
+            const Vector3 adjusted = target + state.offset;
+            Diagnostics::Aim("smooth.overshoot apply offset=(%.9f,%.9f,%.9f) offset_pixels=%.3f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f)",
+                state.offset.X,
+                state.offset.Y,
+                state.offset.Z,
+                EstimateMovePixels(state.offset),
+                local.X,
+                local.Y,
+                local.Z,
+                target.X,
+                target.Y,
+                target.Z,
+                adjusted.X,
+                adjusted.Y,
+                adjusted.Z);
+            return adjusted;
+        }
+
+        inline void CommitOvershootStep(const Vector3& outputDelta) {
+            if (!Config::aimOvershootCurve) {
+                ResetOvershootState();
+                return;
+            }
+
+            OvershootState& state = GetOvershootState();
+            const float gain = std::clamp(Config::aimOvershootGain, 0.0f, 1.0f);
+            const float resetPixels = std::clamp(Config::aimOvershootResetPixels, 1.0f, 250.0f);
+            state.offset = (state.offset + outputDelta * gain) * 0.82f;
+            if (EstimateMovePixels(state.offset) > resetPixels)
+                state.offset = Vector3{};
+
+            Diagnostics::Aim("smooth.overshoot commit output_delta=(%.9f,%.9f,%.9f) gain=%.3f offset=(%.9f,%.9f,%.9f) offset_pixels=%.3f resetPixels=%.3f",
+                outputDelta.X,
+                outputDelta.Y,
+                outputDelta.Z,
+                gain,
+                state.offset.X,
+                state.offset.Y,
+                state.offset.Z,
+                EstimateMovePixels(state.offset),
+                resetPixels);
         }
 
         inline float ClampIntegralComponent(float value, float maxIntegral) {
@@ -1651,31 +2027,57 @@ namespace OW {
         return AimSmoothingDetail::EvaluateBezier(state.controlPoints, state.t);
     }
 
-    inline Vector3 SmoothDispatch(Vector3 local, Vector3 target, float speed, float accel) {
-        (void)accel;
+    inline Vector3 SmoothPiecewise(Vector3 current, Vector3 target, float speed) {
+        const Vector3 error = target - current;
+        const float errorDegrees = RAD2DEG(error.Size());
+        float scale = 0.20f;
+        if (errorDegrees > 12.0f)
+            scale = 1.00f;
+        else if (errorDegrees > 6.0f)
+            scale = 0.75f;
+        else if (errorDegrees > 2.0f)
+            scale = 0.45f;
 
+        return SmoothLinear(current, target, std::clamp(speed * scale, 0.0f, 1.0f));
+    }
+
+    inline Vector3 SmoothDispatchWithMethod(Vector3 local,
+                                            Vector3 target,
+                                            float speed,
+                                            float accel,
+                                            int methodOverride,
+                                            float bezierSpeedOverride = -1.0f) {
         const float deltaTime = AimSmoothingDetail::ComputeDeltaTime();
-        const int method = std::clamp(Config::aimMethod, 0, 2);
+        const int method = std::clamp(methodOverride, 0, 4);
         static int previousMethod = -1;
 
         if (method != previousMethod) {
             AimSmoothingDetail::ResetPIDState();
             AimSmoothingDetail::ResetBezierState();
+            AimSmoothingDetail::ResetOvershootState();
             previousMethod = method;
         }
 
-        const Vector3 error = target - local;
-        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f accel=%.9f dt=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
+        const Vector3 adjustedTarget = AimSmoothingDetail::ApplyOvershootCurveTarget(local, target);
+        const Vector3 error = adjustedTarget - local;
+        const float bezierSpeed = bezierSpeedOverride > 0.0f
+            ? bezierSpeedOverride
+            : Config::aimBezierSpeed;
+        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f accel=%.9f dt=%.9f bezierSpeed=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
             method,
             speed,
             accel,
             deltaTime,
+            bezierSpeed,
             local.X,
             local.Y,
             local.Z,
             target.X,
             target.Y,
             target.Z,
+            adjustedTarget.X,
+            adjustedTarget.Y,
+            adjustedTarget.Z,
             error.X,
             error.Y,
             error.Z,
@@ -1684,20 +2086,27 @@ namespace OW {
         Vector3 result{};
         switch (method) {
         case 0:
-            result = SmoothLinear(local, target, speed);
+            result = SmoothLinear(local, adjustedTarget, speed);
             break;
         case 1:
-            result = SmoothPID(local, target, deltaTime);
+            result = SmoothPID(local, adjustedTarget, deltaTime);
             break;
         case 2:
-            result = SmoothBezier(local, target, deltaTime, Config::aimBezierSpeed);
+            result = SmoothBezier(local, adjustedTarget, deltaTime, bezierSpeed);
+            break;
+        case 3:
+            result = SmoothPiecewise(local, adjustedTarget, speed);
+            break;
+        case 4:
+            result = SmoothAccelerate(local, adjustedTarget, speed, accel);
             break;
         default:
-            result = SmoothLinear(local, target, speed);
+            result = SmoothLinear(local, adjustedTarget, speed);
             break;
         }
 
         const Vector3 outputDelta = result - local;
+        AimSmoothingDetail::CommitOvershootStep(outputDelta);
         Diagnostics::Aim("smooth.result method=%d result=(%.9f,%.9f,%.9f) output_delta=(%.9f,%.9f,%.9f) output_len=%.9f",
             method,
             result.X,
@@ -1708,6 +2117,16 @@ namespace OW {
             outputDelta.Z,
             outputDelta.Size());
         return result;
+    }
+
+    inline Vector3 SmoothDispatch(Vector3 local, Vector3 target, float speed, float accel) {
+        return SmoothDispatchWithMethod(
+            local,
+            target,
+            speed,
+            accel,
+            std::clamp(Config::aimMethod, 0, 4),
+            Config::aimBezierSpeed);
     }
 
 } // namespace OW

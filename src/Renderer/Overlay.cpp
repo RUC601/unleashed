@@ -21,7 +21,6 @@ constexpr int kDefaultMenuClientHeight = 550;
 constexpr int kMinimumMenuClientHeight = 140;
 constexpr int kInitialMenuTopMargin = 24;
 constexpr int kInitialMenuBottomMargin = 16;
-constexpr int kMenuResizeGrip = 8;
 constexpr int kMenuDragHeight = 41;
 constexpr int kHeaderActionWidth = 364;
 constexpr wchar_t kCanvasClassName[] = L"UnleashedOverlayCanvasDX11";
@@ -199,23 +198,8 @@ LRESULT HitTestBorderlessMenu(HWND hWnd, LPARAM lParam) {
     };
     ScreenToClient(hWnd, &cursor);
 
-    RECT rect = {};
-    GetClientRect(hWnd, &rect);
-
-    const bool left = cursor.x < kMenuResizeGrip;
-    const bool right = cursor.x >= (rect.right - kMenuResizeGrip);
-    const bool top = cursor.y < kMenuResizeGrip;
-    const bool bottom = cursor.y >= (rect.bottom - kMenuResizeGrip);
-
-    if (top && left) return HTTOPLEFT;
-    if (top && right) return HTTOPRIGHT;
-    if (bottom && left) return HTBOTTOMLEFT;
-    if (bottom && right) return HTBOTTOMRIGHT;
-    if (left) return HTLEFT;
-    if (right) return HTRIGHT;
-    if (top) return HTTOP;
-    if (bottom) return HTBOTTOM;
-
+    // The menu is auto-sized by the UI layout. Treat edges as client area so
+    // grabbing the top bar cannot accidentally resize the borderless window.
     if (IsInMenuDragZone(hWnd, cursor))
         return HTCAPTION;
 
@@ -592,7 +576,7 @@ bool Overlay::CreateWindows(const wchar_t* overlayTitle, HINSTANCE instance) {
                  static_cast<int>(m_canvasWidth), static_cast<int>(m_canvasHeight),
                  SWP_SHOWWINDOW);
 
-    const DWORD menuStyle = WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX;
+    const DWORD menuStyle = WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX;
     const DWORD menuExStyle = WS_EX_TOPMOST | WS_EX_APPWINDOW;
     const int menuW = kDefaultMenuClientWidth;
     const int menuH = kDefaultMenuClientHeight;
