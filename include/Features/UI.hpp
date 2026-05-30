@@ -8,7 +8,7 @@ namespace UI {
 
     struct State {
         Tab   activeTab      = TAB_AIMING;
-        int   aimingSubTab   = 0;   // 0 = Aimbot, 1 = Trigger, 2 = Skills
+        int   aimingSubTab   = 0;   // 0 = Aimbot, 1 = Trigger, 2 = Skills, 3 = Sequences
         int   visualsSubTab  = 0;   // 0 = Players
         int   aimHeroSegActive = 0;     // Current hero Aim config slot (0-11)
         int   triggerHeroSegActive = 0; // Current hero Trigger config slot (0-11)
@@ -32,6 +32,7 @@ namespace UI {
     void AimbotPage();
     void TriggerPage();
     void SkillsPage();
+    void SequencesPage();
     void VisualsPage();
     void ThemePage();
     void MiscPage();

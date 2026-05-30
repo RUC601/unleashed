@@ -160,6 +160,11 @@ std::atomic<uint64_t> g_entityScanCycles{ 0 };
 std::atomic<uint64_t> g_entityProcessCycles{ 0 };
 std::atomic<uint64_t> g_entityScanHzMilli{ 0 };
 std::atomic<uint64_t> g_entityProcessHzMilli{ 0 };
+std::atomic<uint64_t> g_rosterFresh{ 0 };
+std::atomic<uint64_t> g_rosterDead{ 0 };
+std::atomic<uint64_t> g_rosterMissing{ 0 };
+std::atomic<uint64_t> g_rosterExpired{ 0 };
+std::atomic<uint64_t> g_rosterHeroChanged{ 0 };
 std::atomic<uint64_t> g_framesRendered{ 0 };
 
 std::atomic<bool> g_dmaReady{ false };
@@ -728,6 +733,15 @@ void SetEntityProcessStats(const EntityProcessStats& stats)
     g_entityProcessSampleBoneHeadIndex.store(stats.sampleBoneHeadIndex, std::memory_order_relaxed);
 }
 
+void SetRosterStats(const RosterStats& stats)
+{
+    g_rosterFresh.store(static_cast<uint64_t>(stats.fresh), std::memory_order_relaxed);
+    g_rosterDead.store(static_cast<uint64_t>(stats.dead), std::memory_order_relaxed);
+    g_rosterMissing.store(static_cast<uint64_t>(stats.missing), std::memory_order_relaxed);
+    g_rosterExpired.store(static_cast<uint64_t>(stats.expired), std::memory_order_relaxed);
+    g_rosterHeroChanged.store(static_cast<uint64_t>(stats.heroChanged), std::memory_order_relaxed);
+}
+
 void SetPlayerInfoStats(const PlayerInfoStats& stats)
 {
     g_playerInfoInput.store(static_cast<uint64_t>(stats.input), std::memory_order_relaxed);
@@ -784,6 +798,11 @@ StatusSnapshot Snapshot()
         static_cast<double>(g_entityScanHzMilli.load(std::memory_order_relaxed)) / 1000.0;
     snapshot.entityProcessHz =
         static_cast<double>(g_entityProcessHzMilli.load(std::memory_order_relaxed)) / 1000.0;
+    snapshot.roster.fresh = static_cast<size_t>(g_rosterFresh.load(std::memory_order_relaxed));
+    snapshot.roster.dead = static_cast<size_t>(g_rosterDead.load(std::memory_order_relaxed));
+    snapshot.roster.missing = static_cast<size_t>(g_rosterMissing.load(std::memory_order_relaxed));
+    snapshot.roster.expired = static_cast<size_t>(g_rosterExpired.load(std::memory_order_relaxed));
+    snapshot.roster.heroChanged = static_cast<size_t>(g_rosterHeroChanged.load(std::memory_order_relaxed));
 
     {
         std::lock_guard<std::mutex> lock(g_fpsMutex);
@@ -911,13 +930,18 @@ void DumpStatus()
     UpdateFps();
     const StatusSnapshot snapshot = Snapshot();
 
-    Info("STATUS entities=%zu last_scan=%zu scan_cycles=%llu process_cycles=%llu scan_hz=%.1f process_hz=%.1f fps=%.1f dma_reads=%llu ok=%llu fail=%llu latency_us[min/avg/max]=%llu/%llu/%llu errors[dma/decrypt/invalid]=%llu/%llu/%llu key=%s key1=0x%llX key2=0x%llX dma=%s process=%s",
+    Info("STATUS entities=%zu last_scan=%zu scan_cycles=%llu process_cycles=%llu scan_hz=%.1f process_hz=%.1f roster[fresh/dead/missing/expired/hero_change]=%zu/%zu/%zu/%zu/%zu fps=%.1f dma_reads=%llu ok=%llu fail=%llu latency_us[min/avg/max]=%llu/%llu/%llu errors[dma/decrypt/invalid]=%llu/%llu/%llu key=%s key1=0x%llX key2=0x%llX dma=%s process=%s",
         snapshot.entityCount,
         snapshot.lastScanEntityCount,
         static_cast<unsigned long long>(snapshot.entityScanCycles),
         static_cast<unsigned long long>(snapshot.entityProcessCycles),
         snapshot.entityScanHz,
         snapshot.entityProcessHz,
+        snapshot.roster.fresh,
+        snapshot.roster.dead,
+        snapshot.roster.missing,
+        snapshot.roster.expired,
+        snapshot.roster.heroChanged,
         snapshot.fps,
         static_cast<unsigned long long>(snapshot.dmaReads.total),
         static_cast<unsigned long long>(snapshot.dmaReads.succeeded),

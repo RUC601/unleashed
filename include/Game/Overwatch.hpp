@@ -122,6 +122,8 @@ namespace OW {
     inline constexpr DWORD kEntityProcessIntervalMs = 16;
     inline constexpr DWORD kEntitySlowFieldIntervalMs = 500;
     inline constexpr DWORD kEntityHealthIntervalMs = kEntityProcessIntervalMs;
+    inline constexpr DWORD kEntityHeroIntervalMs = 50;
+    inline constexpr DWORD kEntityRosterTtlMs = 13000;
     inline constexpr DWORD kEntityDeadComponentRefreshMs = 250;
     inline constexpr DWORD kEntityLiveComponentRefreshMs = 2000;
     inline constexpr DWORD kEntityFastRescanWindowMs = 2000;
@@ -370,6 +372,7 @@ inline void entity_thread() {
         bool barrprot = false;
         bool heroValid = false;
         uint64_t heroId = 0;
+        DWORD heroUpdateTick = 0;
         DWORD slowUpdateTick = 0;
         bool slowValid = false;
         bool isEnemy = false;
@@ -396,6 +399,90 @@ inline void entity_thread() {
     };
     std::unordered_map<uint64_t, DynamicEntityCache> dynamicEntityCache{};
     dynamicEntityCache.reserve(64);
+
+    struct RosterEntry {
+        OW::c_entity entity{};
+        bool seenThisCycle = false;
+    };
+    std::unordered_map<uint64_t, RosterEntry> entityRoster{};
+    entityRoster.reserve(128);
+
+    constexpr uint64_t kRosterMatchPrefix = 0x1000000000000000ull;
+    constexpr uint64_t kRosterLinkPrefix = 0x2000000000000000ull;
+    constexpr uint64_t kRosterComponentPrefix = 0x3000000000000000ull;
+
+    auto makeRosterKey = [&](uint32_t matchId, uint64_t linkParent, uint64_t componentParent) -> uint64_t {
+        if (matchId != 0)
+            return kRosterMatchPrefix | static_cast<uint64_t>(matchId);
+        if (linkParent != 0)
+            return kRosterLinkPrefix ^ linkParent;
+        return kRosterComponentPrefix ^ componentParent;
+    };
+
+    auto resetRosterCycleFlags = [&]() {
+        for (auto& rosterPair : entityRoster)
+            rosterPair.second.seenThisCycle = false;
+    };
+
+    auto sanitizeStaleRosterEntity = [](OW::c_entity& entity) {
+        entity.Alive = false;
+        entity.Vis = false;
+        entity.Trg = false;
+        entity.velocity = Vector3(0, 0, 0);
+    };
+
+    auto publishRosterSnapshot = [&](DWORD now, size_t heroChanged, std::vector<OW::c_entity>& published) {
+        Diagnostics::RosterStats rosterStats{};
+        rosterStats.heroChanged = heroChanged;
+        published.clear();
+        published.reserve(entityRoster.size());
+
+        for (auto it = entityRoster.begin(); it != entityRoster.end();) {
+            OW::c_entity& rosterEntity = it->second.entity;
+            const bool seen = it->second.seenThisCycle;
+            const DWORD lastSeen = rosterEntity.last_seen_tick_ms;
+            const DWORD unseenAge = lastSeen != 0 ? now - lastSeen : 0;
+
+            if (!seen && lastSeen != 0 && unseenAge > OW::kEntityRosterTtlMs) {
+                it = entityRoster.erase(it);
+                rosterStats.expired++;
+                continue;
+            }
+
+            if (!seen && rosterEntity.roster_state != OW::EntityRosterState::Dead) {
+                if (rosterEntity.missing_since_tick_ms == 0)
+                    rosterEntity.missing_since_tick_ms = now;
+                rosterEntity.roster_state = OW::EntityRosterState::Missing;
+            }
+
+            if (rosterEntity.roster_state == OW::EntityRosterState::Missing ||
+                rosterEntity.roster_state == OW::EntityRosterState::Dead) {
+                sanitizeStaleRosterEntity(rosterEntity);
+            }
+
+            switch (rosterEntity.roster_state) {
+            case OW::EntityRosterState::Fresh:
+                rosterStats.fresh++;
+                break;
+            case OW::EntityRosterState::Dead:
+                rosterStats.dead++;
+                break;
+            case OW::EntityRosterState::Missing:
+                rosterStats.missing++;
+                break;
+            }
+
+            published.push_back(rosterEntity);
+            ++it;
+        }
+
+        std::sort(published.begin(), published.end(),
+            [](const OW::c_entity& lhs, const OW::c_entity& rhs) {
+                return lhs.roster_key < rhs.roster_key;
+            });
+
+        return rosterStats;
+    };
 
     auto recordEntityCycle = [&]() {
         ++entityCycleCount;
@@ -438,27 +525,42 @@ inline void entity_thread() {
             raw_entities = OW::ow_entities;
             previous_entities = OW::entities;
         }
+        const DWORD processLoopTick = GetTickCount();
+        resetRosterCycleFlags();
 
         // No entities available
         if (raw_entities.empty()) {
             Diagnostics::EntityProcessStats stats{};
             Diagnostics::LocalEntityStats localStats{};
+            std::vector<OW::c_entity> published_entities{};
+            Diagnostics::RosterStats rosterStats = publishRosterSnapshot(processLoopTick, 0, published_entities);
             previousProcessedValidCount = 0;
-            componentBaseCache.clear();
-            dynamicEntityCache.clear();
+            if (componentBaseCache.size() > 512)
+                componentBaseCache.clear();
+            if (dynamicEntityCache.size() > 512)
+                dynamicEntityCache.clear();
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
-                OW::entities = {};
+                OW::entities = std::move(published_entities);
                 OW::hp_dy_entities = {};
-                Diagnostics::SetEntityCount(0);
+                if (rosterStats.fresh > 0 || rosterStats.missing > 0 || rosterStats.dead > 0)
+                    OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
             }
+            Diagnostics::SetEntityCount(rosterStats.fresh + rosterStats.dead + rosterStats.missing);
             Diagnostics::SetEntityProcessStats(stats);
             Diagnostics::SetLocalEntityStats(localStats);
+            Diagnostics::SetRosterStats(rosterStats);
             if (OW::PipelineDebugEnabled()) {
                 const DWORD now = GetTickCount();
                 const bool changed = lastLoggedRawCount != 0 || lastLoggedValidatedCount != 0;
                 if (changed || now - lastProcessLogTick >= 1000) {
                     Diagnostics::Info("[PIPELINE] Stage 4 entity processing raw=0 validated=0.");
+                    Diagnostics::Info("[PIPELINE] Stage 4 roster fresh=%zu dead=%zu missing=%zu expired=%zu hero_change=%zu.",
+                        rosterStats.fresh,
+                        rosterStats.dead,
+                        rosterStats.missing,
+                        rosterStats.expired,
+                        rosterStats.heroChanged);
                     lastLoggedRawCount = 0;
                     lastLoggedValidatedCount = 0;
                     lastProcessLogTick = now;
@@ -479,8 +581,8 @@ inline void entity_thread() {
         Diagnostics::EntityProcessStats processStats{};
         processStats.raw = raw_entities.size();
         Diagnostics::LocalEntityStats localStats{};
+        size_t heroChangedThisCycle = 0;
         bool sampledBoneCandidateHasAngle = false;
-        const DWORD processLoopTick = GetTickCount();
         const bool detailedProcessLog = OW::PipelineDebugEnabled() &&
             (lastProcessLogTick == 0 || processLoopTick - lastProcessLogTick >= 1000);
         const auto cameraLocation = OW::viewMatrix_xor.get_location();
@@ -508,16 +610,29 @@ inline void entity_thread() {
 
         std::unordered_map<uint64_t, const OW::c_entity*> previousEntityByAddress;
         previousEntityByAddress.reserve(previous_entities.size());
+        std::unordered_map<uint64_t, const OW::c_entity*> previousEntityByRosterKey;
+        previousEntityByRosterKey.reserve(previous_entities.size());
         for (const OW::c_entity& previous : previous_entities) {
             if (previous.address)
                 previousEntityByAddress.emplace(previous.address, &previous);
+            if (previous.roster_key)
+                previousEntityByRosterKey.emplace(previous.roster_key, &previous);
         }
 
         auto attachPreviousRenderSample = [&](OW::c_entity& entity) {
             entity.render_sample_tick_ms = processLoopTick;
 
+            const OW::c_entity* previousEntity = nullptr;
             const auto previousIt = previousEntityByAddress.find(entity.address);
-            if (previousIt == previousEntityByAddress.end() || !previousIt->second) {
+            if (previousIt != previousEntityByAddress.end())
+                previousEntity = previousIt->second;
+            if (!previousEntity && entity.roster_key != 0) {
+                const auto rosterPreviousIt = previousEntityByRosterKey.find(entity.roster_key);
+                if (rosterPreviousIt != previousEntityByRosterKey.end())
+                    previousEntity = rosterPreviousIt->second;
+            }
+
+            if (!previousEntity) {
                 entity.previous_render_sample_tick_ms = processLoopTick;
                 entity.has_previous_render_sample = false;
                 entity.previous_head_pos = entity.head_pos;
@@ -532,7 +647,7 @@ inline void entity_thread() {
                 return;
             }
 
-            const OW::c_entity& previous = *previousIt->second;
+            const OW::c_entity& previous = *previousEntity;
             entity.previous_render_sample_tick_ms =
                 previous.render_sample_tick_ms ? previous.render_sample_tick_ms : processLoopTick;
             entity.has_previous_render_sample =
@@ -573,6 +688,8 @@ inline void entity_thread() {
                 Diagnostics::RecordInvalidEntity();
                 continue;
             }
+            entity.match_id = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
+            entity.roster_key = makeRosterKey(entity.match_id, LinkParent, ComponentParent);
 
             auto dynamicCacheIt = dynamicEntityCache.find(ComponentParent);
             if (dynamicCacheIt != dynamicEntityCache.end() &&
@@ -795,6 +912,13 @@ inline void entity_thread() {
                 Diagnostics::RecordInvalidEntity();
                 continue;
             }
+            entity.last_seen_tick_ms = processLoopTick;
+            entity.missing_since_tick_ms = 0;
+            entity.roster_state = entity.Alive
+                ? OW::EntityRosterState::Fresh
+                : OW::EntityRosterState::Dead;
+            if (entity.roster_state == OW::EntityRosterState::Dead)
+                sanitizeStaleRosterEntity(entity);
 
             // ---- Rotation ----
             if (entity.RotationBase) {
@@ -811,15 +935,55 @@ inline void entity_thread() {
             // ---- Hero ID ----
             if (entity.HeroBase) {
                 ComponentBaseCache& componentCache = cacheIt->second;
-                if (componentCache.heroValid) {
-                    entity.HeroID = componentCache.heroId;
-                } else {
+                const bool refreshHero =
+                    !componentCache.heroValid ||
+                    componentCache.heroUpdateTick == 0 ||
+                    processLoopTick - componentCache.heroUpdateTick >= OW::kEntityHeroIntervalMs;
+                if (refreshHero) {
                     OW::hero_compo_t hero_compo{};
                     if (SDK->read_range(entity.HeroBase, &hero_compo, sizeof(hero_compo))) {
-                        entity.HeroID = hero_compo.heroid;
-                        componentCache.heroId = entity.HeroID;
-                        componentCache.heroValid = entity.HeroID != 0;
+                        const uint64_t newHeroId = hero_compo.heroid;
+                        if (newHeroId != 0) {
+                            uint64_t previousHeroId = componentCache.heroValid
+                                ? componentCache.heroId
+                                : 0;
+                            if (previousHeroId == 0 && entity.roster_key != 0) {
+                                const auto rosterIt = entityRoster.find(entity.roster_key);
+                                if (rosterIt != entityRoster.end())
+                                    previousHeroId = rosterIt->second.entity.HeroID;
+                            }
+                            const bool heroChanged =
+                                previousHeroId != 0 &&
+                                previousHeroId != newHeroId;
+                            if (heroChanged) {
+                                componentCache.slowValid = false;
+                                componentCache.slowUpdateTick = 0;
+                                componentCache.heroName = "Unknown";
+                                componentCache.skill1act = false;
+                                componentCache.skill2act = false;
+                                componentCache.ultimate = 0.0f;
+                                componentCache.skillcd1 = 0.0f;
+                                componentCache.skillcd2 = 0.0f;
+                                componentCache.skeletonCache = OW::c_entity::SkeletonBoneCache{};
+                                ++heroChangedThisCycle;
+                                Diagnostics::Info("[PIPELINE] Stage 4 hero_change roster=0x%llX component=0x%llX old=0x%llX new=0x%llX.",
+                                    static_cast<unsigned long long>(entity.roster_key),
+                                    static_cast<unsigned long long>(ComponentParent),
+                                    static_cast<unsigned long long>(previousHeroId),
+                                    static_cast<unsigned long long>(newHeroId));
+                            }
+                            componentCache.heroId = newHeroId;
+                            componentCache.heroValid = true;
+                            entity.HeroID = newHeroId;
+                        } else if (componentCache.heroValid) {
+                            entity.HeroID = componentCache.heroId;
+                        }
+                        componentCache.heroUpdateTick = processLoopTick;
+                    } else if (componentCache.heroValid) {
+                        entity.HeroID = componentCache.heroId;
                     }
+                } else {
+                    entity.HeroID = componentCache.heroId;
                 }
             } else {
                 processStats.heroBaseMissing++;
@@ -1143,7 +1307,7 @@ inline void entity_thread() {
                 bool isLocalByUID = false;
                 uint32_t entityMatchId = 0;
                 if (gameAdminLocalUID != 0 && !gameAdminLocalUidUsed) {
-                    entityMatchId = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
+                    entityMatchId = entity.match_id;
                     if (entityMatchId == gameAdminLocalUID) {
                         isLocalByUID = true;
                         gameAdminLocalUidUsed = true;
@@ -1159,7 +1323,7 @@ inline void entity_thread() {
 
                 // Log MatchId cross-reference on first cycle (diagnostic only)
                 if (matchIdLogEnabled) {
-                    const uint32_t eMatchId = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
+                    const uint32_t eMatchId = entity.match_id;
                     if (eMatchId != 0) {
                         Diagnostics::Info("[MATCHID] entity=0x%llX MatchId=0x%08X(%u) hero=%s angle=0x%llX dist=%.1fm.",
                             static_cast<unsigned long long>(entity.address),
@@ -1270,7 +1434,17 @@ inline void entity_thread() {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu name_done name=%s.", i, name.c_str());
             }
             if (ComponentParent && LinkParent && name != "Unknown") {
+                entity.roster_state = entity.Alive
+                    ? OW::EntityRosterState::Fresh
+                    : OW::EntityRosterState::Dead;
+                entity.last_seen_tick_ms = processLoopTick;
+                entity.missing_since_tick_ms = 0;
+                if (entity.roster_state == OW::EntityRosterState::Dead)
+                    sanitizeStaleRosterEntity(entity);
                 attachPreviousRenderSample(entity);
+                RosterEntry& rosterEntry = entityRoster[entity.roster_key];
+                rosterEntry.entity = entity;
+                rosterEntry.seenThisCycle = true;
                 tmp_entities.push_back(entity);
             } else {
                 if (name == "Unknown")
@@ -1284,20 +1458,25 @@ inline void entity_thread() {
         const size_t dynamic_count = hpdy_entities.size();
         processStats.validated = valid_count;
         processStats.dynamic = dynamic_count;
+        std::vector<OW::c_entity> published_entities{};
+        Diagnostics::RosterStats rosterStats =
+            publishRosterSnapshot(processLoopTick, heroChangedThisCycle, published_entities);
+        const size_t published_count = published_entities.size();
         const bool suspectStaleScan =
             (valid_count == 0 && !raw_entities.empty()) ||
             (previousProcessedValidCount > 0 && valid_count + 1 < previousProcessedValidCount);
         {
             std::lock_guard<std::mutex> lock(g_mutex);
-            OW::entities = std::move(tmp_entities);
+            OW::entities = std::move(published_entities);
             OW::hp_dy_entities = std::move(hpdy_entities);
             if (suspectStaleScan)
                 OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
         }
         previousProcessedValidCount = valid_count;
-        Diagnostics::SetEntityCount(valid_count);
+        Diagnostics::SetEntityCount(published_count);
         Diagnostics::SetEntityProcessStats(processStats);
         Diagnostics::SetLocalEntityStats(localStats);
+        Diagnostics::SetRosterStats(rosterStats);
         if (matchIdLogEnabled)
             matchIdLogEnabled = false;
         Diagnostics::Trace("Entity process cycle: valid=%zu hp_dynamic=%zu raw=%zu.",
@@ -1315,6 +1494,13 @@ inline void entity_thread() {
                     static_cast<unsigned long>(OW::kEntityProcessIntervalMs),
                     static_cast<unsigned long>(OW::kEntityHealthIntervalMs),
                     static_cast<unsigned long>(OW::kEntitySlowFieldIntervalMs));
+                Diagnostics::Info("[PIPELINE] Stage 4 roster fresh=%zu dead=%zu missing=%zu expired=%zu hero_change=%zu published=%zu.",
+                    rosterStats.fresh,
+                    rosterStats.dead,
+                    rosterStats.missing,
+                    rosterStats.expired,
+                    rosterStats.heroChanged,
+                    published_count);
                 if (suspectStaleScan) {
                     Diagnostics::Info("[PIPELINE] Stage 4 suspected stale scan/cache; fast rescan for %lu ms.",
                         static_cast<unsigned long>(OW::kEntityFastRescanWindowMs));
@@ -2578,7 +2764,7 @@ inline void PlayerInfo() {
 
     for (size_t index = 0; index < entity_snapshot.size(); ++index) {
         OW::c_entity entity = OverlayRenderDetail::InterpolateEntityForRender(entity_snapshot[index], renderTick);
-        if (!entity.Alive) {
+        if (entity.roster_state != OW::EntityRosterState::Fresh || !entity.Alive) {
             renderStats.skippedDead++;
             continue;
         }
@@ -2749,9 +2935,6 @@ inline void skillinfo() {
     std::vector<OW::c_entity> enemies;
     std::vector<OW::c_entity> allies;
     for (const OW::c_entity& entity : entity_snapshot) {
-        if (!entity.Alive)
-            continue;
-
         std::string heroname = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
         if (heroname == "Bot" || heroname == "Unknown")
             continue;
@@ -2782,7 +2965,11 @@ inline void skillinfo() {
         constexpr float ultBarHeight = 14.0f;
         constexpr float statusStackGap = 4.0f;
 
-        const float alpha = std::clamp(opacity, 0.0f, 1.0f);
+        const bool rosterFresh = entity.roster_state == OW::EntityRosterState::Fresh;
+        const bool rosterDead = entity.roster_state == OW::EntityRosterState::Dead;
+        const bool rosterMissing = entity.roster_state == OW::EntityRosterState::Missing;
+        const float alpha = std::clamp(opacity * (rosterFresh ? 1.0f : 0.52f), 0.0f, 1.0f);
+        const float maskAlpha = std::clamp(opacity, 0.0f, 1.0f);
         const bool isEnemy = entity.Team;
         Render::DrawFilledRect(Vector2(x, y + 1.0f), cardWidth, rowHeight - 2.0f,
                                OverlayRenderDetail::ImColorWithAlpha(8, 11, 15, alpha * 0.70f));
@@ -2855,9 +3042,10 @@ inline void skillinfo() {
         const float baseHealth = OverlayRenderDetail::PositiveFinite(entity.MinHealth);
         const float armorHealth = OverlayRenderDetail::PositiveFinite(entity.MinArmorHealth);
         const float shieldHealth = OverlayRenderDetail::PositiveFinite(entity.MinBarrierHealth);
-        const float currentHealth = OverlayRenderDetail::PositiveFinite(entity.PlayerHealth) > 0.0f
+        const float liveCurrentHealth = OverlayRenderDetail::PositiveFinite(entity.PlayerHealth) > 0.0f
             ? OverlayRenderDetail::PositiveFinite(entity.PlayerHealth)
             : baseHealth + armorHealth + shieldHealth;
+        const float currentHealth = rosterFresh ? liveCurrentHealth : 0.0f;
         float maxHealth = OverlayRenderDetail::PositiveFinite(entity.PlayerHealthMax);
         if (maxHealth <= 0.0f) {
             maxHealth = OverlayRenderDetail::PositiveFinite(entity.MaxHealth) +
@@ -2865,11 +3053,13 @@ inline void skillinfo() {
                         OverlayRenderDetail::PositiveFinite(entity.MaxBarrierHealth);
         }
         const float healthRatio = maxHealth > 0.0f ? OverlayRenderDetail::Clamp01(currentHealth / maxHealth) : 0.0f;
-        const ImColor healthColor = healthRatio > 0.60f
+        const ImColor healthColor = !rosterFresh
+            ? OverlayRenderDetail::ImColorWithAlpha(132, 138, 148, alpha)
+            : (healthRatio > 0.60f
             ? OverlayRenderDetail::ImColorWithAlpha(55, 230, 95, alpha)
             : (healthRatio >= 0.30f
                 ? OverlayRenderDetail::ImColorWithAlpha(245, 210, 72, alpha)
-                : OverlayRenderDetail::ImColorWithAlpha(245, 76, 72, alpha));
+                : OverlayRenderDetail::ImColorWithAlpha(245, 76, 72, alpha)));
 
         auto drawVerticalBar = [&](float barX, float barY, float ratio, const ImColor& fillColor) {
             Render::DrawFilledRect(Vector2(barX, barY), barWidth, barHeight,
@@ -2919,7 +3109,9 @@ inline void skillinfo() {
         }
         cursorX += barWidth + gap;
 
-        const std::string hpText = std::to_string(static_cast<int>(currentHealth + 0.5f));
+        const std::string hpText = rosterFresh
+            ? std::to_string(static_cast<int>(currentHealth + 0.5f))
+            : (rosterDead ? std::string("0") : std::string("--"));
         Render::DrawText(ImVec2(cursorX, y + 17.0f),
                          OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha),
                          hpText.c_str(), 20.0f);
@@ -3024,6 +3216,23 @@ inline void skillinfo() {
                                   entity.skill1act, entity.skillcd1);
             drawSkillCooldownSlot(icons ? icons->ability2Icon : nullptr, "S2",
                                   entity.skill2act, entity.skillcd2);
+        }
+
+        if (rosterDead || rosterMissing) {
+            const char* statusText = rosterDead ? "DEAD" : "MISSING";
+            Render::DrawFilledRect(Vector2(x, y + 1.0f), cardWidth, rowHeight - 2.0f,
+                                   OverlayRenderDetail::ImColorWithAlpha(0, 0, 0, maskAlpha * 0.38f));
+            constexpr float badgeWidth = 74.0f;
+            constexpr float badgeHeight = 19.0f;
+            const float badgeX = x + cardWidth - badgeWidth - 9.0f;
+            const float badgeY = y + (rowHeight - badgeHeight) * 0.5f;
+            Render::DrawFilledRect(Vector2(badgeX, badgeY), badgeWidth, badgeHeight,
+                                   OverlayRenderDetail::ImColorWithAlpha(18, 21, 26, maskAlpha * 0.90f));
+            Render::DrawRect(Vector2(badgeX, badgeY), badgeWidth, badgeHeight,
+                             Render::Color(210, 218, 230, OverlayRenderDetail::ToByte(maskAlpha * 0.35f)), 1.0f);
+            drawCenteredText(badgeX + badgeWidth * 0.5f, badgeY + badgeHeight * 0.5f,
+                             statusText, 12.5f,
+                             OverlayRenderDetail::ImU32WithAlpha(235, 240, 248, maskAlpha));
         }
 
         return y + rowHeight;

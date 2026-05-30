@@ -207,6 +207,14 @@ struct LocalEntityStats {
     bool localUidResolved = false;
 };
 
+struct RosterStats {
+    size_t fresh = 0;
+    size_t dead = 0;
+    size_t missing = 0;
+    size_t expired = 0;
+    size_t heroChanged = 0;
+};
+
 struct StatusSnapshot {
     size_t entityCount = 0;
     size_t lastScanEntityCount = 0;
@@ -235,6 +243,7 @@ struct StatusSnapshot {
     EntityProcessStats entityProcess{};
     PlayerInfoStats playerInfo{};
     LocalEntityStats localEntity{};
+    RosterStats roster{};
 };
 
 void Initialize(LogLevel minLevel = LogLevel::Info, const char* logPath = "./unleashed_diag.log");
@@ -294,6 +303,7 @@ void SetRenderPipelineStatus(bool drawRadarCalled, bool playerInfoCalled, bool s
 void SetEntityProcessStats(const EntityProcessStats& stats);
 void SetPlayerInfoStats(const PlayerInfoStats& stats);
 void SetLocalEntityStats(const LocalEntityStats& stats);
+void SetRosterStats(const RosterStats& stats);
 
 StatusSnapshot Snapshot();
 void DumpStatus();

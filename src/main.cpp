@@ -192,6 +192,15 @@ namespace {
         std::snprintf(line, sizeof(line), "Validated: %zu", snapshot.entityProcess.validated);
         drawLine(snapshot.entityCount > 0 ? okColor : warnColor, line);
 
+        std::snprintf(line, sizeof(line), "Roster: fresh %zu dead %zu miss %zu exp %zu hero %zu",
+            snapshot.roster.fresh,
+            snapshot.roster.dead,
+            snapshot.roster.missing,
+            snapshot.roster.expired,
+            snapshot.roster.heroChanged);
+        drawLine(snapshot.roster.fresh > 0 ? okColor :
+            (snapshot.roster.dead > 0 || snapshot.roster.missing > 0 ? warnColor : textColor), line);
+
         std::snprintf(line, sizeof(line), "Drop: null %zu dup %zu hp %zu link %zu",
             snapshot.entityProcess.nullPair,
             snapshot.entityProcess.duplicate,
@@ -392,7 +401,12 @@ namespace {
 
     static void DrawRadar()
     {
-        if (!OW::Config::radar || OW::entities.empty() || OW::local_entity.PlayerHealth <= 0.0f)
+        if (!OW::Config::radar)
+            return;
+
+        const std::vector<OW::c_entity> entitySnapshot = OW::TargetingDetail::SnapshotEntities();
+        const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
+        if (entitySnapshot.empty() || localSnapshot.PlayerHealth <= 0.0f)
             return;
 
         const float width = CanvasWidth();
@@ -430,19 +444,21 @@ namespace {
         Render::DrawLine(OW::Vector2(center.X, center.Y - radius), OW::Vector2(center.X, center.Y + radius), Render::Color(255, 255, 255, 55), 1.0f);
         Render::DrawFilledCircle(center, 3.0f, Render::Color(120, 255, 120, 220), 20);
 
-        DirectX::XMFLOAT3 forward = OW::viewMatrix_xor.get_rotation();
+        OW::Matrix renderViewMatrix{}, renderViewMatrixXor{};
+        OW::GetViewMatricesSnapshot(renderViewMatrix, renderViewMatrixXor);
+        DirectX::XMFLOAT3 forward = renderViewMatrixXor.get_rotation();
         const float yaw = static_cast<float>(std::atan2(forward.x, forward.z));
         const float cosYaw = std::cos(-yaw);
         const float sinYaw = std::sin(-yaw);
         const float scale = 1.8f;
 
-        for (size_t index = 0; index < OW::entities.size(); ++index) {
-            const OW::c_entity& entity = OW::entities[index];
-            if (!entity.Alive || entity.address == OW::local_entity.address)
+        for (size_t index = 0; index < entitySnapshot.size(); ++index) {
+            const OW::c_entity& entity = entitySnapshot[index];
+            if (!entity.Alive || entity.address == localSnapshot.address)
                 continue;
 
-            const float dx = entity.pos.X - OW::local_entity.pos.X;
-            const float dz = entity.pos.Z - OW::local_entity.pos.Z;
+            const float dx = entity.pos.X - localSnapshot.pos.X;
+            const float dz = entity.pos.Z - localSnapshot.pos.Z;
             float rx = (dx * cosYaw - dz * sinYaw) * scale;
             float rz = (dx * sinYaw + dz * cosYaw) * scale;
 
@@ -464,14 +480,21 @@ namespace {
 
     static void DrawHealthPacks()
     {
-        if (!OW::Config::draw_hp_pack || OW::hp_dy_entities.empty())
+        if (!OW::Config::draw_hp_pack)
+            return;
+
+        const std::vector<OW::hpanddy> dynamicEntitySnapshot = OW::TargetingDetail::SnapshotDynamicEntities();
+        if (dynamicEntitySnapshot.empty())
             return;
 
         const OW::Vector2 windowSize(CanvasWidth(), CanvasHeight());
-        for (const OW::hpanddy& pack : OW::hp_dy_entities) {
+        OW::Matrix renderViewMatrix{}, renderViewMatrixXor{};
+        OW::GetViewMatricesSnapshot(renderViewMatrix, renderViewMatrixXor);
+
+        for (const OW::hpanddy& pack : dynamicEntitySnapshot) {
             OW::Vector2 screen{};
             OW::Vector3 world(pack.POS.x, pack.POS.y, pack.POS.z);
-            if (!OW::viewMatrix.WorldToScreen(world, &screen, windowSize))
+            if (!renderViewMatrix.WorldToScreen(world, &screen, windowSize))
                 continue;
 
             const bool isBob = pack.entityid == 0x400000000002533;
@@ -539,7 +562,7 @@ void RenderCallback()
 
     // The menu is rendered by the separate overlay menu window. This callback
     // only draws the transparent full-screen canvas layer.
-    const bool entityListEmpty = OW::entities.empty();
+    const bool entityListEmpty = OW::TargetingDetail::SnapshotEntities().empty();
     bool playerInfoCalled = false;
     bool skillInfoCalled = false;
     DrawRadar();

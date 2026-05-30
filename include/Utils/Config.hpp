@@ -308,10 +308,33 @@ namespace OW { namespace Config {
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         float hitbox = 0.13f;    // hitbox radius/size
         int aimMode = 0;         // 0=Tracking, 1=Flick
+        int aimMethod = 0;       // 0=Linear, 1=PID, 2=Bezier
+        int smoothType = 0;      // 0=Constant Speed, 1=Linear, 2=Bezier
+        float pidP = 0.5f;
+        float pidI = 0.01f;
+        float pidD = 0.1f;
+        float pidMaxIntegral = 10.0f;
+        float pidDeadzone = 1.0f;
+        int bezierControlPoints = 2;
+        float bezierCurvature = 0.5f;
+        float bezierSpeed = 50.0f;
         int key = 1;             // aim activation key index (reuses activation key VK list)
+        bool autoshot = false;
+        bool keepFiring = true;
         bool prediction = false; // movement prediction
+        float maxHeadDistance = 100.0f;
+        float stickiness = 100.0f;
         int priority = 0;        // 0=FOV, 1=HP, 2=Distance
         int targetTeam = 0;      // 0=Enemies, 1=Allies, 2=All
+        float maxAimTime = 100.0f;
+        float minCharge = 5.0f;
+        float maxCharge = 100.0f;
+        bool ignoreInvisible = true;
+        int traceCondition = 0;   // 0=Strict, 1=Relaxed, 2=Off
+        int unlockCondition = 0;  // 0=Anytime, 1=On Release, 2=Never
+        float lockTime = 20.0f;
+        float maxDistance = 100.0f;
+        float minDistance = 0.0f;
         TriggerPreset trigger{};
     };
 

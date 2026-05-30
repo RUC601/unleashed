@@ -112,7 +112,9 @@ enum class HeroSkillRunState {
 void RunInputSequence(const std::string& skillId,
                       const std::vector<Config::HeroSkillSequenceStep>& steps,
                       int key,
-                      const Config::HeroSkillTrackingParams& trackingParams);
+                      const Config::HeroSkillTrackingParams& trackingParams,
+                      bool ammoGuardEnabled,
+                      int ammoGuardReserve);
 HeroSkillRunState RunViewpointController(const std::string& skillId,
                                          const Config::HeroSkillSettings& params);
 bool AnyInputSequenceActive();

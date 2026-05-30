@@ -21,6 +21,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -354,6 +355,92 @@ namespace {
         }
         quoted += L"'";
         return quoted;
+    }
+
+    std::wstring PowerShellSingleQuoted(const std::wstring& text)
+    {
+        std::wstring quoted = L"'";
+        for (const wchar_t ch : text) {
+            if (ch == L'\'')
+                quoted += L"''";
+            else
+                quoted += ch;
+        }
+        quoted += L"'";
+        return quoted;
+    }
+
+    std::wstring CurrentExecutablePath()
+    {
+        std::array<wchar_t, MAX_PATH> stackBuffer{};
+        DWORD length = GetModuleFileNameW(nullptr, stackBuffer.data(), static_cast<DWORD>(stackBuffer.size()));
+        if (length == 0)
+            return {};
+
+        if (length < static_cast<DWORD>(stackBuffer.size()))
+            return std::wstring(stackBuffer.data(), length);
+
+        std::vector<wchar_t> dynamicBuffer(32768);
+        length = GetModuleFileNameW(nullptr, dynamicBuffer.data(), static_cast<DWORD>(dynamicBuffer.size()));
+        if (length == 0 || length >= static_cast<DWORD>(dynamicBuffer.size()))
+            return {};
+
+        return std::wstring(dynamicBuffer.data(), length);
+    }
+
+    KmboxConnectionTestResult AllowKmboxMonitorFirewall()
+    {
+        if (OW::Config::kmboxDeviceType != 0)
+            return { false, "Network mode only" };
+
+        const int monitorPort = OW::Config::kmboxPort + 1;
+        if (monitorPort <= 0 || monitorPort > 65535)
+            return { false, "Invalid monitor port" };
+
+        const std::wstring executablePath = CurrentExecutablePath();
+        if (executablePath.empty())
+            return { false, "EXE path unavailable" };
+
+        const std::wstring exe = PowerShellSingleQuoted(executablePath);
+        const std::wstring displayName =
+            PowerShellSingleQuoted(L"Unleashed KMBox Monitor UDP " + std::to_wstring(monitorPort));
+        const std::wstring command =
+            L"-NoProfile -ExecutionPolicy Bypass -Command "
+            L"\"$exe = " + exe + L"; "
+            L"$port = " + std::to_wstring(monitorPort) + L"; "
+            L"$portText = [string]$port; "
+            L"$name = " + displayName + L"; "
+            L"$blocks = Get-NetFirewallRule -Direction Inbound -Action Block -ErrorAction SilentlyContinue | "
+            L"Where-Object { "
+            L"try { "
+            L"$app = Get-NetFirewallApplicationFilter -AssociatedNetFirewallRule $_ -ErrorAction Stop; "
+            L"$pf = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $_ -ErrorAction Stop; "
+            L"($app.Program -eq $exe) -and "
+            L"(($pf.Protocol -eq 'UDP') -or ($pf.Protocol -eq 'Any')) -and "
+            L"((@($pf.LocalPort) -contains $portText) -or (@($pf.LocalPort) -contains 'Any')) "
+            L"} catch { $false } "
+            L"}; "
+            L"$blocks | Disable-NetFirewallRule -ErrorAction SilentlyContinue; "
+            L"Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | "
+            L"Remove-NetFirewallRule -ErrorAction SilentlyContinue; "
+            L"New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow "
+            L"-Program $exe -Protocol UDP -LocalPort $port -Profile Any -ErrorAction Stop | Out-Null\"";
+
+        HINSTANCE result = ShellExecuteW(
+            nullptr,
+            L"runas",
+            L"powershell.exe",
+            command.c_str(),
+            nullptr,
+            SW_HIDE);
+
+        const auto resultCode = reinterpret_cast<intptr_t>(result);
+        if (resultCode <= 32)
+            return { false, Win32ErrorMessage("Firewall launch failed", static_cast<DWORD>(resultCode)) };
+
+        Diagnostics::Info("KMBox monitor firewall allow requested. monitorPort=%d", monitorPort);
+        Diagnostics::Aim("kmbox.firewall allow_requested monitorPort=%d", monitorPort);
+        return { true, "Firewall rule requested" };
     }
 
     KmboxConnectionTestResult RestartKmboxNetworkAdapter()
@@ -892,14 +979,14 @@ static bool IsConcreteHeroSelection(const HeroOption& hero) {
 static void ShowAimSlotSummaryTooltip(bool hasSpecificHero) {
     ImGui::SetItemTooltip("%s",
         hasSpecificHero
-            ? "Aim and Trigger have separate slot lists for the selected hero. Save Config writes the complete INI config."
+            ? "Aim and Trigger have separate slot lists for the selected hero. Save Config writes that hero's JSON config."
             : "All uses the current local hero or global config fallback. Aim and Trigger slot lists are separate.");
 }
 
 static void ShowSaveConfigTooltip(bool savesSelectedHero) {
     ImGui::SetItemTooltip("%s",
         savesSelectedHero
-            ? "Save the selected hero's complete config.ini settings."
+            ? "Save the selected hero's presets to config.heroes.json."
             : "Save config.ini using the current local hero or global fallback.");
 }
 
@@ -1107,15 +1194,17 @@ static std::string SaveSelectedConfig() {
     OW::Config::NormalizeHeroPresets();
 
     if (IsConcreteHeroSelection(selectedHero)) {
+        const std::string heroPath = OW::Config::HeroConfigPath(path);
         OW::Config::SaveConfigForHero(path, selectedHero.heroId, OW::local_entity.LinkBase);
         std::string status = "Saved ";
         status += selectedHero.label;
         status += " config";
-        Diagnostics::Info("%s to %s.", status.c_str(), path.c_str());
+        Diagnostics::Info("%s to %s.", status.c_str(), heroPath.c_str());
         return status;
     }
 
     OW::Config::SaveConfig(path);
+    OW::Config::SaveHeroConfig(path);
     const uint64_t savedHeroId = OW::Config::lastheroid > 0
         ? static_cast<uint64_t>(OW::Config::lastheroid)
         : OW::local_entity.HeroID;
@@ -1252,7 +1341,7 @@ static void DrawPresetSummary(const HeroOption& hero,
     if (kind == ActionSlotKind::Aim) {
         std::snprintf(summary, sizeof(summary),
                       "%s - %s | Method %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f | %s",
-                      hero.label, scope, PresetAimMethodName(OW::Config::aimMethod),
+                      hero.label, scope, PresetAimMethodName(preset.aimMethod),
                       preset.fov, preset.smooth,
                       PresetBoneName(preset), preset.hitbox,
                       PresetAimModeName(preset.aimMode));
@@ -2488,7 +2577,7 @@ static void DrawTopTabIcon(ImDrawList* drawList, int tabIndex, const ImVec2& min
 static int CurrentPageKey() {
     switch (UI::state.activeTab) {
         case UI::TAB_AIMING:
-            return UI::state.aimingSubTab;  // 0=Aimbot, 1=Trigger, 2=Skills
+            return UI::state.aimingSubTab;  // 0=Aimbot, 1=Trigger, 2=Skills, 3=Sequences
         case UI::TAB_VISUALS:
             return 3;
         case UI::TAB_THEME:
@@ -2649,16 +2738,12 @@ void UI::AimbotPage() {
 
     bool presetChanged = false;
     bool slotEnabledChanged = false;
-    bool hasStoredPreset = false;
-    std::string activeSlotLabel;
     OW::Config::HeroPreset activePreset{};
 
     auto refreshActivePreset = [&]() {
         state.selectedTypeIndex = ClampHeroSelectionIndex(state.selectedTypeIndex);
         selectedHero = &kHeroOptions[state.selectedTypeIndex];
         const bool isGlobal = selectedHero->heroId == 0;
-        hasStoredPreset = !isGlobal && HasHeroActionPreset(slotKind, selectedHero->heroId);
-        activeSlotLabel = ActionSlotReadoutLabel(state.aimHeroSegActive);
         activePreset = isGlobal
             ? MakeCurrentHeroActionPreset(slotKind)
             : GetHeroActionPresetOrDefault(slotKind, selectedHero->heroId, state.aimHeroSegActive);
@@ -2667,17 +2752,7 @@ void UI::AimbotPage() {
 
     UIGroupBox("Action Slot");
     {
-        SettingRow("Slot", kAimbotHeroLabelWidth);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(activeSlotLabel.c_str());
-
         slotEnabledChanged |= UIActionSlotEnabledCheckbox(slotKind, *selectedHero, "##aimSlotEnabled", kAimbotHeroLabelWidth);
-
-        SettingRow("Detected", kAimbotHeroLabelWidth);
-        DrawDetectedTypeReadout();
-
-        SettingRow("Aim Summary", kAimbotHeroLabelWidth);
-        DrawPresetSummary(*selectedHero, activePreset, hasStoredPreset, slotKind);
     }
     CloseGroupBox();
 
@@ -2696,54 +2771,54 @@ void UI::AimbotPage() {
             // Aim Method
             SettingRow("Aim Method", kAimbotLeftLabelWidth);
             PushControlWidth();
-            UISelect("##aimMethod", &OW::Config::aimMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod));
+            presetChanged |= UISelect("##aimMethod", &activePreset.aimMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod));
             ImGui::PopItemWidth();
 
-            if (OW::Config::aimMethod == 0) {
+            if (activePreset.aimMethod == 0) {
                 SettingRow("Smooth Type", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISelect("##aimSmoothType", &OW::Config::aimbotSmoothType,
-                         kAimSmoothType, IM_ARRAYSIZE(kAimSmoothType));
+                presetChanged |= UISelect("##aimSmoothType", &activePreset.smoothType,
+                                          kAimSmoothType, IM_ARRAYSIZE(kAimSmoothType));
                 ImGui::PopItemWidth();
-            } else if (OW::Config::aimMethod == 1) {
+            } else if (activePreset.aimMethod == 1) {
                 SettingRow("P Gain", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISlider("##aimPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
+                presetChanged |= UISlider("##aimPidP", &activePreset.pidP, 0.0f, 2.0f, "0.50");
                 ImGui::PopItemWidth();
 
                 SettingRow("I Gain", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISlider("##aimPidI", &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
+                presetChanged |= UISlider("##aimPidI", &activePreset.pidI, 0.0f, 0.5f, "0.050");
                 ImGui::PopItemWidth();
 
                 SettingRow("D Gain", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISlider("##aimPidD", &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
+                presetChanged |= UISlider("##aimPidD", &activePreset.pidD, 0.0f, 1.0f, "0.10");
                 ImGui::PopItemWidth();
 
                 SettingRow("Max Integral", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISlider("##aimPidMaxI", &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
+                presetChanged |= UISlider("##aimPidMaxI", &activePreset.pidMaxIntegral, 1.0f, 50.0f, "10.0");
                 ImGui::PopItemWidth();
 
                 SettingRow("Deadzone", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISlider("##aimPidDz", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
+                presetChanged |= UISlider("##aimPidDz", &activePreset.pidDeadzone, 0.0f, 10.0f, "1.0 deg");
                 ImGui::PopItemWidth();
-            } else if (OW::Config::aimMethod == 2) {
+            } else if (activePreset.aimMethod == 2) {
                 SettingRow("Control Points", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISlider("##aimBezCP", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
+                presetChanged |= UISlider("##aimBezCP", &activePreset.bezierControlPoints, 2.0f, 6.0f, "2");
                 ImGui::PopItemWidth();
 
                 SettingRow("Curvature", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISlider("##aimBezCurve", &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
+                presetChanged |= UISlider("##aimBezCurve", &activePreset.bezierCurvature, 0.0f, 1.0f, "0.50");
                 ImGui::PopItemWidth();
 
                 SettingRow("Speed", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                UISlider("##aimBezSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
+                presetChanged |= UISlider("##aimBezSpeed", &activePreset.bezierSpeed, 1.0f, 200.0f, "50.0");
                 ImGui::PopItemWidth();
             }
 
@@ -2763,11 +2838,11 @@ void UI::AimbotPage() {
 
             // Autoshot
             SettingRow("Autoshot", kAimbotLeftLabelWidth);
-            UICheckbox("##aimAutoshot", &OW::Config::aimbotAutoshot);
+            presetChanged |= UICheckbox("##aimAutoshot", &activePreset.autoshot);
 
             // Keep Firing
             SettingRow("Keep Firing", kAimbotLeftLabelWidth);
-            UICheckbox("##aimKeepFire", &OW::Config::aimbotKeepFiring);
+            presetChanged |= UICheckbox("##aimKeepFire", &activePreset.keepFiring);
 
             // Bone Preference combines fixed aim bones and the dynamic closest-bone mode.
             SettingRow("Bone Preference", kAimbotLeftLabelWidth);
@@ -2787,13 +2862,13 @@ void UI::AimbotPage() {
             // Max Head Distance
             SettingRow("Max Head Distance", kAimbotLeftLabelWidth);
             PushControlWidth();
-            UISlider("##aimMaxHead", &OW::Config::aimbotMaxHead, 0.0f, 100.0f, "Max");
+            presetChanged |= UISlider("##aimMaxHead", &activePreset.maxHeadDistance, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Stickiness
             SettingRow("Stickiness", kAimbotLeftLabelWidth);
             PushControlWidth();
-            UISlider("##aimStick", &OW::Config::aimbotStickiness, 0.0f, 100.0f, "Max");
+            presetChanged |= UISlider("##aimStick", &activePreset.stickiness, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Smooth
@@ -2828,7 +2903,7 @@ void UI::AimbotPage() {
             // Max Aim Time
             SettingRow("Max Aim Time", kAimbotRightLabelWidth);
             PushControlWidth();
-            UISlider("##aimMaxAim", &OW::Config::aimbotMaxAim, 0.0f, 100.0f, "Endless");
+            presetChanged |= UISlider("##aimMaxAim", &activePreset.maxAimTime, 0.0f, 100.0f, "Endless");
             ImGui::PopItemWidth();
 
             // Hitbox Size
@@ -2840,47 +2915,47 @@ void UI::AimbotPage() {
             // Aim Min Charge
             SettingRow("Aim Min Charge", kAimbotRightLabelWidth);
             PushControlWidth();
-            UISlider("##aimMinChg", &OW::Config::aimbotMinCharge, 0.0f, 100.0f, "5 %");
+            presetChanged |= UISlider("##aimMinChg", &activePreset.minCharge, 0.0f, 100.0f, "5 %");
             ImGui::PopItemWidth();
 
             // Autoshot Max Charge
             SettingRow("Autoshot Max Charge", kAimbotRightLabelWidth);
             PushControlWidth();
-            UISlider("##aimMaxChg", &OW::Config::aimbotMaxCharge, 0.0f, 100.0f, "100 %");
+            presetChanged |= UISlider("##aimMaxChg", &activePreset.maxCharge, 0.0f, 100.0f, "100 %");
             ImGui::PopItemWidth();
 
             // Ignore Invisible Targets
             SettingRow("Ignore Invisible Targets", kAimbotRightLabelWidth);
-            UICheckbox("##aimIgnoreInvis", &OW::Config::aimbotIgnoreInvisible);
+            presetChanged |= UICheckbox("##aimIgnoreInvis", &activePreset.ignoreInvisible);
 
             // Trace Condition
             SettingRow("Trace Condition", kAimbotRightLabelWidth);
             PushControlWidth();
-            UISelect("##aimTrace", &OW::Config::aimbotTrace, kTrace, IM_ARRAYSIZE(kTrace));
+            presetChanged |= UISelect("##aimTrace", &activePreset.traceCondition, kTrace, IM_ARRAYSIZE(kTrace));
             ImGui::PopItemWidth();
 
             // Unlock Condition
             SettingRow("Unlock Condition", kAimbotRightLabelWidth);
             PushControlWidth();
-            UISelect("##aimUnlock", &OW::Config::aimbotUnlock, kUnlock, IM_ARRAYSIZE(kUnlock));
+            presetChanged |= UISelect("##aimUnlock", &activePreset.unlockCondition, kUnlock, IM_ARRAYSIZE(kUnlock));
             ImGui::PopItemWidth();
 
             // Lock Time
             SettingRow("Lock Time", kAimbotRightLabelWidth);
             PushControlWidth();
-            UISlider("##aimLockTime", &OW::Config::aimbotLockTime, 0.0f, 100.0f, "200 ms");
+            presetChanged |= UISlider("##aimLockTime", &activePreset.lockTime, 0.0f, 100.0f, "200 ms");
             ImGui::PopItemWidth();
 
             // Max Distance
             SettingRow("Max Distance", kAimbotRightLabelWidth);
             PushControlWidth();
-            UISlider("##aimMaxDist", &OW::Config::aimbotMaxDist, 0.0f, 100.0f, "Max");
+            presetChanged |= UISlider("##aimMaxDist", &activePreset.maxDistance, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
             // Min Distance
             SettingRow("Min Distance", kAimbotRightLabelWidth);
             PushControlWidth();
-            UISlider("##aimMinDist", &OW::Config::aimbotMinDist, 0.0f, 100.0f, "0 m");
+            presetChanged |= UISlider("##aimMinDist", &activePreset.minDistance, 0.0f, 100.0f, "0 m");
             ImGui::PopItemWidth();
         }
         CloseGroupBox();
@@ -2916,16 +2991,12 @@ void UI::TriggerPage() {
 
     bool presetChanged = false;
     bool slotEnabledChanged = false;
-    bool hasStoredPreset = false;
-    std::string activeSlotLabel;
     OW::Config::HeroPreset activePreset{};
 
     auto refreshActivePreset = [&]() {
         state.selectedTypeIndex = ClampHeroSelectionIndex(state.selectedTypeIndex);
         selectedHero = &kHeroOptions[state.selectedTypeIndex];
         const bool isGlobal = selectedHero->heroId == 0;
-        hasStoredPreset = !isGlobal && HasHeroActionPreset(slotKind, selectedHero->heroId);
-        activeSlotLabel = ActionSlotReadoutLabel(state.triggerHeroSegActive);
         activePreset = isGlobal
             ? MakeCurrentHeroActionPreset(slotKind)
             : GetHeroActionPresetOrDefault(slotKind, selectedHero->heroId, state.triggerHeroSegActive);
@@ -2934,17 +3005,7 @@ void UI::TriggerPage() {
 
     UIGroupBox("Action Slot");
     {
-        SettingRow("Slot", kAimbotHeroLabelWidth);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(activeSlotLabel.c_str());
-
         slotEnabledChanged |= UIActionSlotEnabledCheckbox(slotKind, *selectedHero, "##triggerSlotEnabled", kAimbotHeroLabelWidth);
-
-        SettingRow("Detected", kAimbotHeroLabelWidth);
-        DrawDetectedTypeReadout();
-
-        SettingRow("Slot Summary", kAimbotHeroLabelWidth);
-        DrawPresetSummary(*selectedHero, activePreset, hasStoredPreset, slotKind);
     }
     CloseGroupBox();
 
@@ -3034,6 +3095,80 @@ void UI::TriggerPage() {
     }
 }
 
+static bool DrawHeroSkillSequenceSteps(const OW::HeroSkillDefinition& definition,
+                                       OW::Config::HeroSkillSettings& settings) {
+    bool changed = false;
+
+    ImGui::Spacing();
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Sequence Steps  (L=Left  R=Right)");
+
+    if (!settings.sequenceSteps.empty()) {
+        float speedScale = settings.sequenceSteps.front().speedScale;
+        SettingRow("Speed Scale", kAimbotRightLabelWidth);
+        PushControlWidth();
+        if (UISlider("##sequenceSpeedScale", &speedScale, 0.5f, 2.0f, "1.00x")) {
+            for (OW::Config::HeroSkillSequenceStep& step : settings.sequenceSteps)
+                step.speedScale = speedScale;
+            changed = true;
+        }
+        ImGui::PopItemWidth();
+    }
+
+    for (int index = 0; index < static_cast<int>(settings.sequenceSteps.size()); ++index) {
+        OW::Config::HeroSkillSequenceStep& step = settings.sequenceSteps[static_cast<size_t>(index)];
+        ImGui::PushID(index);
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("#%d", index + 1);
+        ImGui::SameLine(0.0f, 8.0f);
+
+        bool left = (step.buttonMask & 1) != 0;
+        bool right = (step.buttonMask & 2) != 0;
+        if (UICheckbox("L", &left)) { step.buttonMask ^= 1; changed = true; }
+        ImGui::SameLine(0.0f, 4.0f);
+        if (UICheckbox("R", &right)) { step.buttonMask ^= 2; changed = true; }
+        ImGui::SameLine(0.0f, 8.0f);
+
+        ImGui::PushItemWidth(150.0f);
+        changed |= UISlider("##stepDur", &step.durationMs, 0.0f, 1000.0f, "117 ms");
+        ImGui::PopItemWidth();
+        ImGui::SameLine(0.0f, 8.0f);
+
+        ImGui::TextUnformatted("+/-");
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::PushItemWidth(96.0f);
+        changed |= UISlider("##stepJitter", &step.jitterMs, 0.0f, 50.0f, "0 ms");
+        ImGui::PopItemWidth();
+        ImGui::SameLine(0.0f, 8.0f);
+
+        if (ImGui::Button("Remove")) {
+            settings.sequenceSteps.erase(settings.sequenceSteps.begin() + index);
+            changed = true;
+            ImGui::PopID();
+            break;
+        }
+
+        ImGui::PopID();
+    }
+
+    if (static_cast<int>(settings.sequenceSteps.size()) < OW::Config::kMaxHeroSkillSequenceSteps) {
+        if (ImGui::Button("Add Step")) {
+            settings.sequenceSteps.push_back({ 1, 117, 1.0f, 0 });
+            changed = true;
+        }
+    }
+
+    if (!definition.defaultSettings.sequenceSteps.empty()) {
+        ImGui::SameLine(0.0f, 8.0f);
+        if (ImGui::Button("Reset Steps")) {
+            settings.sequenceSteps = definition.defaultSettings.sequenceSteps;
+            changed = true;
+        }
+    }
+
+    return changed;
+}
+
 static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, uint64_t heroId) {
     OW::Config::HeroSkillSettings settings = OW::Config::GetHeroSkillSettings(
         heroId,
@@ -3044,11 +3179,6 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     auto hasControl = [&](OW::HeroSkillControlFlags control) {
         return OW::HasHeroSkillControl(definition, control);
     };
-    const bool isAsheFirePattern =
-        definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ASHE) &&
-        definition.skillId &&
-        std::strcmp(definition.skillId, "fire-pattern") == 0;
-
     ImGui::PushID(definition.skillId);
 
     if (ID3D11ShaderResourceView* icon = HeroSkillIconForDefinition(definition)) {
@@ -3075,7 +3205,6 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     }
 
     const bool hasSequenceControls = hasControl(OW::HeroSkillControls::SequenceSteps);
-    const bool showSequenceControls = hasSequenceControls && !isAsheFirePattern;
     const bool hasTrackingOverlay = hasControl(OW::HeroSkillControls::TrackingOverlay);
     const bool hasPitchControls = hasControl(OW::HeroSkillControls::PitchControl);
     const bool hasPhaseTiming = hasControl(OW::HeroSkillControls::PhaseTiming);
@@ -3168,75 +3297,6 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         ImGui::PopItemWidth();
     }
 
-    if (showSequenceControls) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Sequence Steps  (L=Left  R=Right)");
-
-        if (!settings.sequenceSteps.empty()) {
-            float speedScale = settings.sequenceSteps.front().speedScale;
-            SettingRow("Speed Scale", kAimbotRightLabelWidth);
-            PushControlWidth();
-            if (UISlider("##sequenceSpeedScale", &speedScale, 0.5f, 2.0f, "1.00x")) {
-                for (OW::Config::HeroSkillSequenceStep& step : settings.sequenceSteps)
-                    step.speedScale = speedScale;
-                changed = true;
-            }
-            ImGui::PopItemWidth();
-        }
-
-        for (int index = 0; index < static_cast<int>(settings.sequenceSteps.size()); ++index) {
-            OW::Config::HeroSkillSequenceStep& step = settings.sequenceSteps[static_cast<size_t>(index)];
-            ImGui::PushID(index);
-
-            ImGui::AlignTextToFramePadding();
-            ImGui::Text("#%d", index + 1);
-            ImGui::SameLine(0.0f, 8.0f);
-
-            bool left = (step.buttonMask & 1) != 0;
-            bool right = (step.buttonMask & 2) != 0;
-            if (UICheckbox("L", &left)) { step.buttonMask ^= 1; changed = true; }
-            ImGui::SameLine(0.0f, 4.0f);
-            if (UICheckbox("R", &right)) { step.buttonMask ^= 2; changed = true; }
-            ImGui::SameLine(0.0f, 8.0f);
-
-            ImGui::PushItemWidth(150.0f);
-            changed |= UISlider("##stepDur", &step.durationMs, 0.0f, 1000.0f, "117 ms");
-            ImGui::PopItemWidth();
-            ImGui::SameLine(0.0f, 8.0f);
-
-            ImGui::TextUnformatted("+/-");
-            ImGui::SameLine(0.0f, 4.0f);
-            ImGui::PushItemWidth(96.0f);
-            changed |= UISlider("##stepJitter", &step.jitterMs, 0.0f, 50.0f, "0 ms");
-            ImGui::PopItemWidth();
-            ImGui::SameLine(0.0f, 8.0f);
-
-            if (ImGui::Button("Remove")) {
-                settings.sequenceSteps.erase(settings.sequenceSteps.begin() + index);
-                changed = true;
-                ImGui::PopID();
-                break;
-            }
-
-            ImGui::PopID();
-        }
-
-        if (static_cast<int>(settings.sequenceSteps.size()) < OW::Config::kMaxHeroSkillSequenceSteps) {
-            if (ImGui::Button("Add Step")) {
-                settings.sequenceSteps.push_back({ 1, 117, 1.0f, 0 });
-                changed = true;
-            }
-        }
-
-        if (!definition.defaultSettings.sequenceSteps.empty()) {
-            ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button("Reset Steps")) {
-                settings.sequenceSteps = definition.defaultSettings.sequenceSteps;
-                changed = true;
-            }
-        }
-    }
-
     if (hasTrackingOverlay && settings.enabled) {
         ImGui::Spacing();
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Tracking Overlay");
@@ -3315,9 +3375,30 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         }
     }
 
-    if (isAsheFirePattern)
-        settings.sequenceSteps = definition.defaultSettings.sequenceSteps;
+    if (changed)
+        OW::Config::SetHeroSkillSettings(heroId, definition.skillId ? definition.skillId : "", settings);
 
+    ImGui::PopID();
+    return changed;
+}
+
+static bool DrawHeroSkillSequenceDefinition(const OW::HeroSkillDefinition& definition, uint64_t heroId) {
+    OW::Config::HeroSkillSettings settings = OW::Config::GetHeroSkillSettings(
+        heroId,
+        definition.skillId ? definition.skillId : "",
+        definition.defaultSettings);
+
+    ImGui::PushID(definition.skillId);
+    if (ID3D11ShaderResourceView* icon = HeroSkillIconForDefinition(definition)) {
+        ImGui::Image(reinterpret_cast<ImTextureID>(icon), ImVec2(24.0f, 24.0f));
+        ImGui::SameLine(0.0f, 8.0f);
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "%s / %s",
+                       OW::HeroSkillCategoryName(definition.category),
+                       OW::HeroSkillInputActionName(definition.inputAction));
+
+    const bool changed = DrawHeroSkillSequenceSteps(definition, settings);
     if (changed)
         OW::Config::SetHeroSkillSettings(heroId, definition.skillId ? definition.skillId : "", settings);
 
@@ -3408,6 +3489,49 @@ void UI::SkillsPage() {
 
     if (renderedSkillCount == 0) {
         UIGroupBox("Hero Skills");
+        {
+            SettingRow("Selected Hero", kDefaultLabelWidth);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(selectedHero.label);
+
+            SettingRow("Definitions", kDefaultLabelWidth);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextDim), "None");
+        }
+        CloseGroupBox();
+    }
+
+    ImGui::PopID();
+}
+
+// =====================================================================
+// UI::SequencesPage
+// =====================================================================
+void UI::SequencesPage() {
+    ImGui::PushID("SequencesPage");
+
+    const HeroOption& selectedHero = CurrentHeroOption();
+    int renderedSequenceCount = 0;
+
+    if (selectedHero.heroId != 0) {
+        for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
+            if (definition.heroId != selectedHero.heroId ||
+                !OW::HasHeroSkillControl(definition, OW::HeroSkillControls::SequenceSteps)) {
+                continue;
+            }
+
+            std::string title = selectedHero.label;
+            title += " / ";
+            title += definition.displayName;
+            UIGroupBox(title.c_str());
+            DrawHeroSkillSequenceDefinition(definition, selectedHero.heroId);
+            CloseGroupBox();
+            ++renderedSequenceCount;
+        }
+    }
+
+    if (renderedSequenceCount == 0) {
+        UIGroupBox("Sequences");
         {
             SettingRow("Selected Hero", kDefaultLabelWidth);
             ImGui::AlignTextToFramePadding();
@@ -3653,6 +3777,8 @@ void UI::MiscPage() {
         static std::string kmboxConnectionTestMessage;
         static bool kmboxNetworkRestartOk = false;
         static std::string kmboxNetworkRestartMessage;
+        static bool kmboxFirewallOk = false;
+        static std::string kmboxFirewallMessage;
         ImGui::PushID("KMBoxSettings");
 
         SettingRow("Enable KMBox");
@@ -3660,6 +3786,7 @@ void UI::MiscPage() {
         if (ImGui::Checkbox("##Enable", &OW::Config::kmboxEnabled)) {
             kmboxSaveRequested = true;
             kmboxNetworkRestartMessage.clear();
+            kmboxFirewallMessage.clear();
             if (OW::Config::kmboxEnabled && !wasKmboxEnabled) {
                 const KmboxConnectionTestResult initResult = InitializeKmboxFromCurrentConfig();
                 kmboxConnectionTestOk = initResult.ok;
@@ -3834,6 +3961,24 @@ void UI::MiscPage() {
                 "%s",
                 kmboxNetworkRestartMessage.c_str());
         }
+        if (OW::Config::kmboxDeviceType == 0) {
+            SettingRow("Monitor Firewall");
+            if (ImGui::Button("Fix Firewall", ImVec2(112.0f, kControlHeight))) {
+                const KmboxConnectionTestResult firewallResult = AllowKmboxMonitorFirewall();
+                kmboxFirewallOk = firewallResult.ok;
+                kmboxFirewallMessage = firewallResult.message;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Adds an elevated inbound UDP allow rule for this executable and disables matching block rules on the KMBox monitor port.");
+            if (!kmboxFirewallMessage.empty()) {
+                ImGui::SameLine();
+                ImGui::TextColored(
+                    kmboxFirewallOk ? ImVec4(0.30f, 0.90f, 0.45f, 1.0f)
+                                    : ImVec4(1.00f, 0.28f, 0.28f, 1.0f),
+                    "%s",
+                    kmboxFirewallMessage.c_str());
+            }
+        }
 
         if (kmboxSaveRequested)
             OW::Config::SaveConfig(OW::Config::ConfigPath());
@@ -3991,8 +4136,6 @@ void UI::Render() {
         const float selectorW = 172.0f;
         const float configButtonW = 96.0f;
         const float actionGap = 6.0f;
-        const float actionW = selectorW + configButtonW + actionGap;
-        const float actionStartX = headerRect.Max.x - actionW - 12.0f;
 
         const char* title = "UNLEASHED";
         ImFont* titleFont = s_titleFont ? s_titleFont : s_boldFont;
@@ -4007,14 +4150,17 @@ void UI::Render() {
                  ImVec2(titleX, titleY),
                  kColText, title);
 
+        const float selectorStartX = titleX + titleSize.x + 24.0f;
+        const float configButtonX = headerRect.Max.x - configButtonW - 12.0f;
+        const float selectorX = MinFloat(selectorStartX, configButtonX - selectorW - actionGap);
         const HeroOption& selectedHero = CurrentHeroOption();
         const bool savesSelectedHero = IsConcreteHeroSelection(selectedHero);
-        ImGui::SetCursorScreenPos(ImVec2(actionStartX, headerRect.Min.y + 11.0f));
+        ImGui::SetCursorScreenPos(ImVec2(selectorX, headerRect.Min.y + 11.0f));
         if (TypeSelectorButton(selectedHero, ImVec2(selectorW, 26.0f)))
             ImGui::OpenPopup("TypePickerPopup");
         ShowAimSlotSummaryTooltip(selectedHero.heroId != 0);
-        ImGui::SameLine(0.0f, actionGap);
 
+        ImGui::SetCursorScreenPos(ImVec2(configButtonX, headerRect.Min.y + 11.0f));
         if (ImGui::Button("Save Config", ImVec2(configButtonW, 26.0f))) {
             s_configSaveStatus = SaveSelectedConfig();
             s_configSaveStatusUntil = ImGui::GetTime() + 3.0;
@@ -4026,8 +4172,8 @@ void UI::Render() {
             s_configSaveStatus.clear();
         if (!s_configSaveStatus.empty()) {
             const ImVec2 statusSize = ImGui::CalcTextSize(s_configSaveStatus.c_str());
-            const float statusMinX = titleX + titleSize.x + 16.0f;
-            const float statusMaxX = actionStartX - 10.0f;
+            const float statusMinX = selectorX + selectorW + 14.0f;
+            const float statusMaxX = configButtonX - 10.0f;
             if (statusMinX < statusMaxX) {
                 const float statusX = MaxFloat(statusMinX, statusMaxX - statusSize.x);
                 const float statusY = titleY + (titleSize.y - statusSize.y) * 0.5f;
@@ -4038,7 +4184,7 @@ void UI::Render() {
         TypePickerPanel();
 
         // Top tab bar at the bottom of the header
-        ImGui::SetCursorScreenPos(ImVec2(winPos.x + 8.0f, winPos.y + kHeaderHeight - 43.0f));
+        ImGui::SetCursorScreenPos(ImVec2(winPos.x + 20.0f, winPos.y + kHeaderHeight - 43.0f));
 
         const char* topTabNames[] = { "Aiming", "Visuals", "Theme", "Misc" };
         for (int i = 0; i < IM_ARRAYSIZE(topTabNames); i++) {
@@ -4060,8 +4206,8 @@ void UI::Render() {
                 dl->AddRectFilled(ImVec2(tabPos.x + 1.0f, tabPos.y + 4.0f),
                                   ImVec2(tabPos.x + tabW - 3.0f, tabPos.y + 42.0f),
                                   IM_COL32(0x1a, 0x1d, 0x22, 0xFF), 0.0f);
-                dl->AddRectFilled(ImVec2(tabPos.x + 9.0f, tabPos.y + 40.0f),
-                                  ImVec2(tabPos.x + tabW - 12.0f, tabPos.y + 42.0f),
+                dl->AddRectFilled(ImVec2(tabPos.x + 14.0f, tabPos.y + 40.0f),
+                                  ImVec2(tabPos.x + tabW - 14.0f, tabPos.y + 42.0f),
                                   kColAccent, 0.0f);
             } else if (hovered) {
                 dl->AddRectFilled(ImVec2(tabPos.x + 1.0f, tabPos.y + 6.0f),
@@ -4077,10 +4223,10 @@ void UI::Render() {
 
             ImVec2 txtSize = ImGui::CalcTextSize(topTabNames[i]);
             DrawText(dl, isActive ? s_boldFont : nullptr,
-                     ImVec2(tabPos.x + 29.0f, tabPos.y + (43.0f - txtSize.y) * 0.5f),
+                     ImVec2(tabPos.x + 36.0f, tabPos.y + (43.0f - txtSize.y) * 0.5f),
                      txtCol, topTabNames[i]);
 
-            DrawTopTabIcon(dl, i, ImVec2(tabPos.x + 8.0f, tabPos.y + 12.5f), txtCol);
+            DrawTopTabIcon(dl, i, ImVec2(tabPos.x + 14.0f, tabPos.y + 12.5f), txtCol);
 
             ImGui::SetCursorScreenPos(ImVec2(tabPos.x + tabW, tabPos.y));
         }
@@ -4104,7 +4250,8 @@ void UI::Render() {
             subTabNames[0] = "Aim";
             subTabNames[1] = "Trigger";
             subTabNames[2] = "Skills";
-            subTabCount = 3;
+            subTabNames[3] = "Sequences";
+            subTabCount = 4;
             state.aimingSubTab = ImClamp(state.aimingSubTab, 0, subTabCount - 1);
             activeSub   = &state.aimingSubTab;
             break;
@@ -4134,13 +4281,15 @@ void UI::Render() {
 
     // Draw sub-tab buttons
     if (subTabCount > 0 && activeSub) {
-        ImGui::SetCursorScreenPos(ImVec2(winPos.x + 8.0f, contentBandY));
+        ImGui::SetCursorScreenPos(ImVec2(winPos.x + 22.0f, contentBandY));
         for (int i = 0; i < subTabCount; i++) {
             bool isActive = (*activeSub == i);
             ImVec2 pos = ImGui::GetCursorScreenPos();
+            ImVec2 subTextSize = ImGui::CalcTextSize(subTabNames[i]);
+            const float subTabW = MaxFloat(60.0f, subTextSize.x + 16.0f);
 
             ImGui::PushID(i + 10);
-            ImGui::InvisibleButton("##subTab", ImVec2(60.0f, subBarHeight));
+            ImGui::InvisibleButton("##subTab", ImVec2(subTabW, subBarHeight));
             bool hovered = ImGui::IsItemHovered();
             if (ImGui::IsItemClicked())
                 *activeSub = i;
@@ -4148,8 +4297,7 @@ void UI::Render() {
 
             float subT = VisualTransition(ImGui::GetID(subTabNames[i]) ^ 0x2c91,
                                            isActive || hovered, 16.0f);
-            ImVec2 subTextSize = ImGui::CalcTextSize(subTabNames[i]);
-            ImVec2 subTextPos(pos.x, pos.y + (subBarHeight - subTextSize.y) * 0.5f);
+            ImVec2 subTextPos(pos.x + 6.0f, pos.y + (subBarHeight - subTextSize.y) * 0.5f);
             ImU32 col = isActive
                 ? kColText
                 : MixColor(kColTextDim, kColTextMuted, subT);
@@ -4160,7 +4308,7 @@ void UI::Render() {
                                   kColAccent, 1.0f);
             }
 
-            ImGui::SetCursorScreenPos(ImVec2(pos.x + 60.0f + 20.0f, pos.y));
+            ImGui::SetCursorScreenPos(ImVec2(pos.x + subTabW + 20.0f, pos.y));
         }
     }
 
@@ -4192,8 +4340,10 @@ void UI::Render() {
             AimbotPage();
         else if (state.aimingSubTab == 1)
             TriggerPage();
-        else
+        else if (state.aimingSubTab == 2)
             SkillsPage();
+        else
+            SequencesPage();
     } else if (state.activeTab == TAB_VISUALS) {
         VisualsPage();
     } else if (state.activeTab == TAB_THEME) {

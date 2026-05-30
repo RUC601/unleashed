@@ -14,6 +14,12 @@ using namespace DirectX;
 
 namespace OW {
 
+    enum class EntityRosterState : uint8_t {
+        Fresh = 0,
+        Missing,
+        Dead
+    };
+
     class c_entity {
     public:
         // --- Base addresses ---
@@ -59,6 +65,11 @@ namespace OW {
         bool  Vis    = false;
         bool  Team   = false;
         bool  Trg    = false;
+        EntityRosterState roster_state = EntityRosterState::Fresh;
+        uint64_t roster_key = 0;
+        uint32_t match_id = 0;
+        uint32_t last_seen_tick_ms = 0;
+        uint32_t missing_since_tick_ms = 0;
 
         bool   skill1act = false;
         bool   skill2act = false;

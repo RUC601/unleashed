@@ -28,7 +28,7 @@ inline constexpr HeroAbilityIcons kHeroAbilityIcons[] = {
     { "emre", "cyber-frag", "enhanced-agility", "override-protocol" },
     { "freja", "quick-dash", "updraft", "relentless-barrage" },
     { "genji", "swift-strike", "deflect", "dragonblade" },
-    { "hanzo", "storm-arrows", "sonic-arrow", "dragonstrike" },
+    { "hanzo", "sonic-arrow", "storm-arrows", "dragonstrike" },
     { "hazard", "violent-leap", "jagged-wall", "downpour" },
     { "illari", "outburst", "healing-pylon", "captive-sun" },
     { "jetpack-cat", "jetpack", "headbutt", "ulterior-motive" },

@@ -166,9 +166,6 @@ add_custom_command(TARGET Unleashed POST_BUILD
 )
 
 set(ABILITY_ICON_ASSET_DIR "${CMAKE_SOURCE_DIR}/assets/ability-icons")
-if(NOT EXISTS "${ABILITY_ICON_ASSET_DIR}")
-    set(ABILITY_ICON_ASSET_DIR "D:/Desktop/uc/overwatch-kb/assets/ability-icons")
-endif()
 
 if(EXISTS "${ABILITY_ICON_ASSET_DIR}")
     add_custom_command(TARGET Unleashed POST_BUILD
@@ -176,176 +173,13 @@ if(EXISTS "${ABILITY_ICON_ASSET_DIR}")
             "${ABILITY_ICON_ASSET_DIR}"
             "$<TARGET_FILE_DIR:Unleashed>/assets/ability-icons"
     )
+else()
+    message(WARNING "Ability icon assets are missing: ${ABILITY_ICON_ASSET_DIR}")
 endif()
 
 # ============================================================================
 # Compiler options
 # ============================================================================
 
-# ============================================================================
-# Scanner executable (standalone offset finder)
-# ============================================================================
-
-add_executable(Scanner src/scanner.cpp)
-
-target_include_directories(Scanner PRIVATE include vendor/leechcore)
-
-target_link_libraries(Scanner PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
-    ws2_32
-)
-
-copy_leechcore_runtime(Scanner)
-
-target_compile_options(Scanner PRIVATE /W3 /wd4244 /wd4267)
-target_compile_definitions(Scanner PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-
-# ============================================================================
-# DMA Verify Constants - validate fixed DMA read chains and transform constants
-# ============================================================================
-
-add_executable(DmaVerify src/dma_verify_constants.cpp)
-
-target_include_directories(DmaVerify PRIVATE include vendor/leechcore)
-
-target_link_libraries(DmaVerify PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
-    ws2_32
-)
-
-copy_leechcore_runtime(DmaVerify)
-
-target_compile_options(DmaVerify PRIVATE /W3 /wd4244 /wd4267 /wd4200)
-target_compile_definitions(DmaVerify PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# Final Probe — comprehensive entity/viewmatrix/decrypt scan
-# ============================================================================
-
-add_executable(FinalProbe src/final_probe.cpp)
-
-target_include_directories(FinalProbe PRIVATE include vendor/leechcore)
-
-target_link_libraries(FinalProbe PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
-    ws2_32
-)
-
-copy_leechcore_runtime(FinalProbe)
-
-target_compile_options(FinalProbe PRIVATE /W3 /wd4244 /wd4267)
-target_compile_definitions(FinalProbe PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# DecryptEmu - Unicorn-based decryption algorithm verification
-# ============================================================================
-add_executable(DecryptEmu src/decrypt_emu.cpp)
-target_include_directories(DecryptEmu PRIVATE include)
-target_compile_options(DecryptEmu PRIVATE /W3 /wd4244 /wd4267)
-target_compile_definitions(DecryptEmu PRIVATE _CRT_SECURE_NO_WARNINGS)
-add_custom_command(TARGET DecryptEmu POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/vendor/unicorn/unicorn.dll"
-        $<TARGET_FILE_DIR:DecryptEmu>)
-
 target_compile_options(Unleashed PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(Unleashed PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# Hero Probe — read currently selected hero from live OW process
-# ============================================================================
-
-add_executable(HeroProbe src/hero_probe.cpp)
-target_include_directories(HeroProbe PRIVATE include vendor/leechcore)
-target_link_libraries(HeroProbe PRIVATE "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib" "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib" ws2_32)
-copy_leechcore_runtime(HeroProbe)
-target_compile_options(HeroProbe PRIVATE /W3 /wd4244 /wd4267)
-target_compile_definitions(HeroProbe PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# Perk Probe — scan Hero component + unknown component IDs for perk data
-# ============================================================================
-
-add_executable(PerkProbe src/perk_probe.cpp)
-target_include_directories(PerkProbe PRIVATE include vendor/leechcore)
-target_link_libraries(PerkProbe PRIVATE "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib" "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib" ws2_32)
-copy_leechcore_runtime(PerkProbe)
-target_compile_options(PerkProbe PRIVATE /W3 /wd4244 /wd4267)
-target_compile_definitions(PerkProbe PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# KeyScan — complete GetGlobalKey emulation + key resolution
-# ============================================================================
-
-add_executable(KeyScan src/keyscan.cpp)
-target_include_directories(KeyScan PRIVATE vendor/leechcore)
-target_link_libraries(KeyScan PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
-    ws2_32
-)
-copy_leechcore_runtime(KeyScan)
-target_compile_options(KeyScan PRIVATE /W3 /wd4244 /wd4267)
-target_compile_definitions(KeyScan PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# HostMouseHold - host-side synthetic mouse side-button hold tester
-# ============================================================================
-
-add_executable(HostMouseHold src/host_mouse_hold.cpp)
-target_compile_features(HostMouseHold PRIVATE cxx_std_20)
-target_compile_options(HostMouseHold PRIVATE /W3)
-target_compile_definitions(HostMouseHold PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# AngleMathTest - standalone pitch/yaw math chain verification
-# ============================================================================
-
-add_executable(AngleMathTest src/Kmbox/AngleMathTest.cpp)
-target_compile_features(AngleMathTest PRIVATE cxx_std_20)
-target_compile_options(AngleMathTest PRIVATE /W3)
-target_compile_definitions(AngleMathTest PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# HeroSkillSequenceDefaultsTest - guard hand-measured sequence defaults
-# ============================================================================
-
-add_executable(HeroSkillSequenceDefaultsTest src/Game/HeroSkillSequenceDefaultsTest.cpp)
-target_include_directories(HeroSkillSequenceDefaultsTest PRIVATE include vendor/imgui)
-target_compile_features(HeroSkillSequenceDefaultsTest PRIVATE cxx_std_20)
-target_compile_options(HeroSkillSequenceDefaultsTest PRIVATE /W3)
-target_compile_definitions(HeroSkillSequenceDefaultsTest PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# DecryptDump2 — find DecryptComponent + test Key2 candidates (v2, MSVC-safe)
-# ============================================================================
-
-add_executable(DecryptDump src/decryptdump2.cpp)
-target_include_directories(DecryptDump PRIVATE vendor/leechcore)
-target_link_libraries(DecryptDump PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
-    ws2_32
-)
-copy_leechcore_runtime(DecryptDump)
-target_compile_options(DecryptDump PRIVATE /W3 /wd4244 /wd4267)
-target_compile_definitions(DecryptDump PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# ============================================================================
-# CNServerScanner — scan 国服 binary for correct RVA offsets
-# ============================================================================
-
-add_executable(CNServerScanner src/cn_server_scanner.cpp)
-target_include_directories(CNServerScanner PRIVATE include vendor/leechcore)
-target_link_libraries(CNServerScanner PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
-    ws2_32
-)
-copy_leechcore_runtime(CNServerScanner)
-target_compile_options(CNServerScanner PRIVATE /W3 /wd4244 /wd4267)
-target_compile_definitions(CNServerScanner PRIVATE _CRT_SECURE_NO_WARNINGS)

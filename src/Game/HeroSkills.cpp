@@ -169,6 +169,8 @@ namespace {
         int remaining = -1;
         int reserve = 1;
         bool blocked = false;
+        bool reloadObserved = false;
+        bool lastReloading = false;
     };
 
     std::unordered_map<std::string, SequenceRuntime> g_sequences;
@@ -187,7 +189,11 @@ namespace {
     uint64_t g_lastHeroId = 0;
 
     void RefreshAnyInputSequenceActive();
-    bool ConsumeSequenceAmmoBudgetForStep(const std::string& runtimeKey, int previousMask, int nextMask);
+    bool ConsumeSequenceAmmoBudgetForStep(const std::string& runtimeKey,
+                                          int previousMask,
+                                          int nextMask,
+                                          bool ammoGuardEnabled,
+                                          int reserveAmmo);
 
     int ReadEnvInt(const char* name, int fallback, int minValue, int maxValue)
     {
@@ -300,12 +306,6 @@ namespace {
     bool SkillControls(const HeroSkillDefinition& definition, HeroSkillControlFlags control)
     {
         return HasHeroSkillControl(definition, control);
-    }
-
-    bool IsAsheFirePatternDefinition(const HeroSkillDefinition& definition)
-    {
-        return definition.heroId == static_cast<uint64_t>(eHero::HERO_ASHE) &&
-            std::string(definition.skillId ? definition.skillId : "") == "fire-pattern";
     }
 
     bool IsZaryaReloadAmmoProbeDefinition(const HeroSkillDefinition& definition)
@@ -890,7 +890,9 @@ namespace {
 
     void RunSequenceWorker(std::stop_token stopToken,
                            std::string skillId,
-                           std::vector<Config::HeroSkillSequenceStep> steps)
+                           std::vector<Config::HeroSkillSequenceStep> steps,
+                           bool ammoGuardEnabled,
+                           int ammoGuardReserve)
     {
         timeBeginPeriod(1);
 
@@ -905,7 +907,7 @@ namespace {
 
             const Config::HeroSkillSequenceStep& step = steps[stepIndex];
             const int durationMs = PickSequenceDurationMs(step);
-            if (ConsumeSequenceAmmoBudgetForStep(skillId, currentMask, step.buttonMask))
+            if (ConsumeSequenceAmmoBudgetForStep(skillId, currentMask, step.buttonMask, ammoGuardEnabled, ammoGuardReserve))
                 break;
             EnterSequenceStep(currentMask, step);
 
@@ -1658,6 +1660,34 @@ namespace {
         budget.blocked = false;
     }
 
+    void UpdateSequenceAmmoBudgetReloadState(const std::string& runtimeKey,
+                                             const c_entity& local,
+                                             int reserveAmmo)
+    {
+        if (!UsesAsheAmmoBudgetFallback(runtimeKey))
+            return;
+
+        bool reloading = Config::reloading;
+        (void)ReadLocalReloadingFast(local, reloading);
+
+        std::lock_guard<std::mutex> lock(g_sequenceAmmoBudgetMutex);
+        SequenceAmmoBudgetState& budget = g_sequenceAmmoBudgets[runtimeKey];
+        budget.reserve = ClampSequenceReserve(reserveAmmo);
+        const bool wasReloading = budget.reloadObserved && budget.lastReloading;
+
+        if (wasReloading && !reloading) {
+            budget.remaining = AsheAmmoClipSize();
+            budget.blocked = false;
+            Diagnostics::Aim("sequence.ammo_budget reload_reset skill=%s remaining=%d reserve=%d",
+                runtimeKey.c_str(),
+                budget.remaining,
+                budget.reserve);
+        }
+
+        budget.lastReloading = reloading;
+        budget.reloadObserved = true;
+    }
+
     void UpdateSequenceAmmoBudgetFromRead(const std::string& runtimeKey, int reserveAmmo, int ammo)
     {
         if (!UsesAsheAmmoBudgetFallback(runtimeKey))
@@ -1701,7 +1731,11 @@ namespace {
         return budget.blocked;
     }
 
-    bool ConsumeSequenceAmmoBudgetForStep(const std::string& runtimeKey, int previousMask, int nextMask)
+    bool ConsumeSequenceAmmoBudgetForStep(const std::string& runtimeKey,
+                                          int previousMask,
+                                          int nextMask,
+                                          bool ammoGuardEnabled,
+                                          int reserveAmmo)
     {
         if (!UsesAsheAmmoBudgetFallback(runtimeKey))
             return false;
@@ -1712,10 +1746,11 @@ namespace {
 
         std::lock_guard<std::mutex> lock(g_sequenceAmmoBudgetMutex);
         SequenceAmmoBudgetState& budget = g_sequenceAmmoBudgets[runtimeKey];
+        budget.reserve = ClampSequenceReserve(reserveAmmo);
         if (budget.remaining < 0)
             budget.remaining = AsheAmmoClipSize();
 
-        if (budget.remaining <= budget.reserve) {
+        if (ammoGuardEnabled && budget.remaining <= budget.reserve) {
             budget.blocked = true;
             Diagnostics::Aim("sequence.ammo_budget block skill=%s remaining=%d reserve=%d shotEvents=%d",
                 runtimeKey.c_str(),
@@ -1726,13 +1761,14 @@ namespace {
         }
 
         budget.remaining = (std::max)(0, budget.remaining - shotEvents);
-        budget.blocked = budget.remaining <= budget.reserve;
-        Diagnostics::Aim("sequence.ammo_budget consume skill=%s remaining=%d reserve=%d shotEvents=%d blocked=%d",
+        budget.blocked = ammoGuardEnabled && budget.remaining <= budget.reserve;
+        Diagnostics::Aim("sequence.ammo_budget consume skill=%s remaining=%d reserve=%d shotEvents=%d blocked=%d enabled=%d",
             runtimeKey.c_str(),
             budget.remaining,
             budget.reserve,
             shotEvents,
-            budget.blocked ? 1 : 0);
+            budget.blocked ? 1 : 0,
+            ammoGuardEnabled ? 1 : 0);
         return false;
     }
 
@@ -1921,6 +1957,9 @@ namespace {
                                   const Config::HeroSkillSettings& settings,
                                   const TrajectoryParams& params)
     {
+        if (!IsActivationKeyHeld(settings.key))
+            return false;
+
         const float effectiveRange = settings.distance > 0.0f
             ? (std::min)(settings.distance, params.maxRange)
             : params.maxRange;
@@ -1962,6 +2001,9 @@ namespace {
                                      const HeroSkillDefinition& definition,
                                      const Config::HeroSkillSettings& settings)
     {
+        if (!IsActivationKeyHeld(settings.key))
+            return false;
+
         const float effectiveRange = settings.distance > 0.0f
             ? (std::min)(settings.distance, 20.0f)
             : 20.0f;
@@ -1988,6 +2030,9 @@ namespace {
                                         const HeroSkillDefinition& definition,
                                         const Config::HeroSkillSettings& settings)
     {
+        if (!IsActivationKeyHeld(settings.key))
+            return false;
+
         const c_entity local = TargetingDetail::SnapshotLocalEntity();
         if (!std::isfinite(local.ultimate) || local.ultimate < 100.0f)
             return false;
@@ -2057,7 +2102,9 @@ bool AnyInputSequenceActive()
 void RunInputSequence(const std::string& skillId,
                       const std::vector<Config::HeroSkillSequenceStep>& steps,
                       int key,
-                      const Config::HeroSkillTrackingParams& trackingParams)
+                      const Config::HeroSkillTrackingParams& trackingParams,
+                      bool ammoGuardEnabled,
+                      int ammoGuardReserve)
 {
     SequenceRuntime& runtime = g_sequences[skillId];
     const bool held = IsSequenceSelfTestHeld(key) || IsActivationKeyHeld(key);
@@ -2081,9 +2128,12 @@ void RunInputSequence(const std::string& skillId,
         if (useWorker) {
             runtime.worker = std::jthread(RunSequenceWorker,
                 skillId,
-                std::vector<Config::HeroSkillSequenceStep>(steps.begin(), steps.end()));
+                std::vector<Config::HeroSkillSequenceStep>(steps.begin(), steps.end()),
+                ammoGuardEnabled,
+                ammoGuardReserve);
         } else {
-            if (ConsumeSequenceAmmoBudgetForStep(skillId, runtime.currentMask, steps.front().buttonMask)) {
+            if (ConsumeSequenceAmmoBudgetForStep(
+                    skillId, runtime.currentMask, steps.front().buttonMask, ammoGuardEnabled, ammoGuardReserve)) {
                 CancelSequence(skillId, runtime, "ammo_guard_budget");
                 return;
             }
@@ -2109,7 +2159,8 @@ void RunInputSequence(const std::string& skillId,
             runtime.stepIndex = 0;
             runtime.stepStarted = Clock::now();
             runtime.effectiveDurationMs = PickSequenceDurationMs(steps.front());
-            if (ConsumeSequenceAmmoBudgetForStep(skillId, runtime.currentMask, steps.front().buttonMask)) {
+            if (ConsumeSequenceAmmoBudgetForStep(
+                    skillId, runtime.currentMask, steps.front().buttonMask, ammoGuardEnabled, ammoGuardReserve)) {
                 CancelSequence(skillId, runtime, "ammo_guard_budget");
                 return;
             }
@@ -2123,7 +2174,8 @@ void RunInputSequence(const std::string& skillId,
             const Config::HeroSkillSequenceStep& nextStep = steps[runtime.stepIndex];
             runtime.stepStarted = now;
             runtime.effectiveDurationMs = PickSequenceDurationMs(nextStep);
-            if (ConsumeSequenceAmmoBudgetForStep(skillId, runtime.currentMask, nextStep.buttonMask)) {
+            if (ConsumeSequenceAmmoBudgetForStep(
+                    skillId, runtime.currentMask, nextStep.buttonMask, ammoGuardEnabled, ammoGuardReserve)) {
                 CancelSequence(skillId, runtime, "ammo_guard_budget");
                 return;
             }
@@ -2323,8 +2375,6 @@ void ProcessHeroSkills()
             heroId,
             definition.skillId ? definition.skillId : "",
             definition.defaultSettings);
-        if (IsAsheFirePatternDefinition(definition))
-            settings.sequenceSteps = definition.defaultSettings.sequenceSteps;
 
         if (!settings.enabled) {
             CancelSkill(skillKey);
@@ -2338,6 +2388,8 @@ void ProcessHeroSkills()
 
         const bool sequenceSkill = SkillControls(definition, HeroSkillControls::SequenceSteps);
         const bool sequenceActive = sequenceSkill && IsSequenceActive(skillKey);
+        if (sequenceSkill)
+            UpdateSequenceAmmoBudgetReloadState(skillKey, localSnapshot, settings.ammoGuardReserve);
         if (sequenceSkill && !sequenceActive && AimbotDetail::IsInputVkDown('R'))
             ResetSequenceAmmoBudget(skillKey);
 
@@ -2370,7 +2422,12 @@ void ProcessHeroSkills()
         }
 
         if (sequenceSkill) {
-            RunInputSequence(skillKey, settings.sequenceSteps, settings.key, settings.tracking);
+            RunInputSequence(skillKey,
+                             settings.sequenceSteps,
+                             settings.key,
+                             settings.tracking,
+                             settings.ammoGuard,
+                             settings.ammoGuardReserve);
         }
 
         if (SkillControls(definition, HeroSkillControls::PitchControl) ||

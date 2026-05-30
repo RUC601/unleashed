@@ -34,6 +34,12 @@ install_manifest.txt
 *.temp
 *.cache
 
+# Packaged release outputs
+dist/
+
+# Local handoff notes
+docs/win10-kmbox-input-handoff.md
+
 # Machine-local config variants
 config/*.local.cfg
 config/*private*.cfg

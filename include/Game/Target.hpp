@@ -725,6 +725,7 @@ namespace OW {
         }
 
         inline bool IsRuntimeTargetValid(const c_entity& entity, bool requireVisible = true) {
+            if (entity.roster_state != EntityRosterState::Fresh) return false;
             if (!entity.address || !entity.Alive) return false;
             if (requireVisible && !entity.Vis) return false;
             return true;
@@ -970,7 +971,7 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass) {
+                if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
                     if (ignoreInvisible && !entities[i].Vis)
                         continue;
                     ++selectableCandidates;
@@ -1122,7 +1123,7 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass) {
+                if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
                     if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                     else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
                     else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
@@ -1223,7 +1224,7 @@ namespace OW {
                 if (entities[i].HeroID == eHero::HERO_GENJI && entities[i].skill2act) continue;
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass) {
+                if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
                     Vector3 PreditPos;
                     if (!local_entity.skillcd1)
                         PreditPos = entities[i].GetBonePos(entities[i].GetSkel()[16]);
@@ -1281,7 +1282,7 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass) {
+                if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
                     if (ignoreInvisible && !entities[i].Vis)
                         continue;
                     if (entities[i].Team) {
@@ -1390,7 +1391,7 @@ namespace OW {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
-                if (entities[i].Alive && teamPass) {
+                if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
                     PreditPos = entities[i].head_pos;
                     RootPos = entities[i].head_pos;
                     Vector2 Vec2 = viewMatrix.WorldToScreen(RootPos);
