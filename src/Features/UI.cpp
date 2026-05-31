@@ -979,6 +979,15 @@ static void ApplyHeroActionPresetToGlobals(ActionSlotKind kind, const OW::Config
         OW::Config::ApplyHeroTriggerPresetToGlobals(preset);
 }
 
+static void PushHeroActionSlotControlId(ActionSlotKind kind, uint64_t heroId, int slotIndex) {
+    char id[64] = {};
+    std::snprintf(id, sizeof(id), "%s:%llX:%d",
+                  kind == ActionSlotKind::Aim ? "AimSlot" : "TriggerSlot",
+                  static_cast<unsigned long long>(heroId),
+                  ClampHeroPresetSlotIndex(slotIndex));
+    ImGui::PushID(id);
+}
+
 static bool IsConcreteHeroSelection(const HeroOption& hero) {
     return hero.heroId != 0;
 }
@@ -2822,6 +2831,8 @@ void UI::AimbotPage() {
     };
     refreshActivePreset();
 
+    PushHeroActionSlotControlId(slotKind, selectedHero->heroId, state.aimHeroSegActive);
+
     UIGroupBox("Action Slot");
     {
         slotEnabledChanged |= UIActionSlotEnabledCheckbox(slotKind, *selectedHero, "##aimSlotEnabled", kAimbotHeroLabelWidth);
@@ -3055,6 +3066,8 @@ void UI::AimbotPage() {
             ApplyHeroActionPresetToGlobals(slotKind, activePreset);
         }
     }
+
+    ImGui::PopID();
 }
 
 // =====================================================================
@@ -3084,6 +3097,8 @@ void UI::TriggerPage() {
             : GetHeroActionPresetOrDefault(slotKind, selectedHero->heroId, state.triggerHeroSegActive);
     };
     refreshActivePreset();
+
+    PushHeroActionSlotControlId(slotKind, selectedHero->heroId, state.triggerHeroSegActive);
 
     UIGroupBox("Action Slot");
     {
@@ -3174,6 +3189,8 @@ void UI::TriggerPage() {
             ApplyHeroActionPresetToGlobals(slotKind, activePreset);
         }
     }
+
+    ImGui::PopID();
 }
 
 static bool DrawHeroSkillSequenceSteps(const OW::HeroSkillDefinition& definition,
