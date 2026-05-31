@@ -13,10 +13,12 @@
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
 #include "Game/Structs.hpp"
+#include "Game/WeaponSpec.hpp"
 #include "Renderer/Overlay.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
+#include "Utils/ProcessConnection.hpp"
 #include "resource.h"
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -1024,6 +1026,12 @@ static constexpr float kGroupRounding = 0.0f;
 static constexpr float kGroupContentIndent = 14.0f;
 static constexpr float kGroupBorderClipInset = 2.0f;
 static constexpr float kControlRightPadding = 10.0f;
+static constexpr int kAimingSubTabCount = 4;
+static constexpr int kMiscSubTabCount = 5;
+static constexpr int kVisualsPageKey = kAimingSubTabCount;
+static constexpr int kThemePageKey = kVisualsPageKey + 1;
+static constexpr int kMiscPageKeyBase = kThemePageKey + 1;
+static constexpr int kMeasuredPageCount = kMiscPageKeyBase + kMiscSubTabCount;
 
 static const ImU32 kColShell0       = IM_COL32(0x05, 0x06, 0x09, 0xFF);
 static const ImU32 kColShell1       = IM_COL32(0x12, 0x13, 0x17, 0xFF);
@@ -1051,7 +1059,7 @@ static ID3D11ShaderResourceView* s_logoTexture = nullptr;
 static constexpr int kLogoTextureSize = 32;
 static constexpr float kBrandLogoDrawSize = 30.0f;
 static constexpr float kBrandTitleGap = 12.0f;
-static float s_measuredBodyHeightByPage[6] = {};
+static float s_measuredBodyHeightByPage[kMeasuredPageCount] = {};
 static UI::MenuClientSize s_desiredMenuClientSize{ kShellWidth, 550.0f };
 
 // Forward declarations
@@ -2229,6 +2237,60 @@ static bool UISelect(const char* label, int* current, const char* const items[],
     return changed;
 }
 
+static std::vector<int> AttackActionsForHero(uint64_t heroId) {
+    std::vector<int> actions;
+
+    auto addAction = [&](int action) {
+        if (action < 0 || action >= OW::Labels::AttackActionCount())
+            return;
+        if (std::find(actions.begin(), actions.end(), action) == actions.end())
+            actions.push_back(action);
+    };
+
+    if (heroId != 0) {
+        for (const OW::WeaponSpec* spec = OW::WeaponSpecsBegin(); spec != OW::WeaponSpecsEnd(); ++spec) {
+            if (spec->heroId == heroId)
+                addAction(spec->action);
+        }
+    }
+
+    if (actions.empty()) {
+        const int actionCount = OW::Labels::AttackActionCount();
+        for (int action = 0; action < actionCount; ++action)
+            actions.push_back(action);
+    }
+
+    return actions;
+}
+
+static bool UIAttackActionSelect(const char* label, int* action, uint64_t heroId) {
+    std::vector<int> actionValues = AttackActionsForHero(heroId);
+    if (actionValues.empty())
+        return false;
+
+    bool changed = false;
+    int currentIndex = 0;
+    const auto current = std::find(actionValues.begin(), actionValues.end(), *action);
+    if (current != actionValues.end()) {
+        currentIndex = static_cast<int>(current - actionValues.begin());
+    } else {
+        *action = actionValues.front();
+        changed = true;
+    }
+
+    std::vector<const char*> actionLabels;
+    actionLabels.reserve(actionValues.size());
+    for (int value : actionValues)
+        actionLabels.push_back(OW::Labels::AttackActionName(value));
+
+    if (UISelect(label, &currentIndex, actionLabels.data(), static_cast<int>(actionLabels.size()))) {
+        *action = actionValues[static_cast<size_t>(currentIndex)];
+        changed = true;
+    }
+
+    return changed;
+}
+
 // =====================================================================
 // UISegmented  --  Row of buttons, active one gets accent background.
 //                  Returns the new active index (or old if unchanged).
@@ -2308,7 +2370,7 @@ static bool UIActionSlotSelector(ActionSlotKind kind, uint64_t heroId) {
 
     int& activeSlot = ActiveHeroPresetSlotRef(kind);
     const int slotCount = heroId == 0
-        ? 7
+        ? 1
         : ImClamp(GetHeroActionSlotCount(kind, heroId), 1, OW::Config::kMaxHeroPresetSlots);
     activeSlot = ImClamp(activeSlot, 0, slotCount - 1);
 
@@ -2583,13 +2645,13 @@ static void DrawTopTabIcon(ImDrawList* drawList, int tabIndex, const ImVec2& min
 static int CurrentPageKey() {
     switch (UI::state.activeTab) {
         case UI::TAB_AIMING:
-            return UI::state.aimingSubTab;  // 0=Aimbot, 1=Trigger, 2=Skills, 3=Sequences
+            return ImClamp(UI::state.aimingSubTab, 0, kAimingSubTabCount - 1);
         case UI::TAB_VISUALS:
-            return 3;
+            return kVisualsPageKey;
         case UI::TAB_THEME:
-            return 4;
+            return kThemePageKey;
         case UI::TAB_MISC:
-            return 5;
+            return kMiscPageKeyBase + ImClamp(UI::state.miscSubTab, 0, kMiscSubTabCount - 1);
         default:
             return 0;
     }
@@ -2600,6 +2662,8 @@ static float CurrentSubBarHeight() {
         return 32.0f;
     if (UI::state.activeTab == UI::TAB_VISUALS)
         return 42.0f;
+    if (UI::state.activeTab == UI::TAB_MISC)
+        return 32.0f;
     return 0.0f;
 }
 
@@ -2608,6 +2672,8 @@ static float CurrentBodyTopPad() {
         return 8.0f;
     if (UI::state.activeTab == UI::TAB_VISUALS)
         return 10.0f;
+    if (UI::state.activeTab == UI::TAB_MISC)
+        return 8.0f;
     return 10.0f;
 }
 
@@ -2621,7 +2687,7 @@ static float FallbackShellHeight() {
     if (UI::state.activeTab == UI::TAB_VISUALS)
         return 476.0f;
     if (UI::state.activeTab == UI::TAB_MISC)
-        return 190.0f;
+        return 548.0f;
     return 140.0f;
 }
 
@@ -2840,8 +2906,7 @@ void UI::AimbotPage() {
             // Attack
             SettingRow("Attack", kAimbotLeftLabelWidth);
             PushControlWidth();
-            presetChanged |= UISelect("##aimAttack", &activePreset.trigger.action,
-                                      OW::Labels::kAttackActions, OW::Labels::AttackActionCount());
+            presetChanged |= UIAttackActionSelect("##aimAttack", &activePreset.trigger.action, selectedHero->heroId);
             ImGui::PopItemWidth();
 
             // Fire Policy
@@ -3034,8 +3099,7 @@ void UI::TriggerPage() {
 
             SettingRow("Action", kAimbotLeftLabelWidth);
             PushControlWidth();
-            presetChanged |= UISelect("##triggerSlotAction", &activePreset.trigger.action,
-                                      OW::Labels::kAttackActions, OW::Labels::AttackActionCount());
+            presetChanged |= UIAttackActionSelect("##triggerSlotAction", &activePreset.trigger.action, selectedHero->heroId);
             ImGui::PopItemWidth();
 
             SettingRow("Mode", kAimbotLeftLabelWidth);
@@ -3597,7 +3661,7 @@ void UI::VisualsPage() {
     {
         SettingRow("Max Distance");
         PushControlWidth();
-        UISlider("##visMaxDist", &OW::Config::visualMaxDist, 0.0f, 100.0f, "100 m");
+        UISlider("##visMaxDist", &OW::Config::visualMaxDist, 0.0f, 1000.0f, "100 m");
         ImGui::PopItemWidth();
     }
     CloseGroupBox();
@@ -3650,16 +3714,49 @@ void UI::ThemePage() {
         UIColorEdit("Ally Fill", &OW::Config::allyargb);
     }
     CloseGroupBox();
-
-    ImGui::PopID();
 }
 
 // =====================================================================
 // UI::MiscPage
 // =====================================================================
+static void DrawMiscGeneralPage();
+static void DrawMiscDiagnosticsPage();
+static void DrawMiscSmoothingPage();
+static void DrawMiscKmboxPage();
+static void DrawMiscScreenPage();
+
 void UI::MiscPage() {
     ImGui::PushID("MiscPage");
 
+    state.miscSubTab = ImClamp(state.miscSubTab, 0, kMiscSubTabCount - 1);
+    switch (state.miscSubTab) {
+        case 0:
+            DrawMiscGeneralPage();
+            break;
+        case 1:
+            DrawMiscDiagnosticsPage();
+            break;
+        case 2:
+            DrawMiscSmoothingPage();
+            break;
+        case 3:
+            DrawMiscKmboxPage();
+            break;
+        case 4:
+            DrawMiscScreenPage();
+            break;
+        default:
+            DrawMiscGeneralPage();
+            break;
+    }
+
+    ImGui::PopID();
+}
+
+// =====================================================================
+// Misc page sections
+// =====================================================================
+static void DrawMiscGeneralPage() {
     UIGroupBox("Config Profile");
     {
         static char profileName[kConfigProfileNameBufferSize] = "";
@@ -3710,6 +3807,42 @@ void UI::MiscPage() {
     }
     CloseGroupBox();
 
+    UIGroupBox("Application");
+    {
+        SettingRow("Unleashed");
+        if (ImGui::Button("Close UN", ImVec2(96.0f, kControlHeight)))
+            g_Overlay.RequestExit();
+        ImGui::SameLine();
+        const bool reconnectBusy =
+            OW::ProcessConnection::IsConnecting() ||
+            OW::ProcessConnection::IsReconnectRequested();
+        if (reconnectBusy)
+            ImGui::BeginDisabled();
+        if (ImGui::Button("Reconnect UN", ImVec2(112.0f, kControlHeight)))
+            OW::ProcessConnection::RequestReconnect();
+        if (reconnectBusy)
+            ImGui::EndDisabled();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Force a fresh target-process PID scan and SDK attach.");
+
+        SettingRow("Process");
+        const bool connected = OW::ProcessConnection::IsConnected();
+        const bool connecting = OW::ProcessConnection::IsConnecting();
+        const ImVec4 statusColor = connected
+            ? ImVec4(0.25f, 1.0f, 0.45f, 1.0f)
+            : connecting
+                ? ImVec4(1.0f, 0.75f, 0.25f, 1.0f)
+                : ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
+        ImGui::TextColored(statusColor, "%s", OW::ProcessConnection::StatusText().c_str());
+        if (connected) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("PID %d", OW::ProcessConnection::ConnectedPid());
+        }
+    }
+    CloseGroupBox();
+}
+
+static void DrawMiscDiagnosticsPage() {
     UIGroupBox("Diagnostics");
     {
         SettingRow("Input Source");
@@ -3782,7 +3915,9 @@ void UI::MiscPage() {
         ImGui::PopItemWidth();
     }
     CloseGroupBox();
+}
 
+static void DrawMiscSmoothingPage() {
     UIGroupBox("Smoothing Controller");
     {
         SettingRow("Controller");
@@ -3882,15 +4017,9 @@ void UI::MiscPage() {
         }
     }
     CloseGroupBox();
+}
 
-    UIGroupBox("Application");
-    {
-        SettingRow("Unleashed");
-        if (ImGui::Button("Close UN", ImVec2(96.0f, kControlHeight)))
-            g_Overlay.RequestExit();
-    }
-    CloseGroupBox();
-
+static void DrawMiscKmboxPage() {
     UIGroupBox("KMBox Settings");
     {
         bool kmboxSaveRequested = false;
@@ -4113,7 +4242,9 @@ void UI::MiscPage() {
         ImGui::PopID();
     }
     CloseGroupBox();
+}
 
+static void DrawMiscScreenPage() {
     UIGroupBox("Target Screen");
     {
         bool screenChanged = false;
@@ -4179,8 +4310,6 @@ void UI::MiscPage() {
             OW::Config::SaveConfig(OW::Config::ConfigPath());
     }
     CloseGroupBox();
-
-    ImGui::PopID();
 }
 
 // =====================================================================
@@ -4368,7 +4497,7 @@ void UI::Render() {
     ImGui::SetCursorScreenPos(ImVec2(winPos.x, contentBandY));
 
     // Determine which sub-tabs to show
-    const char* subTabNames[4] = { nullptr };
+    const char* subTabNames[5] = { nullptr };
     int subTabCount = 0;
     int* activeSub  = nullptr;
 
@@ -4378,7 +4507,7 @@ void UI::Render() {
             subTabNames[1] = "Trigger";
             subTabNames[2] = "Skills";
             subTabNames[3] = "Sequences";
-            subTabCount = 4;
+            subTabCount = kAimingSubTabCount;
             state.aimingSubTab = ImClamp(state.aimingSubTab, 0, subTabCount - 1);
             activeSub   = &state.aimingSubTab;
             break;
@@ -4391,7 +4520,14 @@ void UI::Render() {
             subTabCount = 0;
             break;
         case TAB_MISC:
-            subTabCount = 0;
+            subTabNames[0] = "General";
+            subTabNames[1] = "Diagnostics";
+            subTabNames[2] = "Smoothing";
+            subTabNames[3] = "KMBox";
+            subTabNames[4] = "Screen";
+            subTabCount = kMiscSubTabCount;
+            state.miscSubTab = ImClamp(state.miscSubTab, 0, subTabCount - 1);
+            activeSub   = &state.miscSubTab;
             break;
     }
 

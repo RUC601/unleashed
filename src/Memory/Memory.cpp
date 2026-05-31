@@ -770,6 +770,12 @@ bool Memory::Init(std::string process_name, bool memMap, bool debug)
 	return AttachToProcess(process_name, true);
 }
 
+void Memory::DetachProcess()
+{
+	PROCESS_INITIALIZED = false;
+	current_process = {};
+}
+
 /* ------------------------------------------------------------------ */
 /*  Close DMA                                                          */
 /* ------------------------------------------------------------------ */

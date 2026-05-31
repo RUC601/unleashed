@@ -7,6 +7,7 @@
 #include "Kmbox/KmBoxNetManager.h"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
+#include "Utils/ProcessConnection.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -2355,7 +2356,7 @@ void CancelActiveSkill()
 
 void ProcessHeroSkills()
 {
-    if (Config::doingentity == 0) {
+    if (Config::doingentity == 0 || !ProcessConnection::IsConnected()) {
         CancelActiveSkill();
         return;
     }

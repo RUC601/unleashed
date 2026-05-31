@@ -6,6 +6,7 @@
 
 #include "Game/Structs.hpp"
 #include "Game/Target.hpp"
+#include "Game/WeaponSpec.hpp"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
 
@@ -33,6 +34,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 // =====================================================================
 // OW::Config -- robust INI persistence
@@ -171,6 +173,9 @@ namespace OW { namespace Config {
 
         void ApplyAimMode(int mode);
         int CurrentAimMode();
+        HeroPreset MakeHeroAimPresetFromCurrentUnlocked();
+        HeroPreset MakeHeroTriggerPresetFromCurrentUnlocked();
+        bool gLastHeroConfigHadAimOrTriggerPresets = false;
 
         struct IniFile {
             std::unordered_map<std::string, SectionValues> sections;
@@ -802,6 +807,80 @@ namespace OW { namespace Config {
             return (std::max)(0, OW::Labels::AimActivationKeyCount() - 1);
         }
 
+        std::vector<int> HeroWeaponActions(uint64_t heroId)
+        {
+            std::vector<int> actions;
+            if (heroId == 0)
+                return actions;
+
+            for (const WeaponSpec* spec = WeaponSpecsBegin(); spec != WeaponSpecsEnd(); ++spec) {
+                if (spec->heroId != heroId ||
+                    spec->action < 0 ||
+                    spec->action >= OW::Labels::AttackActionCount())
+                    continue;
+
+                if (std::find(actions.begin(), actions.end(), spec->action) == actions.end())
+                    actions.push_back(spec->action);
+            }
+            return actions;
+        }
+
+        bool IsHeroWeaponActionValid(uint64_t heroId, int action)
+        {
+            if (action < 0 || action >= OW::Labels::AttackActionCount())
+                return false;
+            if (heroId == 0)
+                return true;
+
+            const std::vector<int> actions = HeroWeaponActions(heroId);
+            if (actions.empty())
+                return true;
+
+            return std::find(actions.begin(), actions.end(), action) != actions.end();
+        }
+
+        int DefaultHeroWeaponAction(uint64_t heroId)
+        {
+            const std::vector<int> actions = HeroWeaponActions(heroId);
+            return actions.empty() ? 0 : actions.front();
+        }
+
+        int NormalizeHeroWeaponAction(uint64_t heroId, int action)
+        {
+            if (IsHeroWeaponActionValid(heroId, action))
+                return std::clamp(action, 0, OW::Labels::AttackActionCount() - 1);
+            return DefaultHeroWeaponAction(heroId);
+        }
+
+        int DefaultAimActivationKeyForAction(int action)
+        {
+            switch (action) {
+            case 1: // Secondary Fire
+            case 2: // Scoped
+                return 0; // Right Mouse
+            default:
+                return 1; // Left Mouse
+            }
+        }
+
+        int DefaultTriggerActivationKeyForAction(int action)
+        {
+            switch (action) {
+            case 1: // Secondary Fire
+            case 2: // Scoped
+                return 3; // Mouse 5
+            default:
+                return 2; // Mouse 4
+            }
+        }
+
+        std::string BasicHeroSlotName(int action, int slotIndex)
+        {
+            if (action >= 0 && action < OW::Labels::AttackActionCount())
+                return OW::Labels::AttackActionCompactName(action);
+            return DefaultHeroSlotName(slotIndex);
+        }
+
         TriggerPreset ValidateTriggerPresetValue(TriggerPreset preset)
         {
             if (!std::isfinite(preset.shotInterval)) preset.shotInterval = 0.0f;
@@ -880,6 +959,15 @@ namespace OW { namespace Config {
             return preset;
         }
 
+        HeroPreset ValidateHeroPresetValueForHero(uint64_t heroId, HeroPreset preset)
+        {
+            preset = ValidateHeroPresetValue(preset);
+            preset.trigger.action = NormalizeHeroWeaponAction(heroId, preset.trigger.action);
+            preset.key = std::clamp(preset.key, 0, MaxActivationKeyIndex());
+            preset.trigger.key = std::clamp(preset.trigger.key, 0, MaxActivationKeyIndex());
+            return preset;
+        }
+
         HeroSkillSettings ValidateHeroSkillSettingsValue(HeroSkillSettings settings)
         {
             if (!std::isfinite(settings.healthThreshold)) settings.healthThreshold = 50.0f;
@@ -954,6 +1042,38 @@ namespace OW { namespace Config {
             }
         }
 
+        void InitializeBasicHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                            uint64_t heroId,
+                                            HeroPresetSlotKind kind)
+        {
+            InitializeHeroPresetSlots(slots, 0, false);
+
+            std::vector<int> actions = HeroWeaponActions(heroId);
+            if (actions.empty())
+                actions.push_back(0);
+
+            const int presentCount = (std::min)(
+                static_cast<int>(actions.size()),
+                kHeroPresetSlotCount);
+            const HeroPreset basePreset = kind == HeroPresetSlotKind::Aim
+                ? MakeHeroAimPresetFromCurrentUnlocked()
+                : MakeHeroTriggerPresetFromCurrentUnlocked();
+
+            for (int slotIndex = 0; slotIndex < presentCount; ++slotIndex) {
+                const int action = actions[static_cast<size_t>(slotIndex)];
+                HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
+                ResetHeroPresetSlot(slot, slotIndex);
+                slot.name = BasicHeroSlotName(action, slotIndex);
+                slot.present = true;
+                slot.enabled = true;
+                slot.preset = basePreset;
+                slot.preset.key = DefaultAimActivationKeyForAction(action);
+                slot.preset.trigger.action = action;
+                slot.preset.trigger.key = DefaultTriggerActivationKeyForAction(action);
+                slot.preset = ValidateHeroPresetValueForHero(heroId, slot.preset);
+            }
+        }
+
         int CountHeroPresetSlots(const std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots)
         {
             int count = 0;
@@ -964,7 +1084,9 @@ namespace OW { namespace Config {
             return count;
         }
 
-        void NormalizeHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots)
+        void NormalizeHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                      uint64_t heroId,
+                                      HeroPresetSlotKind kind)
         {
             std::array<HeroSlotPreset, kHeroPresetSlotCount> normalized{};
             InitializeHeroPresetSlots(normalized, 0, false);
@@ -976,19 +1098,20 @@ namespace OW { namespace Config {
                     continue;
 
                 HeroSlotPreset slot = source;
+                if (!IsHeroWeaponActionValid(heroId, slot.preset.trigger.action))
+                    continue;
+
                 slot.present = true;
+                slot.preset = ValidateHeroPresetValueForHero(heroId, slot.preset);
                 slot.name = NormalizeHeroSlotName(slot.name, writeIndex);
-                slot.preset = ValidateHeroPresetValue(slot.preset);
+                if (slot.name == DefaultHeroSlotName(writeIndex))
+                    slot.name = BasicHeroSlotName(slot.preset.trigger.action, writeIndex);
                 normalized[static_cast<size_t>(writeIndex)] = slot;
                 ++writeIndex;
             }
 
             if (writeIndex == 0) {
-                HeroSlotPreset& firstSlot = normalized[0];
-                firstSlot.present = true;
-                firstSlot.enabled = true;
-                firstSlot.name = DefaultHeroSlotName(0);
-                firstSlot.preset = ValidateHeroPresetValue(firstSlot.preset);
+                InitializeBasicHeroPresetSlots(normalized, heroId, kind);
             }
 
             slots = normalized;
@@ -996,13 +1119,25 @@ namespace OW { namespace Config {
 
         void ValidateHeroPresetsUnlocked()
         {
-            auto validateStore = [](HeroPresetStore& store) {
+            auto validateStore = [](HeroPresetStore& store, HeroPresetSlotKind kind) {
                 for (auto& item : store) {
-                    NormalizeHeroPresetSlots(item.second);
+                    NormalizeHeroPresetSlots(item.second, item.first, kind);
                 }
             };
-            validateStore(heroAimPresets);
-            validateStore(heroTriggerPresets);
+            validateStore(heroAimPresets, HeroPresetSlotKind::Aim);
+            validateStore(heroTriggerPresets, HeroPresetSlotKind::Trigger);
+
+            auto ensureBasicStore = [](HeroPresetStore& store, HeroPresetSlotKind kind) {
+                for (const HeroPresetDefinition& def : kHeroPresetDefinitions) {
+                    auto [item, inserted] = store.try_emplace(def.heroId);
+                    if (inserted)
+                        InitializeBasicHeroPresetSlots(item->second, def.heroId, kind);
+                    else
+                        NormalizeHeroPresetSlots(item->second, def.heroId, kind);
+                }
+            };
+            ensureBasicStore(heroAimPresets, HeroPresetSlotKind::Aim);
+            ensureBasicStore(heroTriggerPresets, HeroPresetSlotKind::Trigger);
         }
 
         void ValidateHeroSkillPresetsUnlocked()
@@ -1969,16 +2104,12 @@ namespace OW { namespace Config {
                 auto& store = PresetStore(kind);
                 auto item = store.find(heroId);
                 if (item != store.end()) {
-                    NormalizeHeroPresetSlots(item->second);
+                    NormalizeHeroPresetSlots(item->second, heroId, kind);
                     return;
                 }
 
                 auto& slots = store[heroId];
-                InitializeHeroPresetSlots(slots, 1, true);
-                slots[0].preset = kind == HeroPresetSlotKind::Aim
-                    ? MakeHeroAimPresetFromCurrentUnlocked()
-                    : MakeHeroTriggerPresetFromCurrentUnlocked();
-                NormalizeHeroPresetSlots(slots);
+                InitializeBasicHeroPresetSlots(slots, heroId, kind);
             };
 
             ensureStore(HeroPresetSlotKind::Aim);
@@ -2434,7 +2565,9 @@ namespace OW { namespace Config {
             return defaults;
         }
 
-        void LoadHeroPresetStoreJson(const rapidjson::Value& storeObject, HeroPresetStore& store)
+        void LoadHeroPresetStoreJson(const rapidjson::Value& storeObject,
+                                     HeroPresetSlotKind kind,
+                                     HeroPresetStore& store)
         {
             if (!storeObject.IsObject())
                 return;
@@ -2464,7 +2597,7 @@ namespace OW { namespace Config {
                     }
                 }
 
-                NormalizeHeroPresetSlots(slots);
+                NormalizeHeroPresetSlots(slots, heroId, kind);
                 store[heroId] = slots;
             }
         }
@@ -2514,9 +2647,21 @@ namespace OW { namespace Config {
 
         bool LoadHeroConfigUnlocked(const std::string& heroConfigPath)
         {
+            gLastHeroConfigHadAimOrTriggerPresets = false;
+
             rapidjson::Document document;
             if (!LoadJsonDocument(heroConfigPath, document))
                 return false;
+
+            const auto storeHasEntries = [&](const char* key) {
+                const auto store = document.FindMember(key);
+                return store != document.MemberEnd() &&
+                    store->value.IsObject() &&
+                    store->value.MemberCount() > 0;
+            };
+            gLastHeroConfigHadAimOrTriggerPresets =
+                storeHasEntries("heroAimPresets") ||
+                storeHasEntries("heroTriggerPresets");
 
             heroAimPresets.clear();
             heroTriggerPresets.clear();
@@ -2524,11 +2669,11 @@ namespace OW { namespace Config {
 
             const auto aimStore = document.FindMember("heroAimPresets");
             if (aimStore != document.MemberEnd())
-                LoadHeroPresetStoreJson(aimStore->value, heroAimPresets);
+                LoadHeroPresetStoreJson(aimStore->value, HeroPresetSlotKind::Aim, heroAimPresets);
 
             const auto triggerStore = document.FindMember("heroTriggerPresets");
             if (triggerStore != document.MemberEnd())
-                LoadHeroPresetStoreJson(triggerStore->value, heroTriggerPresets);
+                LoadHeroPresetStoreJson(triggerStore->value, HeroPresetSlotKind::Trigger, heroTriggerPresets);
 
             const auto skillStore = document.FindMember("heroSkillPresets");
             if (skillStore != document.MemberEnd())
@@ -2577,7 +2722,7 @@ namespace OW { namespace Config {
 
                 auto makeDefaultSlots = [&]() {
                     std::array<HeroSlotPreset, kHeroPresetSlotCount> slots{};
-                    InitializeHeroPresetSlots(slots, 7, true, legacyAutoBone);
+                    InitializeHeroPresetSlots(slots, 0, false, legacyAutoBone);
                     for (HeroSlotPreset& slot : slots) {
                         slot.preset = presetDefaults;
                         slot.preset.autoBone = legacyAutoBone;
@@ -2626,6 +2771,8 @@ namespace OW { namespace Config {
                         } else {
                             HeroPreset legacyPreset{};
                             if (TryLoadLegacyPresetForDefinition(ini, def, presetDefaults, legacyPreset)) {
+                                slots[0].present = true;
+                                slots[0].enabled = true;
                                 slots[0].preset = legacyPreset;
                                 loadedAnySlot = true;
                             }
@@ -2648,7 +2795,7 @@ namespace OW { namespace Config {
 
         bool HasLoadedAimOrTriggerPresetsUnlocked()
         {
-            return !heroAimPresets.empty() || !heroTriggerPresets.empty();
+            return gLastHeroConfigHadAimOrTriggerPresets;
         }
 
         bool IniHasHeroPresetSections(const IniFile& ini)
@@ -3421,7 +3568,7 @@ namespace OW { namespace Config {
 
         for (const HeroSlotPreset& slot : item->second) {
             if (slot.present && slot.enabled) {
-                outPreset = ValidateHeroPresetValue(slot.preset);
+                outPreset = ValidateHeroPresetValueForHero(heroId, slot.preset);
                 return true;
             }
         }
@@ -3484,7 +3631,7 @@ namespace OW { namespace Config {
         const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
         if (item != store.end() &&
             item->second[static_cast<size_t>(clampedSlotIndex)].present)
-            return ValidateHeroPresetValue(item->second[static_cast<size_t>(clampedSlotIndex)].preset);
+            return ValidateHeroPresetValueForHero(heroId, item->second[static_cast<size_t>(clampedSlotIndex)].preset);
         return kind == HeroPresetSlotKind::Aim
             ? MakeHeroAimPresetFromCurrentUnlocked()
             : MakeHeroTriggerPresetFromCurrentUnlocked();
@@ -3520,8 +3667,9 @@ namespace OW { namespace Config {
         auto& store = PresetStore(kind);
         auto [item, inserted] = store.try_emplace(heroId);
         if (inserted)
-            InitializeHeroPresetSlots(item->second, 1, true);
-        NormalizeHeroPresetSlots(item->second);
+            InitializeBasicHeroPresetSlots(item->second, heroId, kind);
+        else
+            NormalizeHeroPresetSlots(item->second, heroId, kind);
         return item->second;
     }
 
@@ -3546,8 +3694,8 @@ namespace OW { namespace Config {
         const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
         auto& slots = EnsureHeroPresetSlotsInStore(kind, heroId);
         EnsureHeroPresetSlotRange(slots, clampedSlotIndex);
-        slots[static_cast<size_t>(clampedSlotIndex)].preset = ValidateHeroPresetValue(preset);
-        NormalizeHeroPresetSlots(slots);
+        slots[static_cast<size_t>(clampedSlotIndex)].preset = ValidateHeroPresetValueForHero(heroId, preset);
+        NormalizeHeroPresetSlots(slots, heroId, kind);
     }
 
     void SetHeroPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset)
@@ -3597,7 +3745,7 @@ namespace OW { namespace Config {
 
         outSlot = slot;
         outSlot.name = NormalizeHeroSlotName(outSlot.name, clampedSlotIndex);
-        outSlot.preset = ValidateHeroPresetValue(outSlot.preset);
+        outSlot.preset = ValidateHeroPresetValueForHero(heroId, outSlot.preset);
         outSlot.present = true;
         return true;
     }
@@ -3671,7 +3819,7 @@ namespace OW { namespace Config {
         auto& slots = EnsureHeroPresetSlotsInStore(kind, heroId);
         EnsureHeroPresetSlotRange(slots, clampedSlotIndex);
         slots[static_cast<size_t>(clampedSlotIndex)].enabled = enabled;
-        NormalizeHeroPresetSlots(slots);
+        NormalizeHeroPresetSlots(slots, heroId, kind);
     }
 
     void SetHeroSlotEnabled(uint64_t heroId, int slotIndex, bool enabled)
@@ -3695,14 +3843,14 @@ namespace OW { namespace Config {
     static int GetHeroSlotCountInStore(HeroPresetSlotKind kind, uint64_t heroId)
     {
         if (heroId == 0)
-            return 7;
+            return 1;
 
         auto& store = PresetStore(kind);
         auto item = store.find(heroId);
         if (item == store.end())
             return 1;
 
-        NormalizeHeroPresetSlots(item->second);
+        NormalizeHeroPresetSlots(item->second, heroId, kind);
         return (std::max)(1, CountHeroPresetSlots(item->second));
     }
 
@@ -3733,8 +3881,8 @@ namespace OW { namespace Config {
         slot.present = true;
         slot.enabled = true;
         slot.name = DefaultHeroSlotName(presentCount);
-        slot.preset = ValidateHeroPresetValue(seedPreset);
-        NormalizeHeroPresetSlots(slots);
+        slot.preset = ValidateHeroPresetValueForHero(heroId, seedPreset);
+        NormalizeHeroPresetSlots(slots, heroId, kind);
         return presentCount;
     }
 
@@ -3760,7 +3908,7 @@ namespace OW { namespace Config {
         if (item == store.end())
             return false;
 
-        NormalizeHeroPresetSlots(item->second);
+        NormalizeHeroPresetSlots(item->second, heroId, kind);
         const int presentCount = CountHeroPresetSlots(item->second);
         const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
         if (presentCount <= 1 || clampedSlotIndex >= presentCount)
@@ -3773,7 +3921,7 @@ namespace OW { namespace Config {
         }
 
         ResetHeroPresetSlot(item->second[static_cast<size_t>(presentCount - 1)], presentCount - 1);
-        NormalizeHeroPresetSlots(item->second);
+        NormalizeHeroPresetSlots(item->second, heroId, kind);
         return true;
     }
 

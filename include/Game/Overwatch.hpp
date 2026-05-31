@@ -26,6 +26,7 @@
 #include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
+#include "Utils/ProcessConnection.hpp"
 #include "Memory/KeyState.hpp"
 
 using namespace OW;
@@ -272,6 +273,12 @@ inline void entity_scan_thread() {
     DWORD lastScanCycleTick = 0;
     double entityScanHz = 0.0;
     while (OW::Config::doingentity == 1) {
+        if (!OW::ProcessConnection::IsConnected()) {
+            Diagnostics::RecordEntityScanCycle(0, 0.0);
+            Sleep(100);
+            continue;
+        }
+
         const DWORD now = GetTickCount();
         bool pending_scan = false;
         bool known_entities_empty = true;
@@ -502,6 +509,11 @@ inline void entity_thread() {
     };
 
     while (OW::Config::doingentity == 1) {
+        if (!OW::ProcessConnection::IsConnected()) {
+            Sleep(100);
+            continue;
+        }
+
         const DWORD cycleNow = GetTickCount();
         if (lastProcessTick != 0 && cycleNow - lastProcessTick < OW::kEntityProcessIntervalMs) {
             Sleep(1);
@@ -1621,6 +1633,12 @@ inline void viewmatrix_thread() {
 
     __try {
         while (true) {
+            if (!OW::ProcessConnection::IsConnected()) {
+                Diagnostics::SetViewMatrixStatus(false, false);
+                Sleep(100);
+                continue;
+            }
+
             // VM12 (2026-05-27): two-key add-XOR chain.
             // UC p330/p331 working snippets use the p2 -> +0x6C8 -> +0x8 -> +0xC0
             // pre-composed view-projection matrix as the primary WorldToScreen source.
@@ -2072,13 +2090,13 @@ namespace OverlayRenderDetail {
     }
 
     inline bool ShouldRenderAtDistance(float distance) {
-        if (!OW::Config::dist || OW::Config::visualMaxDist <= 0.0f)
+        if (OW::Config::visualMaxDist <= 0.0f)
             return true;
         return distance <= OW::Config::visualMaxDist;
     }
 
     inline float DistanceOpacity(float distance) {
-        if (!OW::Config::dist || OW::Config::visualMaxDist <= 0.0f)
+        if (OW::Config::visualMaxDist <= 0.0f)
             return 1.0f;
         return Clamp01(1.0f - Clamp01(distance / OW::Config::visualMaxDist));
     }
@@ -5222,6 +5240,11 @@ inline void aimbot_thread() {
         static DWORD lastSummaryTick = 0;
 
         while (true) {
+            if (!OW::ProcessConnection::IsConnected()) {
+                Sleep(100);
+                continue;
+            }
+
             totalTicks++;
 
             // Periodic diagnostic summary every 5 seconds
@@ -5257,6 +5280,11 @@ namespace OW { namespace Config {
 inline void configsavenloadthread() {
     uint64_t lastHeroId = 0;
     while (1) {
+        if (!OW::ProcessConnection::IsConnected()) {
+            Sleep(100);
+            continue;
+        }
+
         const uint64_t currentHeroId = OW::local_entity.HeroID;
         if (!OW::Config::Menu && currentHeroId != 0 && lastHeroId != currentHeroId) {
             if (lastHeroId != 0) {

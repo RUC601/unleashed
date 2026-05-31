@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 #include <thread>
 #include <chrono>
 #include <string>
@@ -28,6 +29,7 @@
 #include "Kmbox/KmboxTimerResolution.h" // kmbox::EnsureTimerResolution
 #include "Utils/Config.hpp"       // OW::Config
 #include "Utils/HostMouseDpi.hpp" // OW::RefreshHostMouseDpi
+#include "Utils/ProcessConnection.hpp"
 #include "Renderer/IconManager.hpp" // IconManager
 #include "Renderer/Overlay.hpp"   // g_Overlay
 #include "Renderer/Renderer.hpp"  // Render:: drawing primitives
@@ -40,7 +42,13 @@
 
 namespace {
 
+    constexpr const char* kTargetProcessName = "Overwatch.exe";
+    constexpr DWORD kProcessScanIntervalMs = 1000;
+
     std::atomic<bool> g_DiagnosticsThreadRunning{ false };
+    std::atomic<bool> g_ProcessConnectionThreadRunning{ false };
+    std::atomic<bool> g_BackgroundThreadsStarted{ false };
+    std::mutex g_ProcessConnectionMutex;
 
     static float CanvasWidth()
     {
@@ -558,7 +566,10 @@ namespace {
 void RenderCallback()
 {
     Diagnostics::RecordFrame();
-    OW::ProcessHeroSkills();
+    if (OW::ProcessConnection::IsConnected())
+        OW::ProcessHeroSkills();
+    else
+        OW::CancelActiveSkill();
 
     // The menu is rendered by the separate overlay menu window. This callback
     // only draws the transparent full-screen canvas layer.
@@ -699,6 +710,149 @@ static void StartBackgroundThreads()
         KeyState::initialized.load(std::memory_order_acquire) ? "" : " (pending resolver)");
 }
 
+static void ClearProcessRuntimeSnapshots()
+{
+    OW::SDK->Reset();
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        OW::ow_entities.clear();
+        OW::ow_entities_scan.clear();
+        OW::entities.clear();
+        OW::hp_dy_entities.clear();
+        OW::local_entity = OW::c_entity{};
+        OW::abletotread = 0;
+        OW::entity_fast_scan_until_tick = 0;
+    }
+
+    OW::SetViewMatrices(OW::Matrix{}, OW::Matrix{});
+    Diagnostics::SetEntityCount(0);
+    Diagnostics::SetEntityProcessStats(Diagnostics::EntityProcessStats{});
+    Diagnostics::SetPlayerInfoStats(Diagnostics::PlayerInfoStats{});
+    Diagnostics::SetLocalEntityStats(Diagnostics::LocalEntityStats{});
+    Diagnostics::SetRosterStats(Diagnostics::RosterStats{});
+    Diagnostics::SetViewMatrixStatus(false, false);
+    Diagnostics::SetDmaProbeResult(false, false);
+}
+
+static void MarkProcessDisconnected(const char* statusText)
+{
+    const bool wasConnected = OW::ProcessConnection::IsConnected();
+    OW::ProcessConnection::SetStatus(false, false, 0, 0,
+        statusText ? statusText : "Waiting for Overwatch.exe");
+
+    if (wasConnected) {
+        Diagnostics::Warn("Target process disconnected.");
+        std::printf("[MAIN] Target process disconnected; waiting for %s...\n", kTargetProcessName);
+    }
+
+    ClearProcessRuntimeSnapshots();
+    mem.DetachProcess();
+    Diagnostics::SetProcessAttached(false);
+}
+
+static bool TryConnectTargetProcess(bool forceReconnect, bool manualRequest)
+{
+    std::lock_guard<std::mutex> lock(g_ProcessConnectionMutex);
+
+    const DWORD livePid = mem.GetPidFromName(kTargetProcessName);
+    if (livePid == 0) {
+        if (manualRequest)
+            Diagnostics::Info("Manual reconnect requested, but %s is not running.", kTargetProcessName);
+        MarkProcessDisconnected("Waiting for Overwatch.exe");
+        return false;
+    }
+
+    OW::ProcessConnection::SetStatus(false, true, 0, 0,
+        manualRequest ? "Reconnecting UN..." : "Connecting UN...");
+    Diagnostics::SetProcessAttached(false);
+    Diagnostics::Info("%s process connect attempt. target=%s pid=%lu",
+        manualRequest ? "Manual" : "Automatic",
+        kTargetProcessName,
+        static_cast<unsigned long>(livePid));
+
+    ClearProcessRuntimeSnapshots();
+    if (forceReconnect)
+        mem.DetachProcess();
+
+    if (!OW::SDK->Initialize()) {
+        Diagnostics::SetProcessAttached(false);
+        OW::ProcessConnection::SetStatus(false, false, 0, 0,
+            "Connect failed; waiting for Overwatch.exe");
+        return false;
+    }
+
+    const int attachedPid = mem.GetCurrentProcessId();
+    Diagnostics::SetProcessAttached(true);
+    OW::ProcessConnection::SetStatus(true, false, attachedPid, OW::SDK->dwGameBase,
+        "Connected to Overwatch.exe");
+    Diagnostics::Info("Process attached: %s pid=%d base=0x%llX.",
+        kTargetProcessName,
+        attachedPid,
+        static_cast<unsigned long long>(OW::SDK->dwGameBase));
+    std::printf("[MAIN] %s attached. PID=%d base=0x%llX\n",
+        kTargetProcessName,
+        attachedPid,
+        static_cast<unsigned long long>(OW::SDK->dwGameBase));
+
+    RunDmaPeHeaderProbe();
+
+    if (!g_BackgroundThreadsStarted.exchange(true, std::memory_order_acq_rel)) {
+        StartBackgroundThreads();
+        std::printf("\n");
+    }
+
+    return true;
+}
+
+static void StartProcessConnectionThread()
+{
+    g_ProcessConnectionThreadRunning.store(true, std::memory_order_release);
+    OW::ProcessConnection::SetStatus(false, false, 0, 0, "Waiting for Overwatch.exe");
+    std::thread([]() {
+        Diagnostics::Info("Process connection thread started. target=%s interval_ms=%lu.",
+            kTargetProcessName,
+            static_cast<unsigned long>(kProcessScanIntervalMs));
+
+        DWORD lastAttemptTick = 0;
+        while (g_ProcessConnectionThreadRunning.load(std::memory_order_acquire)) {
+            const bool manualRequest = OW::ProcessConnection::ConsumeReconnectRequest();
+            const DWORD now = GetTickCount();
+            const bool scanDue = lastAttemptTick == 0 || now - lastAttemptTick >= kProcessScanIntervalMs;
+
+            if (manualRequest) {
+                TryConnectTargetProcess(true, true);
+                lastAttemptTick = now;
+            } else if (!OW::ProcessConnection::IsConnected()) {
+                if (scanDue) {
+                    TryConnectTargetProcess(false, false);
+                    lastAttemptTick = now;
+                }
+            } else if (scanDue) {
+                const DWORD livePid = mem.GetPidFromName(kTargetProcessName);
+                const int attachedPid = OW::ProcessConnection::ConnectedPid();
+                if (livePid == 0) {
+                    MarkProcessDisconnected("Waiting for Overwatch.exe");
+                } else if (attachedPid != 0 && livePid != static_cast<DWORD>(attachedPid)) {
+                    Diagnostics::Info("Target process PID changed. old=%d new=%lu.",
+                        attachedPid,
+                        static_cast<unsigned long>(livePid));
+                    TryConnectTargetProcess(true, false);
+                }
+                lastAttemptTick = now;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        Diagnostics::Info("Process connection thread stopping.");
+    }).detach();
+}
+
+static void StopProcessConnectionThread()
+{
+    g_ProcessConnectionThreadRunning.store(false, std::memory_order_release);
+}
+
 // =============================================================================
 // Main
 // =============================================================================
@@ -756,46 +910,16 @@ int main()
     StartDiagnosticStatusThread();
 
     // ---------------------------------------------------------------
-    // Step 2 -- Wait for Overwatch.exe to appear
+    // Step 2 -- Start target process connector
     // ---------------------------------------------------------------
-    std::printf("[MAIN] Waiting for Overwatch.exe...\n");
-    Diagnostics::Info("Waiting for Overwatch.exe.");
-    int attempt = 0;
-    while (!mem.AttachToProcess("Overwatch.exe")) {
-        if (++attempt % 15 == 0)
-            std::printf("[MAIN] Still waiting for Overwatch.exe (attempt %d)...\n", attempt);
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-    }
-    std::printf("[MAIN] Overwatch.exe found.\n\n");
-    Diagnostics::SetProcessAttached(true);
-    Diagnostics::Info("Process attached: Overwatch.exe.");
+    StartProcessConnectionThread();
+    std::printf("[MAIN] Process connector ready; overlay can open before %s.\n\n",
+        kTargetProcessName);
+    Diagnostics::Info("Process connector ready; waiting for %s in background.",
+        kTargetProcessName);
 
     // ---------------------------------------------------------------
-    // Step 3 -- Initialise the OW memory SDK
-    // ---------------------------------------------------------------
-    std::printf("[MAIN] Initialising OW SDK...\n");
-    Diagnostics::Info("Initialising OW SDK.");
-    if (!OW::SDK->Initialize()) {
-        std::fprintf(stderr, "[FATAL] SDK initialisation failed.\n");
-        Diagnostics::Error("SDK initialisation failed.");
-        StopDiagnosticStatusThread();
-        mem.CloseDma();
-        Diagnostics::SetDmaReady(false);
-        Diagnostics::SetProcessAttached(false);
-        kmbox::ReleaseTimerResolution();
-        Diagnostics::ShutdownAimLog();
-        Diagnostics::Shutdown();
-        std::printf("[INFO] Press Enter to exit.\n");
-        std::getchar();
-        return 1;
-    }
-    std::printf("[MAIN] SDK ready.  Game base: 0x%llX\n\n", OW::SDK->dwGameBase);
-    Diagnostics::Info("SDK ready. Game base=0x%llX",
-        static_cast<unsigned long long>(OW::SDK->dwGameBase));
-    RunDmaPeHeaderProbe();
-
-    // ---------------------------------------------------------------
-    // Step 4 -- Resolve global encryption keys (SKIP: vestigial)
+    // Step 3 -- Resolve global encryption keys (SKIP: vestigial)
     // May 2026 DecryptComponent reads key material directly from game
     // memory and does not use GlobalKey1/2.  GetGlobalKey() is kept
     // as a no-op for diagnostic probes but no longer blocks startup.
@@ -805,13 +929,7 @@ int main()
     Diagnostics::Info("Global key resolution skipped; current decrypt path reads key material directly.");
 
     // ---------------------------------------------------------------
-    // Step 5 -- Start all background threads
-    // ---------------------------------------------------------------
-    StartBackgroundThreads();
-    std::printf("\n");
-
-    // ---------------------------------------------------------------
-    // Step 6 -- Initialise the DX11 overlay windows
+    // Step 4 -- Initialise the DX11 overlay windows
     // ---------------------------------------------------------------
     std::printf("[MAIN] Initialising overlay...\n");
     Diagnostics::Info("Initialising overlay.");
@@ -820,6 +938,8 @@ int main()
         Diagnostics::Error("Overlay initialisation failed.");
         OW::Config::doingentity = 0;
         KeyState::Stop();
+        StopProcessConnectionThread();
+        OW::ProcessConnection::SetStatus(false, false, 0, 0, "Shutting down");
         StopDiagnosticStatusThread();
         mem.CloseDma();
         Diagnostics::SetDmaReady(false);
@@ -837,7 +957,7 @@ int main()
     PreloadAbilityIcons();
 
     // ---------------------------------------------------------------
-    // Step 7 -- Main loop (blocks until overlay / game closes)
+    // Step 5 -- Main loop (blocks until overlay / game closes)
     // ---------------------------------------------------------------
     std::printf("[MAIN] Entering message loop.  Press HOME to toggle menu.\n");
     std::printf("[MAIN] Close the canvas process/window to exit.\n\n");
@@ -852,11 +972,13 @@ int main()
     std::printf("\n[MAIN] Display closed.  Shutting down...\n");
     Diagnostics::Info("Display closed. Shutting down.");
     OW::CancelActiveSkill();
+    StopProcessConnectionThread();
     StopDiagnosticStatusThread();
     Diagnostics::DumpStatus();
 
     OW::Config::doingentity = 0;
     KeyState::Stop();
+    OW::ProcessConnection::SetStatus(false, false, 0, 0, "Shutting down");
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     mem.CloseDma();
     Diagnostics::SetDmaReady(false);

@@ -69,9 +69,12 @@ public:
 	bool InitDma(bool memMap = true, bool debug = false);
 	bool AttachToProcess(const std::string& process_name, bool applyCr3Fix = true);
 	bool Init(std::string process_name, bool memMap = true, bool debug = false);
+	void DetachProcess();
 	void CloseDma();
 
 	// -- Process information --
+	bool IsProcessInitialized() const { return PROCESS_INITIALIZED.load(); }
+	int GetCurrentProcessId() const { return PROCESS_INITIALIZED.load() ? current_process.PID : 0; }
 	DWORD GetPidFromName(const std::string& process_name);
 	std::vector<int> GetPidListFromName(const std::string& name);
 	std::vector<std::string> GetModuleList(const std::string& process_name);

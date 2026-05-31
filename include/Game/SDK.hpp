@@ -8,6 +8,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <atomic>
 
 #include "Memory/Memory.h"
 
@@ -95,7 +96,7 @@ namespace OW {
         };
 
     private:
-        bool            m_initialized = false;
+        std::atomic<bool> m_initialized{ false };
 
         struct ComponentKeyCache {
             uint64_t generation = 0;
@@ -127,21 +128,37 @@ namespace OW {
         {
             if (!mem.AttachToProcess("Overwatch.exe")) {
                 printf("[SDK] Failed to attach to Overwatch.exe\n");
+                Reset();
                 return false;
             }
 
             dwGameBase = mem.GetBaseDaddy("Overwatch.exe");
             if (!dwGameBase) {
                 printf("[SDK] Failed to get base address for Overwatch.exe\n");
+                Reset();
                 return false;
             }
 
             printf("[SDK] Attached to Overwatch.exe @ 0x%llX\n", dwGameBase);
-            m_initialized = true;
+            m_initialized.store(true, std::memory_order_release);
             return true;
         }
 
-        bool IsInitialized() const { return m_initialized; }
+        bool IsInitialized() const { return m_initialized.load(std::memory_order_acquire); }
+
+        void Reset()
+        {
+            m_initialized.store(false, std::memory_order_release);
+            dwGameBase = 0;
+            GlobalKey1 = 0;
+            GlobalKey2 = 0;
+            g_player_controller = 0;
+            std::lock_guard<std::mutex> lock(m_frameCacheMutex);
+            ++m_frameGeneration;
+            if (m_frameGeneration == 0)
+                m_frameGeneration = 1;
+            m_componentKeyCache = {};
+        }
 
         void BeginFrame()
         {
