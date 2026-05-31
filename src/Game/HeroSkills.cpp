@@ -1050,16 +1050,11 @@ namespace {
 
     struct ScopedTrackingConfig {
         Config::HeroPreset originalPreset{};
-        int originalAimMethod = 0;
         bool active = false;
 
         explicit ScopedTrackingConfig(const Config::HeroSkillTrackingParams& params)
         {
             originalPreset = Config::MakeHeroPresetFromCurrent();
-            {
-                std::lock_guard<std::mutex> lock(Config::mutex);
-                originalAimMethod = Config::aimMethod;
-            }
 
             Config::HeroPreset overlay = originalPreset;
             overlay.fov = params.fov;
@@ -1067,11 +1062,8 @@ namespace {
             overlay.bone = params.bone;
             overlay.hitbox = params.hitbox;
             overlay.aimMode = 0;
+            overlay.aimBehavior = 0;
             Config::ApplyHeroPresetToGlobals(overlay);
-            {
-                std::lock_guard<std::mutex> lock(Config::mutex);
-                Config::aimMethod = params.method;
-            }
             active = true;
         }
 
@@ -1081,8 +1073,6 @@ namespace {
                 return;
 
             Config::ApplyHeroPresetToGlobals(originalPreset);
-            std::lock_guard<std::mutex> lock(Config::mutex);
-            Config::aimMethod = originalAimMethod;
         }
     };
 
@@ -1103,7 +1093,8 @@ namespace {
             targetVector,
             false,
             params.smooth / 10.0f,
-            0.0f);
+            Config::AimBehaviorAcceleration(0),
+            params.method);
         if (!AimbotDetail::IsZeroVector(aim.smoothed_angle))
             AimbotDetail::MoveAimDelta(aim.local_angle, aim.smoothed_angle);
     }

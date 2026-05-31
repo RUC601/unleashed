@@ -1,7 +1,9 @@
 #pragma once
 
 #include <Windows.h>
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <mutex>
@@ -137,6 +139,11 @@ namespace OW { namespace Config {
     inline float aimbotMaxHead = 100.0f;
     inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited
     inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
+    inline constexpr int kAimBehaviorCount = 5;
+    inline constexpr int kAimMethodCount = 5;
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0, 0 };
+    inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+    inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
     inline float aimPidP = 0.5f;
     inline float aimPidI = 0.01f;
     inline float aimPidD = 0.1f;
@@ -169,6 +176,40 @@ namespace OW { namespace Config {
     inline bool  aimOvershootCurve = false;
     inline float aimOvershootGain = 0.25f;
     inline float aimOvershootResetPixels = 56.0f;
+
+    inline int ClampAimBehaviorIndex(int value)
+    {
+        return std::clamp(value, 0, kAimBehaviorCount - 1);
+    }
+
+    inline int ClampAimMethodIndex(int value)
+    {
+        return std::clamp(value, 0, kAimMethodCount - 1);
+    }
+
+    inline int AimBehaviorMethod(int behavior)
+    {
+        return ClampAimMethodIndex(aimBehaviorMethod[static_cast<size_t>(ClampAimBehaviorIndex(behavior))]);
+    }
+
+    inline float AimBehaviorBaseSpeed(int behavior)
+    {
+        const float value = aimBehaviorBaseSpeed[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 100.0f) : 100.0f;
+    }
+
+    inline float AimBehaviorAcceleration(int behavior)
+    {
+        const float value = aimBehaviorAcceleration[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 20.0f) : 0.1f;
+    }
+
+    inline float AimBehaviorSmoothInput(int behavior, float scalePercent, float runtimeScale = 1.0f)
+    {
+        const float scale = std::isfinite(scalePercent) ? std::clamp(scalePercent, 0.0f, 100.0f) : 100.0f;
+        const float extraScale = std::isfinite(runtimeScale) ? std::clamp(runtimeScale, 0.0f, 2.0f) : 1.0f;
+        return (AimBehaviorBaseSpeed(behavior) * (scale / 100.0f) * extraScale) / 10.0f;
+    }
 
     // ---- Hero-specific ----
     inline bool GenjiBlade       = false;
@@ -323,8 +364,8 @@ namespace OW { namespace Config {
         float hitbox = 0.13f;    // hitbox radius/size
         int aimMode = 0;         // 0=Tracking, 1=Flick
         int aimBehavior = 0;     // 0=Tracking, 1=Flick, 2=FlickClamp, 3=FlickDelay, 4=ReacquireAtApex
-        int aimMethod = 0;       // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited
-        int smoothType = 0;      // 0=Constant Speed, 1=Linear, 2=Bezier
+        int aimMethod = 0;       // legacy: smoothing method now comes from Misc behavior profiles
+        int smoothType = 0;      // legacy
         float pidP = 0.5f;
         float pidI = 0.01f;
         float pidD = 0.1f;

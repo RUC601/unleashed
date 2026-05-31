@@ -1318,6 +1318,9 @@ namespace OW { namespace Config {
         void ResetAimMethodDefaultsUnlocked()
         {
             aimMethod = 0;
+            aimBehaviorMethod = { 0, 0, 0, 0, 0 };
+            aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+            aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
             aimPidP = 0.5f;
             aimPidI = 0.01f;
             aimPidD = 0.1f;
@@ -1426,7 +1429,7 @@ namespace OW { namespace Config {
             if (preset.aimMode < 0 || preset.aimMode > 1)
                 preset.aimMode = 0;
             preset.aimBehavior = aimBehavior;
-            preset.aimMethod = aimMethod;
+            preset.aimMethod = AimBehaviorMethod(aimBehavior);
             preset.smoothType = aimbotSmoothType;
             preset.pidP = aimPidP;
             preset.pidI = aimPidI;
@@ -1496,16 +1499,7 @@ namespace OW { namespace Config {
             aimbotTeam = preset.targetTeam;
             aimbotAttack = preset.trigger.action;
             aimBehavior = preset.aimBehavior;
-            aimMethod = preset.aimMethod;
             aimbotSmoothType = preset.smoothType;
-            aimPidP = preset.pidP;
-            aimPidI = preset.pidI;
-            aimPidD = preset.pidD;
-            aimPidMaxIntegral = preset.pidMaxIntegral;
-            aimPidDeadzone = preset.pidDeadzone;
-            aimBezierControlPoints = preset.bezierControlPoints;
-            aimBezierCurvature = preset.bezierCurvature;
-            aimBezierSpeed = preset.bezierSpeed;
             aim_key = preset.key;
             aimbotAutoshot = preset.autoshot;
             aimbotKeepFiring = preset.keepFiring;
@@ -1691,16 +1685,6 @@ namespace OW { namespace Config {
             WritePlainFloatValue(path, section, "hitbox", preset.hitbox);
             WriteIntValue(path, section, "aimMode", preset.aimMode);
             WriteIntValue(path, section, "aimBehavior", preset.aimBehavior);
-            WriteIntValue(path, section, "aimMethod", preset.aimMethod);
-            WriteIntValue(path, section, "aimbotSmoothType", preset.smoothType);
-            WriteFixedFloatValue(path, section, "aimPidP", preset.pidP);
-            WriteFixedFloatValue(path, section, "aimPidI", preset.pidI);
-            WriteFixedFloatValue(path, section, "aimPidD", preset.pidD);
-            WriteFixedFloatValue(path, section, "aimPidMaxIntegral", preset.pidMaxIntegral);
-            WriteFixedFloatValue(path, section, "aimPidDeadzone", preset.pidDeadzone);
-            WriteIntValue(path, section, "aimBezierControlPoints", preset.bezierControlPoints);
-            WriteFixedFloatValue(path, section, "aimBezierCurvature", preset.bezierCurvature);
-            WriteFixedFloatValue(path, section, "aimBezierSpeed", preset.bezierSpeed);
             WriteIntValue(path, section, "key", preset.key);
             WriteBoolValue(path, section, "aimbotAutoshot", preset.autoshot);
             WriteBoolValue(path, section, "aimbotKeepFiring", preset.keepFiring);
@@ -1796,16 +1780,6 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "hitbox", preset.hitbox, allocator);
             AddJsonInt(value, "aimMode", preset.aimMode, allocator);
             AddJsonInt(value, "aimBehavior", preset.aimBehavior, allocator);
-            AddJsonInt(value, "aimMethod", preset.aimMethod, allocator);
-            AddJsonInt(value, "smoothType", preset.smoothType, allocator);
-            AddJsonFloat(value, "pidP", preset.pidP, allocator);
-            AddJsonFloat(value, "pidI", preset.pidI, allocator);
-            AddJsonFloat(value, "pidD", preset.pidD, allocator);
-            AddJsonFloat(value, "pidMaxIntegral", preset.pidMaxIntegral, allocator);
-            AddJsonFloat(value, "pidDeadzone", preset.pidDeadzone, allocator);
-            AddJsonInt(value, "bezierControlPoints", preset.bezierControlPoints, allocator);
-            AddJsonFloat(value, "bezierCurvature", preset.bezierCurvature, allocator);
-            AddJsonFloat(value, "bezierSpeed", preset.bezierSpeed, allocator);
             AddJsonInt(value, "key", preset.key, allocator);
             AddJsonBool(value, "autoshot", preset.autoshot, allocator);
             AddJsonBool(value, "keepFiring", preset.keepFiring, allocator);
@@ -3019,6 +2993,27 @@ namespace OW { namespace Config {
         void LoadAimMethodSettingsUnlocked(const IniFile& ini)
         {
             constexpr const char* section = kAimMethodSection;
+            constexpr std::array<const char*, kAimBehaviorCount> methodKeys = {
+                "trackingMethod",
+                "flickMethod",
+                "flickClampMethod",
+                "flickDelayMethod",
+                "reacquireMethod"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> speedKeys = {
+                "trackingBaseSpeed",
+                "flickBaseSpeed",
+                "flickClampBaseSpeed",
+                "flickDelayBaseSpeed",
+                "reacquireBaseSpeed"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
+                "trackingAcceleration",
+                "flickAcceleration",
+                "flickClampAcceleration",
+                "flickDelayAcceleration",
+                "reacquireAcceleration"
+            };
 
             aimMethod = ReadInt(ini, section, "aimMethod", aimMethod);
             aimPidP = ReadFixedFloat(ini, section, "aimPidP", aimPidP);
@@ -3029,6 +3024,12 @@ namespace OW { namespace Config {
             aimBezierControlPoints = ReadInt(ini, section, "aimBezierControlPoints", aimBezierControlPoints);
             aimBezierCurvature = ReadFixedFloat(ini, section, "aimBezierCurvature", aimBezierCurvature);
             aimBezierSpeed = ReadFixedFloat(ini, section, "aimBezierSpeed", aimBezierSpeed);
+
+            for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
+                aimBehaviorMethod[index] = ReadInt(ini, section, methodKeys[index], aimMethod);
+                aimBehaviorBaseSpeed[index] = ReadFixedFloat(ini, section, speedKeys[index], 100.0f);
+                aimBehaviorAcceleration[index] = ReadFixedFloat(ini, section, accelerationKeys[index], accvalue);
+            }
         }
 
         void SaveAimbotSettingsUnlocked(const std::string& path)
@@ -3089,6 +3090,27 @@ namespace OW { namespace Config {
         void SaveAimMethodSettingsUnlocked(const std::string& path)
         {
             constexpr const char* section = kAimMethodSection;
+            constexpr std::array<const char*, kAimBehaviorCount> methodKeys = {
+                "trackingMethod",
+                "flickMethod",
+                "flickClampMethod",
+                "flickDelayMethod",
+                "reacquireMethod"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> speedKeys = {
+                "trackingBaseSpeed",
+                "flickBaseSpeed",
+                "flickClampBaseSpeed",
+                "flickDelayBaseSpeed",
+                "reacquireBaseSpeed"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
+                "trackingAcceleration",
+                "flickAcceleration",
+                "flickClampAcceleration",
+                "flickDelayAcceleration",
+                "reacquireAcceleration"
+            };
 
             WriteIntValue(path, section, "aimMethod", aimMethod);
             WriteFixedFloatValue(path, section, "aimPidP", aimPidP);
@@ -3099,6 +3121,12 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "aimBezierControlPoints", aimBezierControlPoints);
             WriteFixedFloatValue(path, section, "aimBezierCurvature", aimBezierCurvature);
             WriteFixedFloatValue(path, section, "aimBezierSpeed", aimBezierSpeed);
+
+            for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
+                WriteIntValue(path, section, methodKeys[index], AimBehaviorMethod(static_cast<int>(index)));
+                WriteFixedFloatValue(path, section, speedKeys[index], AimBehaviorBaseSpeed(static_cast<int>(index)));
+                WriteFixedFloatValue(path, section, accelerationKeys[index], AimBehaviorAcceleration(static_cast<int>(index)));
+            }
         }
 
         void LoadGlobalSettingsUnlocked(const IniFile& ini)
@@ -3364,6 +3392,15 @@ namespace OW { namespace Config {
             ClampSetting("lastheroid", lastheroid, -2, (std::numeric_limits<int>::max)(), -2);
             ClampSetting("targetPriority", targetPriority, 0, 2, 0);
             ClampSetting("aimMethod", aimMethod, 0, 4, 0);
+            for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
+                aimBehaviorMethod[index] = std::clamp(aimBehaviorMethod[index], 0, 4);
+                if (!std::isfinite(aimBehaviorBaseSpeed[index]))
+                    aimBehaviorBaseSpeed[index] = 100.0f;
+                if (!std::isfinite(aimBehaviorAcceleration[index]))
+                    aimBehaviorAcceleration[index] = 0.1f;
+                aimBehaviorBaseSpeed[index] = std::clamp(aimBehaviorBaseSpeed[index], 0.0f, 100.0f);
+                aimBehaviorAcceleration[index] = std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f);
+            }
             ClampSetting("aimbotSmoothType", aimbotSmoothType, 0, 2, 0);
             ClampSetting("aimbotPredictionMode", aimbotPredictionMode, 0, 2, 0);
             ClampSetting("aimBehavior", aimBehavior, 0, 4, 0);

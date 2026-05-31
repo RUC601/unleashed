@@ -1348,11 +1348,6 @@ static const char* PresetAimBehaviorName(int behavior) {
     return kAimBehavior[behavior];
 }
 
-static const char* PresetAimMethodName(int method) {
-    method = ImClamp(method, 0, IM_ARRAYSIZE(kAimMethod) - 1);
-    return kAimMethod[method];
-}
-
 static void DrawPresetSummary(const HeroOption& hero,
                               const OW::Config::HeroPreset& preset,
                               bool hasStoredPreset,
@@ -1363,10 +1358,9 @@ static void DrawPresetSummary(const HeroOption& hero,
         : (hasStoredPreset ? "Stored preset" : "Using global defaults");
     if (kind == ActionSlotKind::Aim) {
         std::snprintf(summary, sizeof(summary),
-                      "%s - %s | %s | Smoothing %s | FOV %.0f | Smooth %.1f | %s | Hitbox %.2f",
+                      "%s - %s | %s | Speed %.1f%% | FOV %.0f | %s | Hitbox %.2f",
                       hero.label, scope, PresetAimBehaviorName(preset.aimBehavior),
-                      PresetAimMethodName(preset.aimMethod),
-                      preset.fov, preset.smooth,
+                      preset.smooth, preset.fov,
                       PresetBoneName(preset), preset.hitbox);
     } else {
         std::snprintf(summary, sizeof(summary),
@@ -2859,54 +2853,6 @@ void UI::AimbotPage() {
             }
             ImGui::PopItemWidth();
 
-            // Smoothing controller
-            SettingRow("Smoothing", kAimbotLeftLabelWidth);
-            PushControlWidth();
-            presetChanged |= UISelect("##aimMethod", &activePreset.aimMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod));
-            ImGui::PopItemWidth();
-
-            if (activePreset.aimMethod == 1) {
-                SettingRow("P Gain", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISlider("##aimPidP", &activePreset.pidP, 0.0f, 2.0f, "0.50");
-                ImGui::PopItemWidth();
-
-                SettingRow("I Gain", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISlider("##aimPidI", &activePreset.pidI, 0.0f, 0.5f, "0.050");
-                ImGui::PopItemWidth();
-
-                SettingRow("D Gain", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISlider("##aimPidD", &activePreset.pidD, 0.0f, 1.0f, "0.10");
-                ImGui::PopItemWidth();
-
-                SettingRow("Max Integral", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISlider("##aimPidMaxI", &activePreset.pidMaxIntegral, 1.0f, 50.0f, "10.0");
-                ImGui::PopItemWidth();
-
-                SettingRow("Deadzone", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISlider("##aimPidDz", &activePreset.pidDeadzone, 0.0f, 10.0f, "1.0 deg");
-                ImGui::PopItemWidth();
-            } else if (activePreset.aimMethod == 2) {
-                SettingRow("Control Points", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISlider("##aimBezCP", &activePreset.bezierControlPoints, 2.0f, 6.0f, "2");
-                ImGui::PopItemWidth();
-
-                SettingRow("Curvature", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISlider("##aimBezCurve", &activePreset.bezierCurvature, 0.0f, 1.0f, "0.50");
-                ImGui::PopItemWidth();
-
-                SettingRow("Speed", kAimbotLeftLabelWidth);
-                PushControlWidth();
-                presetChanged |= UISlider("##aimBezSpeed", &activePreset.bezierSpeed, 1.0f, 200.0f, "50.0");
-                ImGui::PopItemWidth();
-            }
-
             // Aim activation key is stored per aim slot.
             SettingRow("Aim Activation Key", kAimbotLeftLabelWidth);
             PushControlWidth();
@@ -2964,8 +2910,8 @@ void UI::AimbotPage() {
             presetChanged |= UISlider("##aimStick", &activePreset.stickiness, 0.0f, 100.0f, "Max");
             ImGui::PopItemWidth();
 
-            // Smooth
-            SettingRow("Smooth", kAimbotLeftLabelWidth);
+            // Speed scale
+            SettingRow("Speed Scale", kAimbotLeftLabelWidth);
             PushControlWidth();
             presetChanged |= UISlider("##aimSmooth", &activePreset.smooth, 0.0f, 100.0f, "50.00 %");
             ImGui::PopItemWidth();
@@ -3937,13 +3883,38 @@ static void DrawMiscDiagnosticsPage() {
 static void DrawMiscSmoothingPage() {
     UIGroupBox("Smoothing Controller");
     {
-        SettingRow("Controller");
+        static int selectedBehavior = 0;
+        selectedBehavior = OW::Config::ClampAimBehaviorIndex(selectedBehavior);
+
+        SettingRow("Behavior");
         PushControlWidth();
-        UISelect("##miscSmoothingController", &OW::Config::aimMethod,
-                 kAimMethod, IM_ARRAYSIZE(kAimMethod));
+        UISelect("##miscSmoothingBehavior", &selectedBehavior,
+                 kAimBehavior, IM_ARRAYSIZE(kAimBehavior));
         ImGui::PopItemWidth();
 
-        if (OW::Config::aimMethod == 1) {
+        selectedBehavior = OW::Config::ClampAimBehaviorIndex(selectedBehavior);
+        const int behaviorIndex = selectedBehavior;
+        int& behaviorMethod = OW::Config::aimBehaviorMethod[static_cast<size_t>(behaviorIndex)];
+        float& behaviorBaseSpeed = OW::Config::aimBehaviorBaseSpeed[static_cast<size_t>(behaviorIndex)];
+        float& behaviorAcceleration = OW::Config::aimBehaviorAcceleration[static_cast<size_t>(behaviorIndex)];
+        behaviorMethod = OW::Config::ClampAimMethodIndex(behaviorMethod);
+        OW::Config::aimMethod = behaviorMethod;
+
+        SettingRow("Method");
+        PushControlWidth();
+        if (UISelect("##miscSmoothingMethod", &behaviorMethod,
+                     kAimMethod, IM_ARRAYSIZE(kAimMethod))) {
+            behaviorMethod = OW::Config::ClampAimMethodIndex(behaviorMethod);
+            OW::Config::aimMethod = behaviorMethod;
+        }
+        ImGui::PopItemWidth();
+
+        SettingRow("Base Angular Speed");
+        PushControlWidth();
+        UISlider("##miscBaseAngularSpeed", &behaviorBaseSpeed, 0.0f, 100.0f, "100");
+        ImGui::PopItemWidth();
+
+        if (behaviorMethod == 1) {
             SettingRow("P Gain");
             PushControlWidth();
             UISlider("##miscPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
@@ -3968,7 +3939,7 @@ static void DrawMiscSmoothingPage() {
             PushControlWidth();
             UISlider("##miscPidDz", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
             ImGui::PopItemWidth();
-        } else if (OW::Config::aimMethod == 2) {
+        } else if (behaviorMethod == 2) {
             SettingRow("Control Points");
             PushControlWidth();
             UISlider("##miscBezCP", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
@@ -3983,10 +3954,10 @@ static void DrawMiscSmoothingPage() {
             PushControlWidth();
             UISlider("##miscBezSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
             ImGui::PopItemWidth();
-        } else if (OW::Config::aimMethod == 4) {
+        } else if (behaviorMethod == 4) {
             SettingRow("Acceleration");
             PushControlWidth();
-            UISlider("##miscAcceleration", &OW::Config::accvalue, 0.0f, 20.0f, "0.10");
+            UISlider("##miscAcceleration", &behaviorAcceleration, 0.0f, 20.0f, "0.10");
             ImGui::PopItemWidth();
         }
 

@@ -3364,7 +3364,6 @@ namespace AimbotDetail {
             int slotIndex = -2;
             bool matchedInput = false;
             int key = -1;
-            int aimMethod = -1;
             int aimBehavior = -1;
             int triggerMode = -1;
             int triggerKey = -1;
@@ -3381,7 +3380,6 @@ namespace AimbotDetail {
             state.slotIndex != selection.slotIndex ||
             state.matchedInput != selection.matchedInput ||
             state.key != preset.key ||
-            state.aimMethod != preset.aimMethod ||
             state.aimBehavior != preset.aimBehavior ||
             state.triggerMode != preset.trigger.mode ||
             state.triggerKey != preset.trigger.key ||
@@ -3390,7 +3388,8 @@ namespace AimbotDetail {
         if (!changed)
             return;
 
-        Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d aimMode=%d aimBehavior=%d aimMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+        const int behaviorMethod = OW::Config::AimBehaviorMethod(preset.aimBehavior);
+        Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
             kind ? kind : "unknown",
             static_cast<unsigned long long>(heroId),
             selection.slotIndex + 1,
@@ -3398,7 +3397,7 @@ namespace AimbotDetail {
             preset.key,
             preset.aimMode,
             preset.aimBehavior,
-            preset.aimMethod,
+            behaviorMethod,
             preset.trigger.enabled ? 1 : 0,
             preset.trigger.mode,
             preset.trigger.key);
@@ -3408,7 +3407,6 @@ namespace AimbotDetail {
         state.slotIndex = selection.slotIndex;
         state.matchedInput = selection.matchedInput;
         state.key = preset.key;
-        state.aimMethod = preset.aimMethod;
         state.aimBehavior = preset.aimBehavior;
         state.triggerMode = preset.trigger.mode;
         state.triggerKey = preset.trigger.key;
@@ -4349,13 +4347,17 @@ namespace AimbotDetail {
                 data.target_angle.Y,
                 data.target_angle.Z);
         }
-        const float dispatchAcceleration = accelerated ? acceleration : 0.0f;
+        const int behavior = OW::Config::ClampAimBehaviorIndex(OW::Config::aimBehavior);
+        const int dispatchMethod = methodOverride >= 0
+            ? std::clamp(methodOverride, 0, 4)
+            : OW::Config::AimBehaviorMethod(behavior);
+        const float dispatchAcceleration = (accelerated || dispatchMethod == 4) ? acceleration : 0.0f;
         data.smoothed_angle = OW::SmoothDispatchWithMethod(
             data.local_angle,
             data.target_angle,
             smooth,
             dispatchAcceleration,
-            methodOverride >= 0 ? methodOverride : std::clamp(OW::Config::aimMethod, 0, 4),
+            dispatchMethod,
             bezierSpeedOverride > 0.0f ? bezierSpeedOverride : OW::Config::aimBezierSpeed
         );
         const Vector3 rawDelta = data.target_angle - data.local_angle;
@@ -4664,11 +4666,14 @@ namespace AimbotDetail {
         if (!IsAimKeyPressed() || OW::Config::reloading)
             return;
         g_trackingAttempts++;
+        const int behavior = OW::Config::ClampAimBehaviorIndex(OW::Config::aimBehavior);
 
-        Diagnostics::Aim("tracking.enter originSens=%.6f reloading=%d trackingSmooth=%.6f prediction=%d targetDelay=%d",
+        Diagnostics::Aim("tracking.enter originSens=%.6f reloading=%d scale=%.6f baseSpeed=%.6f method=%d prediction=%d targetDelay=%d",
             origin_sens,
             OW::Config::reloading ? 1 : 0,
             OW::Config::Tracking_smooth,
+            OW::Config::AimBehaviorBaseSpeed(behavior),
+            OW::Config::AimBehaviorMethod(behavior),
             OW::Config::Prediction ? 1 : 0,
             OW::Config::targetdelay ? 1 : 0);
 
@@ -4680,7 +4685,11 @@ namespace AimbotDetail {
                 lastDryRunLog = now;
                 const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
                 if (!IsZeroVector(vec)) {
-                    AimData aim = BuildAimData(vec, false, OW::Config::Tracking_smooth / 10.f, 0.0f);
+                    AimData aim = BuildAimData(
+                        vec,
+                        false,
+                        OW::Config::AimBehaviorSmoothInput(behavior, OW::Config::Tracking_smooth),
+                        OW::Config::AimBehaviorAcceleration(behavior));
                     Diagnostics::Aim("dryrun.tracking local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) "
                         "delta_pixels_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) sensitivity=%.1f would_move=%d target_pos=(%.1f,%.1f,%.1f)",
                         RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
@@ -4733,12 +4742,15 @@ namespace AimbotDetail {
             } else {
                 const TwoStageAimPlan twoStagePlan = ResolveTwoStageAimPlan(vec, target, OW::Config::Prediction);
                 const Vector3 aimTarget = twoStagePlan.active ? twoStagePlan.target : vec;
-                const float smoothInput = (OW::Config::Tracking_smooth / 10.f) * twoStagePlan.smoothScale;
+                const float smoothInput = OW::Config::AimBehaviorSmoothInput(
+                    behavior,
+                    OW::Config::Tracking_smooth,
+                    twoStagePlan.smoothScale);
                 AimData aim = BuildAimData(
                     aimTarget,
                     false,
                     smoothInput,
-                    0.0f,
+                    OW::Config::AimBehaviorAcceleration(behavior),
                     twoStagePlan.methodOverride,
                     twoStagePlan.bezierSpeed);
                 ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
@@ -4789,13 +4801,16 @@ namespace AimbotDetail {
         if (!IsAimKeyPressed() || OW::Config::shooted || OW::Config::reloading)
             return;
         g_flickAttempts++;
+        const int behavior = OW::Config::ClampAimBehaviorIndex(OW::Config::aimBehavior);
 
-        Diagnostics::Aim("flick.enter originSens=%.6f shooted=%d reloading=%d flickSmooth=%.6f acceleration=%.6f prediction=%d",
+        Diagnostics::Aim("flick.enter originSens=%.6f shooted=%d reloading=%d scale=%.6f baseSpeed=%.6f method=%d acceleration=%.6f prediction=%d",
             origin_sens,
             OW::Config::shooted ? 1 : 0,
             OW::Config::reloading ? 1 : 0,
             OW::Config::Flick_smooth,
-            OW::Config::accvalue,
+            OW::Config::AimBehaviorBaseSpeed(behavior),
+            OW::Config::AimBehaviorMethod(behavior),
+            OW::Config::AimBehaviorAcceleration(behavior),
             OW::Config::Prediction ? 1 : 0);
 
         // ---- Dry-run mode: log diagnostic info, don't move cursor ----
@@ -4806,7 +4821,11 @@ namespace AimbotDetail {
                 lastDryRunLog = now;
                 const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
                 if (!IsZeroVector(vec)) {
-                    AimData aim = BuildAimData(vec, true, OW::Config::Flick_smooth / 10.f, OW::Config::accvalue);
+                    AimData aim = BuildAimData(
+                        vec,
+                        true,
+                        OW::Config::AimBehaviorSmoothInput(behavior, OW::Config::Flick_smooth),
+                        OW::Config::AimBehaviorAcceleration(behavior));
                     const float hitWindow = (std::max)(OW::Config::hitbox, OW::Config::aimbotEffectiveHitWindow);
                     const bool wouldHit = OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
                     Diagnostics::Aim("dryrun.flick local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) "
@@ -4856,12 +4875,15 @@ namespace AimbotDetail {
 
                 const TwoStageAimPlan twoStagePlan = ResolveTwoStageAimPlan(vec, target, OW::Config::Prediction);
                 const Vector3 aimTarget = twoStagePlan.active ? twoStagePlan.target : vec;
-                const float smoothInput = (OW::Config::Flick_smooth / 10.f) * twoStagePlan.smoothScale;
+                const float smoothInput = OW::Config::AimBehaviorSmoothInput(
+                    behavior,
+                    OW::Config::Flick_smooth,
+                    twoStagePlan.smoothScale);
                 AimData aim = BuildAimData(
                     aimTarget,
                     true,
                     smoothInput,
-                    OW::Config::accvalue,
+                    OW::Config::AimBehaviorAcceleration(behavior),
                     twoStagePlan.methodOverride,
                     twoStagePlan.bezierSpeed);
                 ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
@@ -4963,7 +4985,11 @@ namespace AimbotDetail {
                 const float dist = CameraPosition().DistTo(vec);
                 if (dist > 20.f) continue;
 
-                AimData aim = BuildAimData(vec, false, speed / 10.f, 0.0f);
+                AimData aim = BuildAimData(
+                    vec,
+                    false,
+                    OW::Config::AimBehaviorSmoothInput(0, speed),
+                    OW::Config::AimBehaviorAcceleration(0));
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     const float dist2 = CameraPosition().DistTo(vec);
                     if ((!local.skillcd1 && dist2 < 20.f) || dist2 < 7.f) {
@@ -5033,7 +5059,11 @@ namespace AimbotDetail {
         if (local.skillcd1) return;
 
         const float dist = CameraPosition().DistTo(vec);
-        AimData aim = BuildAimData(vec, false, OW::Config::Tracking_smooth / 10.f, 0.0f);
+        AimData aim = BuildAimData(
+            vec,
+            false,
+            OW::Config::AimBehaviorSmoothInput(0, OW::Config::Tracking_smooth),
+            OW::Config::AimBehaviorAcceleration(0));
         if (OW::Config::health <= 50.f && dist <= 15.f) {
             if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f))
                 OW::SetKeyHold(0x8, 40);
@@ -5142,9 +5172,17 @@ namespace AimbotDetail {
                 !(target.skill2act && target.HeroID == OW::eHero::HERO_GENJI)) {
                 AimData aim{};
                 if (OW::Config::Tracking2)
-                    aim = BuildAimData(vec, false, OW::Config::Tracking_smooth2 / 10.f, 0.0f);
+                    aim = BuildAimData(
+                        vec,
+                        false,
+                        OW::Config::AimBehaviorSmoothInput(0, OW::Config::Tracking_smooth2),
+                        OW::Config::AimBehaviorAcceleration(0));
                 else if (OW::Config::Flick2)
-                    aim = BuildAimData(vec, true, OW::Config::Flick_smooth2 / 10.f, OW::Config::accvalue2);
+                    aim = BuildAimData(
+                        vec,
+                        true,
+                        OW::Config::AimBehaviorSmoothInput(1, OW::Config::Flick_smooth2),
+                        OW::Config::AimBehaviorAcceleration(1));
                 else
                     aim = BuildAimData(vec, false, 1.0f, 0.0f);
 

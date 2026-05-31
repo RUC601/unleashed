@@ -2125,7 +2125,7 @@ namespace OW {
             target,
             speed,
             accel,
-            std::clamp(Config::aimMethod, 0, 4),
+            Config::AimBehaviorMethod(Config::aimBehavior),
             Config::aimBezierSpeed);
     }
 
