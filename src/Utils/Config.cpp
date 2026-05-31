@@ -54,9 +54,186 @@ namespace OW { namespace Config {
     bool drawbox3d = false;
     bool manualsave = false;
 
+    namespace {
+
+        bool PathIsRegularFile(const std::string& path)
+        {
+            const DWORD attributes = GetFileAttributesA(path.c_str());
+            return attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+        }
+
+        bool PathIsDirectory(const std::string& path)
+        {
+            const DWORD attributes = GetFileAttributesA(path.c_str());
+            return attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        }
+
+        std::string JoinPathRaw(const std::string& directory, const std::string& child)
+        {
+            if (directory.empty())
+                return child;
+
+            const char tail = directory.back();
+            if (tail == '\\' || tail == '/')
+                return directory + child;
+
+            return directory + "\\" + child;
+        }
+
+        std::string ExecutableDirectoryPath()
+        {
+            std::vector<char> buffer(MAX_PATH);
+            DWORD length = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+            while (length == buffer.size()) {
+                buffer.resize(buffer.size() * 2);
+                length = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+            }
+
+            if (length == 0)
+                return ".";
+
+            std::string path(buffer.data(), length);
+            const size_t slash = path.find_last_of("\\/");
+            return slash == std::string::npos ? "." : path.substr(0, slash);
+        }
+
+        std::string CurrentDirectoryPathRaw()
+        {
+            std::vector<char> buffer(MAX_PATH);
+            DWORD length = GetCurrentDirectoryA(static_cast<DWORD>(buffer.size()), buffer.data());
+            while (length >= buffer.size()) {
+                buffer.resize(static_cast<size_t>(length) + 1);
+                length = GetCurrentDirectoryA(static_cast<DWORD>(buffer.size()), buffer.data());
+            }
+
+            if (length == 0)
+                return ".";
+
+            return std::string(buffer.data(), length);
+        }
+
+        bool SamePathText(std::string lhs, std::string rhs)
+        {
+            std::replace(lhs.begin(), lhs.end(), '/', '\\');
+            std::replace(rhs.begin(), rhs.end(), '/', '\\');
+            std::transform(lhs.begin(), lhs.end(), lhs.begin(),
+                [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            std::transform(rhs.begin(), rhs.end(), rhs.begin(),
+                [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            return lhs == rhs;
+        }
+
+        FILETIME LastWriteTimeOrZero(const std::string& path)
+        {
+            WIN32_FILE_ATTRIBUTE_DATA data{};
+            if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &data))
+                return FILETIME{};
+            return data.ftLastWriteTime;
+        }
+
+        bool FileTimeGreater(FILETIME lhs, FILETIME rhs)
+        {
+            return CompareFileTime(&lhs, &rhs) > 0;
+        }
+
+        std::string HeroSidecarFileName(const std::string& profileFileName)
+        {
+            const size_t dot = profileFileName.find_last_of('.');
+            const std::string stem = dot == std::string::npos
+                ? profileFileName
+                : profileFileName.substr(0, dot);
+            return stem + ".heroes.json";
+        }
+
+        void AddUniquePath(std::vector<std::string>& paths, const std::string& path)
+        {
+            for (const std::string& existing : paths) {
+                if (SamePathText(existing, path))
+                    return;
+            }
+            paths.emplace_back(path);
+        }
+
+        void CopyNewestLegacyFile(const std::vector<std::string>& sourceDirectories,
+                                  const std::string& targetDirectory,
+                                  const std::string& fileName)
+        {
+            const std::string targetPath = JoinPathRaw(targetDirectory, fileName);
+            if (PathIsRegularFile(targetPath))
+                return;
+
+            std::string newestSource;
+            FILETIME newestTime{};
+            for (const std::string& sourceDirectory : sourceDirectories) {
+                const std::string sourcePath = JoinPathRaw(sourceDirectory, fileName);
+                if (!PathIsRegularFile(sourcePath))
+                    continue;
+
+                const FILETIME writeTime = LastWriteTimeOrZero(sourcePath);
+                if (newestSource.empty() || FileTimeGreater(writeTime, newestTime)) {
+                    newestSource = sourcePath;
+                    newestTime = writeTime;
+                }
+            }
+
+            if (!newestSource.empty())
+                CopyFileA(newestSource.c_str(), targetPath.c_str(), TRUE);
+        }
+
+        void MigrateLegacyConfigFiles(const std::string& targetDirectory)
+        {
+            static bool migrated = false;
+            if (migrated)
+                return;
+            migrated = true;
+
+            std::vector<std::string> sourceDirectories;
+            AddUniquePath(sourceDirectories, ExecutableDirectoryPath());
+            AddUniquePath(sourceDirectories, CurrentDirectoryPathRaw());
+
+            std::vector<std::string> profileNames;
+            for (const std::string& sourceDirectory : sourceDirectories) {
+                WIN32_FIND_DATAA findData{};
+                const std::string searchPath = JoinPathRaw(sourceDirectory, "*.ini");
+                HANDLE findHandle = FindFirstFileA(searchPath.c_str(), &findData);
+                if (findHandle == INVALID_HANDLE_VALUE)
+                    continue;
+
+                do {
+                    if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+                        const std::string profileName = findData.cFileName;
+                        if (std::find(profileNames.begin(), profileNames.end(), profileName) == profileNames.end())
+                            profileNames.emplace_back(profileName);
+                    }
+                } while (FindNextFileA(findHandle, &findData));
+                FindClose(findHandle);
+            }
+
+            if (std::find(profileNames.begin(), profileNames.end(), "config.ini") == profileNames.end())
+                profileNames.emplace_back("config.ini");
+
+            for (const std::string& profileName : profileNames) {
+                CopyNewestLegacyFile(sourceDirectories, targetDirectory, profileName);
+                CopyNewestLegacyFile(sourceDirectories, targetDirectory, HeroSidecarFileName(profileName));
+            }
+        }
+
+    } // anonymous namespace
+
+    std::string ConfigDirectoryPath()
+    {
+        const std::string directory = JoinPathRaw(ExecutableDirectoryPath(), "config");
+        if (!PathIsDirectory(directory))
+            CreateDirectoryA(directory.c_str(), nullptr);
+        MigrateLegacyConfigFiles(directory);
+        return directory;
+    }
+
     std::string ConfigPath()
     {
-        return ".\\" + configFileName;
+        return JoinPathRaw(ConfigDirectoryPath(), configFileName);
     }
 
     std::string HeroConfigPath(const std::string& configPath)
@@ -459,9 +636,12 @@ namespace OW { namespace Config {
                    setting == "kmboxPort" ||
                    setting == "kmboxMonitorPort" ||
                    setting == "kmboxInputDelayMs" ||
+                   setting == "kmboxCountsPerRadian" ||
                    setting == "kmboxAimSensitivity" ||
                    setting == "gameMouseSensitivity" ||
                    setting == "hostMouseDpi" ||
+                   setting == "referenceGameSensitivity" ||
+                   setting == "autoScaleByGameSensitivity" ||
                    setting == "sensReference";
         }
 
@@ -1321,6 +1501,7 @@ namespace OW { namespace Config {
             aimBehaviorMethod = { 0, 0, 0, 0, 0 };
             aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
+            secondaryAimMethodOverride = { -1, -1 };
             aimPidP = 0.5f;
             aimPidI = 0.01f;
             aimPidD = 0.1f;
@@ -1376,10 +1557,12 @@ namespace OW { namespace Config {
             kmboxMonitorPort = kDefaultKmboxMonitorPort;
             CopyString(kmboxMac, kDefaultKmboxMac);
             CopyString(kmboxComPort, kDefaultKmboxComPort);
-            kmboxAimSensitivity = 1.0f;   // default: 1:1 scalar
-            gameMouseSensitivity = 15.0f; // default: OW baseline until DMA updates it
-            sensReference = 15.0f;        // default: OW baseline calibration point
-            autoSyncSensitivity = false;  // default: manual scalar only
+            kmboxCountsPerRadian = 100.0f;       // default: reference-project manual baseline
+            gameMouseSensitivity = 15.0f;        // default manual/effective current game sensitivity
+            referenceGameSensitivity = 15.0f;    // default calibration point
+            autoScaleByGameSensitivity = false;  // default: manual counts-per-radian only
+            calibratedCountsPerRadian = 0.0f;
+            calibratedPitchCountsPerRadian = 0.0f;
             hostMouseDpi = kDefaultHostMouseDpi;
             detectedHostMouseDpi = 0.0f;
             hostMouseDpiAutoDetected = false;
@@ -3030,6 +3213,10 @@ namespace OW { namespace Config {
                 aimBehaviorBaseSpeed[index] = ReadFixedFloat(ini, section, speedKeys[index], 100.0f);
                 aimBehaviorAcceleration[index] = ReadFixedFloat(ini, section, accelerationKeys[index], accvalue);
             }
+            secondaryAimMethodOverride[0] = ReadInt(
+                ini, section, "secondaryTrackingMethod", secondaryAimMethodOverride[0]);
+            secondaryAimMethodOverride[1] = ReadInt(
+                ini, section, "secondaryFlickMethod", secondaryAimMethodOverride[1]);
         }
 
         void SaveAimbotSettingsUnlocked(const std::string& path)
@@ -3127,6 +3314,8 @@ namespace OW { namespace Config {
                 WriteFixedFloatValue(path, section, speedKeys[index], AimBehaviorBaseSpeed(static_cast<int>(index)));
                 WriteFixedFloatValue(path, section, accelerationKeys[index], AimBehaviorAcceleration(static_cast<int>(index)));
             }
+            WriteIntValue(path, section, "secondaryTrackingMethod", ClampAimMethodOverride(secondaryAimMethodOverride[0]));
+            WriteIntValue(path, section, "secondaryFlickMethod", ClampAimMethodOverride(secondaryAimMethodOverride[1]));
         }
 
         void LoadGlobalSettingsUnlocked(const IniFile& ini)
@@ -3183,10 +3372,32 @@ namespace OW { namespace Config {
             kmboxMonitorPort = ReadInt(ini, section, "kmboxMonitorPort", kmboxPort + 1);
             CopyString(kmboxMac, ReadString(ini, section, "kmboxMac", kmboxMac));
             CopyString(kmboxComPort, ReadString(ini, section, "kmboxComPort", kmboxComPort));
-            kmboxAimSensitivity = ReadFixedFloat(ini, section, "kmboxAimSensitivity", kmboxAimSensitivity);
+            kmboxCountsPerRadian = ReadFixedFloat(
+                ini,
+                section,
+                KeyExists(ini, section, "kmboxCountsPerRadian") ? "kmboxCountsPerRadian" : "kmboxAimSensitivity",
+                kmboxCountsPerRadian);
             gameMouseSensitivity = ReadFixedFloat(ini, section, "gameMouseSensitivity", gameMouseSensitivity);
-            sensReference = ReadFixedFloat(ini, section, "sensReference", sensReference);
-            autoSyncSensitivity = ReadBool(ini, section, "autoSyncSensitivity", autoSyncSensitivity);
+            referenceGameSensitivity = ReadFixedFloat(
+                ini,
+                section,
+                KeyExists(ini, section, "referenceGameSensitivity") ? "referenceGameSensitivity" : "sensReference",
+                referenceGameSensitivity);
+            autoScaleByGameSensitivity = ReadBool(
+                ini,
+                section,
+                KeyExists(ini, section, "autoScaleByGameSensitivity") ? "autoScaleByGameSensitivity" : "autoSyncSensitivity",
+                autoScaleByGameSensitivity);
+            calibratedCountsPerRadian = ReadFixedFloat(
+                ini,
+                section,
+                KeyExists(ini, section, "calibratedCountsPerRadian") ? "calibratedCountsPerRadian" : "calibratedPixelsPerRadian",
+                calibratedCountsPerRadian);
+            calibratedPitchCountsPerRadian = ReadFixedFloat(
+                ini,
+                section,
+                KeyExists(ini, section, "calibratedPitchCountsPerRadian") ? "calibratedPitchCountsPerRadian" : "calibratedPixelsPerRadianPitch",
+                calibratedPitchCountsPerRadian);
             hostMouseDpi = ReadFixedFloat(ini, section, "hostMouseDpi", hostMouseDpi);
             detectedHostMouseDpi = 0.0f;
             hostMouseDpiAutoDetected = false;
@@ -3203,10 +3414,15 @@ namespace OW { namespace Config {
             WriteIntValue(path, "KMBox", "kmboxMonitorPort", kmboxMonitorPort);
             WriteStringValue(path, "KMBox", "kmboxMac", kmboxMac);
             WriteStringValue(path, "KMBox", "kmboxComPort", kmboxComPort);
-            WriteFixedFloatValue(path, "KMBox", "kmboxAimSensitivity", kmboxAimSensitivity);
+            WriteFixedFloatValue(path, "KMBox", "kmboxCountsPerRadian", kmboxCountsPerRadian);
+            WriteFixedFloatValue(path, "KMBox", "kmboxAimSensitivity", kmboxCountsPerRadian);
             WriteFixedFloatValue(path, "KMBox", "gameMouseSensitivity", gameMouseSensitivity);
-            WriteFixedFloatValue(path, "KMBox", "sensReference", sensReference);
-            WriteBoolValue(path, "KMBox", "autoSyncSensitivity", autoSyncSensitivity);
+            WriteFixedFloatValue(path, "KMBox", "referenceGameSensitivity", referenceGameSensitivity);
+            WriteFixedFloatValue(path, "KMBox", "sensReference", referenceGameSensitivity);
+            WriteBoolValue(path, "KMBox", "autoScaleByGameSensitivity", autoScaleByGameSensitivity);
+            WriteBoolValue(path, "KMBox", "autoSyncSensitivity", autoScaleByGameSensitivity);
+            WriteFixedFloatValue(path, "KMBox", "calibratedCountsPerRadian", calibratedCountsPerRadian);
+            WriteFixedFloatValue(path, "KMBox", "calibratedPitchCountsPerRadian", calibratedPitchCountsPerRadian);
             WriteFixedFloatValue(path, "KMBox", "hostMouseDpi", hostMouseDpi);
             WriteIntValue(path, "KMBox", "kmboxInputDelayMs", kmboxInputDelayMs);
             WriteBoolValue(path, "KMBox", "kmboxDebugLog", kmboxDebugLog);
@@ -3401,6 +3617,8 @@ namespace OW { namespace Config {
                 aimBehaviorBaseSpeed[index] = std::clamp(aimBehaviorBaseSpeed[index], 0.0f, 100.0f);
                 aimBehaviorAcceleration[index] = std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f);
             }
+            for (int& method : secondaryAimMethodOverride)
+                method = ClampAimMethodOverride(method);
             ClampSetting("aimbotSmoothType", aimbotSmoothType, 0, 2, 0);
             ClampSetting("aimbotPredictionMode", aimbotPredictionMode, 0, 2, 0);
             ClampSetting("aimBehavior", aimBehavior, 0, 4, 0);
@@ -3421,26 +3639,31 @@ namespace OW { namespace Config {
             ClampSetting("kmboxInputDelayMs", kmboxInputDelayMs, 0, 20, kDefaultKmboxInputDelayMs);
             ClampSetting("manualScreenWidth", manualScreenWidth, 0, 16384, 1920);
             ClampSetting("manualScreenHeight", manualScreenHeight, 0, 16384, 1080);
-            ClampFloatSetting("kmboxAimSensitivity", kmboxAimSensitivity, 0.1f, 2000.0f, 1.0f);
+            ClampFloatSetting("kmboxCountsPerRadian", kmboxCountsPerRadian, 0.1f, 20000.0f, 100.0f);
             ClampFloatSetting("gameMouseSensitivity", gameMouseSensitivity, 0.01f, 100.0f, 15.0f);
-            ClampFloatSetting("sensReference", sensReference, 0.01f, 100.0f, 15.0f);
+            ClampFloatSetting("referenceGameSensitivity", referenceGameSensitivity, 0.01f, 100.0f, 15.0f);
+            ClampFloatSetting("calibratedCountsPerRadian", calibratedCountsPerRadian, 0.0f, 20000.0f, 0.0f);
+            ClampFloatSetting("calibratedPitchCountsPerRadian", calibratedPitchCountsPerRadian, 0.0f, 20000.0f, 0.0f);
             ClampFloatSetting("hostMouseDpi", hostMouseDpi, 100.0f, 64000.0f, kDefaultHostMouseDpi);
-            const float effectiveSensitivity =
-                autoSyncSensitivity && gameMouseSensitivity > 0.0f && sensReference > 0.0f
-                    ? kmboxAimSensitivity * (sensReference / gameMouseSensitivity)
-                    : kmboxAimSensitivity;
-            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d hostMouseDpi=%.6f effectiveSensitivity=%.6f inputDelayMs=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
+            const float baseCountsPerRadian = KmboxBaseCountsPerRadian();
+            const float yawCountsPerRadian = KmboxYawCountsPerRadian();
+            const float pitchCountsPerRadian = KmboxPitchCountsPerRadian();
+            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f calibratedPitchCountsPerRadian=%.6f baseCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f yawCountsPerRadian=%.6f pitchCountsPerRadian=%.6f inputDelayMs=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
                 kmboxEnabled ? 1 : 0,
                 kmboxDeviceType,
                 kmboxIp,
                 kmboxPort,
                 kmboxMonitorPort,
-                kmboxAimSensitivity,
+                kmboxCountsPerRadian,
+                calibratedCountsPerRadian,
+                calibratedPitchCountsPerRadian,
+                baseCountsPerRadian,
                 gameMouseSensitivity,
-                sensReference,
-                autoSyncSensitivity ? 1 : 0,
+                referenceGameSensitivity,
+                autoScaleByGameSensitivity ? 1 : 0,
                 hostMouseDpi,
-                effectiveSensitivity,
+                yawCountsPerRadian,
+                pitchCountsPerRadian,
                 kmboxInputDelayMs,
                 aim_key,
                 aim_key2,
@@ -3449,9 +3672,9 @@ namespace OW { namespace Config {
                 aimMethod,
                 aimPidDeadzone,
                 aimBezierSpeed);
-            if (effectiveSensitivity <= 1.0f) {
-                Diagnostics::Aim("config.warning effectiveSensitivity=%.6f is very low; small angle deltas may remain sub-pixel for many frames",
-                    effectiveSensitivity);
+            if (yawCountsPerRadian <= 1.0f) {
+                Diagnostics::Aim("config.warning yawCountsPerRadian=%.6f is very low; small angle deltas may remain sub-count for many frames",
+                    yawCountsPerRadian);
             }
             ClampSetting("locx", locx, 0, 100000, 0);
             ClampSetting("locy", locy, 0, 100000, 0);
@@ -3529,10 +3752,11 @@ namespace OW { namespace Config {
                 AutoRMBdistance, ToText(AutoSkill).c_str(), SkillHealth, ToText(AntiAFK).c_str());
             LogConfig(level, "Dump: secondary secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
-            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d monitorPort=%d mac=%s comPort=%s aimSensitivity=%.3f gameMouseSensitivity=%.3f sensReference=%.3f autoSyncSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s",
+            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d monitorPort=%d mac=%s comPort=%s countsPerRadian=%.3f calibratedCountsPerRadian=%.3f calibratedPitchCountsPerRadian=%.3f gameMouseSensitivity=%.3f referenceGameSensitivity=%.3f autoScaleByGameSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMonitorPort, kmboxMac,
-                kmboxComPort, kmboxAimSensitivity, gameMouseSensitivity, sensReference,
-                ToText(autoSyncSensitivity).c_str(), hostMouseDpi, detectedHostMouseDpi,
+                kmboxComPort, kmboxCountsPerRadian, calibratedCountsPerRadian, calibratedPitchCountsPerRadian,
+                gameMouseSensitivity, referenceGameSensitivity,
+                ToText(autoScaleByGameSensitivity).c_str(), hostMouseDpi, detectedHostMouseDpi,
                 ToText(hostMouseDpiAutoDetected).c_str(), kmboxInputDelayMs,
                 ToText(kmboxDebugLog).c_str());
             LogConfig(level, "Dump: keystate offset=%s size=%d sessionId=%d",

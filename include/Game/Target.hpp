@@ -117,41 +117,21 @@ namespace OW {
         }
 
         {
-            // Use calibrated pixels-per-radian if available, otherwise fall back to manual kmboxAimSensitivity
-            float baseSensitivity;
-            if (Config::calibratedPixelsPerRadian > 0.0f) {
-                baseSensitivity = std::clamp(Config::calibratedPixelsPerRadian, 0.1f, 20000.0f);
-            } else {
-                baseSensitivity = std::clamp(Config::kmboxAimSensitivity, 0.1f, 2000.0f);
-            }
-            float sensitivity = baseSensitivity;
-            float pitchSensitivity = (Config::calibratedPixelsPerRadianPitch > 0.0f)
-                ? Config::calibratedPixelsPerRadianPitch
-                : sensitivity;
-            float syncScale = 1.0f;
-            if (Config::autoSyncSensitivity &&
-                std::isfinite(Config::gameMouseSensitivity) &&
-                std::isfinite(Config::sensReference) &&
-                Config::gameMouseSensitivity > 0.0f &&
-                Config::sensReference > 0.0f) {
-                syncScale = Config::sensReference / Config::gameMouseSensitivity;
-                sensitivity = baseSensitivity * syncScale;
-                pitchSensitivity = (Config::calibratedPixelsPerRadianPitch > 0.0f)
-                    ? Config::calibratedPixelsPerRadianPitch * syncScale
-                    : sensitivity;
-            }
+            const float baseCountsPerRadian = Config::KmboxBaseCountsPerRadian();
+            const float syncScale = Config::KmboxGameSensitivityScale();
+            float sensitivity = Config::KmboxYawCountsPerRadian();
+            float pitchSensitivity = Config::KmboxPitchCountsPerRadian();
 
             if (!std::isfinite(sensitivity) || sensitivity <= 0.0f) {
-                Diagnostics::Aim("mouse.convert warning invalid_effective_sensitivity computed=%.9f fallback=%.9f autoSync=%d gameSens=%.9f refSens=%.9f pitchSens=%.9f",
+                Diagnostics::Aim("mouse.convert warning invalid_counts_per_rad computed=%.9f fallback=%.9f autoScale=%d gameSens=%.9f refSens=%.9f pitchCountsPerRad=%.9f",
                     sensitivity,
-                    baseSensitivity,
-                    Config::autoSyncSensitivity ? 1 : 0,
+                    baseCountsPerRadian,
+                    Config::autoScaleByGameSensitivity ? 1 : 0,
                     Config::gameMouseSensitivity,
-                    Config::sensReference,
+                    Config::referenceGameSensitivity,
                     pitchSensitivity);
-                sensitivity = baseSensitivity;
+                sensitivity = baseCountsPerRadian;
                 pitchSensitivity = sensitivity;
-                syncScale = 1.0f;
             }
 
             static float accumX = 0.0f;
@@ -173,13 +153,14 @@ namespace OW {
             accumY -= static_cast<float>(pixelY);
 
             ++callCount;
-            Diagnostics::Aim("mouse.convert call=%d delta_rad_pitch=%.9f delta_rad_yaw=%.9f baseSensitivity=%.6f effectiveSensitivity=%.6f autoSync=%d syncScale=%.6f pitchScale=%.6f scaled_pixels=(yaw=%.9f,pitch=%.9f) accum_before=(%.9f,%.9f) pixel=(%d,%d) accum_after=(%.9f,%.9f)",
+            Diagnostics::Aim("mouse.convert call=%d delta_rad_pitch=%.9f delta_rad_yaw=%.9f baseCountsPerRad=%.6f yawCountsPerRad=%.6f pitchCountsPerRad=%.6f autoScale=%d syncScale=%.6f pitchScale=%.6f scaled_counts=(yaw=%.9f,pitch=%.9f) accum_before=(%.9f,%.9f) counts=(%d,%d) accum_after=(%.9f,%.9f)",
                 callCount,
                 delta.X,
                 delta.Y,
-                baseSensitivity,
+                baseCountsPerRadian,
                 sensitivity,
-                Config::autoSyncSensitivity ? 1 : 0,
+                pitchSensitivity,
+                Config::autoScaleByGameSensitivity ? 1 : 0,
                 syncScale,
                 pitchScale,
                 scaledYaw,
@@ -191,13 +172,13 @@ namespace OW {
                 accumX,
                 accumY);
             if (callCount <= 50 || pixelX != 0 || pixelY != 0) {
-                std::printf("[KMBOX] #%d pitch=%.6f yaw=%.6f yawSens=%.1f pitchSens=%.1f px=(%d,%d) accum=(%.3f,%.3f)\n",
+                std::printf("[KMBOX] #%d pitch=%.6f yaw=%.6f yawCountsPerRad=%.1f pitchCountsPerRad=%.1f counts=(%d,%d) accum=(%.3f,%.3f)\n",
                     callCount, delta.X, delta.Y, sensitivity, pitchSensitivity,
                     pixelX, pixelY, accumX, accumY);
             }
 
             if (pixelX == 0 && pixelY == 0) {
-                Diagnostics::Aim("mouse.move early_return reason=zero_pixels scaled=(yaw_%.9f,pitch_%.9f) accum_after=(%.9f,%.9f) note=integer_truncation_waiting_for_accumulator",
+                Diagnostics::Aim("mouse.move early_return reason=zero_counts scaled=(yaw_%.9f,pitch_%.9f) accum_after=(%.9f,%.9f) note=integer_truncation_waiting_for_accumulator",
                     scaledYaw,
                     scaledPitch,
                     accumX,
@@ -272,7 +253,16 @@ namespace OW {
     // Sensitivity auto-calibration
     // =========================================================================
 
-    inline float CalibrateSensitivity(bool calibrateBothAxes = true) {
+    inline float ResolveCalibrationReferenceGameSensitivity(float referenceOverride = 0.0f) {
+        if (std::isfinite(referenceOverride) && referenceOverride > 0.0f)
+            return referenceOverride;
+        if (std::isfinite(Config::gameMouseSensitivity) && Config::gameMouseSensitivity > 0.0f)
+            return Config::gameMouseSensitivity;
+        return Config::referenceGameSensitivity;
+    }
+
+    inline float CalibrateSensitivity(bool calibrateBothAxes = true,
+                                      float referenceGameSensitivityOverride = 0.0f) {
         // 1. Set calibration flag
         Config::calibrationInProgress = true;
 
@@ -301,9 +291,11 @@ namespace OW {
         // Handle angle wrapping (if angles wrap at +/-PI)
         if (yawDelta > kPi) yawDelta = 2.0f * kPi - yawDelta;
 
-        // 7. Calculate pixels per radian
+        // 7. Calculate KMBox mouse counts per radian and bind it to the current game sensitivity.
         if (yawDelta > 0.0001f) {
-            Config::calibratedPixelsPerRadian = static_cast<float>(moveX) / yawDelta;
+            Config::calibratedCountsPerRadian = static_cast<float>(moveX) / yawDelta;
+            Config::referenceGameSensitivity =
+                ResolveCalibrationReferenceGameSensitivity(referenceGameSensitivityOverride);
         } else {
             std::printf("[CALIBRATE] Yaw delta too small (%.9f rad) -- game may be in menu or not running\n", yawDelta);
             Config::calibrationInProgress = false;
@@ -335,13 +327,13 @@ namespace OW {
             if (pitchDelta > 0.0001f) {
                 float pitchRatio = static_cast<float>(pitchMoveY) / pitchDelta;
                 // Store separate pitch sensitivity only if >5% different from yaw
-                if (Config::calibratedPixelsPerRadian > 0.0f) {
-                    float ratioDiff = fabsf(pitchRatio - Config::calibratedPixelsPerRadian) / Config::calibratedPixelsPerRadian;
+                if (Config::calibratedCountsPerRadian > 0.0f) {
+                    float ratioDiff = fabsf(pitchRatio - Config::calibratedCountsPerRadian) / Config::calibratedCountsPerRadian;
                     if (ratioDiff > 0.05f) {
-                        Config::calibratedPixelsPerRadianPitch = pitchRatio;
+                        Config::calibratedPitchCountsPerRadian = pitchRatio;
                         std::printf("[CALIBRATE] Pitch sensitivity differs from yaw by %.1f%% -- storing separate value\n", ratioDiff * 100.0f);
                     } else {
-                        Config::calibratedPixelsPerRadianPitch = 0.0f;
+                        Config::calibratedPitchCountsPerRadian = 0.0f;
                     }
                 }
             } else {
@@ -349,26 +341,27 @@ namespace OW {
             }
         }
 
-        std::printf("[CALIBRATE] Result: yaw=%.1f px/rad pitch=%.1f px/rad\n",
-            Config::calibratedPixelsPerRadian,
-            Config::calibratedPixelsPerRadianPitch > 0.0f ? Config::calibratedPixelsPerRadianPitch : Config::calibratedPixelsPerRadian);
+        std::printf("[CALIBRATE] Result: yaw=%.1f counts/rad pitch=%.1f counts/rad refGameSens=%.3f\n",
+            Config::calibratedCountsPerRadian,
+            Config::calibratedPitchCountsPerRadian > 0.0f ? Config::calibratedPitchCountsPerRadian : Config::calibratedCountsPerRadian,
+            Config::referenceGameSensitivity);
 
         Config::calibrationInProgress = false;
-        return Config::calibratedPixelsPerRadian;
+        return Config::calibratedCountsPerRadian;
     }
 
-    inline float RunCalibrationSamples() {
+    inline float RunCalibrationSamples(float referenceGameSensitivityOverride = 0.0f) {
         float total = 0.0f;
         int validSamples = 0;
         int numSamples = (std::max)(Config::calibrationSampleCount, 1);
 
         for (int i = 0; i < numSamples; ++i) {
             std::printf("[CALIBRATE] Sample %d/%d starting...\n", i + 1, numSamples);
-            float result = CalibrateSensitivity(true);
+            float result = CalibrateSensitivity(true, referenceGameSensitivityOverride);
             if (result > 0.0f) {
                 total += result;
                 ++validSamples;
-                std::printf("[CALIBRATE] Sample %d/%d complete: %.1f px/rad\n", i + 1, numSamples, result);
+                std::printf("[CALIBRATE] Sample %d/%d complete: %.1f counts/rad\n", i + 1, numSamples, result);
             } else {
                 std::printf("[CALIBRATE] Sample %d/%d failed (zero delta)\n", i + 1, numSamples);
             }
@@ -381,14 +374,17 @@ namespace OW {
 
         if (validSamples > 0) {
             float avg = total / static_cast<float>(validSamples);
-            Config::calibratedPixelsPerRadian = avg;
-            std::printf("[CALIBRATE] Averaged %d valid samples: %.1f px/rad\n", validSamples, avg);
+            Config::calibratedCountsPerRadian = avg;
+            Config::referenceGameSensitivity =
+                ResolveCalibrationReferenceGameSensitivity(referenceGameSensitivityOverride);
+            std::printf("[CALIBRATE] Averaged %d valid samples: %.1f counts/rad refGameSens=%.3f\n",
+                validSamples, avg, Config::referenceGameSensitivity);
         } else {
             std::printf("[CALIBRATE] All samples failed -- calibration unsuccessful\n");
-            Config::calibratedPixelsPerRadian = 0.0f;
+            Config::calibratedCountsPerRadian = 0.0f;
         }
 
-        return Config::calibratedPixelsPerRadian;
+        return Config::calibratedCountsPerRadian;
     }
 
     inline void SendMouseButton(int button, bool down) {
@@ -1785,15 +1781,8 @@ namespace OW {
         }
 
         inline float EstimateMovePixels(const Vector3& angleDelta) {
-            const float sensitivity = std::clamp(
-                Config::calibratedPixelsPerRadian > 0.0f
-                    ? Config::calibratedPixelsPerRadian
-                    : Config::kmboxAimSensitivity,
-                0.1f,
-                20000.0f);
-            const float pitchSensitivity = Config::calibratedPixelsPerRadianPitch > 0.0f
-                ? Config::calibratedPixelsPerRadianPitch
-                : sensitivity;
+            const float sensitivity = Config::KmboxYawCountsPerRadian();
+            const float pitchSensitivity = Config::KmboxPitchCountsPerRadian();
             const float pitchScale = std::clamp(Config::aimbotPitchScale, 0.1f, 3.0f);
             const float pixelX = -angleDelta.Y * sensitivity;
             const float pixelY = angleDelta.X * pitchSensitivity * pitchScale;

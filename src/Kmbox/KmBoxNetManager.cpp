@@ -6,6 +6,7 @@
 #include "Kmbox/KmBoxNetManager.h"
 #include "Utils/Diagnostics.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -150,6 +151,35 @@ namespace
     {
         return type == KmBoxCommandType::MouseMove ||
             type == KmBoxCommandType::MouseAutoMove;
+    }
+
+    int UpdateQueuedMouseMoveButtonState(std::deque<KmBoxQueuedNetCommand>& queue,
+                                         std::deque<KmBoxQueuedNetCommand>::iterator begin,
+                                         int buttonState)
+    {
+        int updated = 0;
+        for (auto it = begin; it != queue.end(); ++it) {
+            if (!IsMouseMoveCommand(it->type))
+                continue;
+            it->data.cmd_mouse.button = buttonState;
+            ++updated;
+        }
+        return updated;
+    }
+
+    bool DropOldestMouseMove(std::deque<KmBoxQueuedNetCommand>& queue,
+                             KmBoxQueuedNetCommand& dropped)
+    {
+        const auto item = std::find_if(queue.begin(), queue.end(),
+            [](const KmBoxQueuedNetCommand& queued) {
+                return IsMouseMoveCommand(queued.type);
+            });
+        if (item == queue.end())
+            return false;
+
+        dropped = *item;
+        queue.erase(item);
+        return true;
     }
 
     int FlushIntervalForCommand(KmBoxCommandType type)
@@ -550,16 +580,21 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
 
         if (commandQueue.size() >= KmBoxRuntimeConfig::CommandQueueMaxSize) {
             Diagnostics::Error("[KMBOX-NET] Command queue full; dropping oldest command.");
-            if (!commandQueue.empty()) {
-                const KmBoxQueuedNetCommand& dropped = commandQueue.front();
-                Diagnostics::Aim("udp.enqueue drop_oldest reason=queue_full dropped_type=%s dropped_x=%d dropped_y=%d dropped_button=%d queue_size=%zu",
-                    ToString(dropped.type),
-                    dropped.data.cmd_mouse.x,
-                    dropped.data.cmd_mouse.y,
-                    dropped.data.cmd_mouse.button,
-                    commandQueue.size());
+            KmBoxQueuedNetCommand dropped{};
+            bool droppedMove = false;
+            if (Command.type == KmBoxCommandType::MouseButton)
+                droppedMove = DropOldestMouseMove(commandQueue, dropped);
+            if (!droppedMove && !commandQueue.empty()) {
+                dropped = commandQueue.front();
+                commandQueue.pop_front();
             }
-            commandQueue.pop_front();
+            Diagnostics::Aim("udp.enqueue drop_oldest reason=queue_full prefer_move=%d dropped_type=%s dropped_x=%d dropped_y=%d dropped_button=%d queue_size=%zu",
+                Command.type == KmBoxCommandType::MouseButton ? 1 : 0,
+                ToString(dropped.type),
+                dropped.data.cmd_mouse.x,
+                dropped.data.cmd_mouse.y,
+                dropped.data.cmd_mouse.button,
+                commandQueue.size());
         }
 
         if (Command.type == KmBoxCommandType::MouseButton) {
@@ -572,9 +607,16 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
                 insertAt = previous;
             }
 
-            commandQueue.insert(insertAt, Command);
-            Diagnostics::Aim("udp.enqueue prioritized_button queue_size_after=%zu",
-                commandQueue.size());
+            const auto inserted = commandQueue.insert(insertAt, Command);
+            const int currentButtonState = Command.mouseButtonStateMask >= 0
+                ? Command.mouseButtonStateMask
+                : Command.data.cmd_mouse.button;
+            const int updatedMoves = UpdateQueuedMouseMoveButtonState(
+                commandQueue, std::next(inserted), currentButtonState);
+            Diagnostics::Aim("udp.enqueue prioritized_button queue_size_after=%zu currentButtonState=0x%02X updatedTrailingMoves=%d",
+                commandQueue.size(),
+                currentButtonState,
+                updatedMoves);
         } else {
             commandQueue.push_back(Command);
         }
@@ -909,6 +951,7 @@ int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int C
     command.data = packet;
     command.length = commandLength;
     command.type = KmBoxCommandType::MouseButton;
+    command.mouseButtonStateMask = stateMask;
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
 }

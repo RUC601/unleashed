@@ -27,6 +27,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <cstdlib>
 #include <cfloat>
 #include <cstdint>
@@ -314,6 +315,13 @@ namespace {
             return directory + child;
 
         return directory + "\\" + child;
+    }
+
+    bool RegularFileExists(const std::string& path)
+    {
+        const DWORD attributes = GetFileAttributesA(path.c_str());
+        return attributes != INVALID_FILE_ATTRIBUTES &&
+            (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
     }
 
     std::string SocketErrorMessage(const char* prefix, int error)
@@ -653,6 +661,40 @@ namespace {
         std::snprintf(destination, kConfigProfileNameBufferSize, "%s", name.c_str());
     }
 
+    std::string NormalizeProfileFileName(const char* rawName)
+    {
+        std::string name = rawName ? rawName : "";
+
+        const auto isSpace = [](unsigned char ch) { return std::isspace(ch) != 0; };
+        name.erase(name.begin(), std::find_if(name.begin(), name.end(),
+            [&](unsigned char ch) { return !isSpace(ch); }));
+        name.erase(std::find_if(name.rbegin(), name.rend(),
+            [&](unsigned char ch) { return !isSpace(ch); }).base(), name.end());
+
+        const size_t slash = name.find_last_of("\\/");
+        if (slash != std::string::npos)
+            name = name.substr(slash + 1);
+
+        for (char& ch : name) {
+            const unsigned char value = static_cast<unsigned char>(ch);
+            if (value < 32 || ch == '<' || ch == '>' || ch == ':' || ch == '"' ||
+                ch == '/' || ch == '\\' || ch == '|' || ch == '?' || ch == '*') {
+                ch = '_';
+            }
+        }
+
+        if (name.empty())
+            name = "config";
+
+        std::string lowered = name;
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (lowered.size() < 4 || lowered.substr(lowered.size() - 4) != ".ini")
+            name += ".ini";
+
+        return name;
+    }
+
     void ReloadConfigProfile()
     {
         const std::string savedName = OW::Config::configFileName;
@@ -675,7 +717,7 @@ namespace {
     {
         std::vector<std::string> profiles;
         WIN32_FIND_DATAA findData{};
-        const std::string searchPath = JoinPath(CurrentDirectoryPath(), "*.ini");
+        const std::string searchPath = JoinPath(OW::Config::ConfigDirectoryPath(), "*.ini");
         HANDLE findHandle = FindFirstFileA(searchPath.c_str(), &findData);
         if (findHandle != INVALID_HANDLE_VALUE) {
             do {
@@ -694,6 +736,28 @@ namespace {
         std::sort(profiles.begin(), profiles.end());
         profiles.erase(std::unique(profiles.begin(), profiles.end()), profiles.end());
         return profiles;
+    }
+
+    bool CreateConfigProfileFromCurrent(const std::string& profileName)
+    {
+        const std::string targetPath = JoinPath(OW::Config::ConfigDirectoryPath(), profileName.c_str());
+        if (RegularFileExists(targetPath))
+            return false;
+
+        const std::string sourcePath = OW::Config::ConfigPath();
+        if (RegularFileExists(sourcePath)) {
+            CopyFileA(sourcePath.c_str(), targetPath.c_str(), TRUE);
+
+            const std::string sourceHeroPath = OW::Config::HeroConfigPath(sourcePath);
+            const std::string targetHeroPath = OW::Config::HeroConfigPath(targetPath);
+            if (RegularFileExists(sourceHeroPath))
+                CopyFileA(sourceHeroPath.c_str(), targetHeroPath.c_str(), TRUE);
+        } else {
+            OW::Config::SaveConfig(targetPath);
+            OW::Config::SaveHeroConfig(targetPath);
+        }
+
+        return true;
     }
 
     int FindConfigProfileIndex(const std::vector<std::string>& profiles, const std::string& name)
@@ -794,6 +858,7 @@ static constexpr int kBonePreferenceAimBones[] = {
 static constexpr int kBonePreferenceClosestIndex = 3;
 static const char* kAimBehavior[]  = { "Tracking", "Flick", "FlickClamp", "FlickDelay", "Reacquire" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited" };
+static const char* kAimMethodOverride[] = { "Inherit", "Linear", "PID", "Bezier", "Piecewise", "Accel Limited" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPredictionMode[] = { "Auto", "Force On", "Force Off" };
 static const char* kFirePolicy[] = {
@@ -827,6 +892,14 @@ static int InputSourceUiIndexToConfig(int uiIndex) {
     if (uiIndex < 0 || uiIndex >= IM_ARRAYSIZE(kInputSourceConfigOrder))
         return 0;
     return kInputSourceConfigOrder[uiIndex];
+}
+
+static int AimMethodOverrideConfigToUi(int method) {
+    return method < 0 ? 0 : ImClamp(method + 1, 1, IM_ARRAYSIZE(kAimMethodOverride) - 1);
+}
+
+static int AimMethodOverrideUiToConfig(int uiIndex) {
+    return uiIndex <= 0 ? -1 : ImClamp(uiIndex - 1, 0, IM_ARRAYSIZE(kAimMethod) - 1);
 }
 
 static void DrawProbeState(const char* label, bool available, bool down) {
@@ -1059,6 +1132,13 @@ static const ImU32 kColAccent       = IM_COL32(0xe4, 0x11, 0x43, 0xFF);
 static const ImU32 kColAccentDark   = IM_COL32(0xa9, 0x0a, 0x2e, 0xFF);
 static const ImU32 kColAccentSoft   = IM_COL32(0xe4, 0x11, 0x43, 0x58);
 static const ImU32 kColAccentGlow   = IM_COL32(0xe4, 0x11, 0x43, 0x28);
+static constexpr const char* kNotOpenedText = "\xE6\x9C\xAA\xE6\x89\x93\xE5\xBC\x80";
+static constexpr ImWchar kNotOpenedGlyphRanges[] = {
+    0x5F00, 0x5F00,
+    0x6253, 0x6253,
+    0x672A, 0x672A,
+    0
+};
 
 static ImFont* s_regularFont = nullptr;
 static ImFont* s_boldFont = nullptr;
@@ -2240,6 +2320,42 @@ static bool UISelect(const char* label, int* current, const char* const items[],
     return changed;
 }
 
+static void UIDisabledSelect(const char* label, const char* previewText = kNotOpenedText) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) return;
+
+    const ImGuiID id = window->GetID(label);
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    float width = ImGui::CalcItemWidth();
+    if (width <= 0.0f || width > availableWidth)
+        width = availableWidth;
+    width = MaxFloat(1.0f, width);
+    const float height = kControlHeight;
+    ImRect bb(pos, ImVec2(pos.x + width, pos.y + height));
+
+    ImGui::ItemSize(bb);
+    if (!ImGui::ItemAdd(bb, id))
+        return;
+
+    const ImU32 frameCol = MixColor(kColPanelSoft, kColControl, 0.45f);
+    window->DrawList->AddRectFilled(bb.Min, bb.Max, IM_COL32(0x00, 0x00, 0x00, 0x2E), kControlRounding);
+    window->DrawList->AddRectFilled(ImVec2(bb.Min.x, bb.Min.y + 1.0f), bb.Max,
+                                    frameCol, kControlRounding);
+    window->DrawList->AddRect(bb.Min, bb.Max,
+                              MixColor(kColStrokeDark, kColStroke, 0.25f),
+                              kControlRounding, 0, 1.0f);
+
+    const ImVec2 textSize = ImGui::CalcTextSize(previewText);
+    const ImVec2 textPos(bb.Min.x + 8.0f, bb.Min.y + (height - textSize.y) * 0.5f);
+    ImGui::PushClipRect(bb.Min, bb.Max, true);
+    window->DrawList->AddText(textPos, kColTextDim, previewText);
+    ImGui::PopClipRect();
+
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", previewText);
+}
+
 static std::vector<int> AttackActionsForHero(uint64_t heroId) {
     std::vector<int> actions;
 
@@ -2739,9 +2855,25 @@ void UI::InitStyle() {
         fontConfig.OversampleV = 2;
         fontConfig.PixelSnapH = false;
         fontConfig.RasterizerMultiply = 1.12f;
-        s_regularFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 13.25f, &fontConfig);
-        s_boldFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 13.25f, &fontConfig);
-        s_titleFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 15.25f, &fontConfig);
+        auto addUiFont = [&](const char* primaryPath, const char* fallbackPath, float size) {
+            ImFont* font = io.Fonts->AddFontFromFileTTF(primaryPath, size, &fontConfig);
+            if (font) {
+                ImFontConfig fallbackConfig;
+                fallbackConfig.MergeMode = true;
+                fallbackConfig.OversampleH = fontConfig.OversampleH;
+                fallbackConfig.OversampleV = fontConfig.OversampleV;
+                fallbackConfig.PixelSnapH = fontConfig.PixelSnapH;
+                fallbackConfig.RasterizerMultiply = fontConfig.RasterizerMultiply;
+                io.Fonts->AddFontFromFileTTF(fallbackPath, size, &fallbackConfig, kNotOpenedGlyphRanges);
+            }
+            return font;
+        };
+        s_regularFont = addUiFont("C:\\Windows\\Fonts\\segoeui.ttf",
+                                  "C:\\Windows\\Fonts\\msyh.ttc", 13.25f);
+        s_boldFont = addUiFont("C:\\Windows\\Fonts\\segoeuib.ttf",
+                               "C:\\Windows\\Fonts\\msyhbd.ttc", 13.25f);
+        s_titleFont = addUiFont("C:\\Windows\\Fonts\\segoeuib.ttf",
+                                "C:\\Windows\\Fonts\\msyhbd.ttc", 15.25f);
         if (!s_titleFont)
             s_titleFont = s_boldFont;
         if (s_regularFont)
@@ -3641,29 +3773,26 @@ void UI::ThemePage() {
         static const char* kDisplayPosition[] = { "Above Head", "Left Side", "Right Side" };
         static const char* kRadarCorner[] = { "Bottom Right", "Bottom Left", "Top Right", "Top Left" };
 
-        SettingRow("Radar Corner");
-        PushControlWidth();
-        if (UISelect("##radarCorner", &OW::Config::radarCorner,
-                     kRadarCorner, IM_ARRAYSIZE(kRadarCorner))) {
-            OW::Config::SaveConfig(OW::Config::ConfigPath());
-        }
-        ImGui::PopItemWidth();
+        auto drawPositionSelect = [](const char* rowLabel, const char* controlId,
+                                     bool visualEnabled, int* value,
+                                     const char* const items[], int itemCount) {
+            SettingRow(rowLabel);
+            PushControlWidth();
+            if (visualEnabled) {
+                if (UISelect(controlId, value, items, itemCount))
+                    OW::Config::SaveConfig(OW::Config::ConfigPath());
+            } else {
+                UIDisabledSelect(controlId);
+            }
+            ImGui::PopItemWidth();
+        };
 
-        SettingRow("Ultimate Status");
-        PushControlWidth();
-        if (UISelect("##ultimateDisplayMode", &OW::Config::ultimateDisplayMode,
-                     kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition))) {
-            OW::Config::SaveConfig(OW::Config::ConfigPath());
-        }
-        ImGui::PopItemWidth();
-
-        SettingRow("Skill Cooldowns");
-        PushControlWidth();
-        if (UISelect("##skillDisplayMode", &OW::Config::skillDisplayMode,
-                     kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition))) {
-            OW::Config::SaveConfig(OW::Config::ConfigPath());
-        }
-        ImGui::PopItemWidth();
+        drawPositionSelect("Radar Corner", "##radarCorner", OW::Config::radar,
+                           &OW::Config::radarCorner, kRadarCorner, IM_ARRAYSIZE(kRadarCorner));
+        drawPositionSelect("Ultimate Status", "##ultimateDisplayMode", OW::Config::ult,
+                           &OW::Config::ultimateDisplayMode, kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition));
+        drawPositionSelect("Skill Cooldowns", "##skillDisplayMode", OW::Config::skillinfo,
+                           &OW::Config::skillDisplayMode, kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition));
     }
     CloseGroupBox();
 
@@ -3723,6 +3852,7 @@ static void DrawMiscGeneralPage() {
     UIGroupBox("Config Profile");
     {
         static char profileName[kConfigProfileNameBufferSize] = "";
+        static char newProfileName[kConfigProfileNameBufferSize] = "";
         static bool profileNameInitialized = false;
 
         std::vector<std::string> profiles = EnumerateConfigProfiles();
@@ -3755,6 +3885,51 @@ static void DrawMiscGeneralPage() {
             PersistLastConfigProfile();
         }
         ImGui::PopItemWidth();
+
+        SettingRow("Folder");
+        {
+            char folderBuffer[MAX_PATH] = {};
+            const std::string configDirectory = OW::Config::ConfigDirectoryPath();
+            std::snprintf(folderBuffer, sizeof(folderBuffer), "%s", configDirectory.c_str());
+            const float openButtonWidth = 54.0f;
+            const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+            const float folderWidth = MaxFloat(
+                120.0f,
+                ImGui::GetContentRegionAvail().x - openButtonWidth - spacing);
+            ImGui::PushItemWidth(folderWidth);
+            ImGui::InputText("##configFolder", folderBuffer, IM_ARRAYSIZE(folderBuffer),
+                             ImGuiInputTextFlags_ReadOnly);
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            if (ImGui::Button("Open", ImVec2(openButtonWidth, kControlHeight)))
+                ShellExecuteA(nullptr, "open", configDirectory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+
+        SettingRow("New Profile");
+        {
+            const float createButtonWidth = 64.0f;
+            const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+            const float inputWidth = MaxFloat(
+                90.0f,
+                ImGui::GetContentRegionAvail().x - createButtonWidth - spacing);
+            ImGui::PushItemWidth(inputWidth);
+            ImGui::InputText("##newConfigProfile", newProfileName, IM_ARRAYSIZE(newProfileName));
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            if (ImGui::Button("Create", ImVec2(createButtonWidth, kControlHeight))) {
+                const std::string normalizedProfile = NormalizeProfileFileName(newProfileName);
+                if (CreateConfigProfileFromCurrent(normalizedProfile)) {
+                    SelectConfigProfile(normalizedProfile.c_str(), profileName);
+                    OW::Config::lastConfigProfile = normalizedProfile;
+                    PersistLastConfigProfile();
+                    newProfileName[0] = '\0';
+                    s_configSaveStatus = "Created config profile";
+                } else {
+                    s_configSaveStatus = "Config profile already exists";
+                }
+                s_configSaveStatusUntil = ImGui::GetTime() + 3.0;
+            }
+        }
     }
     CloseGroupBox();
 
@@ -3914,7 +4089,36 @@ static void DrawMiscSmoothingPage() {
         UISlider("##miscBaseAngularSpeed", &behaviorBaseSpeed, 0.0f, 100.0f, "100");
         ImGui::PopItemWidth();
 
-        if (behaviorMethod == 1) {
+        int secondaryTrackingMethodUi = AimMethodOverrideConfigToUi(OW::Config::secondaryAimMethodOverride[0]);
+        SettingRow("Second Tracking Method");
+        PushControlWidth();
+        if (UISelect("##miscSecondTrackingMethod", &secondaryTrackingMethodUi,
+                     kAimMethodOverride, IM_ARRAYSIZE(kAimMethodOverride))) {
+            OW::Config::secondaryAimMethodOverride[0] =
+                AimMethodOverrideUiToConfig(secondaryTrackingMethodUi);
+        }
+        ImGui::PopItemWidth();
+
+        int secondaryFlickMethodUi = AimMethodOverrideConfigToUi(OW::Config::secondaryAimMethodOverride[1]);
+        SettingRow("Second Flick Method");
+        PushControlWidth();
+        if (UISelect("##miscSecondFlickMethod", &secondaryFlickMethodUi,
+                     kAimMethodOverride, IM_ARRAYSIZE(kAimMethodOverride))) {
+            OW::Config::secondaryAimMethodOverride[1] =
+                AimMethodOverrideUiToConfig(secondaryFlickMethodUi);
+        }
+        ImGui::PopItemWidth();
+
+        const int secondaryTrackingMethod = OW::Config::SecondaryAimMethod(0);
+        const int secondaryFlickMethod = OW::Config::SecondaryAimMethod(1);
+        const bool showPid = behaviorMethod == 1 ||
+            secondaryTrackingMethod == 1 ||
+            secondaryFlickMethod == 1;
+        const bool showBezier = behaviorMethod == 2 ||
+            secondaryTrackingMethod == 2 ||
+            secondaryFlickMethod == 2;
+
+        if (showPid) {
             SettingRow("P Gain");
             PushControlWidth();
             UISlider("##miscPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
@@ -3939,7 +4143,9 @@ static void DrawMiscSmoothingPage() {
             PushControlWidth();
             UISlider("##miscPidDz", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
             ImGui::PopItemWidth();
-        } else if (behaviorMethod == 2) {
+        }
+
+        if (showBezier) {
             SettingRow("Control Points");
             PushControlWidth();
             UISlider("##miscBezCP", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
@@ -3954,10 +4160,19 @@ static void DrawMiscSmoothingPage() {
             PushControlWidth();
             UISlider("##miscBezSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
             ImGui::PopItemWidth();
-        } else if (behaviorMethod == 4) {
+        }
+
+        if (behaviorMethod == 4) {
             SettingRow("Acceleration");
             PushControlWidth();
             UISlider("##miscAcceleration", &behaviorAcceleration, 0.0f, 20.0f, "0.10");
+            ImGui::PopItemWidth();
+        }
+
+        if (secondaryTrackingMethod == 4 || secondaryFlickMethod == 4) {
+            SettingRow("Second Acceleration");
+            PushControlWidth();
+            UISlider("##miscSecondAcceleration", &OW::Config::accvalue2, 0.0f, 20.0f, "0.10");
             ImGui::PopItemWidth();
         }
 
@@ -4082,17 +4297,22 @@ static void DrawMiscKmboxPage() {
             ImGui::PopItemWidth();
         }
 
-        SettingRow("Aim Sensitivity");
+        SettingRow("Base Counts/Rad");
         PushControlWidth();
-        kmboxSaveRequested |= UISlider("##AimSensitivity", &OW::Config::kmboxAimSensitivity,
-                                       0.1f, 5.0f, "1.00");
+        ImGui::InputFloat("##CountsPerRadian", &OW::Config::kmboxCountsPerRadian,
+                          1.0f, 10.0f, "%.1f");
+        kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Manual KMBox relative mouse counts per radian. Calibration overrides this value until calibration is cleared.");
         ImGui::PopItemWidth();
 
-        SettingRow("Game Sens (DMA)");
+        SettingRow("Current Game Sens");
         PushControlWidth();
-        float displaySens = OW::Config::gameMouseSensitivity;
-        ImGui::InputFloat("##GameSensDisplay", &displaySens, 0.0f, 0.0f, "%.2f",
-                          ImGuiInputTextFlags_ReadOnly);
+        ImGui::InputFloat("##GameSens", &OW::Config::gameMouseSensitivity,
+                          0.0f, 0.0f, "%.2f");
+        kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Manual current in-game sensitivity. DMA sensitivity reading is not used for this value.");
         ImGui::PopItemWidth();
 
         SettingRow("Host DPI (DMA)");
@@ -4111,25 +4331,29 @@ static void DrawMiscKmboxPage() {
         kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::PopItemWidth();
 
-        SettingRow("Reference Sens");
-        const float useDmaButtonWidth = 72.0f;
-        const float useDmaSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
+        SettingRow("Reference Game Sens");
+        const float useCurrentButtonWidth = 88.0f;
+        const float useCurrentSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
         const float referenceWidth = MaxFloat(
             80.0f,
-            ImGui::GetContentRegionAvail().x - useDmaButtonWidth - useDmaSpacing);
+            ImGui::GetContentRegionAvail().x - useCurrentButtonWidth - useCurrentSpacing);
         ImGui::PushItemWidth(referenceWidth);
-        ImGui::InputFloat("##ReferenceSens", &OW::Config::sensReference,
+        ImGui::InputFloat("##ReferenceGameSens", &OW::Config::referenceGameSensitivity,
                           0.0f, 0.0f, "%.2f");
         kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The in-game sensitivity used when Base Counts/Rad or calibration was measured.");
         ImGui::PopItemWidth();
         ImGui::SameLine();
-        if (ImGui::Button("Use DMA", ImVec2(useDmaButtonWidth, kControlHeight))) {
-            OW::Config::sensReference = OW::Config::gameMouseSensitivity;
+        if (ImGui::Button("Use Current", ImVec2(useCurrentButtonWidth, kControlHeight))) {
+            OW::Config::referenceGameSensitivity = OW::Config::gameMouseSensitivity;
             kmboxSaveRequested = true;
         }
 
-        SettingRow("Auto Sync");
-        kmboxSaveRequested |= UICheckbox("##AutoSyncSens", &OW::Config::autoSyncSensitivity);
+        SettingRow("Auto Sens Scale");
+        kmboxSaveRequested |= UICheckbox("##AutoScaleGameSens", &OW::Config::autoScaleByGameSensitivity);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Scales KMBox counts by reference game sensitivity divided by current game sensitivity.");
 
         SettingRow("Input Delay (ms)");
         PushControlWidth();
@@ -4140,10 +4364,10 @@ static void DrawMiscKmboxPage() {
         SettingRow("Debug Logging");
         kmboxSaveRequested |= ImGui::Checkbox("##Debug", &OW::Config::kmboxDebugLog);
 
-        // ---- Sensitivity auto-calibration button ----
-        SettingRow("Sensitivity Calibration");
+        // ---- Counts-per-radian auto-calibration button ----
+        SettingRow("Counts Calibration");
         {
-            const bool wasCalibrated = OW::Config::calibratedPixelsPerRadian > 0.0f;
+            const bool wasCalibrated = OW::Config::calibratedCountsPerRadian > 0.0f;
             if (ImGui::Button(OW::Config::calibrationInProgress ? "Calibrating..." : "Calibrate", ImVec2(72.0f, kControlHeight))) {
                 if (!OW::Config::calibrationInProgress) {
                     OW::CalibrateSensitivity();
@@ -4151,15 +4375,18 @@ static void DrawMiscKmboxPage() {
                 }
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Sends a known mouse movement and measures the view angle change to compute the actual pixels-per-radian ratio.\nRequires the game to be running and in a state where mouse movement changes view angles.\nWarning: This will move the remote machine's mouse cursor!");
+                ImGui::SetTooltip("Sends a known KMBox movement and measures the view angle change to compute actual counts per radian.\nRequires the game to be running and in a state where mouse movement changes view angles.\nWarning: This will move the remote machine's mouse cursor!");
             ImGui::SameLine();
             if (wasCalibrated) {
                 char buf[128];
-                std::snprintf(buf, sizeof(buf), "Yaw: %.1f px/rad", OW::Config::calibratedPixelsPerRadian);
-                if (OW::Config::calibratedPixelsPerRadianPitch > 0.0f) {
-                    std::snprintf(buf, sizeof(buf), "Yaw: %.1f / Pitch: %.1f px/rad",
-                        OW::Config::calibratedPixelsPerRadian,
-                        OW::Config::calibratedPixelsPerRadianPitch);
+                std::snprintf(buf, sizeof(buf), "Yaw: %.1f c/rad @ %.2f",
+                    OW::Config::calibratedCountsPerRadian,
+                    OW::Config::referenceGameSensitivity);
+                if (OW::Config::calibratedPitchCountsPerRadian > 0.0f) {
+                    std::snprintf(buf, sizeof(buf), "Yaw: %.1f / Pitch: %.1f c/rad @ %.2f",
+                        OW::Config::calibratedCountsPerRadian,
+                        OW::Config::calibratedPitchCountsPerRadian,
+                        OW::Config::referenceGameSensitivity);
                 }
                 ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.45f, 1.0f), "%s", buf);
             } else {

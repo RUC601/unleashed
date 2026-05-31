@@ -2471,7 +2471,7 @@ namespace OverlayRenderDetail {
             Render::DrawLine(from, to, color, thickness);
     }
 
-    inline void DrawSkeleton(const OW::c_entity& entity, const Render::Color& color, float thickness) {
+    inline void DrawSkeleton(const OW::c_entity& entity, const OW::Matrix& view, const Render::Color& color, float thickness) {
         Vector2 points[18]{};
         bool projected[18]{};
         const Vector2 windowSize(OW::WX, OW::WY);
@@ -2479,7 +2479,7 @@ namespace OverlayRenderDetail {
         for (int i = 0; i < 18; ++i) {
             if (!entity.skeleton_bone_valid[i])
                 continue;
-            projected[i] = OW::viewMatrix.WorldToScreen(entity.skeleton_bones[i], &points[i], windowSize);
+            projected[i] = view.WorldToScreen(entity.skeleton_bones[i], &points[i], windowSize);
         }
 
         auto draw = [&](int from, int to) {
@@ -2902,7 +2902,7 @@ inline void PlayerInfo() {
         }
 
         if (OW::Config::draw_skel && !specialEntity) {
-            OverlayRenderDetail::DrawSkeleton(entity, lineColor, skeletonThickness);
+            OverlayRenderDetail::DrawSkeleton(entity, renderViewMatrix, lineColor, skeletonThickness);
             drewAny = true;
         }
 
@@ -2915,8 +2915,8 @@ inline void PlayerInfo() {
         if (OW::Config::eyeray) {
             Vector2 eyeStart{}, eyeEnd{};
             Vector3 rayEnd(Vec3.X + sinf(entity.Rot.X) * 5.0f, Vec3.Y, Vec3.Z + cosf(entity.Rot.X) * 5.0f);
-            if (OW::viewMatrix.WorldToScreen(Vec3, &eyeStart, Vector2(OW::WX, OW::WY)) &&
-                OW::viewMatrix.WorldToScreen(rayEnd, &eyeEnd, Vector2(OW::WX, OW::WY))) {
+            if (renderViewMatrix.WorldToScreen(Vec3, &eyeStart, Vector2(OW::WX, OW::WY)) &&
+                renderViewMatrix.WorldToScreen(rayEnd, &eyeEnd, Vector2(OW::WX, OW::WY))) {
                 Render::DrawLine(eyeStart, eyeEnd, lineColor, 1.0f);
                 drewAny = true;
             }
@@ -3829,7 +3829,6 @@ namespace AimbotDetail {
         const float current_sens = SDK->RPM<float>(sensitive_ptr);
         if (std::isfinite(current_sens) && current_sens > 0.0f) {
             origin_sens = current_sens;
-            OW::Config::gameMouseSensitivity = current_sens;
         }
     }
 
@@ -4690,14 +4689,17 @@ namespace AimbotDetail {
                         false,
                         OW::Config::AimBehaviorSmoothInput(behavior, OW::Config::Tracking_smooth),
                         OW::Config::AimBehaviorAcceleration(behavior));
+                    const float yawCountsPerRadian = OW::Config::KmboxYawCountsPerRadian();
+                    const float pitchCountsPerRadian = OW::Config::KmboxPitchCountsPerRadian();
                     Diagnostics::Aim("dryrun.tracking local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) "
-                        "delta_pixels_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) sensitivity=%.1f would_move=%d target_pos=(%.1f,%.1f,%.1f)",
+                        "delta_counts_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) yawCountsPerRad=%.1f pitchCountsPerRad=%.1f would_move=%d target_pos=(%.1f,%.1f,%.1f)",
                         RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
                         RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
                         RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
-                        -(aim.target_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
-                        (aim.target_angle.X - aim.local_angle.X) * OW::Config::kmboxAimSensitivity,
-                        OW::Config::kmboxAimSensitivity,
+                        -(aim.target_angle.Y - aim.local_angle.Y) * yawCountsPerRadian,
+                        (aim.target_angle.X - aim.local_angle.X) * pitchCountsPerRadian,
+                        yawCountsPerRadian,
+                        pitchCountsPerRadian,
                         1, vec.X, vec.Y, vec.Z);
                 } else {
                     Diagnostics::Aim("dryrun.tracking no_target_vector targetIndex=%d entities=%zu",
@@ -4766,9 +4768,9 @@ namespace AimbotDetail {
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     g_trackingMoves++;
                     if (OW::Config::aimVerboseLog) {
-                        Diagnostics::Aim("tracking.tick moved=1 delta_px_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) target_dist=%.1f",
-                            -(aim.smoothed_angle.Y - aim.local_angle.Y) * OW::Config::kmboxAimSensitivity,
-                            (aim.smoothed_angle.X - aim.local_angle.X) * OW::Config::kmboxAimSensitivity,
+                        Diagnostics::Aim("tracking.tick moved=1 delta_counts_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) target_dist=%.1f",
+                            -(aim.smoothed_angle.Y - aim.local_angle.Y) * OW::Config::KmboxYawCountsPerRadian(),
+                            (aim.smoothed_angle.X - aim.local_angle.X) * OW::Config::KmboxPitchCountsPerRadian(),
                             CameraPosition().DistTo(aimTarget));
                     }
                     RunCloseRangeActions(aimTarget);
@@ -5171,19 +5173,23 @@ namespace AimbotDetail {
             if (!IsZeroVector(vec) && CurrentTarget(target) &&
                 !(target.skill2act && target.HeroID == OW::eHero::HERO_GENJI)) {
                 AimData aim{};
-                if (OW::Config::Tracking2)
+                if (OW::Config::Tracking2) {
+                    const int method = OW::Config::SecondaryAimMethod(0);
                     aim = BuildAimData(
                         vec,
                         false,
                         OW::Config::AimBehaviorSmoothInput(0, OW::Config::Tracking_smooth2),
-                        OW::Config::AimBehaviorAcceleration(0));
-                else if (OW::Config::Flick2)
+                        method == 4 ? OW::Config::accvalue2 : OW::Config::AimBehaviorAcceleration(0),
+                        method);
+                } else if (OW::Config::Flick2) {
+                    const int method = OW::Config::SecondaryAimMethod(1);
                     aim = BuildAimData(
                         vec,
                         true,
                         OW::Config::AimBehaviorSmoothInput(1, OW::Config::Flick_smooth2),
-                        OW::Config::AimBehaviorAcceleration(1));
-                else
+                        method == 4 ? OW::Config::accvalue2 : OW::Config::AimBehaviorAcceleration(1),
+                        method);
+                } else
                     aim = BuildAimData(vec, false, 1.0f, 0.0f);
 
                 ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);

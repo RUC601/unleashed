@@ -27,6 +27,7 @@ namespace OW { namespace Config {
 
     inline std::string configFileName = "config.ini";
     inline std::string lastConfigProfile = "config.ini";
+    std::string ConfigDirectoryPath();
     std::string ConfigPath();
     std::string HeroConfigPath();
     std::string HeroConfigPath(const std::string& configPath);
@@ -144,6 +145,7 @@ namespace OW { namespace Config {
     inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0, 0 };
     inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
     inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
+    inline std::array<int, 2> secondaryAimMethodOverride = { -1, -1 }; // -1=inherit, 0-4=kAimMethod
     inline float aimPidP = 0.5f;
     inline float aimPidI = 0.01f;
     inline float aimPidD = 0.1f;
@@ -187,9 +189,21 @@ namespace OW { namespace Config {
         return std::clamp(value, 0, kAimMethodCount - 1);
     }
 
+    inline int ClampAimMethodOverride(int value)
+    {
+        return std::clamp(value, -1, kAimMethodCount - 1);
+    }
+
     inline int AimBehaviorMethod(int behavior)
     {
         return ClampAimMethodIndex(aimBehaviorMethod[static_cast<size_t>(ClampAimBehaviorIndex(behavior))]);
+    }
+
+    inline int SecondaryAimMethod(int aimMode)
+    {
+        const int mode = std::clamp(aimMode, 0, 1);
+        const int overrideMethod = ClampAimMethodOverride(secondaryAimMethodOverride[static_cast<size_t>(mode)]);
+        return overrideMethod >= 0 ? overrideMethod : AimBehaviorMethod(mode);
     }
 
     inline float AimBehaviorBaseSpeed(int behavior)
@@ -313,10 +327,13 @@ namespace OW { namespace Config {
     inline int  kmboxMonitorPort = 8809;
     inline char kmboxMac[32] = "12525C53";
     inline char kmboxComPort[16] = "COM3";
-    inline float kmboxAimSensitivity = 100.0f;
-    inline float gameMouseSensitivity = 15.0f; // DMA-read, updated each tick
-    inline float sensReference = 15.0f;        // game sens used when kmboxAimSensitivity was calibrated
-    inline bool  autoSyncSensitivity = false;
+    inline float kmboxCountsPerRadian = 100.0f;       // KMBox relative mouse counts needed for one radian at the reference game sens
+    inline float gameMouseSensitivity = 15.0f;        // manual/effective current in-game sensitivity used for scaling
+    inline float referenceGameSensitivity = 15.0f;    // game sens used when counts-per-radian was measured
+    inline bool  autoScaleByGameSensitivity = false;  // scale counts by reference/current game sensitivity
+    inline float& kmboxAimSensitivity = kmboxCountsPerRadian;     // legacy config/code alias
+    inline float& sensReference = referenceGameSensitivity;       // legacy config/code alias
+    inline bool&  autoSyncSensitivity = autoScaleByGameSensitivity; // legacy config/code alias
     inline float hostMouseDpi = 1600.0f;       // manual/effective host mouse DPI fallback
     inline float detectedHostMouseDpi = 0.0f;  // runtime-only automatic detection result
     inline bool  hostMouseDpiAutoDetected = false;
@@ -330,11 +347,49 @@ namespace OW { namespace Config {
 
     // ---- Sensitivity auto-calibration ----
     inline bool calibrationInProgress = false;
-    inline float calibratedPixelsPerRadian = 0.0f;  // 0 = not calibrated, use manual kmboxAimSensitivity
-    inline float calibratedPixelsPerRadianPitch = 0.0f; // Separate pitch calibration if >5% different from yaw
-    inline int calibrationMovePixels = 200;          // How many pixels to move for calibration
+    inline float calibratedCountsPerRadian = 0.0f;       // 0 = not calibrated, use manual kmboxCountsPerRadian
+    inline float calibratedPitchCountsPerRadian = 0.0f;  // Separate pitch calibration if >5% different from yaw
+    inline float& calibratedPixelsPerRadian = calibratedCountsPerRadian;           // legacy alias
+    inline float& calibratedPixelsPerRadianPitch = calibratedPitchCountsPerRadian; // legacy alias
+    inline int calibrationMovePixels = 200;          // KMBox relative counts to send for calibration
     inline int calibrationStabilityWaitMs = 50;      // Wait time before/after move for stable read
     inline int calibrationSampleCount = 3;           // Number of calibration samples to average
+
+    inline float KmboxBaseCountsPerRadian()
+    {
+        return calibratedCountsPerRadian > 0.0f
+            ? std::clamp(calibratedCountsPerRadian, 0.1f, 20000.0f)
+            : std::clamp(kmboxCountsPerRadian, 0.1f, 20000.0f);
+    }
+
+    inline float KmboxPitchBaseCountsPerRadian()
+    {
+        return calibratedPitchCountsPerRadian > 0.0f
+            ? std::clamp(calibratedPitchCountsPerRadian, 0.1f, 20000.0f)
+            : KmboxBaseCountsPerRadian();
+    }
+
+    inline float KmboxGameSensitivityScale()
+    {
+        if (!autoScaleByGameSensitivity ||
+            !std::isfinite(gameMouseSensitivity) ||
+            !std::isfinite(referenceGameSensitivity) ||
+            gameMouseSensitivity <= 0.0f ||
+            referenceGameSensitivity <= 0.0f) {
+            return 1.0f;
+        }
+        return referenceGameSensitivity / gameMouseSensitivity;
+    }
+
+    inline float KmboxYawCountsPerRadian()
+    {
+        return KmboxBaseCountsPerRadian() * KmboxGameSensitivityScale();
+    }
+
+    inline float KmboxPitchCountsPerRadian()
+    {
+        return KmboxPitchBaseCountsPerRadian() * KmboxGameSensitivityScale();
+    }
 
     // ---- Mouse movement splitting ----
     inline bool moveSplitEnabled = true;       // Enable micro-splitting of mouse moves

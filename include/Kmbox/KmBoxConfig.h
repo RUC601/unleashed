@@ -135,6 +135,7 @@ struct KmBoxQueuedNetCommand {
     client_data data{};
     int length = 0;
     KmBoxCommandType type = KmBoxCommandType::Unknown;
+    int mouseButtonStateMask = -1;
     std::chrono::steady_clock::time_point enqueuedAt{};
 };
 

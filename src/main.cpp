@@ -11,6 +11,9 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <thread>
 #include <chrono>
@@ -26,6 +29,7 @@
 #include "Game/Offsets.hpp"       // offset constants
 #include "Kmbox/KmBoxNetManager.h" // kmbox::KmBoxMgr
 #include "Kmbox/KmboxB.h"         // kmbox::kmBoxBMgr
+#include "Kmbox/KmboxMoveTest.h"  // RunKmboxMoveTest
 #include "Kmbox/KmboxTimerResolution.h" // kmbox::EnsureTimerResolution
 #include "Utils/Config.hpp"       // OW::Config
 #include "Utils/HostMouseDpi.hpp" // OW::RefreshHostMouseDpi
@@ -68,6 +72,41 @@ namespace {
             static_cast<int>(color.z * 255.0f),
             static_cast<int>(color.w * 255.0f)
         );
+    }
+
+    std::string AbsolutePathForLog(const std::string& path)
+    {
+        try {
+            return std::filesystem::absolute(path).string();
+        } catch (...) {
+            return path;
+        }
+    }
+
+    bool HasCommandLineFlag(int argc, char** argv, const char* flag)
+    {
+        for (int index = 1; index < argc; ++index) {
+            if (argv[index] && std::strcmp(argv[index], flag) == 0)
+                return true;
+        }
+        return false;
+    }
+
+    bool TryGetCommandLineFloat(int argc, char** argv, const char* flag, float& value)
+    {
+        for (int index = 1; index + 1 < argc; ++index) {
+            if (!argv[index] || std::strcmp(argv[index], flag) != 0)
+                continue;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(argv[index + 1], &end);
+            if (end == argv[index + 1] || !std::isfinite(parsed))
+                return false;
+
+            value = parsed;
+            return true;
+        }
+        return false;
     }
 
     static Render::Color EntityRadarColor(const OW::c_entity& entity, size_t index)
@@ -675,6 +714,142 @@ static void InitializeKmBoxFromConfig()
     }
 }
 
+static void StartBackgroundThreads();
+static void StartProcessConnectionThread();
+static void StopProcessConnectionThread();
+
+static void LoadRuntimeConfigForDiagnostics()
+{
+    const std::string configPath = OW::Config::ConfigPath();
+    const std::string configPathForLog = AbsolutePathForLog(configPath);
+    OW::Config::LoadConfig(configPath);
+    OW::RefreshHostMouseDpi();
+    OW::RefreshScreenSizeFromConfig();
+    Diagnostics::Aim("main.config_loaded configPath=%s screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f hostDpiDetected=%d",
+        configPathForLog.c_str(),
+        OW::WX,
+        OW::WY,
+        OW::Config::kmboxEnabled ? 1 : 0,
+        OW::Config::kmboxDeviceType,
+        OW::Config::kmboxIp,
+        OW::Config::kmboxPort,
+        OW::Config::kmboxMonitorPort,
+        OW::Config::kmboxCountsPerRadian,
+        OW::Config::calibratedCountsPerRadian,
+        OW::Config::gameMouseSensitivity,
+        OW::Config::referenceGameSensitivity,
+        OW::Config::autoScaleByGameSensitivity ? 1 : 0,
+        OW::Config::hostMouseDpi,
+        OW::Config::hostMouseDpiAutoDetected ? 1 : 0);
+}
+
+static void ShutdownHeadlessRuntime()
+{
+    OW::Config::doingentity = 0;
+    KeyState::Stop();
+    StopProcessConnectionThread();
+    OW::ProcessConnection::SetStatus(false, false, 0, 0, "Shutting down");
+    StopDiagnosticStatusThread();
+    mem.CloseDma();
+    Diagnostics::SetDmaReady(false);
+    Diagnostics::SetProcessAttached(false);
+    kmbox::ReleaseTimerResolution();
+    Diagnostics::ShutdownAimLog();
+    Diagnostics::Shutdown();
+}
+
+static int RunConfigCheckCli()
+{
+    const std::string configPath = OW::Config::ConfigPath();
+    OW::Config::LoadConfig(configPath);
+
+    std::printf("[CONFIG] directory=%s\n", OW::Config::ConfigDirectoryPath().c_str());
+    std::printf("[CONFIG] profile=%s\n", OW::Config::configFileName.c_str());
+    std::printf("[CONFIG] path=%s\n", AbsolutePathForLog(configPath).c_str());
+    std::printf("[CONFIG] heroPath=%s\n", AbsolutePathForLog(OW::Config::HeroConfigPath(configPath)).c_str());
+    std::printf("[CONFIG] countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d\n",
+        OW::Config::kmboxCountsPerRadian,
+        OW::Config::calibratedCountsPerRadian,
+        OW::Config::gameMouseSensitivity,
+        OW::Config::referenceGameSensitivity,
+        OW::Config::autoScaleByGameSensitivity ? 1 : 0);
+    return 0;
+}
+
+static int RunKmboxMoveTestCli()
+{
+    Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
+    Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
+    LoadRuntimeConfigForDiagnostics();
+    InitializeKmBoxFromConfig();
+    RunKmboxMoveTest();
+    kmbox::ReleaseTimerResolution();
+    Diagnostics::ShutdownAimLog();
+    Diagnostics::Shutdown();
+    return 0;
+}
+
+static int RunKmboxCalibrationCli(float referenceGameSensitivityOverride = 0.0f)
+{
+    mem.LoadDmaDeviceConfig();
+    std::printf("[MAIN] Initialising DMA subsystem for KMBox calibration...\n");
+    if (!mem.InitDma()) {
+        std::fprintf(stderr, "[FATAL] DMA initialisation failed -- check configured DMA device.\n");
+        return 1;
+    }
+
+    Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
+    Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
+    LoadRuntimeConfigForDiagnostics();
+    InitializeKmBoxFromConfig();
+    Diagnostics::SetDmaReady(true);
+    StartProcessConnectionThread();
+    StartBackgroundThreads();
+
+    constexpr DWORD kWaitForControllerMs = 15000;
+    const DWORD waitStarted = GetTickCount();
+    while (OW::SDK && OW::SDK->g_player_controller == 0 &&
+           GetTickCount() - waitStarted < kWaitForControllerMs) {
+        Sleep(100);
+    }
+
+    if (!OW::SDK || OW::SDK->g_player_controller == 0) {
+        std::fprintf(stderr, "[KMBOX] Calibration failed: player controller was not resolved within %lu ms.\n",
+            static_cast<unsigned long>(kWaitForControllerMs));
+        Diagnostics::Aim("kmbox.calibration_cli failure reason=player_controller_timeout waitMs=%lu",
+            static_cast<unsigned long>(kWaitForControllerMs));
+        ShutdownHeadlessRuntime();
+        return 2;
+    }
+
+    if (std::isfinite(referenceGameSensitivityOverride) && referenceGameSensitivityOverride > 0.0f) {
+        OW::Config::referenceGameSensitivity = referenceGameSensitivityOverride;
+        std::printf("[KMBOX] Calibration reference game sensitivity override: %.3f\n",
+            referenceGameSensitivityOverride);
+        Diagnostics::Aim("kmbox.calibration_cli reference_override gameSens=%.6f",
+            referenceGameSensitivityOverride);
+    }
+
+    const float result = OW::RunCalibrationSamples(referenceGameSensitivityOverride);
+    if (result > 0.0f) {
+        OW::Config::SaveConfig(OW::Config::ConfigPath());
+        std::printf("[KMBOX] Calibration complete: yaw=%.3f counts/rad refGameSens=%.3f\n",
+            result, OW::Config::referenceGameSensitivity);
+        Diagnostics::Aim("kmbox.calibration_cli success yawCountsPerRad=%.6f pitchCountsPerRad=%.6f refGameSens=%.6f",
+            OW::Config::calibratedCountsPerRadian,
+            OW::Config::calibratedPitchCountsPerRadian > 0.0f
+                ? OW::Config::calibratedPitchCountsPerRadian
+                : OW::Config::calibratedCountsPerRadian,
+            OW::Config::referenceGameSensitivity);
+    } else {
+        std::fprintf(stderr, "[KMBOX] Calibration failed: zero view-angle delta.\n");
+        Diagnostics::Aim("kmbox.calibration_cli failure reason=zero_angle_delta");
+    }
+
+    ShutdownHeadlessRuntime();
+    return result > 0.0f ? 0 : 3;
+}
+
 // =============================================================================
 // Background thread launcher
 // =============================================================================
@@ -857,7 +1032,7 @@ static void StopProcessConnectionThread()
 // Main
 // =============================================================================
 
-int main()
+int main(int argc, char** argv)
 {
     // ---- Console ----
     SetConsoleTitleA("UNLEASHED");
@@ -870,6 +1045,16 @@ int main()
 
     // ---- Config ----
     OW::Config::doingentity = 1;
+
+    if (HasCommandLineFlag(argc, argv, "--config-check"))
+        return RunConfigCheckCli();
+    if (HasCommandLineFlag(argc, argv, "--kmbox-move-test"))
+        return RunKmboxMoveTestCli();
+    if (HasCommandLineFlag(argc, argv, "--kmbox-calibrate")) {
+        float referenceGameSensitivityOverride = 0.0f;
+        TryGetCommandLineFloat(argc, argv, "--kmbox-reference-sens", referenceGameSensitivityOverride);
+        return RunKmboxCalibrationCli(referenceGameSensitivityOverride);
+    }
 
     // ---------------------------------------------------------------
     // Step 1 -- Initialise the DMA subsystem (configured VMMDLL device)
@@ -885,10 +1070,13 @@ int main()
     std::printf("[MAIN] DMA subsystem ready.\n\n");
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
     Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
-    OW::Config::LoadConfig(OW::Config::ConfigPath());
+    const std::string configPath = OW::Config::ConfigPath();
+    const std::string configPathForLog = AbsolutePathForLog(configPath);
+    OW::Config::LoadConfig(configPath);
     OW::RefreshHostMouseDpi();
     OW::RefreshScreenSizeFromConfig();
-    Diagnostics::Aim("main.config_loaded screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d aimSensitivity=%.6f gameMouseSensitivity=%.6f sensReference=%.6f autoSync=%d hostMouseDpi=%.6f hostDpiDetected=%d",
+    Diagnostics::Aim("main.config_loaded configPath=%s screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f hostDpiDetected=%d",
+        configPathForLog.c_str(),
         OW::WX,
         OW::WY,
         OW::Config::kmboxEnabled ? 1 : 0,
@@ -896,10 +1084,11 @@ int main()
         OW::Config::kmboxIp,
         OW::Config::kmboxPort,
         OW::Config::kmboxMonitorPort,
-        OW::Config::kmboxAimSensitivity,
+        OW::Config::kmboxCountsPerRadian,
+        OW::Config::calibratedCountsPerRadian,
         OW::Config::gameMouseSensitivity,
-        OW::Config::sensReference,
-        OW::Config::autoSyncSensitivity ? 1 : 0,
+        OW::Config::referenceGameSensitivity,
+        OW::Config::autoScaleByGameSensitivity ? 1 : 0,
         OW::Config::hostMouseDpi,
         OW::Config::hostMouseDpiAutoDetected ? 1 : 0);
     std::printf("[MAIN] Screen size: %.0fx%.0f\n", OW::WX, OW::WY);
