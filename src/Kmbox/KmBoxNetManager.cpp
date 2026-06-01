@@ -968,6 +968,20 @@ int KmBoxNetManager::ForceReleaseMouseButtons()
     return status;
 }
 
+int KmBoxNetManager::ForceReleaseMouseButton(int button)
+{
+    switch (button) {
+    case 0:
+        return SetMouseButton(0x01, false, cmd_mouse_left, true);
+    case 1:
+        return SetMouseButton(0x02, false, cmd_mouse_right, true);
+    case 2:
+        return SetMouseButton(0x04, false, cmd_mouse_middle, true);
+    default:
+        return err_net_cmd;
+    }
+}
+
 int KmBoxNetManager::SendKeyboardKey(unsigned char hidCode, bool down)
 {
     client_data packet = BuildPacket(cmd_keyboard_all, NextRandom());

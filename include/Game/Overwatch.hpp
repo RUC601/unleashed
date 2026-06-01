@@ -3929,7 +3929,7 @@ namespace AimbotDetail {
         OW::SendMouseButton(button, false);
     }
 
-    inline int MouseButtonForAttackAction(int action) {
+    inline constexpr int MouseButtonForAttackAction(int action) {
         switch (action) {
         case 1: // Secondary Fire
         case 2: // Scoped
@@ -3941,6 +3941,23 @@ namespace AimbotDetail {
             return -1;
         }
     }
+
+    inline constexpr uint32_t FireKeyMaskForAttackAction(int action) {
+        switch (action) {
+        case 1: // Secondary Fire
+            return 0x2u;
+        case 0: // Primary Fire
+        case 2: // Scoped
+        case 3: // Unscoped
+        default:
+            return 0x1u;
+        }
+    }
+
+    static_assert(MouseButtonForAttackAction(0) == 0);
+    static_assert(MouseButtonForAttackAction(1) == 1);
+    static_assert(FireKeyMaskForAttackAction(0) == 0x1u);
+    static_assert(FireKeyMaskForAttackAction(1) == 0x2u);
 
     inline bool ShouldHoldFireWhileTracking() {
         return ClampFirePolicy(OW::Config::aimbotFirePolicy) == FirePolicyType::HoldWhileTracking ||
@@ -3961,6 +3978,10 @@ namespace AimbotDetail {
         SetSensitivityLocked(true, origin_sens);
         ClickDmaMouseKey(key, sleep_ms);
         SetSensitivityLocked(false, origin_sens);
+    }
+
+    inline void ClickConfiguredFire(DWORD sleep_ms = 10) {
+        ClickDmaMouseKey(FireKeyMaskForAttackAction(OW::Config::aimbotAttack), sleep_ms);
     }
 
     inline bool CurrentTarget(c_entity& target, bool requireVisible = false) {
@@ -4532,27 +4553,43 @@ namespace AimbotDetail {
                !OW::Config::doingdelay;
     }
 
+    inline void FireHanzo();
+
     inline void FirePrimaryNormal() {
         const c_entity local = LocalEntity();
-        if (local.HeroID == OW::eHero::HERO_GENJI || local.HeroID == OW::eHero::HERO_KIRIKO) {
-            ClickMouseButton(1);
-            if (OW::Config::dontshot) OW::Config::shotcount++;
+        if (local.HeroID == OW::eHero::HERO_HANJO) {
+            FireHanzo();
             return;
         }
 
-        if ((local.HeroID == OW::eHero::HERO_ANA ||
+        const uint32_t fireKey = FireKeyMaskForAttackAction(OW::Config::aimbotAttack);
+        if (fireKey == 0x1u &&
+            (local.HeroID == OW::eHero::HERO_ANA ||
              local.HeroID == OW::eHero::HERO_WIDOWMAKER ||
              local.HeroID == OW::eHero::HERO_ASHE) && IsInputVkDown(VK_RBUTTON)) {
             OW::SetKeyscopeHold(0x1, 30);
         } else {
-            ClickMouseButton(0);
+            ClickDmaMouseKey(fireKey);
         }
     }
 
     inline void FireHanzo() {
         const c_entity local = LocalEntity();
-        if (local.skill2act) ClickMouseButton(0);
-        else OW::SetKeyHold(0x1000, 100);
+        if (local.skill2act) {
+            Diagnostics::Aim("hanzo.fire mode=storm_arrow_tap");
+            ClickMouseButton(0);
+            return;
+        }
+
+        if (IsInputVkDownQuiet(VK_LBUTTON)) {
+            Diagnostics::Aim("hanzo.fire mode=charge_release");
+            OW::ForceReleaseMouseButton(0);
+            Sleep(10);
+            return;
+        }
+
+        Diagnostics::Aim("hanzo.fire mode=tap_fallback");
+        ClickMouseButton(0);
     }
 
     inline void RunAutoScaleFov() {
@@ -4699,10 +4736,12 @@ namespace AimbotDetail {
 
         // 6. Fire
         const c_entity local = LocalEntity();
-        if (local.HeroID == OW::eHero::HERO_HANJO && local.skill2act) {
+        if (local.HeroID == OW::eHero::HERO_HANJO) {
+            SetSensitivityLocked(true, origin_sens);
             FireHanzo();
+            SetSensitivityLocked(false, origin_sens);
         } else {
-            PressWithSensitivity(0x1, origin_sens, 2);
+            PressWithSensitivity(FireKeyMaskForAttackAction(OW::Config::aimbotAttack), origin_sens, 2);
         }
         lastFireTick = GetTickCount();
     }
@@ -4965,8 +5004,11 @@ namespace AimbotDetail {
                         Diagnostics::Aim("flick delayed_shot timeout target=%d localHero=0x%llX",
                             OW::Config::Targetenemyi,
                             static_cast<unsigned long long>(local.HeroID));
-                        ClickMouseButton((local.HeroID == OW::eHero::HERO_GENJI ||
-                                          local.HeroID == OW::eHero::HERO_KIRIKO) ? 1 : 0);
+                        if (local.HeroID == OW::eHero::HERO_HANJO) {
+                            FireHanzo();
+                        } else {
+                            ClickConfiguredFire();
+                        }
                         OW::Config::shooted = true;
                         continue;
                     }
@@ -5001,8 +5043,11 @@ namespace AimbotDetail {
                             OW::Config::Targetenemyi,
                             previousShotCount,
                             OW::Config::missbox);
-                        ClickMouseButton((local.HeroID == OW::eHero::HERO_GENJI ||
-                                          local.HeroID == OW::eHero::HERO_KIRIKO) ? 1 : 0);
+                        if (local.HeroID == OW::eHero::HERO_HANJO) {
+                            FireHanzo();
+                        } else {
+                            ClickConfiguredFire();
+                        }
                         OW::Config::shooted = true;
                         continue;
                     }

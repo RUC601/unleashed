@@ -17,6 +17,7 @@
 #include "Game/Decrypt.hpp"
 #include "Game/Entity.hpp"
 #include "Game/HeroGeometrySpec.hpp"
+#include "Game/Motion.hpp"
 #include "Game/WeaponSpec.hpp"
 #include "Kmbox/KmBoxNetManager.h"
 #include "Kmbox/KmboxB.h"
@@ -447,6 +448,29 @@ namespace OW {
             kmbox::kmBoxBMgr.km_left(false);
             kmbox::kmBoxBMgr.km_right(false);
             kmbox::kmBoxBMgr.km_middle(false);
+        }
+    }
+
+    inline void ForceReleaseMouseButton(int button) {
+        if (!Config::kmboxEnabled)
+            return;
+
+        if (Config::kmboxDeviceType == 0) {
+            kmbox::KmBoxMgr.ForceReleaseMouseButton(button);
+        } else {
+            switch (button) {
+            case 0:
+                kmbox::kmBoxBMgr.km_left(false);
+                break;
+            case 1:
+                kmbox::kmBoxBMgr.km_right(false);
+                break;
+            case 2:
+                kmbox::kmBoxBMgr.km_middle(false);
+                break;
+            default:
+                break;
+            }
         }
     }
 
@@ -1007,14 +1031,17 @@ namespace OW {
         inline EntityMotionState EstimateMotionState(const c_entity& entity, const Vector2& screenPoint) {
             (void)screenPoint;
 
+            const Motion::EntityMotionEstimate motion = Motion::EstimateEntityMotion(entity);
+            const Vector3 velocity = motion.valid ? motion.effectiveVelocity : entity.velocity;
+
             EntityMotionState state{};
-            state.worldVelocity = entity.velocity;
-            state.verticalVelocity = entity.velocity.Y;
+            state.worldVelocity = velocity;
+            state.verticalVelocity = velocity.Y;
 
             const float horizontalSpeed = sqrtf(
-                entity.velocity.X * entity.velocity.X +
-                entity.velocity.Z * entity.velocity.Z);
-            const float verticalSpeed = entity.velocity.Y;
+                velocity.X * velocity.X +
+                velocity.Z * velocity.Z);
+            const float verticalSpeed = velocity.Y;
 
             if (!std::isfinite(horizontalSpeed) || !std::isfinite(verticalSpeed) ||
                 horizontalSpeed > 250.0f || fabsf(verticalSpeed) > 250.0f) {
@@ -1031,7 +1058,7 @@ namespace OW {
                 state.confidence = 0.55f;
             } else if (horizontalSpeed > 2.0f) {
                 state.kind = EntityMotionState::Kind::Strafing;
-                state.confidence = 0.45f;
+                state.confidence = motion.usedWorldDeltaFallback ? 0.50f : 0.45f;
             } else {
                 state.kind = EntityMotionState::Kind::Grounded;
                 state.confidence = 0.35f;
@@ -1047,13 +1074,17 @@ namespace OW {
         }
 
         inline Vector3 AccelerationAwareVelocity(const c_entity& entity, float distance, float projectileSpeed) {
+            const Motion::EntityMotionEstimate motion = Motion::EstimateEntityMotion(entity);
+            const Vector3 baseVelocity = motion.valid ? motion.effectiveVelocity : entity.velocity;
             const uint64_t key = entity.address ? entity.address : entity.LinkBase;
-            if (!key) return entity.velocity;
+            if (!key) return baseVelocity;
 
-            const DWORD now = GetTickCount();
+            const DWORD now = entity.render_sample_tick_ms
+                ? static_cast<DWORD>(entity.render_sample_tick_ms)
+                : GetTickCount();
             const float safeSpeed = (std::max)(projectileSpeed, 1.0f);
             const float leadTime = std::clamp(distance / safeSpeed, 0.0f, 1.0f);
-            Vector3 adjusted = entity.velocity;
+            Vector3 adjusted = baseVelocity;
 
             std::lock_guard<std::mutex> lock(velocity_history_mutex);
             if (velocity_history.size() > 256) velocity_history.clear();
@@ -1062,13 +1093,13 @@ namespace OW {
             if (sample.initialized && now > sample.tick) {
                 const float dt = static_cast<float>(now - sample.tick) / 1000.0f;
                 if (dt > 0.001f && dt < 0.5f) {
-                    Vector3 acceleration = (entity.velocity - sample.velocity) / dt;
+                    Vector3 acceleration = (baseVelocity - sample.velocity) / dt;
                     acceleration = ClampMagnitude(acceleration, 250.0f);
                     adjusted += acceleration * std::clamp(leadTime * 0.5f, 0.0f, 0.25f);
                 }
             }
 
-            sample.velocity = entity.velocity;
+            sample.velocity = baseVelocity;
             sample.tick = now;
             sample.initialized = true;
             return adjusted;

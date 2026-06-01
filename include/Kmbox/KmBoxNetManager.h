@@ -110,6 +110,7 @@ private:
 public:
     KmBoxNetManager();
     ~KmBoxNetManager();
+    int ForceReleaseMouseButton(int button);
     int ForceReleaseMouseButtons();
     int SendKeyboardKey(unsigned char hidCode, bool down);
     KmBoxConnectionState GetConnectionState() const;

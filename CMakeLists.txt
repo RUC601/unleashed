@@ -5,6 +5,8 @@ project(Unleashed LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+enable_testing()
+
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
@@ -97,6 +99,12 @@ add_executable(CnOffsetProbe
     src/Utils/Diagnostics.cpp
 )
 
+add_executable(MotionEstimatorSelfTest
+    src/Tools/MotionEstimatorSelfTest.cpp
+)
+
+add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
+
 # ============================================================================
 # Include directories
 # ============================================================================
@@ -113,6 +121,11 @@ target_include_directories(Unleashed PRIVATE
 target_include_directories(CnOffsetProbe PRIVATE
     include
     vendor/leechcore
+)
+
+target_include_directories(MotionEstimatorSelfTest PRIVATE
+    include
+    vendor/imgui
 )
 
 # ============================================================================
@@ -219,3 +232,6 @@ target_compile_definitions(Unleashed PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 target_compile_options(CnOffsetProbe PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(CnOffsetProbe PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+target_compile_options(MotionEstimatorSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(MotionEstimatorSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)

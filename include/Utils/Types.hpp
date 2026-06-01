@@ -126,11 +126,11 @@ public:
 };
 
     // Helper for convertToHex with ImVec4 (used by Target.hpp)
-    inline DWORD ConvertImVec4ToHex(const ImVec4& color) {
-        DWORD r = (DWORD)(color.x * 255.f);
-        DWORD g = (DWORD)(color.y * 255.f);
-        DWORD b = (DWORD)(color.z * 255.f);
-        DWORD a = (DWORD)(color.w * 255.f);
+    inline std::uint32_t ConvertImVec4ToHex(const ImVec4& color) {
+        std::uint32_t r = static_cast<std::uint32_t>(color.x * 255.f);
+        std::uint32_t g = static_cast<std::uint32_t>(color.y * 255.f);
+        std::uint32_t b = static_cast<std::uint32_t>(color.z * 255.f);
+        std::uint32_t a = static_cast<std::uint32_t>(color.w * 255.f);
         return ((a & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | (r & 0xff);
     }
 
