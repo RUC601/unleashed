@@ -4491,7 +4491,8 @@ namespace OW { namespace Config {
 
     void LoadConfig(const std::string& path)
     {
-        LoadConfigForHero(path, OW::local_entity.HeroID, OW::local_entity.LinkBase);
+        const OW::c_entity localSnapshot = OW::SnapshotLocalEntity();
+        LoadConfigForHero(path, localSnapshot.HeroID, localSnapshot.LinkBase);
     }
 
 }} // namespace OW::Config

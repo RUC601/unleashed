@@ -598,13 +598,14 @@ inline void entity_thread() {
         bool sampledBoneCandidateHasAngle = false;
         const bool detailedProcessLog = OW::PipelineDebugEnabled() &&
             (lastProcessLogTick == 0 || processLoopTick - lastProcessLogTick >= 1000);
-        const auto cameraLocation = OW::viewMatrix_xor.get_location();
+        const OW::Vector3 cameraLocation = OW::SnapshotCameraPosition();
+        OW::c_entity localCycleSnapshot = OW::SnapshotLocalEntity();
         const auto toCentimeters = [](float value) -> int {
             return std::isfinite(value) ? static_cast<int>(value * 100.0f) : 0;
         };
-        localStats.cameraXCm = std::isfinite(cameraLocation.x) ? static_cast<int>(cameraLocation.x * 100.0f) : 0;
-        localStats.cameraYCm = std::isfinite(cameraLocation.y) ? static_cast<int>(cameraLocation.y * 100.0f) : 0;
-        localStats.cameraZCm = std::isfinite(cameraLocation.z) ? static_cast<int>(cameraLocation.z * 100.0f) : 0;
+        localStats.cameraXCm = std::isfinite(cameraLocation.X) ? static_cast<int>(cameraLocation.X * 100.0f) : 0;
+        localStats.cameraYCm = std::isfinite(cameraLocation.Y) ? static_cast<int>(cameraLocation.Y * 100.0f) : 0;
+        localStats.cameraZCm = std::isfinite(cameraLocation.Z) ? static_cast<int>(cameraLocation.Z * 100.0f) : 0;
 
         // Resolve local player UID from GameAdmin chain (slot 79)
         const uint32_t gameAdminLocalUID = OW::GetGameAdminLocalUID();
@@ -1116,8 +1117,7 @@ inline void entity_thread() {
                     if (entity.debugHeadLookupException)
                         processStats.headProbeExceptions++;
 
-                    const float posDist = Vector3(cameraLocation.x, cameraLocation.y, cameraLocation.z)
-                        .DistTo(entity.pos);
+                    const float posDist = cameraLocation.DistTo(entity.pos);
                     const bool nearCameraByPosition = std::isfinite(posDist) && posDist <= 3.0f;
                     if (nearCameraByPosition) {
                         processStats.headProbeNearCandidates++;
@@ -1130,8 +1130,7 @@ inline void entity_thread() {
                     }
 
                     if (entity.debugHeadWorldNonZero && processStats.sampleHeadGoodAddress == 0) {
-                        const float headDist = Vector3(cameraLocation.x, cameraLocation.y, cameraLocation.z)
-                            .DistTo(entity.debugHeadWorld);
+                        const float headDist = cameraLocation.DistTo(entity.debugHeadWorld);
                         processStats.sampleHeadGoodAddress = entity.address;
                         processStats.sampleHeadGoodHeroId = entity.HeroID;
                         processStats.sampleHeadGoodMappedIndex = entity.debugHeadMappedIndex;
@@ -1211,7 +1210,7 @@ inline void entity_thread() {
             // ---- BattleTag (optional) ----
             if (OW::Config::drawbattletag) {
                 entity.statcombase = OW::DecryptComponent(LinkParent, OW::TYPE_STAT, linkSnapshot);
-                if (entity.statcombase && entity != OW::local_entity) {
+                if (entity.statcombase && entity != localCycleSnapshot) {
                     uintptr_t off = SDK->RPM<uintptr_t>(entity.statcombase + 0xE0);
                     char buffer[64] = "";
                     SDK->read_buf(off, buffer, sizeof(buffer));
@@ -1230,10 +1229,10 @@ inline void entity_thread() {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu team_start team_base=0x%llX local_team_base=0x%llX.",
                         i,
                         static_cast<unsigned long long>(entity.TeamBase),
-                        static_cast<unsigned long long>(OW::local_entity.TeamBase));
+                        static_cast<unsigned long long>(localCycleSnapshot.TeamBase));
                 }
                 auto team = entity.GetTeam();
-                entity.Team = (team == OW::eTeam::TEAM_DEATHMATCH || team != OW::local_entity.GetTeam());
+                entity.Team = (team == OW::eTeam::TEAM_DEATHMATCH || team != localCycleSnapshot.GetTeam());
                 slowCache.isEnemy = entity.Team;
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu team_done team=%d enemy=%d.",
@@ -1244,7 +1243,8 @@ inline void entity_thread() {
             }
 
             // ---- Visibility (refreshed every frame) ----
-            // p334 xwwxxwwxwxwxwx: bit 11 of visComp+0x98 = visibility (0=visible)
+            // DecryptVis owns profile-specific polarity. CN/NE uses visComp+0x98
+            // as a live-verified raw bool state: raw == 1 means visible.
             if (entity.VisBase) {
                 const uint64_t rawVis = OW::DecryptVis(entity.VisBase);
                 entity.Vis = (rawVis == 1);
@@ -1306,8 +1306,7 @@ inline void entity_thread() {
                 if (positionIsNonZero)
                     localStats.nonZeroPositionCandidates++;
 
-                float dist = Vector3(cameraLocation.x, cameraLocation.y, cameraLocation.z)
-                    .DistTo(entity.head_pos);
+                float dist = cameraLocation.DistTo(entity.head_pos);
                 const int distanceCm = std::isfinite(dist)
                     ? static_cast<int>(dist * 100.0f + 0.5f)
                     : -1;
@@ -1409,6 +1408,7 @@ inline void entity_thread() {
                         OW::local_entity = entity;
                         SDK->g_player_controller = entity.AngleBase;
                     }
+                    localCycleSnapshot = entity;
                     localStats.selected++;
                     localStats.selectedAddress = entity.address;
                     localStats.selectedHeroId = entity.HeroID;
@@ -1639,30 +1639,45 @@ inline void viewmatrix_thread() {
                 continue;
             }
 
-            // VM12 (2026-05-27): two-key add-XOR chain.
-            // UC p330/p331 working snippets use the p2 -> +0x6C8 -> +0x8 -> +0xC0
-            // pre-composed view-projection matrix as the primary WorldToScreen source.
-            uint64_t enc = SDK->RPM<uint64_t>(SDK->dwGameBase + OW::offset::Address_viewmatrix_base);
-            if (!enc) {
-                OW::RecordViewMatrixUnresolved("encrypted base pointer", enc, lastViewMatrixLogTick);
+            // VM12 (2026-05-27): world/BZ uses a two-key add-XOR root.
+            // CN/NE (2026-06-01): the root pointer is read directly.
+            // Both profiles use p2 -> +0x6C8 -> +0x8 -> +0xC0 as the
+            // pre-composed view-projection matrix source.
+            const auto& activeOffsets = OW::offset::Active();
+            if (!activeOffsets.Address_viewmatrix_base) {
+                OW::RecordViewMatrixUnresolved("profile viewmatrix unresolved", 0, lastViewMatrixLogTick);
+                Sleep(100);
+                continue;
+            }
+
+            const bool directViewMatrixRoot =
+                OW::offset::ActiveProfile() == OW::offset::RuntimeProfile::CnNe;
+            uint64_t root = SDK->RPM<uint64_t>(SDK->dwGameBase + activeOffsets.Address_viewmatrix_base);
+            if (!root) {
+                OW::RecordViewMatrixUnresolved(
+                    directViewMatrixRoot ? "direct root pointer" : "encrypted base pointer",
+                    root,
+                    lastViewMatrixLogTick);
                 Sleep(5);
                 continue;
             }
-            uint64_t dec = (enc + OW::offset::offset_viewmatrix_xor_key)
-                         ^ OW::offset::offset_viewmatrix_xor_key2;
+            uint64_t dec = directViewMatrixRoot
+                ? root
+                : ((root + activeOffsets.offset_viewmatrix_xor_key)
+                    ^ activeOffsets.offset_viewmatrix_xor_key2);
             if (!dec) {
                 OW::RecordViewMatrixUnresolved("decoded base pointer", dec, lastViewMatrixLogTick);
                 Sleep(5);
                 continue;
             }
 
-            uint64_t p1 = SDK->RPM<uint64_t>(dec + OW::offset::VM_P1);
+            uint64_t p1 = SDK->RPM<uint64_t>(dec + activeOffsets.VM_P1);
             if (!p1) {
                 OW::RecordViewMatrixUnresolved("p1", p1, lastViewMatrixLogTick);
                 Sleep(5);
                 continue;
             }
-            uint64_t p2 = SDK->RPM<uint64_t>(p1 + OW::offset::VM_P2);
+            uint64_t p2 = SDK->RPM<uint64_t>(p1 + activeOffsets.VM_P2);
             if (!p2) {
                 OW::RecordViewMatrixUnresolved("p2", p2, lastViewMatrixLogTick);
                 Sleep(5);
@@ -1671,46 +1686,46 @@ inline void viewmatrix_thread() {
 
             OW::RefreshScreenSizeFromConfig();
 
-            const uint64_t p3 = SDK->RPM<uint64_t>(p2 + OW::offset::VM_ViewProjectionParent);
+            const uint64_t p3 = SDK->RPM<uint64_t>(p2 + activeOffsets.VM_ViewProjectionParent);
             if (!p3) {
                 OW::RecordViewMatrixUnresolved("view projection p3", p3, lastViewMatrixLogTick);
                 Sleep(5);
                 continue;
             }
 
-            const uint64_t p4 = SDK->RPM<uint64_t>(p3 + OW::offset::VM_ViewProjectionPtr);
+            const uint64_t p4 = SDK->RPM<uint64_t>(p3 + activeOffsets.VM_ViewProjectionPtr);
             if (!p4) {
                 OW::RecordViewMatrixUnresolved("view projection p4", p4, lastViewMatrixLogTick);
                 Sleep(5);
                 continue;
             }
 
-            viewMatrixPtr = p4 + OW::offset::VM_ViewProjectionMatrix;
-            viewMatrix_xor_ptr = p2 + OW::offset::VM_ViewMatrix;
+            viewMatrixPtr = p4 + activeOffsets.VM_ViewProjectionMatrix;
+            viewMatrix_xor_ptr = p2 + activeOffsets.VM_ViewMatrix;
 
             OW::Matrix renderViewProjection = SDK->RPM<OW::Matrix>(viewMatrixPtr);
             OW::Matrix cameraViewMatrix = SDK->RPM<OW::Matrix>(viewMatrix_xor_ptr);
 
             const bool renderViewProjectionValid = OW::IsMatrixNonIdentity(renderViewProjection);
             const bool cameraViewValid = OW::IsMatrixNonIdentity(cameraViewMatrix);
-            {
-                OW::g_viewMatrixMutex.lock();
-                OW::viewMatrix = renderViewProjection;
-                if (cameraViewValid) {
-                    OW::viewMatrix_xor = cameraViewMatrix;
-                } else if (renderViewProjectionValid) {
-                    if (!OW::IsMatrixNonIdentity(OW::viewMatrix_xor)) {
-                        OW::viewMatrix_xor = cameraViewMatrix;
-                    }
-                } else {
+            OW::Matrix publishedCameraView{};
+            OW::g_viewMatrixMutex.lock();
+            OW::viewMatrix = renderViewProjection;
+            if (cameraViewValid) {
+                OW::viewMatrix_xor = cameraViewMatrix;
+            } else if (renderViewProjectionValid) {
+                if (!OW::IsMatrixNonIdentity(OW::viewMatrix_xor)) {
                     OW::viewMatrix_xor = cameraViewMatrix;
                 }
-                OW::g_viewMatrixMutex.unlock();
+            } else {
+                OW::viewMatrix_xor = cameraViewMatrix;
             }
+            publishedCameraView = OW::viewMatrix_xor;
+            OW::g_viewMatrixMutex.unlock();
 
             const bool viewMatrixValid =
-                OW::IsMatrixNonIdentity(OW::viewMatrix) &&
-                OW::IsMatrixNonIdentity(OW::viewMatrix_xor);
+                renderViewProjectionValid &&
+                OW::IsMatrixNonIdentity(publishedCameraView);
             OW::RecordViewMatrixResolved(
                 viewMatrixPtr,
                 viewMatrix_xor_ptr,
@@ -3579,8 +3594,7 @@ namespace AimbotDetail {
     }
 
     inline Vector3 CameraPosition() {
-        const auto camera = OW::viewMatrix_xor.get_location();
-        return Vector3(camera.x, camera.y, camera.z);
+        return OW::SnapshotCameraPosition();
     }
 
     inline OW::c_entity LocalEntity() {
@@ -3961,7 +3975,8 @@ namespace AimbotDetail {
     inline bool ProjectAimPoint(const Vector3& world, Vector2& screen) {
         if (IsZeroVector(world))
             return false;
-        return OW::viewMatrix.WorldToScreen(world, &screen, Vector2(OW::WX, OW::WY), false);
+        const OW::Matrix view = OW::SnapshotViewMatrix();
+        return view.WorldToScreen(world, &screen, Vector2(OW::WX, OW::WY), false);
     }
 
     inline void ExpandTwoStageBox(TwoStageScreenBox& box, const Vector2& point) {
@@ -4498,8 +4513,9 @@ namespace AimbotDetail {
         }
 
         Vector2 high{}, low{};
-        if (OW::viewMatrix.WorldToScreen(fov_target.head_pos, &high, Vector2(OW::WX, OW::WY)) &&
-            OW::viewMatrix.WorldToScreen(fov_target.chest_pos, &low, Vector2(OW::WX, OW::WY))) {
+        const OW::Matrix view = OW::SnapshotViewMatrix();
+        if (view.WorldToScreen(fov_target.head_pos, &high, Vector2(OW::WX, OW::WY)) &&
+            view.WorldToScreen(fov_target.chest_pos, &low, Vector2(OW::WX, OW::WY))) {
             OW::Config::Fov = -(high.Y - low.Y) * 4.f;
             if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
             else if (OW::Config::Fov < OW::Config::minFov1) OW::Config::Fov = OW::Config::minFov1;
@@ -5329,17 +5345,18 @@ inline void configsavenloadthread() {
             continue;
         }
 
-        const uint64_t currentHeroId = OW::local_entity.HeroID;
+        const OW::c_entity localSnapshot = OW::SnapshotLocalEntity();
+        const uint64_t currentHeroId = localSnapshot.HeroID;
         if (!OW::Config::Menu && currentHeroId != 0 && lastHeroId != currentHeroId) {
             if (lastHeroId != 0) {
-                OW::Config::SaveConfigForHero(OW::Config::ConfigPath(), lastHeroId, OW::local_entity.LinkBase);
+                OW::Config::SaveConfigForHero(OW::Config::ConfigPath(), lastHeroId, localSnapshot.LinkBase);
             }
 
-            OW::Config::LoadConfigForHero(OW::Config::ConfigPath(), currentHeroId, OW::local_entity.LinkBase);
+            OW::Config::LoadConfigForHero(OW::Config::ConfigPath(), currentHeroId, localSnapshot.LinkBase);
             lastHeroId = currentHeroId;
-            OW::Config::nowhero = "Now using: " + OW::GetHeroEngNames(currentHeroId, OW::local_entity.LinkBase);
+            OW::Config::nowhero = "Now using: " + OW::GetHeroEngNames(currentHeroId, localSnapshot.LinkBase);
         } else if (OW::Config::manualsave && lastHeroId != 0) {
-            OW::Config::SaveConfigForHero(OW::Config::ConfigPath(), lastHeroId, OW::local_entity.LinkBase);
+            OW::Config::SaveConfigForHero(OW::Config::ConfigPath(), lastHeroId, localSnapshot.LinkBase);
             OW::Config::manualsave = false;
         }
         Sleep(2);

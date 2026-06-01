@@ -82,9 +82,13 @@ bool TryReadViewportFromTarget(UINT& width, UINT& height) {
     if (!OW::SDK || !OW::SDK->IsInitialized() || OW::SDK->dwGameBase == 0)
         return false;
 
+    const auto& activeOffsets = OW::offset::Active();
+    if (!activeOffsets.ViewportWidth_RVA || !activeOffsets.ViewportHeight_RVA)
+        return false;
+
     const uint64_t base = OW::SDK->dwGameBase;
-    const UINT detectedWidth = OW::SDK->RPM<uint32_t>(base + OW::offset::ViewportWidth_RVA);
-    const UINT detectedHeight = OW::SDK->RPM<uint32_t>(base + OW::offset::ViewportHeight_RVA);
+    const UINT detectedWidth = OW::SDK->RPM<uint32_t>(base + activeOffsets.ViewportWidth_RVA);
+    const UINT detectedHeight = OW::SDK->RPM<uint32_t>(base + activeOffsets.ViewportHeight_RVA);
     if (!IsPlausibleViewport(detectedWidth, detectedHeight))
         return false;
 

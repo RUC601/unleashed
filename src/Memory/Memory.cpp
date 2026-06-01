@@ -110,12 +110,17 @@ namespace {
 		return text;
 	}
 
-	bool StartsWithNoCase(const std::string& value, const char* prefix)
+	bool StartsWithNoCase(const std::string& value, const std::string& prefix)
 	{
 		const std::string lowerValue = ToLower(value);
 		const std::string lowerPrefix = ToLower(prefix);
 		return lowerValue.size() >= lowerPrefix.size() &&
 			lowerValue.compare(0, lowerPrefix.size(), lowerPrefix) == 0;
+	}
+
+	bool StartsWithNoCase(const std::string& value, const char* prefix)
+	{
+		return StartsWithNoCase(value, std::string(prefix ? prefix : ""));
 	}
 
 	bool ParseDmaDeviceType(const std::string& value, DmaDeviceType& deviceType)
@@ -957,6 +962,71 @@ std::vector<int> Memory::GetPidListFromName(const std::string& name)
 
 	VMMDLL_MemFree(process_info);
 	return list;
+}
+
+Memory::ProcessLookupResult Memory::FindProcessByNamePrefix(const std::string& namePrefix)
+{
+	ProcessLookupResult result = {};
+	if (namePrefix.empty())
+		return result;
+
+	PVMMDLL_PROCESS_INFORMATION process_info = NULL;
+	DWORD total_processes = 0;
+	if (this->vHandle &&
+		VMMDLL_ProcessGetInformationAll(this->vHandle, &process_info, &total_processes))
+	{
+		for (DWORD i = 0; i < total_processes; i++)
+		{
+			const auto& process = process_info[i];
+			if (process.dwPID == 0)
+				continue;
+
+			const std::string shortName = process.szName ? process.szName : "";
+			const std::string longName = process.szNameLong ? process.szNameLong : "";
+			if (StartsWithNoCase(shortName, namePrefix) || StartsWithNoCase(longName, namePrefix))
+			{
+				result.pid = process.dwPID;
+				result.name = !longName.empty() ? longName : shortName;
+				break;
+			}
+		}
+
+		VMMDLL_MemFree(process_info);
+		if (result)
+			return result;
+	}
+
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snapshot == INVALID_HANDLE_VALUE)
+		return result;
+
+	PROCESSENTRY32W entry = {};
+	entry.dwSize = sizeof(entry);
+	const std::wstring prefixWide(namePrefix.begin(), namePrefix.end());
+	if (Process32FirstW(snapshot, &entry))
+	{
+		do
+		{
+			std::wstring exeName = entry.szExeFile;
+			std::wstring exeNameLower = exeName;
+			std::wstring prefixLower = prefixWide;
+			std::transform(exeNameLower.begin(), exeNameLower.end(), exeNameLower.begin(),
+				[](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+			std::transform(prefixLower.begin(), prefixLower.end(), prefixLower.begin(),
+				[](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+
+			if (exeNameLower.size() >= prefixLower.size() &&
+				exeNameLower.compare(0, prefixLower.size(), prefixLower) == 0)
+			{
+				result.pid = entry.th32ProcessID;
+				result.name.assign(exeName.begin(), exeName.end());
+				break;
+			}
+		} while (Process32NextW(snapshot, &entry));
+	}
+
+	CloseHandle(snapshot);
+	return result;
 }
 
 /* ------------------------------------------------------------------ */

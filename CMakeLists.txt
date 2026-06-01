@@ -91,6 +91,12 @@ add_executable(Unleashed
     ${IMGUI_SOURCES}
 )
 
+add_executable(CnOffsetProbe
+    src/Tools/CnOffsetProbe.cpp
+    src/Memory/Memory.cpp
+    src/Utils/Diagnostics.cpp
+)
+
 # ============================================================================
 # Include directories
 # ============================================================================
@@ -102,6 +108,11 @@ target_include_directories(Unleashed PRIVATE
     vendor/imgui/backends
     vendor/rapidjson
     vendor/stb
+)
+
+target_include_directories(CnOffsetProbe PRIVATE
+    include
+    vendor/leechcore
 )
 
 # ============================================================================
@@ -120,6 +131,11 @@ target_link_libraries(Unleashed PRIVATE
     shell32
     dwmapi
     setupapi
+)
+
+target_link_libraries(CnOffsetProbe PRIVATE
+    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
+    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
 )
 
 # ============================================================================
@@ -161,6 +177,7 @@ function(copy_leechcore_runtime target_name)
 endfunction()
 
 copy_leechcore_runtime(Unleashed)
+copy_leechcore_runtime(CnOffsetProbe)
 
 add_custom_command(TARGET Unleashed POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -187,5 +204,18 @@ endif()
 # Compiler options
 # ============================================================================
 
+if(MSVC)
+    function(enable_release_symbols target_name)
+        target_compile_options(${target_name} PRIVATE "$<$<CONFIG:Release>:/Zi>")
+        target_link_options(${target_name} PRIVATE "$<$<CONFIG:Release>:/DEBUG:FULL>")
+    endfunction()
+
+    enable_release_symbols(Unleashed)
+    enable_release_symbols(CnOffsetProbe)
+endif()
+
 target_compile_options(Unleashed PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(Unleashed PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+target_compile_options(CnOffsetProbe PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(CnOffsetProbe PRIVATE _CRT_SECURE_NO_WARNINGS)

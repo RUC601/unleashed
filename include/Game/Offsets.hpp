@@ -1,5 +1,8 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
+
 // =============================================================================
 // Overwatch Offsets - static dump verified on 2026-05-27
 //
@@ -9,13 +12,55 @@
 // Changes from 0521/0525:
 //   - Component key source RVAs changed; key qword offset moved 0x10C -> 0x1D4.
 //   - Component tail changed from add/xor/add/xor/xor/xor/ROR3 to xor/ROR/add/sub/ROR60/ROR57.
-//   - Visibility flag moved from +0x98 to +0x2D8 and now uses a dedicated magic byte.
+//   - Visibility uses profile-specific runtime polarity; CN/NE uses +0x98 as
+//     a live-verified raw bool state.
 //   - ViewMatrix root moved and lost the third key: new formula is (enc + key1) ^ key2.
 //   - GameAdmin root moved and now reads +0x30 with a two-rotate formula.
 // =============================================================================
 
 namespace OW {
     namespace offset {
+
+        enum class RuntimeProfile {
+            WorldBz,
+            CnNe,
+        };
+
+        enum class ComponentTransformMode {
+            World0527,
+            Identity,
+        };
+
+        struct RuntimeOffsetProfile {
+            const char* name = "world/bz";
+            ComponentTransformMode componentTransform = ComponentTransformMode::World0527;
+
+            uint64_t Address_entity_base = 0;
+            uint64_t InputMouseScaleX_RVA = 0;
+            uint64_t InputMouseScaleY_RVA = 0;
+            uint64_t ViewportWidth_RVA = 0;
+            uint64_t ViewportHeight_RVA = 0;
+            uint64_t VisibilityValueOffset = 0;
+
+            uint64_t Address_viewmatrix_base = 0;
+            uint64_t offset_viewmatrix_xor_key = 0;
+            uint64_t offset_viewmatrix_xor_key2 = 0;
+            uint64_t VM_P1 = 0;
+            uint64_t VM_P2 = 0;
+            uint64_t VM_ViewProjectionParent = 0;
+            uint64_t VM_ViewProjectionPtr = 0;
+            uint64_t VM_ViewProjectionMatrix = 0;
+            uint64_t VM_ViewMatrix = 0;
+            uint64_t VM_ProjMatrix = 0;
+
+            uint64_t Address_game_admin_root = 0;
+            uint64_t GameAdmin_RootPtr = 0;
+            uint64_t GameAdmin_Add1 = 0;
+            uint64_t GameAdmin_Xor1 = 0;
+            uint64_t GameAdmin_Ror1 = 0;
+            uint64_t GameAdmin_Add2 = 0;
+            uint64_t GameAdmin_Ror2 = 0;
+        };
 
         // =========================================================================
         // STATIC-VERIFIED (2026-05-27): IDA xrefs + forum p330/p331
@@ -137,6 +182,95 @@ namespace OW {
         static constexpr auto InputMouseScaleY_RVA      = 0x3778BE4; // input.MouseScaleY
 
         static constexpr auto changefov = 0x402B658; // current candidate; not revalidated in 0527 pass
+
+        inline constexpr RuntimeOffsetProfile kWorldBzRuntimeProfile{
+            "world/bz",
+            ComponentTransformMode::World0527,
+            Address_entity_base,
+            InputMouseScaleX_RVA,
+            InputMouseScaleY_RVA,
+            ViewportWidth_RVA,
+            ViewportHeight_RVA,
+            VisibilityValueOffset,
+            Address_viewmatrix_base,
+            offset_viewmatrix_xor_key,
+            offset_viewmatrix_xor_key2,
+            VM_P1,
+            VM_P2,
+            VM_ViewProjectionParent,
+            VM_ViewProjectionPtr,
+            VM_ViewProjectionMatrix,
+            VM_ViewMatrix,
+            VM_ProjMatrix,
+            Address_game_admin_root,
+            GameAdmin_RootPtr,
+            GameAdmin_Add1,
+            GameAdmin_Xor1,
+            GameAdmin_Ror1,
+            GameAdmin_Add2,
+            GameAdmin_Ror2,
+        };
+
+        inline constexpr RuntimeOffsetProfile kCnNeRuntimeProfile{
+            "cn/ne",
+            ComponentTransformMode::Identity,
+            0x42D2268, // live-verified 2026-05-31: CN entity root
+            0x411E4EC, // live-verified 2026-05-31: input.MouseScaleX
+            0x411E504, // live-verified 2026-05-31: input.MouseScaleY
+            0,         // unresolved: CN viewport width
+            0,         // unresolved: CN viewport height
+            0x98,      // live-verified 2026-06-01: CN visibility raw bool, raw == 1 means visible
+            0x49A6A90, // live-verified 2026-06-01: direct ViewMatrix root
+            0,         // not used by CN direct ViewMatrix path
+            0,         // not used by CN direct ViewMatrix path
+            0x20,
+            0x48,
+            0x6C8,
+            0x8,
+            0xC0,
+            0x140,
+            0xB0,
+            0,         // unresolved: CN GameAdmin root/formula/table
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        };
+
+        inline std::atomic<RuntimeProfile>& ActiveProfileStorage()
+        {
+            static std::atomic<RuntimeProfile> profile{ RuntimeProfile::WorldBz };
+            return profile;
+        }
+
+        inline void SetActiveProfile(RuntimeProfile profile)
+        {
+            ActiveProfileStorage().store(profile, std::memory_order_release);
+        }
+
+        inline RuntimeProfile ActiveProfile()
+        {
+            return ActiveProfileStorage().load(std::memory_order_acquire);
+        }
+
+        inline const RuntimeOffsetProfile& Active()
+        {
+            return ActiveProfile() == RuntimeProfile::CnNe
+                ? kCnNeRuntimeProfile
+                : kWorldBzRuntimeProfile;
+        }
+
+        inline const char* ActiveProfileName()
+        {
+            return Active().name;
+        }
+
+        inline bool IsCnNeProfile()
+        {
+            return ActiveProfile() == RuntimeProfile::CnNe;
+        }
 
         // =========================================================================
         // Legacy / unresolved offsets

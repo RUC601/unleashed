@@ -1280,7 +1280,8 @@ static std::string HeroDisplayNameForId(uint64_t heroId) {
     if (const HeroOption* option = FindHeroOptionById(heroId))
         return option->label;
 
-    std::string name = OW::GetHeroEngNames(heroId, OW::local_entity.LinkBase);
+    const OW::c_entity localSnapshot = OW::SnapshotLocalEntity();
+    std::string name = OW::GetHeroEngNames(heroId, localSnapshot.LinkBase);
     if (name.empty() || name == "Unknown") {
         char unknown[64] = {};
         std::snprintf(unknown, sizeof(unknown), "Unknown (0x%llX)",
@@ -1293,11 +1294,12 @@ static std::string HeroDisplayNameForId(uint64_t heroId) {
 static std::string SaveSelectedConfig() {
     const HeroOption& selectedHero = CurrentHeroOption();
     const std::string path = OW::Config::ConfigPath();
+    const OW::c_entity localSnapshot = OW::SnapshotLocalEntity();
     OW::Config::NormalizeHeroPresets();
 
     if (IsConcreteHeroSelection(selectedHero)) {
         const std::string heroPath = OW::Config::HeroConfigPath(path);
-        OW::Config::SaveConfigForHero(path, selectedHero.heroId, OW::local_entity.LinkBase);
+        OW::Config::SaveConfigForHero(path, selectedHero.heroId, localSnapshot.LinkBase);
         std::string status = "Saved ";
         status += selectedHero.label;
         status += " config";
@@ -1309,7 +1311,7 @@ static std::string SaveSelectedConfig() {
     OW::Config::SaveHeroConfig(path);
     const uint64_t savedHeroId = OW::Config::lastheroid > 0
         ? static_cast<uint64_t>(OW::Config::lastheroid)
-        : OW::local_entity.HeroID;
+        : localSnapshot.HeroID;
     const std::string savedName = savedHeroId != 0
         ? HeroDisplayNameForId(savedHeroId)
         : std::string("global");

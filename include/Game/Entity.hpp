@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <DirectXMath.h>
 using namespace DirectX;
 
@@ -935,9 +936,14 @@ namespace OW {
                 // We rely on the caller to have set up the extern viewMatrix and WX/WY.
                 extern Matrix viewMatrix;
                 extern float WX, WY;
+                extern std::mutex g_viewMatrixMutex;
+                Matrix view{};
+                g_viewMatrixMutex.lock();
+                view = viewMatrix;
+                g_viewMatrixMutex.unlock();
 
                 if (isBot) {
-                    if (!viewMatrix.WorldToScreen(root, &w2s, Vector2(WX, WY))) {
+                    if (!view.WorldToScreen(root, &w2s, Vector2(WX, WY))) {
                         a.boneerror = true;
                         return a;
                     }
@@ -946,7 +952,7 @@ namespace OW {
                     for (int i = 0; i < 5; i++) {
                         Vector3 bone = GetBonePos(botIndices[i]);
                         Vector2 ws{};
-                        if (viewMatrix.WorldToScreen(bone, &ws, Vector2(WX, WY))) {
+                        if (view.WorldToScreen(bone, &ws, Vector2(WX, WY))) {
                             if (i == 0) { a.head = ws; a.head.Y += 4.f; }
                             else if (i == 1) a.neck = ws;
                             else if (i == 2) a.body_1 = ws;
@@ -959,7 +965,7 @@ namespace OW {
                         }
                     }
                 } else {
-                    if (!viewMatrix.WorldToScreen(root, &w2s, Vector2(WX, WY))) {
+                    if (!view.WorldToScreen(root, &w2s, Vector2(WX, WY))) {
                         a.boneerror = true;
                         return a;
                     }
@@ -967,7 +973,7 @@ namespace OW {
                     for (int i = 0; i < 18; i++) {
                         Vector3 bone = GetBonePos(index[i]);
                         Vector2 ws{};
-                        if (viewMatrix.WorldToScreen(bone, &ws, Vector2(WX, WY))) {
+                        if (view.WorldToScreen(bone, &ws, Vector2(WX, WY))) {
                             if      (i == 0)  a.head = ws;
                             else if (i == 1)  a.neck = ws;
                             else if (i == 2)  a.body_1 = ws;

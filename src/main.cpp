@@ -47,6 +47,7 @@
 namespace {
 
     constexpr const char* kTargetProcessName = "Overwatch.exe";
+    constexpr const char* kCnDetectorProcessPrefix = "Neac";
     constexpr DWORD kProcessScanIntervalMs = 1000;
 
     std::atomic<bool> g_DiagnosticsThreadRunning{ false };
@@ -945,6 +946,20 @@ static bool TryConnectTargetProcess(bool forceReconnect, bool manualRequest)
         kTargetProcessName,
         static_cast<unsigned long>(livePid));
 
+    const auto neacProcess = mem.FindProcessByPrefix(kCnDetectorProcessPrefix);
+    OW::offset::SetActiveProfile(neacProcess
+        ? OW::offset::RuntimeProfile::CnNe
+        : OW::offset::RuntimeProfile::WorldBz);
+    Diagnostics::Info("Offset profile selected: %s reason=%s%s pid=%lu name=%s.",
+        OW::offset::ActiveProfileName(),
+        neacProcess ? "Neac process detected" : "Neac process not detected",
+        neacProcess ? "" : " (world fallback)",
+        static_cast<unsigned long>(neacProcess.pid),
+        neacProcess.name.empty() ? "<none>" : neacProcess.name.c_str());
+    std::printf("[MAIN] Offset profile: %s (%s)\n",
+        OW::offset::ActiveProfileName(),
+        neacProcess ? neacProcess.name.c_str() : "world fallback");
+
     ClearProcessRuntimeSnapshots();
     if (forceReconnect)
         mem.DetachProcess();
@@ -959,7 +974,7 @@ static bool TryConnectTargetProcess(bool forceReconnect, bool manualRequest)
     const int attachedPid = mem.GetCurrentProcessId();
     Diagnostics::SetProcessAttached(true);
     OW::ProcessConnection::SetStatus(true, false, attachedPid, OW::SDK->dwGameBase,
-        "Connected to Overwatch.exe");
+        std::string("Connected to Overwatch.exe (") + OW::offset::ActiveProfileName() + ")");
     Diagnostics::Info("Process attached: %s pid=%d base=0x%llX.",
         kTargetProcessName,
         attachedPid,

@@ -289,6 +289,18 @@ namespace OW {
             return 0;
         }
 
+        const uint64_t present_mask =
+            static_cast<uint64_t>(static_cast<int64_t>(
+                -static_cast<int32_t>(present)));
+        const auto& activeOffsets = offset::Active();
+
+        if (activeOffsets.componentTransform == offset::ComponentTransformMode::Identity) {
+            const uintptr_t decoded = static_cast<uintptr_t>(present_mask & component);
+            if (!decoded)
+                Diagnostics::RecordDecryptFailure();
+            return decoded;
+        }
+
         uint64_t component_key_source = 0;
         uint64_t component_key_material_1 = 0;
         uint8_t component_key_byte = 0;
@@ -312,9 +324,6 @@ namespace OW {
         component = ROR64(component, offset::Component_Ror2);
         component = ROR64(component, offset::Component_Ror3);
 
-        const uint64_t present_mask =
-            static_cast<uint64_t>(static_cast<int64_t>(
-                -static_cast<int32_t>(present)));
         const uintptr_t decoded = static_cast<uintptr_t>(present_mask & component);
         if (!decoded)
             Diagnostics::RecordDecryptFailure();
@@ -329,8 +338,22 @@ namespace OW {
     }
 
     inline uint64_t DecryptVis(uint64_t visBase) {
-        const uint64_t enc = SDK->RPM<uint64_t>(visBase + offset::VisibilityValueOffset);
-        const bool visible = (enc & 0x800) == 0;
+        const auto& activeOffsets = offset::Active();
+        if (!activeOffsets.VisibilityValueOffset)
+            return 0;
+
+        const bool cnNeProfile = offset::ActiveProfile() == offset::RuntimeProfile::CnNe;
+        if (cnNeProfile) {
+            static bool loggedCnVisibility = false;
+            if (!loggedCnVisibility) {
+                Diagnostics::Info("[VISIBILITY] CN/NE +0x%llX uses live-verified raw bool state; visible when raw == 1.",
+                    static_cast<unsigned long long>(activeOffsets.VisibilityValueOffset));
+                loggedCnVisibility = true;
+            }
+        }
+
+        const uint64_t enc = SDK->RPM<uint64_t>(visBase + activeOffsets.VisibilityValueOffset);
+        const bool visible = cnNeProfile ? (enc == 1) : ((enc & 0x800) == 0);
         const uint64_t result = visible ? 1 : 0;
         {
             static uint32_t sampleCount = 0;
@@ -354,20 +377,24 @@ namespace OW {
         if (!SDK->dwGameBase)
             return 0;
 
+        const auto& activeOffsets = offset::Active();
+        if (!activeOffsets.Address_game_admin_root)
+            return 0;
+
         const uintptr_t root =
-            SDK->RPM<uintptr_t>(SDK->dwGameBase + offset::Address_game_admin_root);
+            SDK->RPM<uintptr_t>(SDK->dwGameBase + activeOffsets.Address_game_admin_root);
         if (!root)
             return 0;
 
-        const uint64_t enc = SDK->RPM<uint64_t>(root + offset::GameAdmin_RootPtr);
+        const uint64_t enc = SDK->RPM<uint64_t>(root + activeOffsets.GameAdmin_RootPtr);
         if (!enc)
             return 0;
 
-        uint64_t slot_table = enc + offset::GameAdmin_Add1;
-        slot_table ^= offset::GameAdmin_Xor1;
-        slot_table = ROR64(slot_table, offset::GameAdmin_Ror1);
-        slot_table += offset::GameAdmin_Add2;
-        slot_table = ROR64(slot_table, offset::GameAdmin_Ror2);
+        uint64_t slot_table = enc + activeOffsets.GameAdmin_Add1;
+        slot_table ^= activeOffsets.GameAdmin_Xor1;
+        slot_table = ROR64(slot_table, static_cast<int>(activeOffsets.GameAdmin_Ror1));
+        slot_table += activeOffsets.GameAdmin_Add2;
+        slot_table = ROR64(slot_table, static_cast<int>(activeOffsets.GameAdmin_Ror2));
         if (!slot_table)
             return 0;
 
@@ -383,11 +410,19 @@ namespace OW {
             return 0;
 
         static uintptr_t cached = 0;
-        if (cached)
+        static uint64_t cachedBase = 0;
+        static offset::RuntimeProfile cachedProfile = offset::RuntimeProfile::WorldBz;
+        const offset::RuntimeProfile currentProfile = offset::ActiveProfile();
+        if (cached && cachedBase == SDK->dwGameBase && cachedProfile == currentProfile)
             return cached;
 
+        cached = 0;
+        cachedBase = SDK->dwGameBase;
+        cachedProfile = currentProfile;
+
+        const auto& activeOffsets = offset::Active();
         const uintptr_t mouse_scale_x =
-            SDK->dwGameBase + offset::InputMouseScaleX_RVA;
+            SDK->dwGameBase + activeOffsets.InputMouseScaleX_RVA;
         if (IsPlausibleSensitivity(SDK->RPM<float>(mouse_scale_x))) {
             cached = mouse_scale_x;
             return cached;
@@ -461,27 +496,34 @@ namespace OW {
             return probe;
         }
 
-        probe.root = SDK->RPM<uintptr_t>(
-            SDK->dwGameBase + offset::Address_game_admin_root);
-        if (!probe.root) {
-            Diagnostics::Info("[GAMEADMIN] FAIL: root null at RVA 0x%llX.",
-                static_cast<unsigned long long>(offset::Address_game_admin_root));
+        const auto& activeOffsets = offset::Active();
+        if (!activeOffsets.Address_game_admin_root) {
+            Diagnostics::Info("[GAMEADMIN] SKIP: unresolved for active offset profile %s.",
+                offset::ActiveProfileName());
             return probe;
         }
 
-        probe.enc = SDK->RPM<uint64_t>(probe.root + offset::GameAdmin_RootPtr);
+        probe.root = SDK->RPM<uintptr_t>(
+            SDK->dwGameBase + activeOffsets.Address_game_admin_root);
+        if (!probe.root) {
+            Diagnostics::Info("[GAMEADMIN] FAIL: root null at RVA 0x%llX.",
+                static_cast<unsigned long long>(activeOffsets.Address_game_admin_root));
+            return probe;
+        }
+
+        probe.enc = SDK->RPM<uint64_t>(probe.root + activeOffsets.GameAdmin_RootPtr);
         if (!probe.enc) {
             Diagnostics::Info("[GAMEADMIN] FAIL: enc null at root=0x%llX+0x%llX.",
                 static_cast<unsigned long long>(probe.root),
-                static_cast<unsigned long long>(offset::GameAdmin_RootPtr));
+                static_cast<unsigned long long>(activeOffsets.GameAdmin_RootPtr));
             return probe;
         }
 
-        probe.decryptedSlotTable = probe.enc + offset::GameAdmin_Add1;
-        probe.decryptedSlotTable ^= offset::GameAdmin_Xor1;
-        probe.decryptedSlotTable = ROR64(probe.decryptedSlotTable, offset::GameAdmin_Ror1);
-        probe.decryptedSlotTable += offset::GameAdmin_Add2;
-        probe.decryptedSlotTable = ROR64(probe.decryptedSlotTable, offset::GameAdmin_Ror2);
+        probe.decryptedSlotTable = probe.enc + activeOffsets.GameAdmin_Add1;
+        probe.decryptedSlotTable ^= activeOffsets.GameAdmin_Xor1;
+        probe.decryptedSlotTable = ROR64(probe.decryptedSlotTable, static_cast<int>(activeOffsets.GameAdmin_Ror1));
+        probe.decryptedSlotTable += activeOffsets.GameAdmin_Add2;
+        probe.decryptedSlotTable = ROR64(probe.decryptedSlotTable, static_cast<int>(activeOffsets.GameAdmin_Ror2));
 
         if (!probe.decryptedSlotTable) {
             Diagnostics::Info("[GAMEADMIN] FAIL: decrypted table null. enc=0x%llX.",
@@ -563,24 +605,31 @@ namespace OW {
             return;
         }
 
+        const auto& activeOffsets = offset::Active();
+        if (!activeOffsets.Address_game_admin_root) {
+            Diagnostics::Info("[GAMEADMIN-SCAN] unresolved for active offset profile %s.",
+                offset::ActiveProfileName());
+            return;
+        }
+
         const uintptr_t root = SDK->RPM<uintptr_t>(
-            SDK->dwGameBase + offset::Address_game_admin_root);
+            SDK->dwGameBase + activeOffsets.Address_game_admin_root);
         if (!root) {
             Diagnostics::Info("[GAMEADMIN-SCAN] root null.");
             return;
         }
 
-        const uint64_t enc = SDK->RPM<uint64_t>(root + offset::GameAdmin_RootPtr);
+        const uint64_t enc = SDK->RPM<uint64_t>(root + activeOffsets.GameAdmin_RootPtr);
         if (!enc) {
             Diagnostics::Info("[GAMEADMIN-SCAN] enc null.");
             return;
         }
 
-        uint64_t slot_table = enc + offset::GameAdmin_Add1;
-        slot_table ^= offset::GameAdmin_Xor1;
-        slot_table = ROR64(slot_table, offset::GameAdmin_Ror1);
-        slot_table += offset::GameAdmin_Add2;
-        slot_table = ROR64(slot_table, offset::GameAdmin_Ror2);
+        uint64_t slot_table = enc + activeOffsets.GameAdmin_Add1;
+        slot_table ^= activeOffsets.GameAdmin_Xor1;
+        slot_table = ROR64(slot_table, static_cast<int>(activeOffsets.GameAdmin_Ror1));
+        slot_table += activeOffsets.GameAdmin_Add2;
+        slot_table = ROR64(slot_table, static_cast<int>(activeOffsets.GameAdmin_Ror2));
 
         if (!slot_table) {
             Diagnostics::Info("[GAMEADMIN-SCAN] decrypted table null. enc=0x%llX.",
@@ -737,7 +786,8 @@ namespace OW {
                    entity_id == 0x400000000002533;
         };
 
-        uint64_t entity_list = SDK->RPM<uint64_t>(SDK->dwGameBase + offset::Address_entity_base);
+        uint64_t entity_list = SDK->RPM<uint64_t>(
+            SDK->dwGameBase + offset::Active().Address_entity_base);
         if (!entity_list) {
             Diagnostics::Trace("Entity scan skipped: entity list pointer is null.");
             return result;

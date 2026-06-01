@@ -553,6 +553,7 @@ namespace {
         }
 
         const Vector2 crosshair = TargetingDetail::CrosshairCenter();
+        const Matrix view = SnapshotViewMatrix();
         float bestScore = (std::numeric_limits<float>::max)();
         int bestIndex = -1;
         bool found = false;
@@ -568,7 +569,7 @@ namespace {
                     continue;
 
                 Vector2 projected{};
-                if (!viewMatrix.WorldToScreen(position, &projected, Vector2(WX, WY), false))
+                if (!view.WorldToScreen(position, &projected, Vector2(WX, WY), false))
                     continue;
 
                 if (!std::isfinite(projected.X) || !std::isfinite(projected.Y))

@@ -50,11 +50,41 @@ namespace OW {
 
     extern Matrix viewMatrix;
     extern Matrix viewMatrix_xor;
+    extern std::mutex g_viewMatrixMutex;
     extern float WX;
     extern float WY;
     extern std::vector<c_entity> entities;
     extern c_entity local_entity;
     extern std::vector<hpanddy> hp_dy_entities;
+
+    inline void SnapshotViewMatrices(Matrix& view, Matrix& viewXor) {
+        std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
+        view = viewMatrix;
+        viewXor = viewMatrix_xor;
+    }
+
+    inline Matrix SnapshotViewMatrix() {
+        Matrix view{}, viewXor{};
+        SnapshotViewMatrices(view, viewXor);
+        return view;
+    }
+
+    inline Vector3 SnapshotCameraPosition() {
+        Matrix view{}, viewXor{};
+        SnapshotViewMatrices(view, viewXor);
+        const auto camera = viewXor.get_location();
+        return Vector3(camera.x, camera.y, camera.z);
+    }
+
+    inline c_entity SnapshotLocalEntity() {
+        std::lock_guard<std::mutex> lock(::g_mutex);
+        return local_entity;
+    }
+
+    inline uint64_t SnapshotLocalSkillBase() {
+        std::lock_guard<std::mutex> lock(::g_mutex);
+        return local_entity.SkillBase;
+    }
 
     // =========================================================================
     // Color4 = ImVec4 (Config uses ImVec4 directly)
@@ -574,9 +604,11 @@ namespace OW {
 
     inline void AimCorrection(Vector3* InVecArg, Vector3 currVelocity, float Distance, float Bulletspeed) {
         double G = 9.8;
-        double A = viewMatrix_xor.get_location().x;
-        double B = viewMatrix_xor.get_location().y;
-        double C = viewMatrix_xor.get_location().z;
+        const Vector3 camera = SnapshotCameraPosition();
+        const c_entity local = SnapshotLocalEntity();
+        double A = camera.X;
+        double B = camera.Y;
+        double C = camera.Z;
         double M = InVecArg->X;
         double N = InVecArg->Y;
         double O = InVecArg->Z;
@@ -603,20 +635,21 @@ namespace OW {
                 fBestRoot = pOutRoots[i].real();
             }
         }
-        InVecArg->X = (float)(viewMatrix_xor.get_location().x + (H + P * fBestRoot));
-        if (Config::projectile_arc || local_entity.HeroID == eHero::HERO_HANJO || Config::Gravitypredit) {
-            InVecArg->Y = (float)(viewMatrix_xor.get_location().y + (K + Q * fBestRoot - L * fBestRoot * fBestRoot));
+        InVecArg->X = (float)(camera.X + (H + P * fBestRoot));
+        if (Config::projectile_arc || local.HeroID == eHero::HERO_HANJO || Config::Gravitypredit) {
+            InVecArg->Y = (float)(camera.Y + (K + Q * fBestRoot - L * fBestRoot * fBestRoot));
         } else {
             InVecArg->Y += (float)(fBestRoot * currVelocity.Y);
         }
-        InVecArg->Z = (float)(viewMatrix_xor.get_location().z + (J + R * fBestRoot));
+        InVecArg->Z = (float)(camera.Z + (J + R * fBestRoot));
     }
 
     inline void AimCorrection22(Vector3* InVecArg, Vector3 currVelocity, float Distance, float Bulletspeed) {
         double G = 9.8;
-        double A = viewMatrix_xor.get_location().x;
-        double B = viewMatrix_xor.get_location().y;
-        double C = viewMatrix_xor.get_location().z;
+        const Vector3 camera = SnapshotCameraPosition();
+        double A = camera.X;
+        double B = camera.Y;
+        double C = camera.Z;
         double M = InVecArg->X;
         double N = InVecArg->Y;
         double O = InVecArg->Z;
@@ -643,13 +676,13 @@ namespace OW {
                 fBestRoot = pOutRoots[i].real();
             }
         }
-        InVecArg->X = (float)(viewMatrix_xor.get_location().x + (H + P * fBestRoot));
+        InVecArg->X = (float)(camera.X + (H + P * fBestRoot));
         if (Config::Gravitypredit2) {
-            InVecArg->Y = (float)(viewMatrix_xor.get_location().y + (K + Q * fBestRoot - L * fBestRoot * fBestRoot));
+            InVecArg->Y = (float)(camera.Y + (K + Q * fBestRoot - L * fBestRoot * fBestRoot));
         } else {
             InVecArg->Y += (float)(fBestRoot * currVelocity.Y);
         }
-        InVecArg->Z = (float)(viewMatrix_xor.get_location().z + (J + R * fBestRoot));
+        InVecArg->Z = (float)(camera.Z + (J + R * fBestRoot));
     }
 
     namespace TargetingDetail {
@@ -705,8 +738,7 @@ namespace OW {
         }
 
         inline Vector3 CameraPosition() {
-            const auto camera = viewMatrix_xor.get_location();
-            return Vector3(camera.x, camera.y, camera.z);
+            return OW::SnapshotCameraPosition();
         }
 
         inline bool IsTrainingBot(uint64_t heroId) {
@@ -728,8 +760,7 @@ namespace OW {
         }
 
         inline c_entity SnapshotLocalEntity() {
-            std::lock_guard<std::mutex> lock(::g_mutex);
-            return local_entity;
+            return OW::SnapshotLocalEntity();
         }
 
         inline bool IsValidIndex(int index, size_t size) {
@@ -979,7 +1010,7 @@ namespace OW {
         }
 
         inline float CandidateScore(const Vector3& position, const Vector2& crosshair) {
-            return crosshair.Distance(viewMatrix.WorldToScreen(position));
+            return crosshair.Distance(OW::SnapshotViewMatrix().WorldToScreen(position));
         }
 
         inline SelectionResult SelectTargetFromSnapshot(const std::vector<c_entity>& snapshot,
@@ -1016,13 +1047,14 @@ namespace OW {
         inline Vector3 SelectAutoBone(c_entity entity, const Vector2& crosshair, bool predit, bool secondary, size_t maxSkeletonBones) {
             float bestDistance = (std::numeric_limits<float>::max)();
             Vector3 bestRoot{};
+            const Matrix view = OW::SnapshotViewMatrix();
 
             if (IsTrainingBot(entity.HeroID)) {
                 const int botBones[] = { 17, 16, 3, 13, 54 };
                 for (int bone : botBones) {
                     Vector3 bonePosition = entity.GetBonePos(bone);
                     if (IsZeroVector(bonePosition) || bonePosition == entity.pos) continue;
-                    const float distance = crosshair.Distance(viewMatrix.WorldToScreen(bonePosition));
+                    const float distance = crosshair.Distance(view.WorldToScreen(bonePosition));
                     if (distance < bestDistance) {
                         bestDistance = distance;
                         bestRoot = bonePosition;
@@ -1034,7 +1066,7 @@ namespace OW {
                 for (size_t i = 0; i < limit; ++i) {
                     Vector3 bonePosition = entity.GetBonePos(skeleton[i]);
                     if (IsZeroVector(bonePosition) || bonePosition == entity.pos) continue;
-                    const float distance = crosshair.Distance(viewMatrix.WorldToScreen(bonePosition));
+                    const float distance = crosshair.Distance(view.WorldToScreen(bonePosition));
                     if (distance < bestDistance) {
                         bestDistance = distance;
                         bestRoot = bonePosition;
@@ -1089,8 +1121,12 @@ namespace OW {
     // =========================================================================
 
     inline float GetLookUpSkill(uint16_t a1) {
+        const uint64_t localSkillBase = SnapshotLocalSkillBase();
+        if (!localSkillBase)
+            return 0.f;
+
         __try {
-            uint64_t pSkill = SDK->RPM<uint64_t>(local_entity.SkillBase + 0x1848);
+            uint64_t pSkill = SDK->RPM<uint64_t>(localSkillBase + 0x1848);
             uint64_t SkillRawList = SDK->RPM<uint64_t>(pSkill + 0x10);
             uint32_t SkillSize = SDK->RPM<uint32_t>(pSkill + 0x18);
             for (uint32_t i = 0; i < SkillSize; i++) {
@@ -1111,6 +1147,7 @@ namespace OW {
         TargetCandidate best{};
         int TarGetIndex = -1;
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
+        const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
         auto entities = TargetingDetail::SnapshotEntities();
         auto hp_dy_entities = TargetingDetail::SnapshotDynamicEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
@@ -1182,11 +1219,11 @@ namespace OW {
 
                     Vel = entities[i].velocity;
                     if (resolvedPrediction) {
-                        float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                         Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
                         AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                     }
-                    Vector2 Vec2 = resolvedPrediction ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
+                    Vector2 Vec2 = resolvedPrediction ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
                     if (CrossDist <= Config::Fov) {
                         const float distance = TargetingDetail::CameraPosition().DistTo(RootPos);
@@ -1244,7 +1281,7 @@ namespace OW {
                             bonerootpos = entities[TarGetIndex].GetBonePos(index[iii]);
                             if (bonerootpos == entities[TarGetIndex].pos) distbone[iii] = 100000;
                             else {
-                                bonecrosspos = viewMatrix.WorldToScreen(bonerootpos);
+                                bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
                                 distbone[iii] = CrossHair.Distance(bonecrosspos);
                             }
                         }
@@ -1255,14 +1292,14 @@ namespace OW {
                         best.rawAimPoint = RootPos;
                         best.aimPoint = RootPos;
                         if (resolvedPrediction) {
-                            float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
                             Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                             best.predictedAimPoint = PreditPos;
                             best.aimPoint = PreditPos;
                         }
-                        best.screenPoint = viewMatrix.WorldToScreen(best.aimPoint);
+                        best.screenPoint = aimViewMatrix.WorldToScreen(best.aimPoint);
                         best.fovScore = CrossHair.Distance(best.screenPoint);
                         best.distance = TargetingDetail::CameraPosition().DistTo(RootPos);
                         best.effectiveHitWindow = ResolveEffectiveHitWindow(
@@ -1277,7 +1314,7 @@ namespace OW {
                         Vector2 bonecrosspos{};
                         for (int iii = 0; iii < 12; iii++) {
                             bonerootpos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[iii]);
-                            bonecrosspos = viewMatrix.WorldToScreen(bonerootpos);
+                            bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
                             distbone[iii] = CrossHair.Distance(bonecrosspos);
                         }
                         int m = (int)(std::min_element(distbone, distbone + 12) - distbone);
@@ -1287,14 +1324,14 @@ namespace OW {
                         best.rawAimPoint = RootPos;
                         best.aimPoint = RootPos;
                         if (resolvedPrediction) {
-                            float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
                             Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                             best.predictedAimPoint = PreditPos;
                             best.aimPoint = PreditPos;
                         }
-                        best.screenPoint = viewMatrix.WorldToScreen(best.aimPoint);
+                        best.screenPoint = aimViewMatrix.WorldToScreen(best.aimPoint);
                         best.fovScore = CrossHair.Distance(best.screenPoint);
                         best.distance = TargetingDetail::CameraPosition().DistTo(RootPos);
                         best.effectiveHitWindow = ResolveEffectiveHitWindow(
@@ -1314,7 +1351,7 @@ namespace OW {
                 if (hppack.entityid == 0x400000000002533) {
                     if (TargetingDetail::CandidateBlockedByMinLock(lockPolicy, activeLock, hppack.entityid, now))
                         continue;
-                    Vector2 Vec2 = viewMatrix.WorldToScreen(Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z));
+                    Vector2 Vec2 = aimViewMatrix.WorldToScreen(Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z));
                     float CrossDist = CrossHair.Distance(Vec2);
                     const float lockAdjustedScore = TargetingDetail::ApplyRetargetHysteresis(CrossDist, lockPolicy, activeLock, hppack.entityid);
                     if (lockAdjustedScore < origin && CrossDist <= Config::Fov) {
@@ -1396,10 +1433,11 @@ namespace OW {
     inline Vector3 GetVector3fortrackback(bool predit = false) {
         int TarGetIndex = -1;
         Vector3 target{};
+        auto local_entity = TargetingDetail::SnapshotLocalEntity();
         if (local_entity.HeroID == eHero::HERO_HANJO) predit = true;
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
+        const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
         auto entities = TargetingDetail::SnapshotEntities();
-        auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
         if (entities.size() > 0) {
             Vector3 PreditPos, RootPos, Vel;
@@ -1412,11 +1450,11 @@ namespace OW {
                     else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
                     Vel = entities[i].velocity;
                     if (predit) {
-                        float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                         Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
                         AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
                     }
-                    Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
+                    Vector2 Vec2 = predit ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
                     if (CrossDist <= Config::Fov) {
                         float score;
@@ -1425,7 +1463,7 @@ namespace OW {
                         } else if (Config::aimbotPriority == 1) {
                             score = entities[i].PlayerHealth;
                         } else {
-                            score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            score = TargetingDetail::CameraPosition().DistTo(PreditPos);
                         }
                         if (score < origin) {
                             target = predit ? PreditPos : RootPos;
@@ -1447,7 +1485,7 @@ namespace OW {
                             bonerootpos = entities[TarGetIndex].GetBonePos(index[iii]);
                             if (bonerootpos == entities[TarGetIndex].pos) distbone[iii] = 100000;
                             else {
-                                bonecrosspos = viewMatrix.WorldToScreen(bonerootpos);
+                                bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
                                 distbone[iii] = CrossHair.Distance(bonecrosspos);
                             }
                         }
@@ -1456,7 +1494,7 @@ namespace OW {
                         PreditPos = RootPos;
                         target = RootPos;
                         if (predit) {
-                            float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
                             Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
@@ -1468,7 +1506,7 @@ namespace OW {
                         Vector2 bonecrosspos{};
                         for (int iii = 0; iii < 12; iii++) {
                             bonerootpos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[iii]);
-                            bonecrosspos = viewMatrix.WorldToScreen(bonerootpos);
+                            bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
                             distbone[iii] = CrossHair.Distance(bonecrosspos);
                         }
                         int m = (int)(std::min_element(distbone, distbone + 12) - distbone);
@@ -1476,7 +1514,7 @@ namespace OW {
                         PreditPos = RootPos;
                         target = RootPos;
                         if (predit) {
-                            float dist = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
                             Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
                             AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
@@ -1500,6 +1538,7 @@ namespace OW {
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
+        const Vector3 camera = TargetingDetail::CameraPosition();
         float origin = 100000.f;
         if (entities.size() > 0) {
             for (size_t i = 0; i < entities.size(); i++) {
@@ -1525,13 +1564,13 @@ namespace OW {
                     }
                     float score;
                     if (Config::aimbotPriority == 0) {
-                        score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        score = camera.DistTo(PreditPos);
                         if (entities[i].PlayerHealth > 200.f) score = entities[i].PlayerHealth;
                         if (entities[i].HeroID == eHero::HERO_ZENYATTA && entities[i].ultimate == 0.f) score = 1000.f;
                     } else if (Config::aimbotPriority == 1) {
                         score = entities[i].PlayerHealth;
                     } else {
-                        score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        score = camera.DistTo(PreditPos);
                     }
                     if (score < origin && score <= 6000.f) {
                         target = RootPos;
@@ -1556,6 +1595,8 @@ namespace OW {
         int TarGetIndex = -1;
         Vector3 target{};
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
+        const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
+        const Vector3 camera = TargetingDetail::CameraPosition();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
@@ -1579,11 +1620,11 @@ namespace OW {
                     }
                     Vel = entities[i].velocity;
                     if (predit) {
-                        float dist2 = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        float dist2 = camera.DistTo(PreditPos);
                         Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist2, Config::predit_level2);
                         AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
                     }
-                    Vector2 Vec2 = predit ? viewMatrix.WorldToScreen(PreditPos) : viewMatrix.WorldToScreen(RootPos);
+                    Vector2 Vec2 = predit ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
                     if (CrossDist <= Config::Fov) {
                         float score;
@@ -1592,7 +1633,7 @@ namespace OW {
                         } else if (Config::aimbotPriority == 1) {
                             score = entities[i].PlayerHealth;
                         } else {
-                            score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            score = camera.DistTo(PreditPos);
                         }
                         if (score < origin) {
                             target = predit ? PreditPos : RootPos;
@@ -1616,7 +1657,7 @@ namespace OW {
                             bonerootpos = entities[TarGetIndex].GetBonePos(index[iii]);
                             if (bonerootpos == entities[TarGetIndex].pos) distbone[iii] = 100000;
                             else {
-                                bonecrosspos = viewMatrix.WorldToScreen(bonerootpos);
+                                bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
                                 distbone[iii] = CrossHair.Distance(bonecrosspos);
                             }
                         }
@@ -1626,7 +1667,7 @@ namespace OW {
                         target = RootPos;
                         if (predit) {
                             Vel = entities[TarGetIndex].velocity;
-                            float dist2 = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            float dist2 = camera.DistTo(PreditPos);
                             Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, Config::predit_level2);
                             AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
                             target = PreditPos;
@@ -1637,7 +1678,7 @@ namespace OW {
                         Vector2 bonecrosspos{};
                         for (int iii = 0; iii < 10; iii++) {
                             bonerootpos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[iii]);
-                            bonecrosspos = viewMatrix.WorldToScreen(bonerootpos);
+                            bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
                             distbone[iii] = CrossHair.Distance(bonecrosspos);
                         }
                         int m = (int)(std::min_element(distbone, distbone + 10) - distbone);
@@ -1646,7 +1687,7 @@ namespace OW {
                         target = RootPos;
                         if (predit) {
                             Vel = entities[TarGetIndex].velocity;
-                            float dist2 = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                            float dist2 = camera.DistTo(PreditPos);
                             Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, Config::predit_level2);
                             AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
                             target = PreditPos;
@@ -1666,6 +1707,8 @@ namespace OW {
         int TarGetIndex = -1;
         Vector3 target{};
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
+        const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
+        const Vector3 camera = TargetingDetail::CameraPosition();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         float origin = 100000.f;
@@ -1677,7 +1720,7 @@ namespace OW {
                 if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
                     PreditPos = entities[i].head_pos;
                     RootPos = entities[i].head_pos;
-                    Vector2 Vec2 = viewMatrix.WorldToScreen(RootPos);
+                    Vector2 Vec2 = aimViewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
                     float score;
                     if (Config::aimbotPriority == 0) {
@@ -1685,7 +1728,7 @@ namespace OW {
                     } else if (Config::aimbotPriority == 1) {
                         score = entities[i].PlayerHealth;
                     } else {
-                        score = Vector3(viewMatrix_xor.get_location().x, viewMatrix_xor.get_location().y, viewMatrix_xor.get_location().z).DistTo(PreditPos);
+                        score = camera.DistTo(PreditPos);
                     }
                     if (score < origin) {
                         target = RootPos;

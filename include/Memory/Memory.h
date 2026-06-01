@@ -58,6 +58,14 @@ private:
 	const char* GetDeviceTypeName(DmaDeviceType deviceType) const;
 
 public:
+	struct ProcessLookupResult
+	{
+		DWORD pid = 0;
+		std::string name = "";
+
+		explicit operator bool() const { return pid != 0; }
+	};
+
 	Memory() = default;
 	~Memory();
 
@@ -77,6 +85,8 @@ public:
 	int GetCurrentProcessId() const { return PROCESS_INITIALIZED.load() ? current_process.PID : 0; }
 	DWORD GetPidFromName(const std::string& process_name);
 	std::vector<int> GetPidListFromName(const std::string& name);
+	ProcessLookupResult FindProcessByNamePrefix(const std::string& namePrefix);
+	ProcessLookupResult FindProcessByPrefix(const std::string& prefix) { return FindProcessByNamePrefix(prefix); }
 	std::vector<std::string> GetModuleList(const std::string& process_name);
 	VMMDLL_PROCESS_INFORMATION GetProcessInformation();
 	size_t GetBaseDaddy(std::string module_name);
