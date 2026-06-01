@@ -602,10 +602,9 @@ namespace OW {
         roots[3] = (-b + Q7 + std::sqrt(4.f * Q4 / 6.f - 4.f * Q6 + Q3 / Q7)) / 4.f;
     }
 
-    inline void AimCorrection(Vector3* InVecArg, Vector3 currVelocity, float Distance, float Bulletspeed) {
+    inline void AimCorrection(Vector3* InVecArg, Vector3 currVelocity, float Distance, float Bulletspeed, bool gravityEnabled) {
         double G = 9.8;
         const Vector3 camera = SnapshotCameraPosition();
-        const c_entity local = SnapshotLocalEntity();
         double A = camera.X;
         double B = camera.Y;
         double C = camera.Z;
@@ -636,7 +635,7 @@ namespace OW {
             }
         }
         InVecArg->X = (float)(camera.X + (H + P * fBestRoot));
-        if (Config::projectile_arc || local.HeroID == eHero::HERO_HANJO || Config::Gravitypredit) {
+        if (gravityEnabled) {
             InVecArg->Y = (float)(camera.Y + (K + Q * fBestRoot - L * fBestRoot * fBestRoot));
         } else {
             InVecArg->Y += (float)(fBestRoot * currVelocity.Y);
@@ -644,7 +643,7 @@ namespace OW {
         InVecArg->Z = (float)(camera.Z + (J + R * fBestRoot));
     }
 
-    inline void AimCorrection22(Vector3* InVecArg, Vector3 currVelocity, float Distance, float Bulletspeed) {
+    inline void AimCorrection22(Vector3* InVecArg, Vector3 currVelocity, float Distance, float Bulletspeed, bool gravityEnabled) {
         double G = 9.8;
         const Vector3 camera = SnapshotCameraPosition();
         double A = camera.X;
@@ -677,7 +676,7 @@ namespace OW {
             }
         }
         InVecArg->X = (float)(camera.X + (H + P * fBestRoot));
-        if (Config::Gravitypredit2) {
+        if (gravityEnabled) {
             InVecArg->Y = (float)(camera.Y + (K + Q * fBestRoot - L * fBestRoot * fBestRoot));
         } else {
             InVecArg->Y += (float)(fBestRoot * currVelocity.Y);
@@ -700,6 +699,12 @@ namespace OW {
             Vector3 velocity{};
             DWORD tick = 0;
             bool initialized = false;
+        };
+
+        struct PredictionRuntimeSpec {
+            float projectileSpeed = 0.0f;
+            bool gravity = false;
+            bool fromWeaponSpec = false;
         };
 
         inline std::mutex velocity_history_mutex;
@@ -996,15 +1001,58 @@ namespace OW {
             return adjusted;
         }
 
+        inline PredictionRuntimeSpec ResolvePredictionRuntimeSpec(const WeaponSpec* weapon,
+                                                                  const c_entity& local,
+                                                                  bool secondary) {
+            if (!secondary &&
+                Config::hanzoautospeed &&
+                local.HeroID == eHero::HERO_HANJO) {
+                Config::predit_level = readult(local.SkillBase + 0x40, 0xB, 0x2A5) * 85.f + 25.f;
+                if (local.skill2act) Config::predit_level = 110.f;
+            }
+
+            const float fallbackSpeed = secondary ? Config::predit_level2 : Config::predit_level;
+            const bool fallbackGravity = secondary
+                ? Config::Gravitypredit2
+                : (Config::projectile_arc || local.HeroID == eHero::HERO_HANJO || Config::Gravitypredit);
+
+            if (!secondary &&
+                Config::hanzoautospeed &&
+                local.HeroID == eHero::HERO_HANJO &&
+                fallbackSpeed > 0.0f) {
+                return PredictionRuntimeSpec{
+                    fallbackSpeed,
+                    weapon ? weapon->prediction.gravity : true,
+                    weapon != nullptr
+                };
+            }
+
+            if (weapon && weapon->prediction.projectileSpeed > 0.0f) {
+                return PredictionRuntimeSpec{
+                    weapon->prediction.projectileSpeed,
+                    weapon->prediction.gravity,
+                    true
+                };
+            }
+
+            return PredictionRuntimeSpec{
+                fallbackSpeed,
+                fallbackGravity,
+                false
+            };
+        }
+
         inline Vector3 ApplyPrediction(c_entity& entity, Vector3 position, bool predit, bool secondary) {
             if (!predit || IsZeroVector(position)) return position;
 
+            const c_entity local = SnapshotLocalEntity();
+            const WeaponSpec* weapon = ResolveWeaponSpec(local.HeroID, Config::aimbotAttack);
+            const PredictionRuntimeSpec prediction = ResolvePredictionRuntimeSpec(weapon, local, secondary);
             const float distance = CameraPosition().DistTo(position);
-            const float projectileSpeed = secondary ? Config::predit_level2 : Config::predit_level;
-            const Vector3 velocity = AccelerationAwareVelocity(entity, distance, projectileSpeed);
+            const Vector3 velocity = AccelerationAwareVelocity(entity, distance, prediction.projectileSpeed);
 
-            if (secondary) AimCorrection22(&position, velocity, distance, projectileSpeed);
-            else AimCorrection(&position, velocity, distance, projectileSpeed);
+            if (secondary) AimCorrection22(&position, velocity, distance, prediction.projectileSpeed, prediction.gravity);
+            else AimCorrection(&position, velocity, distance, prediction.projectileSpeed, prediction.gravity);
 
             return position;
         }
@@ -1189,13 +1237,9 @@ namespace OW {
             static_cast<int>(lockPolicy.unlockMode),
             CrossHair.X,
             CrossHair.Y);
+        const TargetingDetail::PredictionRuntimeSpec predictionSpec =
+            TargetingDetail::ResolvePredictionRuntimeSpec(weaponSpec, local_entity, false);
         if (entities.size() > 0) {
-            if (Config::hanzoautospeed) {
-                if (local_entity.HeroID == eHero::HERO_HANJO) {
-                    Config::predit_level = readult(local_entity.SkillBase + 0x40, 0xB, 0x2A5) * 85.f + 25.f;
-                    if (local_entity.skill2act) Config::predit_level = 110.f;
-                }
-            }
             Vector3 Vel, PreditPos, RootPos;
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
@@ -1220,8 +1264,8 @@ namespace OW {
                     Vel = entities[i].velocity;
                     if (resolvedPrediction) {
                         float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
-                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
-                        AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
+                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, predictionSpec.projectileSpeed);
+                        AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
                     }
                     Vector2 Vec2 = resolvedPrediction ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
@@ -1294,8 +1338,8 @@ namespace OW {
                         if (resolvedPrediction) {
                             float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
-                            AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, predictionSpec.projectileSpeed);
+                            AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
                             best.predictedAimPoint = PreditPos;
                             best.aimPoint = PreditPos;
                         }
@@ -1326,8 +1370,8 @@ namespace OW {
                         if (resolvedPrediction) {
                             float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
-                            AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, predictionSpec.projectileSpeed);
+                            AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
                             best.predictedAimPoint = PreditPos;
                             best.aimPoint = PreditPos;
                         }
@@ -1435,6 +1479,9 @@ namespace OW {
         Vector3 target{};
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         if (local_entity.HeroID == eHero::HERO_HANJO) predit = true;
+        const WeaponSpec* weaponSpec = ResolveWeaponSpec(local_entity.HeroID, Config::aimbotAttack);
+        const TargetingDetail::PredictionRuntimeSpec predictionSpec =
+            TargetingDetail::ResolvePredictionRuntimeSpec(weaponSpec, local_entity, false);
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
         auto entities = TargetingDetail::SnapshotEntities();
@@ -1451,8 +1498,8 @@ namespace OW {
                     Vel = entities[i].velocity;
                     if (predit) {
                         float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
-                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, Config::predit_level);
-                        AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
+                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, predictionSpec.projectileSpeed);
+                        AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
                     }
                     Vector2 Vec2 = predit ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
@@ -1496,8 +1543,8 @@ namespace OW {
                         if (predit) {
                             float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
-                            AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, predictionSpec.projectileSpeed);
+                            AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
                             target = PreditPos;
                         }
                     } else {
@@ -1516,8 +1563,8 @@ namespace OW {
                         if (predit) {
                             float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
                             Vel = entities[TarGetIndex].velocity;
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, Config::predit_level);
-                            AimCorrection(&PreditPos, Vel, dist, Config::predit_level);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, predictionSpec.projectileSpeed);
+                            AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
                             target = PreditPos;
                         }
                     }
@@ -1599,6 +1646,9 @@ namespace OW {
         const Vector3 camera = TargetingDetail::CameraPosition();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
+        const WeaponSpec* weaponSpec = ResolveWeaponSpec(local_entity.HeroID, Config::aimbotAttack);
+        const TargetingDetail::PredictionRuntimeSpec predictionSpec =
+            TargetingDetail::ResolvePredictionRuntimeSpec(weaponSpec, local_entity, true);
         float origin = 100000.f;
         float dist = 100000.f;
         Vector3 PreditPos, RootPos, Vel;
@@ -1621,8 +1671,8 @@ namespace OW {
                     Vel = entities[i].velocity;
                     if (predit) {
                         float dist2 = camera.DistTo(PreditPos);
-                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist2, Config::predit_level2);
-                        AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
+                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist2, predictionSpec.projectileSpeed);
+                        AimCorrection22(&PreditPos, Vel, dist2, predictionSpec.projectileSpeed, predictionSpec.gravity);
                     }
                     Vector2 Vec2 = predit ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
                     float CrossDist = CrossHair.Distance(Vec2);
@@ -1668,8 +1718,8 @@ namespace OW {
                         if (predit) {
                             Vel = entities[TarGetIndex].velocity;
                             float dist2 = camera.DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, Config::predit_level2);
-                            AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, predictionSpec.projectileSpeed);
+                            AimCorrection22(&PreditPos, Vel, dist2, predictionSpec.projectileSpeed, predictionSpec.gravity);
                             target = PreditPos;
                         }
                     } else {
@@ -1688,8 +1738,8 @@ namespace OW {
                         if (predit) {
                             Vel = entities[TarGetIndex].velocity;
                             float dist2 = camera.DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, Config::predit_level2);
-                            AimCorrection22(&PreditPos, Vel, dist2, Config::predit_level2);
+                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, predictionSpec.projectileSpeed);
+                            AimCorrection22(&PreditPos, Vel, dist2, predictionSpec.projectileSpeed, predictionSpec.gravity);
                             target = PreditPos;
                         }
                     }
