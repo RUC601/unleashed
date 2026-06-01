@@ -68,6 +68,7 @@ enum class SmoothingControllerType : int {
     Bezier = 2,
     PiecewiseCurve = 3,
     AccelLimited = 4,
+    Constant = 5,
 };
 
 enum class ExecutionSource : int {
@@ -216,7 +217,7 @@ inline UnlockMode ClampUnlockMode(int value)
 
 inline SmoothingControllerType ClampSmoothingController(int value)
 {
-    return static_cast<SmoothingControllerType>(std::clamp(value, 0, 4));
+    return static_cast<SmoothingControllerType>(std::clamp(value, 0, 5));
 }
 
 inline bool ResolvePredictionEnabled(PredictionOverrideMode mode,

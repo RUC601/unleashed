@@ -408,6 +408,113 @@ namespace {
         ImGui::End();
     }
 
+    static float FovRadiusForViewport(float width, float height, float fovDeg)
+    {
+        const float fullViewportRadius = std::sqrt(width * width + height * height) * 0.5f;
+        return fullViewportRadius * ((OW::Config::ClampFovDeg(fovDeg) * 0.5f) / 180.0f);
+    }
+
+    static void DrawDashedCircle(const OW::Vector2& center,
+                                 float radius,
+                                 const Render::Color& color,
+                                 float thickness)
+    {
+        constexpr float kPi = 3.14159265358979323846f;
+        constexpr int kSegments = 128;
+        constexpr int kDashSegments = 3;
+        constexpr int kGapSegments = 2;
+
+        for (int start = 0; start < kSegments; start += kDashSegments + kGapSegments) {
+            const int end = (std::min)(start + kDashSegments, kSegments);
+            for (int segment = start; segment < end; ++segment) {
+                const float a0 = (2.0f * kPi * static_cast<float>(segment)) / static_cast<float>(kSegments);
+                const float a1 = (2.0f * kPi * static_cast<float>(segment + 1)) / static_cast<float>(kSegments);
+                Render::DrawLine(
+                    OW::Vector2(center.X + std::cos(a0) * radius, center.Y + std::sin(a0) * radius),
+                    OW::Vector2(center.X + std::cos(a1) * radius, center.Y + std::sin(a1) * radius),
+                    color,
+                    thickness);
+            }
+        }
+    }
+
+    static void DrawStyledFovRing(const OW::Vector2& center,
+                                  float width,
+                                  float height,
+                                  float fovDeg,
+                                  const OW::Config::FovRingSlotStyle& rawStyle,
+                                  bool active,
+                                  const char* label)
+    {
+        OW::Config::FovRingSlotStyle style = rawStyle;
+        if (!style.visible)
+            return;
+
+        const float radius = FovRadiusForViewport(width, height, fovDeg);
+        if (radius <= 0.0f)
+            return;
+
+        const float thickness = active
+            ? (std::max)(style.thickness + 0.8f, 2.0f)
+            : style.thickness;
+        const Render::Color color = ToRenderColor(style.color);
+        if (style.lineStyle == 1)
+            DrawDashedCircle(center, radius, color, thickness);
+        else
+            Render::DrawCircle(center, radius, color, 128, thickness);
+
+        if (style.showLabel && label && *label) {
+            constexpr float kPi = 3.14159265358979323846f;
+            const float angle = -0.25f * kPi;
+            const float labelX = std::clamp(center.X + std::cos(angle) * radius + 6.0f,
+                                            4.0f,
+                                            (std::max)(4.0f, width - 92.0f));
+            const float labelY = std::clamp(center.Y + std::sin(angle) * radius - 7.0f,
+                                            4.0f,
+                                            (std::max)(4.0f, height - 18.0f));
+            Render::DrawText(ImVec2(labelX, labelY), color.ToImU32(), label, active ? 14.0f : 13.0f);
+        }
+    }
+
+    static bool DrawHeroFovRings(uint64_t heroId,
+                                 OW::Config::FovRingSlotKind kind,
+                                 const OW::Vector2& center,
+                                 float width,
+                                 float height,
+                                 const OW::Config::RuntimeDrawFovState& activeState)
+    {
+        bool drewAny = false;
+        for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
+            OW::Config::HeroSlotPreset slot{};
+            const bool found = kind == OW::Config::FovRingSlotKind::Trigger
+                ? OW::Config::TryGetHeroTriggerSlot(heroId, slotIndex, slot)
+                : OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot);
+            if (!found || !slot.enabled)
+                continue;
+            if (kind == OW::Config::FovRingSlotKind::Trigger && !slot.preset.trigger.enabled)
+                continue;
+
+            const OW::Config::FovRingSlotStyle style = OW::Config::ClampFovRingStyle(
+                OW::Config::FovRingStyleFor(kind, slotIndex),
+                kind,
+                slotIndex);
+            const bool active = activeState.active &&
+                activeState.slotKind == static_cast<int>(kind) &&
+                activeState.slotIndex == slotIndex;
+
+            char label[32] = {};
+            std::snprintf(label,
+                          sizeof(label),
+                          "%c%d %.0f deg",
+                          kind == OW::Config::FovRingSlotKind::Trigger ? 'T' : 'A',
+                          slotIndex + 1,
+                          OW::Config::ClampFovDeg(slot.preset.fov));
+            DrawStyledFovRing(center, width, height, slot.preset.fov, style, active, label);
+            drewAny = true;
+        }
+        return drewAny;
+    }
+
     static void DrawFovCircle()
     {
         if (!OW::Config::draw_fov)
@@ -415,16 +522,43 @@ namespace {
 
         const float width = CanvasWidth();
         const float height = CanvasHeight();
-        if (width <= 0.0f || height <= 0.0f || OW::Config::Fov <= 0.0f)
+        if (width <= 0.0f || height <= 0.0f)
             return;
 
-        Render::DrawCircle(
-            OW::Vector2(width * 0.5f, height * 0.5f),
-            OW::Config::Fov,
-            ToRenderColor(OW::Config::fovcol),
-            128,
-            1.5f
-        );
+        const OW::Vector2 center(width * 0.5f, height * 0.5f);
+        const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
+        const OW::Config::RuntimeDrawFovState activeState = OW::Config::SnapshotRuntimeDrawFov();
+        bool drewAny = false;
+        if (localSnapshot.HeroID != 0) {
+            drewAny |= DrawHeroFovRings(localSnapshot.HeroID,
+                                        OW::Config::FovRingSlotKind::Aim,
+                                        center,
+                                        width,
+                                        height,
+                                        activeState);
+            drewAny |= DrawHeroFovRings(localSnapshot.HeroID,
+                                        OW::Config::FovRingSlotKind::Trigger,
+                                        center,
+                                        width,
+                                        height,
+                                        activeState);
+        }
+        if (drewAny)
+            return;
+
+        OW::Config::FovRingSlotStyle fallbackStyle{};
+        fallbackStyle.visible = true;
+        fallbackStyle.color = OW::Config::fovcol;
+        fallbackStyle.thickness = 1.5f;
+        fallbackStyle.lineStyle = 0;
+        fallbackStyle.showLabel = false;
+        DrawStyledFovRing(center,
+                          width,
+                          height,
+                          OW::Config::RuntimeDrawFovOrDefault(OW::Config::Fov),
+                          fallbackStyle,
+                          false,
+                          nullptr);
     }
 
     static void DrawCrosshair()

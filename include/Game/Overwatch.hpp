@@ -2599,12 +2599,13 @@ namespace OverlayRenderDetail {
                 const int slotIndex = item.first;
                 const OW::Config::HeroSlotPreset& slot = item.second;
                 const bool active = slot.enabled && slotIndex == activeAimSlot;
-                char line[192]{};
+                char line[240]{};
                 std::snprintf(line, sizeof(line),
-                              "#%d %s | %s | Hold | enabled:%s%s",
+                              "#%d %s | %s | FOV %.0f deg | Hold | enabled:%s%s",
                               slotIndex + 1,
                               OW::Labels::AimModeName(slot.preset.aimMode),
                               OW::Labels::AimActivationKeyName(slot.preset.key),
+                              slot.preset.fov,
                               YesNo(slot.enabled),
                               active ? " | active" : "");
                 rows.push_back({
@@ -2624,13 +2625,14 @@ namespace OverlayRenderDetail {
                 const OW::Config::HeroSlotPreset& slot = item.second;
                 const OW::Config::TriggerPreset& trigger = slot.preset.trigger;
                 const bool active = slot.enabled && trigger.enabled && slotIndex == runtimeTriggerSlot;
-                char line[240]{};
+                char line[320]{};
                 std::snprintf(line, sizeof(line),
-                              "#%d %s | %s | %s | charge:%s | invis:%s | slot:%s trig:%s%s",
+                              "#%d %s | %s | %s | FOV %.0f deg | charge:%s | invis:%s | slot:%s trig:%s%s",
                               slotIndex + 1,
                               OW::Labels::AttackActionCompactName(trigger.action),
                               OW::Labels::TriggerbotModeName(trigger.mode),
                               OW::Labels::AimActivationKeyName(trigger.key),
+                              slot.preset.fov,
                               YesNo(trigger.chargeAware),
                               YesNo(trigger.ignoreInvisible),
                               YesNo(slot.enabled),
@@ -3379,6 +3381,7 @@ namespace AimbotDetail {
             int slotIndex = -2;
             bool matchedInput = false;
             int key = -1;
+            float fov = -1.0f;
             int aimBehavior = -1;
             int triggerMode = -1;
             int triggerKey = -1;
@@ -3395,6 +3398,7 @@ namespace AimbotDetail {
             state.slotIndex != selection.slotIndex ||
             state.matchedInput != selection.matchedInput ||
             state.key != preset.key ||
+            std::fabs(state.fov - preset.fov) > 0.001f ||
             state.aimBehavior != preset.aimBehavior ||
             state.triggerMode != preset.trigger.mode ||
             state.triggerKey != preset.trigger.key ||
@@ -3404,12 +3408,13 @@ namespace AimbotDetail {
             return;
 
         const int behaviorMethod = OW::Config::AimBehaviorMethod(preset.aimBehavior);
-        Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+        Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d fovDeg=%.2f aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
             kind ? kind : "unknown",
             static_cast<unsigned long long>(heroId),
             selection.slotIndex + 1,
             selection.matchedInput ? 1 : 0,
             preset.key,
+            preset.fov,
             preset.aimMode,
             preset.aimBehavior,
             behaviorMethod,
@@ -3422,6 +3427,7 @@ namespace AimbotDetail {
         state.slotIndex = selection.slotIndex;
         state.matchedInput = selection.matchedInput;
         state.key = preset.key;
+        state.fov = preset.fov;
         state.aimBehavior = preset.aimBehavior;
         state.triggerMode = preset.trigger.mode;
         state.triggerKey = preset.trigger.key;
@@ -3535,6 +3541,11 @@ namespace AimbotDetail {
     struct ScopedHeroPresetOverride {
         bool active = false;
         OW::Config::HeroPreset original{};
+        float originalFov = OW::Config::kDefaultFovDeg;
+        float originalFov2 = OW::Config::kDefaultFovDeg;
+        float originalMinFov1 = OW::Config::kDefaultFovDeg;
+        float originalMinFov2 = OW::Config::kDefaultFovDeg;
+        OW::Config::RuntimeDrawFovState originalDrawFov{};
 
         ScopedHeroPresetOverride() {
             const OW::c_entity local = LocalEntity();
@@ -3546,20 +3557,40 @@ namespace AimbotDetail {
                 return;
 
             original = OW::Config::MakeHeroPresetFromCurrent();
+            originalFov = OW::Config::Fov;
+            originalFov2 = OW::Config::Fov2;
+            originalMinFov1 = OW::Config::minFov1;
+            originalMinFov2 = OW::Config::minFov2;
+            originalDrawFov = OW::Config::SnapshotRuntimeDrawFov();
             OW::Config::ApplyHeroAimPresetToGlobals(selection.preset);
+            OW::Config::SetRuntimeDrawFov(
+                selection.preset.fov,
+                static_cast<int>(OW::Config::FovRingSlotKind::Aim),
+                selection.slotIndex);
             LogRuntimePresetSelection("aim", local.HeroID, selection);
             active = true;
         }
 
         ~ScopedHeroPresetOverride() {
-            if (active)
+            if (active) {
                 OW::Config::ApplyHeroPresetToGlobals(original);
+                OW::Config::Fov = originalFov;
+                OW::Config::Fov2 = originalFov2;
+                OW::Config::minFov1 = originalMinFov1;
+                OW::Config::minFov2 = originalMinFov2;
+                OW::Config::RestoreRuntimeDrawFov(originalDrawFov);
+            }
         }
     };
 
     struct ScopedHeroTriggerPresetOverride {
         bool active = false;
         OW::Config::HeroPreset original{};
+        float originalFov = OW::Config::kDefaultFovDeg;
+        float originalFov2 = OW::Config::kDefaultFovDeg;
+        float originalMinFov1 = OW::Config::kDefaultFovDeg;
+        float originalMinFov2 = OW::Config::kDefaultFovDeg;
+        OW::Config::RuntimeDrawFovState originalDrawFov{};
 
         ScopedHeroTriggerPresetOverride() {
             const OW::c_entity local = LocalEntity();
@@ -3571,14 +3602,35 @@ namespace AimbotDetail {
                 return;
 
             original = OW::Config::MakeHeroPresetFromCurrent();
+            originalFov = OW::Config::Fov;
+            originalFov2 = OW::Config::Fov2;
+            originalMinFov1 = OW::Config::minFov1;
+            originalMinFov2 = OW::Config::minFov2;
+            originalDrawFov = OW::Config::SnapshotRuntimeDrawFov();
             OW::Config::ApplyHeroTriggerPresetToGlobals(selection.preset);
+            const float triggerFovDeg = OW::Config::ClampFovDeg(selection.preset.fov);
+            OW::Config::Fov = triggerFovDeg;
+            OW::Config::Fov2 = triggerFovDeg;
+            OW::Config::minFov1 = triggerFovDeg;
+            OW::Config::minFov2 = triggerFovDeg;
+            if (selection.matchedInput && selection.preset.trigger.enabled)
+                OW::Config::SetRuntimeDrawFov(
+                    triggerFovDeg,
+                    static_cast<int>(OW::Config::FovRingSlotKind::Trigger),
+                    selection.slotIndex);
             LogRuntimePresetSelection("trigger", local.HeroID, selection);
             active = true;
         }
 
         ~ScopedHeroTriggerPresetOverride() {
-            if (active)
+            if (active) {
                 OW::Config::ApplyHeroPresetToGlobals(original);
+                OW::Config::Fov = originalFov;
+                OW::Config::Fov2 = originalFov2;
+                OW::Config::minFov1 = originalMinFov1;
+                OW::Config::minFov2 = originalMinFov2;
+                OW::Config::RestoreRuntimeDrawFov(originalDrawFov);
+            }
         }
     };
 
@@ -4363,7 +4415,7 @@ namespace AimbotDetail {
         }
         const int behavior = OW::Config::ClampAimBehaviorIndex(OW::Config::aimBehavior);
         const int dispatchMethod = methodOverride >= 0
-            ? std::clamp(methodOverride, 0, 4)
+            ? OW::Config::ClampAimMethodIndex(methodOverride)
             : OW::Config::AimBehaviorMethod(behavior);
         const float dispatchAcceleration = dispatchMethod == 4
             ? OW::Config::AimMethodAcceleration(dispatchMethod)
@@ -4408,11 +4460,11 @@ namespace AimbotDetail {
         target.Y += AimNoise(divisor);
         target.Z += AimNoise(divisor);
 
-        if (OW::Config::minFov1 > 500.f) OW::Config::minFov1 = 500.f;
-        if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
+        if (OW::Config::minFov1 > OW::Config::kMaxFovDeg) OW::Config::minFov1 = OW::Config::kMaxFovDeg;
+        if (OW::Config::Fov > OW::Config::kMaxFovDeg) OW::Config::Fov = OW::Config::kMaxFovDeg;
         if (clampSecondaryFov) {
-            if (OW::Config::minFov2 > 500.f) OW::Config::minFov2 = 500.f;
-            if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
+            if (OW::Config::minFov2 > OW::Config::kMaxFovDeg) OW::Config::minFov2 = OW::Config::kMaxFovDeg;
+            if (OW::Config::Fov2 > OW::Config::kMaxFovDeg) OW::Config::Fov2 = OW::Config::kMaxFovDeg;
         }
     }
 
@@ -4514,17 +4566,15 @@ namespace AimbotDetail {
             return;
         }
 
-        Vector2 high{}, low{};
-        const OW::Matrix view = OW::SnapshotViewMatrix();
-        if (view.WorldToScreen(fov_target.head_pos, &high, Vector2(OW::WX, OW::WY)) &&
-            view.WorldToScreen(fov_target.chest_pos, &low, Vector2(OW::WX, OW::WY))) {
-            OW::Config::Fov = -(high.Y - low.Y) * 4.f;
-            if (OW::Config::Fov > 500.f) OW::Config::Fov = 500.f;
-            else if (OW::Config::Fov < OW::Config::minFov1) OW::Config::Fov = OW::Config::minFov1;
-
-            OW::Config::Fov2 = -(high.Y - low.Y) * 4.f;
-            if (OW::Config::Fov2 > 500.f) OW::Config::Fov2 = 500.f;
-            else if (OW::Config::Fov2 < OW::Config::minFov2) OW::Config::Fov2 = OW::Config::minFov2;
+        const Vector3 camera = CameraPosition();
+        const float bodyAngleDeg = OW::TargetingDetail::AngularSeparationDegFromCamera(
+            camera,
+            fov_target.head_pos,
+            fov_target.chest_pos);
+        if (std::isfinite(bodyAngleDeg) && bodyAngleDeg > 0.0f) {
+            const float scaledFovDeg = OW::Config::ClampFovDeg(bodyAngleDeg * 4.0f);
+            OW::Config::Fov = (std::max)(scaledFovDeg, OW::Config::minFov1);
+            OW::Config::Fov2 = (std::max)(scaledFovDeg, OW::Config::minFov2);
         } else {
             OW::Config::Fov = OW::Config::minFov1;
             OW::Config::Fov2 = OW::Config::minFov2;
@@ -4620,8 +4670,8 @@ namespace AimbotDetail {
         // 4. Check crosshair proximity
         AimData aim = BuildAimData(vec, false, 1.0f, 0.0f);
         const float hitbox = secondary
-            ? OW::Config::hitbox2
-            : (std::max)(OW::Config::hitbox, OW::Config::aimbotEffectiveHitWindow);
+            ? OW::Config::aimbotEffectiveHitWindow2
+            : OW::Config::aimbotEffectiveHitWindow;
         const bool triggerReady = (!secondary && OW::Config::aimbotTwoStage)
             ? TwoStageTriggerOpenForTarget(target)
             : OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox);
@@ -4846,7 +4896,7 @@ namespace AimbotDetail {
                         true,
                         OW::Config::AimBehaviorSmoothInput(behavior, OW::Config::Flick_smooth),
                         OW::Config::AimBehaviorAcceleration(behavior));
-                    const float hitWindow = (std::max)(OW::Config::hitbox, OW::Config::aimbotEffectiveHitWindow);
+                    const float hitWindow = OW::Config::aimbotEffectiveHitWindow;
                     const bool wouldHit = OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
                     Diagnostics::Aim("dryrun.flick local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) "
                         "delta_deg=(%.4f,%.4f) hitbox=%.4f would_hit=%d target_pos=(%.1f,%.1f,%.1f)",
@@ -4907,7 +4957,7 @@ namespace AimbotDetail {
                     twoStagePlan.methodOverride,
                     twoStagePlan.bezierSpeed);
                 ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
-                const float hitWindow = (std::max)(OW::Config::hitbox, OW::Config::aimbotEffectiveHitWindow);
+                const float hitWindow = OW::Config::aimbotEffectiveHitWindow;
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     if (DelayedShotTimedOut(state)) {
@@ -5216,7 +5266,7 @@ namespace AimbotDetail {
                     RunCloseRangeActions(vec);
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     if (OW::Config::Flick2 &&
-                        OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::hitbox2)) {
+                        OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::aimbotEffectiveHitWindow2)) {
                         const int tk = OW::Config::togglekey;
                         if (tk == 0)       ClickMouseButton(0);
                         else if (tk == 1)  ClickMouseButton(1);
@@ -5395,7 +5445,7 @@ inline void configsavenloadthread() {
                 saveHeroFloat(sec, "comarea",   OW::Config::comarea);
                 saveHeroFloat(sec, "comspeed",  OW::Config::comspeed);
                 saveHero(sec, "FOV",            (int)OW::Config::Fov);
-                saveHeroFloat(sec, "hitbox",    OW::Config::hitbox);
+                saveHeroFloat(sec, "hitboxScale", OW::Config::hitbox);
                 saveHeroFloat(sec, "missbox",   OW::Config::missbox);
                 saveHeroFloat(sec, "Tracking_smooth", OW::Config::Tracking_smooth);
                 saveHeroFloat(sec, "Flick_smooth",    OW::Config::Flick_smooth);
@@ -5449,7 +5499,7 @@ inline void configsavenloadthread() {
                 saveHeroFloat(sec, "Tracking_smooth2", OW::Config::Tracking_smooth2);
                 saveHeroFloat(sec, "Flick_smooth2",    OW::Config::Flick_smooth2);
                 saveHeroFloat(sec, "accvalue2",        OW::Config::accvalue2);
-                saveHeroFloat(sec, "hitbox2",          OW::Config::hitbox2);
+                saveHeroFloat(sec, "hitbox2Scale",     OW::Config::hitbox2);
                 saveHeroFloat(sec, "Fov2",             OW::Config::Fov2);
 
                 saveHero(sec, "enablechangefov", OW::Config::enablechangefov);
@@ -5523,6 +5573,29 @@ inline void configsavenloadthread() {
             auto loadHeroFloat = [&](const char* section, const char* key, int def) -> float {
                 return (float)GetPrivateProfileIntA(section, key, def, OW::Config::ConfigPath().c_str()) / 10000.f;
             };
+            auto heroKeyExists = [&](const char* section, const char* key) -> bool {
+                char value[2]{};
+                return GetPrivateProfileStringA(section, key, "", value, sizeof(value), OW::Config::ConfigPath().c_str()) > 0;
+            };
+            auto legacyHitboxRadiusToScale = [](float radius) -> float {
+                if (!std::isfinite(radius))
+                    return OW::Config::kDefaultHitboxScalePercent;
+                if (radius > 5.0f)
+                    return OW::Config::ClampHitboxScalePercent(radius);
+                if (radius <= 0.0f)
+                    return OW::Config::kMinHitboxScalePercent;
+                return OW::Config::ClampHitboxScalePercent(
+                    (radius / OW::Config::kLegacyDefaultHitboxRadius) * 100.0f);
+            };
+            auto loadHeroHitboxScale = [&](const char* section,
+                                           const char* scaleKey,
+                                           const char* legacyKey,
+                                           int legacyDef) -> float {
+                if (heroKeyExists(section, scaleKey))
+                    return OW::Config::ClampHitboxScalePercent(
+                        loadHeroFloat(section, scaleKey, static_cast<int>(OW::Config::kDefaultHitboxScalePercent * 10000.0f)));
+                return legacyHitboxRadiusToScale(loadHeroFloat(section, legacyKey, legacyDef));
+            };
 
             std::string heroName = OW::GetHeroEngNames(OW::local_entity.HeroID, OW::local_entity.LinkBase);
             const char* sec = heroName.c_str();
@@ -5531,7 +5604,7 @@ inline void configsavenloadthread() {
             OW::Config::minFov1         = (float)loadHero(sec, "FOV", 200);
             OW::Config::comarea         = loadHeroFloat(sec, "comarea", 100);
             OW::Config::comspeed        = loadHeroFloat(sec, "comspeed", 5000);
-            OW::Config::hitbox          = loadHeroFloat(sec, "hitbox", 1300);
+            OW::Config::hitbox          = loadHeroHitboxScale(sec, "hitboxScale", "hitbox", 1300);
             OW::Config::missbox         = loadHeroFloat(sec, "missbox", 6000);
             OW::Config::Tracking_smooth = loadHeroFloat(sec, "Tracking_smooth", 1000);
             OW::Config::Flick_smooth    = loadHeroFloat(sec, "Flick_smooth", 1000);
@@ -5579,7 +5652,7 @@ inline void configsavenloadthread() {
             OW::Config::Tracking_smooth2 = loadHeroFloat(sec, "Tracking_smooth2", 1000);
             OW::Config::Flick_smooth2   = loadHeroFloat(sec, "Flick_smooth2", 1000);
             OW::Config::accvalue2       = loadHeroFloat(sec, "accvalue2", 1000);
-            OW::Config::hitbox2         = loadHeroFloat(sec, "hitbox2", 1300);
+            OW::Config::hitbox2         = loadHeroHitboxScale(sec, "hitbox2Scale", "hitbox2", 1300);
             OW::Config::Fov2            = (float)loadHero(sec, "Fov2", 200);
             OW::Config::minFov2         = (float)loadHero(sec, "Fov2", 200);
 

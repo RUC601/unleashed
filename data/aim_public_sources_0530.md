@@ -23,6 +23,6 @@ This folder records the public data collected for the QA-driven aim architecture
 
 ## Gaps Recorded
 
-- Projectile size data is usable for most direct-hit windows, but Fandom and Workshop.codes disagree on a few values such as Genji, Echo, Baptiste alt fire, and Kiriko. Those rows are marked with source-conflict notes.
+- Projectile size data is usable for most direct-hit windows, but Fandom and Workshop.codes disagree on a few values such as Genji, Echo, Baptiste alt fire, and Kiriko. Baptiste alt fire currently uses a temporary Workshop fallback in runtime code; conflicting rows remain marked for later verification.
 - Public hero hitbox sources found during this pass are visual meshes, relative volume/surface metrics, or ability-volume vertex lists. They are not a current per-hero/per-bone radius dataset.
-- `HeroGeometrySpec` therefore keeps conservative fallback radii with low confidence. The TSV records that these are runtime placeholders, not public measurements.
+- `HeroGeometrySpec` therefore keeps conservative fallback radii with low confidence. Limb rows are extrapolated placeholders so auto-bone windows are not blank; the TSV records that these are not public measurements.

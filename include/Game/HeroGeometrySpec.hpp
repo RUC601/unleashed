@@ -12,7 +12,7 @@ float ResolveBoneHitboxRadius(uint64_t heroId, int boneId, float fallbackRadius)
 float ResolveEffectiveHitWindow(uint64_t heroId,
                                 int boneId,
                                 const WeaponSpec* weapon,
-                                float behaviorTolerance,
+                                float hitboxScalePercent,
                                 float fallbackBoneRadius);
 int AimBoneToSkeletonBoneId(int aimBone);
 

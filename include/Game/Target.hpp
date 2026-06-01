@@ -746,6 +746,79 @@ namespace OW {
             return OW::SnapshotCameraPosition();
         }
 
+        struct FovRuntimeContext {
+            Vector3 camera{};
+            Vector3 forward{};
+            bool valid = false;
+        };
+
+        inline bool IsFiniteVector(const Vector3& value) {
+            return std::isfinite(value.X) &&
+                   std::isfinite(value.Y) &&
+                   std::isfinite(value.Z);
+        }
+
+        inline Vector3 NormalizeVector(const Vector3& value) {
+            const float length = value.Size();
+            if (!IsFiniteVector(value) || length <= 0.0001f)
+                return Vector3{};
+            return value / length;
+        }
+
+        inline FovRuntimeContext SnapshotFovRuntimeContext() {
+            Matrix view{}, viewXor{};
+            SnapshotViewMatrices(view, viewXor);
+
+            const auto camera = viewXor.get_location();
+            const auto forward = viewXor.get_rotation();
+
+            FovRuntimeContext context{};
+            context.camera = Vector3(camera.x, camera.y, camera.z);
+            context.forward = NormalizeVector(Vector3(forward.x, forward.y, forward.z));
+            context.valid = IsFiniteVector(context.camera) &&
+                            !IsZeroVector(context.camera) &&
+                            !IsZeroVector(context.forward);
+            return context;
+        }
+
+        inline float FovHalfAngleDeg(float fovApertureDeg) {
+            return Config::ClampFovDeg(fovApertureDeg) * 0.5f;
+        }
+
+        inline float AngularSeparationDegFromCamera(const Vector3& camera,
+                                                    const Vector3& a,
+                                                    const Vector3& b) {
+            const Vector3 dirA = NormalizeVector(a - camera);
+            const Vector3 dirB = NormalizeVector(b - camera);
+            if (IsZeroVector(dirA) || IsZeroVector(dirB))
+                return (std::numeric_limits<float>::max)();
+
+            const float dot = std::clamp(dirA | dirB, -1.0f, 1.0f);
+            return RAD2DEG(std::acos(dot));
+        }
+
+        inline float FovScoreDeg(const FovRuntimeContext& context, const Vector3& position) {
+            if (!context.valid)
+                return (std::numeric_limits<float>::max)();
+
+            const Vector3 targetDir = NormalizeVector(position - context.camera);
+            if (IsZeroVector(targetDir))
+                return (std::numeric_limits<float>::max)();
+
+            const float dot = std::clamp(context.forward | targetDir, -1.0f, 1.0f);
+            return RAD2DEG(std::acos(dot));
+        }
+
+        inline bool IsWithinFovDeg(const FovRuntimeContext& context,
+                                   const Vector3& position,
+                                   float fovApertureDeg,
+                                   float* outScoreDeg = nullptr) {
+            const float scoreDeg = FovScoreDeg(context, position);
+            if (outScoreDeg)
+                *outScoreDeg = scoreDeg;
+            return scoreDeg <= FovHalfAngleDeg(fovApertureDeg) + 0.0001f;
+        }
+
         inline bool IsTrainingBot(uint64_t heroId) {
             return GameData::IsTrainingBotHeroId(heroId);
         }
@@ -1057,8 +1130,8 @@ namespace OW {
             return position;
         }
 
-        inline float CandidateScore(const Vector3& position, const Vector2& crosshair) {
-            return crosshair.Distance(OW::SnapshotViewMatrix().WorldToScreen(position));
+        inline float CandidateScore(const Vector3& position, const FovRuntimeContext& fovContext) {
+            return FovScoreDeg(fovContext, position);
         }
 
         inline SelectionResult SelectTargetFromSnapshot(const std::vector<c_entity>& snapshot,
@@ -1069,7 +1142,7 @@ namespace OW {
                                                         int boneSetting,
                                                         float fov) {
             SelectionResult result{};
-            const Vector2 crosshair = CrosshairCenter();
+            const FovRuntimeContext fovContext = SnapshotFovRuntimeContext();
 
             for (size_t i = 0; i < snapshot.size(); ++i) {
                 c_entity entity = snapshot[i];
@@ -1079,9 +1152,9 @@ namespace OW {
                 if (IsZeroVector(rootPosition)) continue;
 
                 Vector3 aimPosition = ApplyPrediction(entity, rootPosition, predit, secondary);
-                const float score = CandidateScore(aimPosition, crosshair);
+                const float score = CandidateScore(aimPosition, fovContext);
                 if (score >= result.score) continue;
-                if (score > fov) continue;
+                if (score > FovHalfAngleDeg(fov)) continue;
 
                 result.index = static_cast<int>(i);
                 result.target = aimPosition;
@@ -1096,13 +1169,16 @@ namespace OW {
             float bestDistance = (std::numeric_limits<float>::max)();
             Vector3 bestRoot{};
             const Matrix view = OW::SnapshotViewMatrix();
+            const FovRuntimeContext fovContext = SnapshotFovRuntimeContext();
 
             if (IsTrainingBot(entity.HeroID)) {
                 const int botBones[] = { 17, 16, 3, 13, 54 };
                 for (int bone : botBones) {
                     Vector3 bonePosition = entity.GetBonePos(bone);
                     if (IsZeroVector(bonePosition) || bonePosition == entity.pos) continue;
-                    const float distance = crosshair.Distance(view.WorldToScreen(bonePosition));
+                    const float distance = fovContext.valid
+                        ? FovScoreDeg(fovContext, bonePosition)
+                        : crosshair.Distance(view.WorldToScreen(bonePosition));
                     if (distance < bestDistance) {
                         bestDistance = distance;
                         bestRoot = bonePosition;
@@ -1114,7 +1190,9 @@ namespace OW {
                 for (size_t i = 0; i < limit; ++i) {
                     Vector3 bonePosition = entity.GetBonePos(skeleton[i]);
                     if (IsZeroVector(bonePosition) || bonePosition == entity.pos) continue;
-                    const float distance = crosshair.Distance(view.WorldToScreen(bonePosition));
+                    const float distance = fovContext.valid
+                        ? FovScoreDeg(fovContext, bonePosition)
+                        : crosshair.Distance(view.WorldToScreen(bonePosition));
                     if (distance < bestDistance) {
                         bestDistance = distance;
                         bestRoot = bonePosition;
@@ -1196,6 +1274,7 @@ namespace OW {
         int TarGetIndex = -1;
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
+        const TargetingDetail::FovRuntimeContext fovContext = TargetingDetail::SnapshotFovRuntimeContext();
         auto entities = TargetingDetail::SnapshotEntities();
         auto hp_dy_entities = TargetingDetail::SnapshotDynamicEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
@@ -1212,9 +1291,9 @@ namespace OW {
 
         float origin = 100000.f;
         size_t selectableCandidates = 0;
-        float selectedCrossDist = 0.0f;
+        float selectedFovScoreDeg = 0.0f;
         bool targetFromBob = false;
-        Diagnostics::Aim("target.primary start prediction=%d predictionMode=%d weapon=%s entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fov=%.6f bone=%d autobone=%d teamMode=%d distance=(%.2f,%.2f) lock=(active=%d key=0x%llX minMs=%.0f maxMs=%.0f hysteresis=%.1f trace=%d unlock=%d) crosshair=(%.3f,%.3f)",
+        Diagnostics::Aim("target.primary start prediction=%d predictionMode=%d weapon=%s entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fovDeg=%.6f bone=%d autobone=%d teamMode=%d distance=(%.2f,%.2f) lock=(active=%d key=0x%llX minMs=%.0f maxMs=%.0f hysteresis=%.1f trace=%d unlock=%d) crosshair=(%.3f,%.3f)",
             resolvedPrediction ? 1 : 0,
             Config::aimbotPredictionMode,
             weaponSpec ? weaponSpec->weaponId.data() : "none",
@@ -1267,16 +1346,18 @@ namespace OW {
                         Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, predictionSpec.projectileSpeed);
                         AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
                     }
-                    Vector2 Vec2 = resolvedPrediction ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
-                    float CrossDist = CrossHair.Distance(Vec2);
-                    if (CrossDist <= Config::Fov) {
+                    const Vector3 fovPoint = resolvedPrediction ? PreditPos : RootPos;
+                    float fovScoreDeg = 0.0f;
+                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov, &fovScoreDeg)) {
                         const float distance = TargetingDetail::CameraPosition().DistTo(RootPos);
                         if (!TargetingDetail::DistancePassesAimFilter(distance))
                             continue;
 
+                        Vector2 Vec2 = CrossHair;
+                        aimViewMatrix.WorldToScreen(fovPoint, &Vec2, Vector2(OW::WX, OW::WY));
                         float score;
                         if (Config::aimbotPriority == 0) {
-                            score = CrossDist;
+                            score = fovScoreDeg;
                         } else if (Config::aimbotPriority == 1) {
                             score = entities[i].PlayerHealth;
                         } else {
@@ -1285,7 +1366,7 @@ namespace OW {
                         score = TargetingDetail::ApplyRetargetHysteresis(score, lockPolicy, activeLock, candidateKey);
                         if (score < origin) {
                             origin = score;
-                            selectedCrossDist = CrossDist;
+                            selectedFovScoreDeg = fovScoreDeg;
                             TarGetIndex = i;
                             best.valid = true;
                             best.entityIndex = static_cast<int>(i);
@@ -1297,7 +1378,7 @@ namespace OW {
                             best.aimPoint = resolvedPrediction ? PreditPos : RootPos;
                             best.screenPoint = Vec2;
                             best.distance = distance;
-                            best.fovScore = CrossDist;
+                            best.fovScore = fovScoreDeg;
                             best.motion = TargetingDetail::EstimateMotionState(entities[i], Vec2);
                             best.lockPolicy = lockPolicy;
                             best.weaponSpec = weaponSpec;
@@ -1306,7 +1387,7 @@ namespace OW {
                                 best.boneId,
                                 weaponSpec,
                                 Config::hitbox,
-                                Config::hitbox);
+                                Config::kLegacyDefaultHitboxRadius);
                         }
                     }
                 }
@@ -1326,7 +1407,9 @@ namespace OW {
                             if (bonerootpos == entities[TarGetIndex].pos) distbone[iii] = 100000;
                             else {
                                 bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                                distbone[iii] = CrossHair.Distance(bonecrosspos);
+                                distbone[iii] = fovContext.valid
+                                    ? TargetingDetail::FovScoreDeg(fovContext, bonerootpos)
+                                    : CrossHair.Distance(bonecrosspos);
                             }
                         }
                         int m = (int)(std::min_element(distbone, distbone + 5) - distbone);
@@ -1343,15 +1426,17 @@ namespace OW {
                             best.predictedAimPoint = PreditPos;
                             best.aimPoint = PreditPos;
                         }
-                        best.screenPoint = aimViewMatrix.WorldToScreen(best.aimPoint);
-                        best.fovScore = CrossHair.Distance(best.screenPoint);
+                        best.screenPoint = CrossHair;
+                        aimViewMatrix.WorldToScreen(best.aimPoint, &best.screenPoint, Vector2(OW::WX, OW::WY));
+                        best.fovScore = TargetingDetail::FovScoreDeg(fovContext, best.aimPoint);
+                        selectedFovScoreDeg = best.fovScore;
                         best.distance = TargetingDetail::CameraPosition().DistTo(RootPos);
                         best.effectiveHitWindow = ResolveEffectiveHitWindow(
                             entities[TarGetIndex].HeroID,
                             best.boneId,
                             weaponSpec,
                             Config::hitbox,
-                            Config::hitbox);
+                            Config::kLegacyDefaultHitboxRadius);
                     } else {
                         float distbone[12] = { 0 };
                         Vector3 bonerootpos{};
@@ -1359,7 +1444,9 @@ namespace OW {
                         for (int iii = 0; iii < 12; iii++) {
                             bonerootpos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[iii]);
                             bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                            distbone[iii] = CrossHair.Distance(bonecrosspos);
+                            distbone[iii] = fovContext.valid
+                                ? TargetingDetail::FovScoreDeg(fovContext, bonerootpos)
+                                : CrossHair.Distance(bonecrosspos);
                         }
                         int m = (int)(std::min_element(distbone, distbone + 12) - distbone);
                         RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
@@ -1375,15 +1462,17 @@ namespace OW {
                             best.predictedAimPoint = PreditPos;
                             best.aimPoint = PreditPos;
                         }
-                        best.screenPoint = aimViewMatrix.WorldToScreen(best.aimPoint);
-                        best.fovScore = CrossHair.Distance(best.screenPoint);
+                        best.screenPoint = CrossHair;
+                        aimViewMatrix.WorldToScreen(best.aimPoint, &best.screenPoint, Vector2(OW::WX, OW::WY));
+                        best.fovScore = TargetingDetail::FovScoreDeg(fovContext, best.aimPoint);
+                        selectedFovScoreDeg = best.fovScore;
                         best.distance = TargetingDetail::CameraPosition().DistTo(RootPos);
                         best.effectiveHitWindow = ResolveEffectiveHitWindow(
                             entities[TarGetIndex].HeroID,
                             best.boneId,
                             weaponSpec,
                             Config::hitbox,
-                            Config::hitbox);
+                            Config::kLegacyDefaultHitboxRadius);
                     }
                 }
             }
@@ -1395,21 +1484,28 @@ namespace OW {
                 if (hppack.entityid == 0x400000000002533) {
                     if (TargetingDetail::CandidateBlockedByMinLock(lockPolicy, activeLock, hppack.entityid, now))
                         continue;
-                    Vector2 Vec2 = aimViewMatrix.WorldToScreen(Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z));
-                    float CrossDist = CrossHair.Distance(Vec2);
-                    const float lockAdjustedScore = TargetingDetail::ApplyRetargetHysteresis(CrossDist, lockPolicy, activeLock, hppack.entityid);
-                    if (lockAdjustedScore < origin && CrossDist <= Config::Fov) {
+                    const Vector3 bobPosition(hppack.POS.x, hppack.POS.y, hppack.POS.z);
+                    const float bobDistance = TargetingDetail::CameraPosition().DistTo(bobPosition);
+                    if (!TargetingDetail::DistancePassesAimFilter(bobDistance))
+                        break;
+                    float fovScoreDeg = 0.0f;
+                    if (!TargetingDetail::IsWithinFovDeg(fovContext, bobPosition, Config::Fov, &fovScoreDeg))
+                        break;
+                    Vector2 Vec2 = CrossHair;
+                    aimViewMatrix.WorldToScreen(bobPosition, &Vec2, Vector2(OW::WX, OW::WY));
+                    const float lockAdjustedScore = TargetingDetail::ApplyRetargetHysteresis(fovScoreDeg, lockPolicy, activeLock, hppack.entityid);
+                    if (lockAdjustedScore < origin) {
                         best = TargetCandidate{};
                         best.valid = true;
                         best.entityIndex = -1;
                         best.entityKey = hppack.entityid;
                         best.boneId = BONE_CHEST;
-                        best.rawAimPoint = Vector3(hppack.POS.x, hppack.POS.y, hppack.POS.z);
+                        best.rawAimPoint = bobPosition;
                         best.predictedAimPoint = best.rawAimPoint;
                         best.aimPoint = best.rawAimPoint;
                         best.screenPoint = Vec2;
-                        best.distance = TargetingDetail::CameraPosition().DistTo(best.rawAimPoint);
-                        best.fovScore = CrossDist;
+                        best.distance = bobDistance;
+                        best.fovScore = fovScoreDeg;
                         best.lockPolicy = lockPolicy;
                         best.weaponSpec = weaponSpec;
                         best.effectiveHitWindow = ResolveEffectiveHitWindow(
@@ -1417,9 +1513,9 @@ namespace OW {
                             best.boneId,
                             weaponSpec,
                             Config::hitbox,
-                            Config::hitbox);
+                            Config::kLegacyDefaultHitboxRadius);
                         origin = lockAdjustedScore;
-                        selectedCrossDist = CrossDist;
+                        selectedFovScoreDeg = fovScoreDeg;
                         targetFromBob = true;
                     }
                     break;
@@ -1427,32 +1523,32 @@ namespace OW {
             }
         }
         Config::aimbotEffectiveHitWindow = best.valid
-            ? (std::max)(Config::hitbox, best.effectiveHitWindow)
-            : Config::hitbox;
+            ? best.effectiveHitWindow
+            : 0.0f;
         TargetingDetail::CommitTargetLockRuntime(best, origin, lockPolicy, now);
 
         if (!best.valid) {
-            Diagnostics::Aim("target.primary result none reason=no_selectable_target entities=%zu candidates=%zu fov=%.6f targetIndex=%d",
+            Diagnostics::Aim("target.primary result none reason=no_selectable_target entities=%zu candidates=%zu fovDeg=%.6f targetIndex=%d",
                 entities.size(),
                 selectableCandidates,
                 Config::Fov,
                 TarGetIndex);
         } else if (targetFromBob) {
-            Diagnostics::Aim("target.primary result source=ashe_bob target=(%.9f,%.9f,%.9f) score=%.9f crossDist=%.9f",
+            Diagnostics::Aim("target.primary result source=ashe_bob target=(%.9f,%.9f,%.9f) score=%.9f fovScoreDeg=%.9f",
                 best.aimPoint.X,
                 best.aimPoint.Y,
                 best.aimPoint.Z,
                 origin,
-                selectedCrossDist);
+                selectedFovScoreDeg);
         } else if (TarGetIndex >= 0 && static_cast<size_t>(TarGetIndex) < entities.size()) {
             const c_entity& selected = entities[static_cast<size_t>(TarGetIndex)];
-            Diagnostics::Aim("target.primary result index=%d target=(%.9f,%.9f,%.9f) score=%.9f crossDist=%.9f distance=%.3f bone=%d hitWindow=%.4f health=%.3f hero=0x%llX address=0x%llX vis=%d team=%d",
+            Diagnostics::Aim("target.primary result index=%d target=(%.9f,%.9f,%.9f) score=%.9f fovScoreDeg=%.9f distance=%.3f bone=%d hitWindow=%.4f health=%.3f hero=0x%llX address=0x%llX vis=%d team=%d",
                 TarGetIndex,
                 best.aimPoint.X,
                 best.aimPoint.Y,
                 best.aimPoint.Z,
                 origin,
-                selectedCrossDist,
+                selectedFovScoreDeg,
                 best.distance,
                 best.boneId,
                 best.effectiveHitWindow,
@@ -1484,6 +1580,7 @@ namespace OW {
             TargetingDetail::ResolvePredictionRuntimeSpec(weaponSpec, local_entity, false);
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
+        const TargetingDetail::FovRuntimeContext fovContext = TargetingDetail::SnapshotFovRuntimeContext();
         auto entities = TargetingDetail::SnapshotEntities();
         float origin = 100000.f;
         if (entities.size() > 0) {
@@ -1501,12 +1598,12 @@ namespace OW {
                         Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, predictionSpec.projectileSpeed);
                         AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
                     }
-                    Vector2 Vec2 = predit ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
-                    float CrossDist = CrossHair.Distance(Vec2);
-                    if (CrossDist <= Config::Fov) {
+                    const Vector3 fovPoint = predit ? PreditPos : RootPos;
+                    float fovScoreDeg = 0.0f;
+                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov, &fovScoreDeg)) {
                         float score;
                         if (Config::aimbotPriority == 0) {
-                            score = CrossDist;
+                            score = fovScoreDeg;
                         } else if (Config::aimbotPriority == 1) {
                             score = entities[i].PlayerHealth;
                         } else {
@@ -1533,7 +1630,9 @@ namespace OW {
                             if (bonerootpos == entities[TarGetIndex].pos) distbone[iii] = 100000;
                             else {
                                 bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                                distbone[iii] = CrossHair.Distance(bonecrosspos);
+                                distbone[iii] = fovContext.valid
+                                    ? TargetingDetail::FovScoreDeg(fovContext, bonerootpos)
+                                    : CrossHair.Distance(bonecrosspos);
                             }
                         }
                         int m = (int)(std::min_element(distbone, distbone + 5) - distbone);
@@ -1554,7 +1653,9 @@ namespace OW {
                         for (int iii = 0; iii < 12; iii++) {
                             bonerootpos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[iii]);
                             bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                            distbone[iii] = CrossHair.Distance(bonecrosspos);
+                            distbone[iii] = fovContext.valid
+                                ? TargetingDetail::FovScoreDeg(fovContext, bonerootpos)
+                                : CrossHair.Distance(bonecrosspos);
                         }
                         int m = (int)(std::min_element(distbone, distbone + 12) - distbone);
                         RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
@@ -1643,6 +1744,7 @@ namespace OW {
         Vector3 target{};
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
+        const TargetingDetail::FovRuntimeContext fovContext = TargetingDetail::SnapshotFovRuntimeContext();
         const Vector3 camera = TargetingDetail::CameraPosition();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
@@ -1650,14 +1752,17 @@ namespace OW {
         const TargetingDetail::PredictionRuntimeSpec predictionSpec =
             TargetingDetail::ResolvePredictionRuntimeSpec(weaponSpec, local_entity, true);
         float origin = 100000.f;
-        float dist = 100000.f;
         Vector3 PreditPos, RootPos, Vel;
+        int selectedBoneId = AimBoneToSkeletonBoneId(Config::Bone2);
         if (entities.size() > 0) {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
                 if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
                     if (ignoreInvisible && !entities[i].Vis)
+                        continue;
+                    const float initialDistance = camera.DistTo(entities[i].chest_pos);
+                    if (!TargetingDetail::DistancePassesAimFilter(initialDistance))
                         continue;
                     if (entities[i].Team) {
                         if (Config::Bone2 == 1)      { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
@@ -1674,21 +1779,25 @@ namespace OW {
                         Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist2, predictionSpec.projectileSpeed);
                         AimCorrection22(&PreditPos, Vel, dist2, predictionSpec.projectileSpeed, predictionSpec.gravity);
                     }
-                    Vector2 Vec2 = predit ? aimViewMatrix.WorldToScreen(PreditPos) : aimViewMatrix.WorldToScreen(RootPos);
-                    float CrossDist = CrossHair.Distance(Vec2);
-                    if (CrossDist <= Config::Fov) {
+                    const Vector3 fovPoint = predit ? PreditPos : RootPos;
+                    float fovScoreDeg = 0.0f;
+                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov2, &fovScoreDeg)) {
+                        const float distance = camera.DistTo(RootPos);
+                        if (!TargetingDetail::DistancePassesAimFilter(distance))
+                            continue;
                         float score;
                         if (Config::aimbotPriority == 0) {
-                            score = CrossDist;
+                            score = fovScoreDeg;
                         } else if (Config::aimbotPriority == 1) {
                             score = entities[i].PlayerHealth;
                         } else {
-                            score = camera.DistTo(PreditPos);
+                            score = distance;
                         }
                         if (score < origin) {
                             target = predit ? PreditPos : RootPos;
                             origin = score;
                             TarGetIndex = i;
+                            selectedBoneId = AimBoneToSkeletonBoneId(entities[i].Team ? Config::Bone2 : Config::Bone);
                         }
                     }
                 }
@@ -1712,6 +1821,7 @@ namespace OW {
                             }
                         }
                         int m = (int)(std::min_element(distbone, distbone + 5) - distbone);
+                        selectedBoneId = index[m];
                         RootPos = entities[TarGetIndex].GetBonePos(index[m]);
                         PreditPos = RootPos;
                         target = RootPos;
@@ -1732,6 +1842,7 @@ namespace OW {
                             distbone[iii] = CrossHair.Distance(bonecrosspos);
                         }
                         int m = (int)(std::min_element(distbone, distbone + 10) - distbone);
+                        selectedBoneId = entities[TarGetIndex].GetSkel()[m];
                         RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
                         PreditPos = RootPos;
                         target = RootPos;
@@ -1744,8 +1855,18 @@ namespace OW {
                         }
                     }
                 }
+                Config::aimbotEffectiveHitWindow2 = ResolveEffectiveHitWindow(
+                    entities[TarGetIndex].HeroID,
+                    selectedBoneId,
+                    weaponSpec,
+                    Config::hitbox2,
+                    Config::kLegacyDefaultHitboxRadius);
             }
+        } else {
+            Config::aimbotEffectiveHitWindow2 = 0.0f;
         }
+        if (TarGetIndex == -1)
+            Config::aimbotEffectiveHitWindow2 = 0.0f;
         return target;
     }
 
@@ -1756,8 +1877,7 @@ namespace OW {
     inline Vector3 GetVector3forfov(bool predit = false) {
         int TarGetIndex = -1;
         Vector3 target{};
-        Vector2 CrossHair = TargetingDetail::CrosshairCenter();
-        const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
+        const TargetingDetail::FovRuntimeContext fovContext = TargetingDetail::SnapshotFovRuntimeContext();
         const Vector3 camera = TargetingDetail::CameraPosition();
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
@@ -1768,17 +1888,18 @@ namespace OW {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
                 if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
+                    const float distance = camera.DistTo(entities[i].chest_pos);
+                    if (!TargetingDetail::DistancePassesAimFilter(distance))
+                        continue;
                     PreditPos = entities[i].head_pos;
                     RootPos = entities[i].head_pos;
-                    Vector2 Vec2 = aimViewMatrix.WorldToScreen(RootPos);
-                    float CrossDist = CrossHair.Distance(Vec2);
                     float score;
                     if (Config::aimbotPriority == 0) {
-                        score = CrossDist;
+                        score = TargetingDetail::FovScoreDeg(fovContext, RootPos);
                     } else if (Config::aimbotPriority == 1) {
                         score = entities[i].PlayerHealth;
                     } else {
-                        score = camera.DistTo(PreditPos);
+                        score = distance;
                     }
                     if (score < origin) {
                         target = RootPos;
@@ -2123,6 +2244,27 @@ namespace OW {
         return SmoothLinear(current, target, std::clamp(speed * scale, 0.0f, 1.0f));
     }
 
+    inline Vector3 SmoothConstantAngularVelocity(Vector3 current,
+                                                 Vector3 target,
+                                                 float deltaTime,
+                                                 float degreesPerSecond) {
+        deltaTime = AimSmoothingDetail::ClampDeltaTime(deltaTime);
+        const Vector3 error = target - current;
+        const float errorLength = error.Size();
+        const float angularSpeedRad = DEG2RAD(std::clamp(
+            std::isfinite(degreesPerSecond) ? degreesPerSecond : 30.0f,
+            0.0f,
+            720.0f));
+        const float maxStep = angularSpeedRad * deltaTime;
+
+        if (errorLength <= 0.000001f || maxStep <= 0.0f)
+            return current;
+        if (errorLength <= maxStep)
+            return target;
+
+        return current + error * (maxStep / errorLength);
+    }
+
     inline Vector3 SmoothDispatchWithMethod(Vector3 local,
                                             Vector3 target,
                                             float speed,
@@ -2130,7 +2272,7 @@ namespace OW {
                                             int methodOverride,
                                             float bezierSpeedOverride = -1.0f) {
         const float deltaTime = AimSmoothingDetail::ComputeDeltaTime();
-        const int method = std::clamp(methodOverride, 0, 4);
+        const int method = std::clamp(methodOverride, 0, Config::kAimMethodCount - 1);
         static int previousMethod = -1;
 
         if (method != previousMethod) {
@@ -2149,7 +2291,8 @@ namespace OW {
             ? bezierSpeedOverride
             : Config::aimBezierSpeed;
         const float effectiveBezierSpeed = std::clamp(bezierSpeed * methodSpeedScale, 1.0f, 200.0f);
-        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f speedScale=%.9f effectiveSpeed=%.9f accel=%.9f effectiveAccel=%.9f dt=%.9f bezierSpeed=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
+        const float constantAngularSpeedDeg = Config::AimConstantAngularSpeedDeg();
+        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f speedScale=%.9f effectiveSpeed=%.9f accel=%.9f effectiveAccel=%.9f dt=%.9f bezierSpeed=%.9f constantDegPerSec=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
             method,
             speed,
             methodSpeedScale,
@@ -2158,6 +2301,7 @@ namespace OW {
             effectiveAccel,
             deltaTime,
             effectiveBezierSpeed,
+            constantAngularSpeedDeg,
             local.X,
             local.Y,
             local.Z,
@@ -2188,6 +2332,9 @@ namespace OW {
             break;
         case 4:
             result = SmoothAccelerate(local, adjustedTarget, effectiveSpeed, effectiveAccel);
+            break;
+        case 5:
+            result = SmoothConstantAngularVelocity(local, adjustedTarget, deltaTime, constantAngularSpeedDeg);
             break;
         default:
             result = SmoothLinear(local, adjustedTarget, effectiveSpeed);

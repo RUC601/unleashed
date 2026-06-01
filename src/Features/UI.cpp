@@ -857,8 +857,8 @@ static constexpr int kBonePreferenceAimBones[] = {
 };
 static constexpr int kBonePreferenceClosestIndex = 3;
 static const char* kAimBehavior[]  = { "Tracking", "Flick", "FlickClamp", "FlickDelay", "Reacquire" };
-static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited" };
-static const char* kAimMethodOverride[] = { "Inherit", "Linear", "PID", "Bezier", "Piecewise", "Accel Limited" };
+static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant" };
+static const char* kAimMethodOverride[] = { "Inherit", "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPredictionMode[] = { "Auto", "Force On", "Force Off" };
 static const char* kFirePolicy[] = {
@@ -1109,10 +1109,11 @@ static constexpr float kGroupContentIndent = 14.0f;
 static constexpr float kGroupBorderClipInset = 2.0f;
 static constexpr float kControlRightPadding = 10.0f;
 static constexpr int kAimingSubTabCount = 4;
+static constexpr int kThemeSubTabCount = 2;
 static constexpr int kMiscSubTabCount = 6;
 static constexpr int kVisualsPageKey = kAimingSubTabCount;
-static constexpr int kThemePageKey = kVisualsPageKey + 1;
-static constexpr int kMiscPageKeyBase = kThemePageKey + 1;
+static constexpr int kThemePageKeyBase = kVisualsPageKey + 1;
+static constexpr int kMiscPageKeyBase = kThemePageKeyBase + kThemeSubTabCount;
 static constexpr int kMeasuredPageCount = kMiscPageKeyBase + kMiscSubTabCount;
 
 static const ImU32 kColShell0       = IM_COL32(0x05, 0x06, 0x09, 0xFF);
@@ -1299,6 +1300,7 @@ static std::string SaveSelectedConfig() {
 
     if (IsConcreteHeroSelection(selectedHero)) {
         const std::string heroPath = OW::Config::HeroConfigPath(path);
+        OW::Config::SaveConfig(path);
         OW::Config::SaveConfigForHero(path, selectedHero.heroId, localSnapshot.LinkBase);
         std::string status = "Saved ";
         status += selectedHero.label;
@@ -1440,13 +1442,13 @@ static void DrawPresetSummary(const HeroOption& hero,
         : (hasStoredPreset ? "Stored preset" : "Using global defaults");
     if (kind == ActionSlotKind::Aim) {
         std::snprintf(summary, sizeof(summary),
-                      "%s - %s | %s | Speed %.1f%% | FOV %.0f | %s | Hitbox %.2f",
+                      "%s - %s | %s | Speed %.1f%% | FOV %.0f deg | %s | Hitbox %.0f%%",
                       hero.label, scope, PresetAimBehaviorName(preset.aimBehavior),
                       preset.smooth, preset.fov,
                       PresetBoneName(preset), preset.hitbox);
     } else {
         std::snprintf(summary, sizeof(summary),
-                      "%s - %s | Trigger %s | %s | %s | Hitbox %.2f | %s",
+                      "%s - %s | Trigger %s | %s | %s | Hitbox %.0f%% | %s",
                       hero.label, scope,
                       preset.trigger.enabled ? "On" : "Off",
                       OW::Labels::AttackActionName(preset.trigger.action),
@@ -2770,7 +2772,7 @@ static int CurrentPageKey() {
         case UI::TAB_VISUALS:
             return kVisualsPageKey;
         case UI::TAB_THEME:
-            return kThemePageKey;
+            return kThemePageKeyBase + ImClamp(UI::state.themeSubTab, 0, kThemeSubTabCount - 1);
         case UI::TAB_MISC:
             return kMiscPageKeyBase + ImClamp(UI::state.miscSubTab, 0, kMiscSubTabCount - 1);
         default:
@@ -2783,6 +2785,8 @@ static float CurrentSubBarHeight() {
         return 32.0f;
     if (UI::state.activeTab == UI::TAB_VISUALS)
         return 42.0f;
+    if (UI::state.activeTab == UI::TAB_THEME)
+        return 32.0f;
     if (UI::state.activeTab == UI::TAB_MISC)
         return 32.0f;
     return 0.0f;
@@ -2807,6 +2811,8 @@ static float FallbackShellHeight() {
         return 548.0f;
     if (UI::state.activeTab == UI::TAB_VISUALS)
         return 476.0f;
+    if (UI::state.activeTab == UI::TAB_THEME)
+        return 548.0f;
     if (UI::state.activeTab == UI::TAB_MISC)
         return 548.0f;
     return 140.0f;
@@ -3035,7 +3041,7 @@ void UI::AimbotPage() {
             // Max Head Distance
             SettingRow("Max Head Distance", kAimbotLeftLabelWidth);
             PushControlWidth();
-            presetChanged |= UISlider("##aimMaxHead", &activePreset.maxHeadDistance, 0.0f, 100.0f, "Max");
+            presetChanged |= UISlider("##aimMaxHead", &activePreset.maxHeadDistance, 0.0f, 500.0f, "100 m");
             ImGui::PopItemWidth();
 
             // Retarget hysteresis
@@ -3051,9 +3057,11 @@ void UI::AimbotPage() {
             ImGui::PopItemWidth();
 
             // FOV
-            SettingRow("FOV", kAimbotLeftLabelWidth);
+            SettingRow("FOV (deg)", kAimbotLeftLabelWidth);
             PushControlWidth();
-            presetChanged |= UISlider("##aimFov", &activePreset.fov, 0.0f, 500.0f, "200");
+            presetChanged |= UISlider("##aimFov", &activePreset.fov,
+                                      OW::Config::kMinFovDeg, OW::Config::kMaxFovDeg,
+                                      "200 deg");
             ImGui::PopItemWidth();
 
             // Target Priority
@@ -3079,10 +3087,13 @@ void UI::AimbotPage() {
             presetChanged |= UISlider("##aimMaxAim", &activePreset.maxAimTime, 0.0f, 100.0f, "Endless");
             ImGui::PopItemWidth();
 
-            // Hitbox Size
-            SettingRow("Hitbox Size", kAimbotRightLabelWidth);
+            // Hitbox Scale
+            SettingRow("Hitbox Scale", kAimbotRightLabelWidth);
             PushControlWidth();
-            presetChanged |= UISlider("##aimHitbox", &activePreset.hitbox, 0.0f, 5.0f, "0.13");
+            presetChanged |= UISlider("##aimHitbox", &activePreset.hitbox,
+                                      OW::Config::kMinHitboxScalePercent,
+                                      OW::Config::kMaxHitboxScalePercent,
+                                      "100 %");
             ImGui::PopItemWidth();
 
             // Aim Min Charge
@@ -3122,13 +3133,13 @@ void UI::AimbotPage() {
             // Max Distance
             SettingRow("Max Distance", kAimbotRightLabelWidth);
             PushControlWidth();
-            presetChanged |= UISlider("##aimMaxDist", &activePreset.maxDistance, 0.0f, 100.0f, "Max");
+            presetChanged |= UISlider("##aimMaxDist", &activePreset.maxDistance, 0.0f, 500.0f, "100 m");
             ImGui::PopItemWidth();
 
             // Min Distance
             SettingRow("Min Distance", kAimbotRightLabelWidth);
             PushControlWidth();
-            presetChanged |= UISlider("##aimMinDist", &activePreset.minDistance, 0.0f, 100.0f, "0 m");
+            presetChanged |= UISlider("##aimMinDist", &activePreset.minDistance, 0.0f, 500.0f, "0 m");
             ImGui::PopItemWidth();
         }
         CloseGroupBox();
@@ -3230,10 +3241,19 @@ void UI::TriggerPage() {
                 ImGui::PopItemWidth();
             }
 
-            SettingRow("Detection Range", kAimbotRightLabelWidth);
+            SettingRow("Detection Scale", kAimbotRightLabelWidth);
             PushControlWidth();
             presetChanged |= UISlider("##triggerSlotHitbox", &activePreset.hitbox,
-                                      0.0f, 5.0f, "0.13");
+                                      OW::Config::kMinHitboxScalePercent,
+                                      OW::Config::kMaxHitboxScalePercent,
+                                      "100 %");
+            ImGui::PopItemWidth();
+
+            SettingRow("FOV (deg)", kAimbotRightLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISlider("##triggerSlotFov", &activePreset.fov,
+                                      OW::Config::kMinFovDeg, OW::Config::kMaxFovDeg,
+                                      "200 deg");
             ImGui::PopItemWidth();
 
             SettingRow("Target Filter", kAimbotRightLabelWidth);
@@ -3489,9 +3509,11 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         changed |= UISlider("##skillTrackingSmooth", &settings.tracking.smooth, 0.0f, 100.0f, "5.00 %");
         ImGui::PopItemWidth();
 
-        SettingRow("Tracking FOV", kAimbotRightLabelWidth);
+        SettingRow("Tracking FOV (deg)", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISlider("##skillTrackingFov", &settings.tracking.fov, 0.0f, 500.0f, "200");
+        changed |= UISlider("##skillTrackingFov", &settings.tracking.fov,
+                            OW::Config::kMinFovDeg, OW::Config::kMaxFovDeg,
+                            "200 deg");
         ImGui::PopItemWidth();
 
         SettingRow("Tracking Bone", kAimbotRightLabelWidth);
@@ -3500,9 +3522,12 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
                             kHeroSkillTrackingBones, IM_ARRAYSIZE(kHeroSkillTrackingBones));
         ImGui::PopItemWidth();
 
-        SettingRow("Tracking Hitbox", kAimbotRightLabelWidth);
+        SettingRow("Tracking Hitbox Scale", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISlider("##skillTrackingHitbox", &settings.tracking.hitbox, 0.0f, 5.0f, "0.13");
+        changed |= UISlider("##skillTrackingHitbox", &settings.tracking.hitbox,
+                            OW::Config::kMinHitboxScalePercent,
+                            OW::Config::kMaxHitboxScalePercent,
+                            "100 %");
         ImGui::PopItemWidth();
     }
 
@@ -3767,9 +3792,7 @@ void UI::VisualsPage() {
 // =====================================================================
 // UI::ThemePage
 // =====================================================================
-void UI::ThemePage() {
-    ImGui::PushID("ThemePage");
-
+static void DrawThemeGeneralPage() {
     UIGroupBox("ESP Display Position");
     {
         static const char* kDisplayPosition[] = { "Above Head", "Left Side", "Right Side" };
@@ -3808,6 +3831,125 @@ void UI::ThemePage() {
         UIColorEdit("Ally Fill", &OW::Config::allyargb);
     }
     CloseGroupBox();
+}
+
+static bool UIFovRingCompactColorEdit(const char* label, ImVec4* value) {
+    ImGui::SetNextItemWidth(92.0f);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, kColControl);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, kColControlHover);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, kColControlHot);
+    ImGui::PushStyleColor(ImGuiCol_Border, kColStroke);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kControlRounding);
+    const bool changed = ImGui::ColorEdit4(
+        label,
+        &value->x,
+        ImGuiColorEditFlags_NoLabel |
+        ImGuiColorEditFlags_NoInputs |
+        ImGuiColorEditFlags_AlphaBar |
+        ImGuiColorEditFlags_DisplayRGB |
+        ImGuiColorEditFlags_InputRGB);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(4);
+    return changed;
+}
+
+static bool UIFovRingStyleRow(OW::Config::FovRingSlotKind kind,
+                              int slotIndex,
+                              bool slotEnabled,
+                              float slotFovDeg) {
+    OW::Config::FovRingSlotStyle& style = OW::Config::FovRingStyleFor(kind, slotIndex);
+    style = OW::Config::ClampFovRingStyle(style, kind, slotIndex);
+
+    bool changed = false;
+    ImGui::PushID(static_cast<int>(kind) * 100 + slotIndex);
+
+    char slotLabel[32] = {};
+    std::snprintf(slotLabel, sizeof(slotLabel), "Slot %d", slotIndex + 1);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(slotLabel);
+
+    ImGui::SameLine(74.0f);
+    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(slotEnabled ? kColTextMuted : kColTextDim),
+                       "%s %.0f deg",
+                       slotEnabled ? "On" : "Off",
+                       OW::Config::ClampFovDeg(slotFovDeg));
+
+    ImGui::SameLine(160.0f);
+    changed |= UICheckbox("##visible", &style.visible);
+    ImGui::SameLine(181.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Show");
+
+    ImGui::SameLine(232.0f);
+    changed |= UIFovRingCompactColorEdit("##color", &style.color);
+
+    ImGui::SameLine(334.0f);
+    ImGui::SetNextItemWidth(102.0f);
+    changed |= UISlider("##thickness", &style.thickness, 0.5f, 6.0f, "1.5 px");
+
+    ImGui::SameLine(448.0f);
+    static const char* kLineStyles[] = { "Solid", "Dashed" };
+    ImGui::SetNextItemWidth(88.0f);
+    changed |= UISelect("##lineStyle", &style.lineStyle, kLineStyles, IM_ARRAYSIZE(kLineStyles));
+
+    ImGui::SameLine(548.0f);
+    changed |= UICheckbox("##label", &style.showLabel);
+    ImGui::SameLine(569.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Label");
+
+    if (changed)
+        style = OW::Config::ClampFovRingStyle(style, kind, slotIndex);
+
+    ImGui::PopID();
+    return changed;
+}
+
+static void DrawFovRingStyleGroup(OW::Config::FovRingSlotKind kind,
+                                  const HeroOption& selectedHero) {
+    const bool isTrigger = kind == OW::Config::FovRingSlotKind::Trigger;
+    UIGroupBox(isTrigger ? "Trigger Slot Rings" : "Aim Slot Rings");
+    {
+        const int slotCount = selectedHero.heroId == 0
+            ? OW::Config::kMaxHeroPresetSlots
+            : ImClamp(isTrigger
+                ? OW::Config::GetHeroTriggerSlotCount(selectedHero.heroId)
+                : OW::Config::GetHeroAimSlotCount(selectedHero.heroId),
+                1,
+                OW::Config::kMaxHeroPresetSlots);
+
+        for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex) {
+            OW::Config::HeroSlotPreset slot{};
+            const bool hasSlot = selectedHero.heroId != 0 && (isTrigger
+                ? OW::Config::TryGetHeroTriggerSlot(selectedHero.heroId, slotIndex, slot)
+                : OW::Config::TryGetHeroAimSlot(selectedHero.heroId, slotIndex, slot));
+            const bool slotEnabled = hasSlot &&
+                slot.enabled &&
+                (!isTrigger || slot.preset.trigger.enabled);
+            const float fovDeg = hasSlot ? slot.preset.fov : OW::Config::kDefaultFovDeg;
+
+            UIFovRingStyleRow(kind, slotIndex, selectedHero.heroId == 0 || slotEnabled, fovDeg);
+        }
+    }
+    CloseGroupBox();
+}
+
+static void DrawThemeFovRingsPage() {
+    const HeroOption& selectedHero = CurrentHeroOption();
+    DrawFovRingStyleGroup(OW::Config::FovRingSlotKind::Aim, selectedHero);
+    DrawFovRingStyleGroup(OW::Config::FovRingSlotKind::Trigger, selectedHero);
+}
+
+void UI::ThemePage() {
+    ImGui::PushID("ThemePage");
+
+    state.themeSubTab = ImClamp(state.themeSubTab, 0, kThemeSubTabCount - 1);
+    if (state.themeSubTab == 0)
+        DrawThemeGeneralPage();
+    else
+        DrawThemeFovRingsPage();
+
+    ImGui::PopID();
 }
 
 // =====================================================================
@@ -4274,6 +4416,13 @@ static void DrawMiscMethodPage() {
             SettingRow("Acceleration");
             PushControlWidth();
             UISlider("##methodAccelAcceleration", &OW::Config::aimAccelLimitedAcceleration, 0.0f, 20.0f, "0.10");
+            ImGui::PopItemWidth();
+            break;
+        case 5:
+            SettingRow("Angular Speed");
+            PushControlWidth();
+            UISlider("##methodConstantAngularSpeed", &OW::Config::aimConstantAngularSpeedDeg,
+                     0.0f, 720.0f, "30 deg/s");
             ImGui::PopItemWidth();
             break;
         default:
@@ -4793,7 +4942,11 @@ void UI::Render() {
             activeSub   = &state.visualsSubTab;
             break;
         case TAB_THEME:
-            subTabCount = 0;
+            subTabNames[0] = "General";
+            subTabNames[1] = "FOV Rings";
+            subTabCount = kThemeSubTabCount;
+            state.themeSubTab = ImClamp(state.themeSubTab, 0, subTabCount - 1);
+            activeSub   = &state.themeSubTab;
             break;
         case TAB_MISC:
             subTabNames[0] = "General";

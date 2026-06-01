@@ -634,11 +634,13 @@ namespace OW { namespace Config {
                    setting == "aimPiecewiseMidDegrees" ||
                    setting == "aimPiecewiseFarDegrees" ||
                    setting == "aimAccelLimitedAcceleration" ||
+                   setting == "aimConstantAngularSpeedDeg" ||
                    setting == "linearAngularSpeedScale" ||
                    setting == "pidAngularSpeedScale" ||
                    setting == "bezierAngularSpeedScale" ||
                    setting == "piecewiseAngularSpeedScale" ||
                    setting == "accelLimitedAngularSpeedScale" ||
+                   setting == "constantAngularSpeedScale" ||
                    setting == "aim_key" ||
                    setting == "aim_key2" ||
                    setting == "kmboxDeviceType" ||
@@ -871,6 +873,38 @@ namespace OW { namespace Config {
             return ini.TryGet(section, key, value);
         }
 
+        float LegacyHitboxRadiusToScalePercent(float radius)
+        {
+            if (!std::isfinite(radius))
+                return kDefaultHitboxScalePercent;
+            if (radius > 5.0f)
+                return ClampHitboxScalePercent(radius);
+            if (radius <= 0.0f)
+                return kMinHitboxScalePercent;
+            return ClampHitboxScalePercent((radius / kLegacyDefaultHitboxRadius) * 100.0f);
+        }
+
+        float ReadHitboxScaleCompat(const IniFile& ini,
+                                    const char* section,
+                                    const char* scaleKey,
+                                    const char* legacyRadiusKey,
+                                    float def)
+        {
+            if (KeyExists(ini, section, scaleKey))
+                return ClampHitboxScalePercent(ReadFixedFloat(ini, section, scaleKey, def));
+            if (KeyExists(ini, section, legacyRadiusKey)) {
+                const float legacyRadius = ReadFixedFloat(
+                    ini,
+                    section,
+                    legacyRadiusKey,
+                    kLegacyDefaultHitboxRadius);
+                return LegacyHitboxRadiusToScalePercent(legacyRadius);
+            }
+
+            LogDefault(section, scaleKey, ToText(def));
+            return ClampHitboxScalePercent(def);
+        }
+
         constexpr int kHeroPresetSlotCount = kMaxHeroPresetSlots;
 
         enum class HeroPresetSlotKind {
@@ -1085,9 +1119,9 @@ namespace OW { namespace Config {
 
         HeroPreset ValidateHeroPresetValue(HeroPreset preset)
         {
-            if (!std::isfinite(preset.fov)) preset.fov = 200.0f;
+            if (!std::isfinite(preset.fov)) preset.fov = kDefaultFovDeg;
             if (!std::isfinite(preset.smooth)) preset.smooth = 5.0f;
-            if (!std::isfinite(preset.hitbox)) preset.hitbox = 0.13f;
+            if (!std::isfinite(preset.hitbox)) preset.hitbox = kDefaultHitboxScalePercent;
             if (!std::isfinite(preset.pidP)) preset.pidP = 0.5f;
             if (!std::isfinite(preset.pidI)) preset.pidI = 0.01f;
             if (!std::isfinite(preset.pidD)) preset.pidD = 0.1f;
@@ -1105,16 +1139,16 @@ namespace OW { namespace Config {
             if (!std::isfinite(preset.maxDistance)) preset.maxDistance = 100.0f;
             if (!std::isfinite(preset.minDistance)) preset.minDistance = 0.0f;
 
-            preset.fov = std::clamp(preset.fov, 0.0f, 500.0f);
+            preset.fov = ClampFovDeg(preset.fov);
             preset.smooth = std::clamp(preset.smooth, 0.0f, 100.0f);
             preset.bone = NormalizeAimBone(preset.bone);
-            preset.hitbox = std::clamp(preset.hitbox, 0.0f, 5.0f);
+            preset.hitbox = ClampHitboxScalePercent(preset.hitbox);
             preset.aimMode = std::clamp(preset.aimMode, 0, 1);
             if (preset.aimMode == 1 && preset.aimBehavior == 0)
                 preset.aimBehavior = 1;
             preset.aimBehavior = std::clamp(preset.aimBehavior, 0, 4);
             preset.aimMode = preset.aimBehavior == 0 ? 0 : 1;
-            preset.aimMethod = std::clamp(preset.aimMethod, 0, 4);
+            preset.aimMethod = ClampAimMethodIndex(preset.aimMethod);
             preset.smoothType = std::clamp(preset.smoothType, 0, 2);
             preset.pidP = std::clamp(preset.pidP, 0.0f, 2.0f);
             preset.pidI = std::clamp(preset.pidI, 0.0f, 0.5f);
@@ -1131,7 +1165,7 @@ namespace OW { namespace Config {
             else if (preset.firePolicy == 0 && preset.autoshot)
                 preset.firePolicy = 2;
             preset.firePolicy = std::clamp(preset.firePolicy, 0, 5);
-            preset.maxHeadDistance = std::clamp(preset.maxHeadDistance, 0.0f, 100.0f);
+            preset.maxHeadDistance = std::clamp(preset.maxHeadDistance, 0.0f, 500.0f);
             preset.stickiness = std::clamp(preset.stickiness, 0.0f, 100.0f);
             preset.pitchScale = std::clamp(preset.pitchScale, 0.1f, 3.0f);
             preset.priority = std::clamp(preset.priority, 0, 2);
@@ -1190,11 +1224,11 @@ namespace OW { namespace Config {
                 step.speedScale = std::clamp(step.speedScale, 0.5f, 2.0f);
                 step.jitterMs = std::clamp(step.jitterMs, 0, 50);
             }
-            settings.tracking.method = std::clamp(settings.tracking.method, 0, 4);
+            settings.tracking.method = ClampAimMethodIndex(settings.tracking.method);
             settings.tracking.smooth = std::clamp(settings.tracking.smooth, 0.0f, 100.0f);
-            settings.tracking.fov = std::clamp(settings.tracking.fov, 0.0f, 500.0f);
+            settings.tracking.fov = ClampFovDeg(settings.tracking.fov);
             settings.tracking.bone = NormalizeAimBone(settings.tracking.bone);
-            settings.tracking.hitbox = std::clamp(settings.tracking.hitbox, 0.0f, 5.0f);
+            settings.tracking.hitbox = ClampHitboxScalePercent(settings.tracking.hitbox);
             settings.pitchDownDurationMs = std::clamp(settings.pitchDownDurationMs, 20, 100);
             settings.pitchDownDurationJitter = std::clamp(settings.pitchDownDurationJitter, 0.0f, 50.0f);
             settings.pitchDownTargetAngle = std::clamp(settings.pitchDownTargetAngle, 0.0f, 180.0f);
@@ -1374,14 +1408,14 @@ namespace OW { namespace Config {
             aim_key2 = 1;                 // default: Left Mouse
             togglekey = 0;                // default: disabled
 
-            Fov = 200.0f;                 // default: 200
-            Fov2 = 200.0f;                // default: 200
-            minFov1 = 200.0f;             // default: 200
-            minFov2 = 200.0f;             // default: 200
+            Fov = kDefaultFovDeg;         // default: 200 deg
+            Fov2 = kDefaultFovDeg;        // default: 200 deg
+            minFov1 = kDefaultFovDeg;     // default: 200 deg
+            minFov2 = kDefaultFovDeg;     // default: 200 deg
             Smooth = 5.0f;                // default: 5
             autoscalefov = false;         // default: false
-            hitbox = 0.13f;               // default: 0.13
-            hitbox2 = 0.13f;              // default: 0.13
+            hitbox = kDefaultHitboxScalePercent;  // default: 100%
+            hitbox2 = kDefaultHitboxScalePercent; // default: 100%
             missbox = 0.6f;               // default: 0.6
             Tracking_smooth = 0.1f;       // default: 0.1
             Tracking_smooth2 = 0.1f;      // default: 0.1
@@ -1510,7 +1544,7 @@ namespace OW { namespace Config {
             aimBehaviorMethod = { 0, 0, 0, 0, 0 };
             aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
-            aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+            aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             secondaryAimMethodOverride = { -1, -1 };
             aimPidP = 0.5f;
             aimPidI = 0.01f;
@@ -1527,6 +1561,7 @@ namespace OW { namespace Config {
             aimPiecewiseMidScale = 0.45f;
             aimPiecewiseFarScale = 0.75f;
             aimAccelLimitedAcceleration = 0.1f;
+            aimConstantAngularSpeedDeg = 30.0f;
         }
 
         void ResetGlobalDefaultsUnlocked()
@@ -1566,6 +1601,8 @@ namespace OW { namespace Config {
             allyargb = ImVec4(0.0f, 0.0f, 1.0f, 0.4f);     // default: 0,0,1,0.4
             EnemyCol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);     // default: 1,1,1,1
             fovcol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);       // default: 1,1,1,1
+            aimFovRingStyles = MakeDefaultFovRingStyles(FovRingSlotKind::Aim);
+            triggerFovRingStyles = MakeDefaultFovRingStyles(FovRingSlotKind::Trigger);
 
             kmboxEnabled = false;         // default: disabled
             kmboxDeviceType = 0;          // default: Network/UDP
@@ -1763,7 +1800,12 @@ namespace OW { namespace Config {
             if (storedBoneUsesLegacyPresetIndex)
                 slot.preset.bone = LegacyPresetBoneToAimBone(slot.preset.bone);
             slot.preset.autoBone = ReadBool(ini, section, "autoBone", slot.preset.autoBone);
-            slot.preset.hitbox = ReadFixedFloat(ini, section, "hitbox", slot.preset.hitbox);
+            slot.preset.hitbox = ReadHitboxScaleCompat(
+                ini,
+                section,
+                "hitboxScale",
+                "hitbox",
+                slot.preset.hitbox);
             slot.preset.aimMode = ReadInt(ini, section, "aimMode", slot.preset.aimMode);
             const bool hasAimBehavior = KeyExists(ini, section, "aimBehavior");
             slot.preset.aimBehavior = ReadInt(
@@ -1825,14 +1867,19 @@ namespace OW { namespace Config {
         HeroPreset ReadLegacyHeroPresetSectionUnlocked(const IniFile& ini, const char* section, HeroPreset defaults)
         {
             HeroPreset preset = defaults;
-            preset.fov = static_cast<float>(ReadInt(ini, section, "FOV", static_cast<int>(preset.fov)));
+            preset.fov = ReadFov2Compat(ini, section, "FOV", preset.fov);
             const int aimMode = std::clamp(ReadInt(ini, section, "Aim Mode", preset.aimMode), 0, 1);
             const float trackingSmooth = ReadFixedFloat(ini, section, "Tracking_smooth", preset.smooth);
             const float flickSmooth = ReadFixedFloat(ini, section, "Flick_smooth", trackingSmooth);
             preset.smooth = aimMode == 1 ? flickSmooth : trackingSmooth;
             preset.bone = NormalizeAimBone(ReadInt(ini, section, "Bone", preset.bone));
             preset.autoBone = ReadBool(ini, section, "autobone", preset.autoBone);
-            preset.hitbox = ReadFixedFloat(ini, section, "hitbox", preset.hitbox);
+            preset.hitbox = ReadHitboxScaleCompat(
+                ini,
+                section,
+                "hitboxScale",
+                "hitbox",
+                preset.hitbox);
             preset.aimMode = aimMode;
             preset.aimBehavior = ReadInt(ini, section, "aimBehavior", preset.aimMode);
             preset.aimMethod = ReadInt(ini, section, "aimMethod", preset.aimMethod);
@@ -1882,7 +1929,7 @@ namespace OW { namespace Config {
             WritePlainFloatValue(path, section, "smooth", preset.smooth);
             WriteIntValue(path, section, "bone", preset.bone);
             WriteBoolValue(path, section, "autoBone", preset.autoBone);
-            WritePlainFloatValue(path, section, "hitbox", preset.hitbox);
+            WritePlainFloatValue(path, section, "hitboxScale", preset.hitbox);
             WriteIntValue(path, section, "aimMode", preset.aimMode);
             WriteIntValue(path, section, "aimBehavior", preset.aimBehavior);
             WriteIntValue(path, section, "key", preset.key);
@@ -1977,7 +2024,7 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "smooth", preset.smooth, allocator);
             AddJsonInt(value, "bone", preset.bone, allocator);
             AddJsonBool(value, "autoBone", preset.autoBone, allocator);
-            AddJsonFloat(value, "hitbox", preset.hitbox, allocator);
+            AddJsonFloat(value, "hitboxScale", preset.hitbox, allocator);
             AddJsonInt(value, "aimMode", preset.aimMode, allocator);
             AddJsonInt(value, "aimBehavior", preset.aimBehavior, allocator);
             AddJsonInt(value, "key", preset.key, allocator);
@@ -2101,7 +2148,7 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "trackingSmooth", settings.tracking.smooth, allocator);
             AddJsonFloat(value, "trackingFov", settings.tracking.fov, allocator);
             AddJsonInt(value, "trackingBone", settings.tracking.bone, allocator);
-            AddJsonFloat(value, "trackingHitbox", settings.tracking.hitbox, allocator);
+            AddJsonFloat(value, "trackingHitboxScale", settings.tracking.hitbox, allocator);
             AddJsonInt(value, "pitchDownDurationMs", settings.pitchDownDurationMs, allocator);
             AddJsonFloat(value, "pitchDownDurationJitter", settings.pitchDownDurationJitter, allocator);
             AddJsonFloat(value, "pitchDownTargetAngle", settings.pitchDownTargetAngle, allocator);
@@ -2395,6 +2442,22 @@ namespace OW { namespace Config {
                 : def;
         }
 
+        float ReadJsonHitboxScaleCompat(const rapidjson::Value& object,
+                                        const char* scaleKey,
+                                        const char* legacyRadiusKey,
+                                        float def)
+        {
+            const auto scale = object.FindMember(scaleKey);
+            if (scale != object.MemberEnd() && scale->value.IsNumber())
+                return ClampHitboxScalePercent(scale->value.GetFloat());
+
+            const auto legacy = object.FindMember(legacyRadiusKey);
+            if (legacy != object.MemberEnd() && legacy->value.IsNumber())
+                return LegacyHitboxRadiusToScalePercent(legacy->value.GetFloat());
+
+            return ClampHitboxScalePercent(def);
+        }
+
         std::string ReadJsonString(const rapidjson::Value& object, const char* key, const std::string& def)
         {
             const auto item = object.FindMember(key);
@@ -2454,7 +2517,11 @@ namespace OW { namespace Config {
             defaults.tracking.smooth = ReadJsonFloat(value, "trackingSmooth", defaults.tracking.smooth);
             defaults.tracking.fov = ReadJsonFloat(value, "trackingFov", defaults.tracking.fov);
             defaults.tracking.bone = ReadJsonInt(value, "trackingBone", defaults.tracking.bone);
-            defaults.tracking.hitbox = ReadJsonFloat(value, "trackingHitbox", defaults.tracking.hitbox);
+            defaults.tracking.hitbox = ReadJsonHitboxScaleCompat(
+                value,
+                "trackingHitboxScale",
+                "trackingHitbox",
+                defaults.tracking.hitbox);
             defaults.pitchDownDurationMs = ReadJsonInt(value, "pitchDownDurationMs", defaults.pitchDownDurationMs);
             defaults.pitchDownDurationJitter = ReadJsonFloat(value, "pitchDownDurationJitter", defaults.pitchDownDurationJitter);
             defaults.pitchDownTargetAngle = ReadJsonFloat(value, "pitchDownTargetAngle", defaults.pitchDownTargetAngle);
@@ -2647,9 +2714,9 @@ namespace OW { namespace Config {
 
             return settings.tracking.method == 0 &&
                 std::fabs(settings.tracking.smooth - 5.0f) < 0.001f &&
-                std::fabs(settings.tracking.fov - 200.0f) < 0.001f &&
+                std::fabs(settings.tracking.fov - kDefaultFovDeg) < 0.001f &&
                 settings.tracking.bone == kAimBoneHead &&
-                std::fabs(settings.tracking.hitbox - 0.13f) < 0.001f;
+                std::fabs(settings.tracking.hitbox - kDefaultHitboxScalePercent) < 0.001f;
         }
 
         TriggerPreset ReadTriggerPresetJson(const rapidjson::Value& value, TriggerPreset defaults)
@@ -2678,7 +2745,11 @@ namespace OW { namespace Config {
             defaults.smooth = ReadJsonFloat(value, "smooth", defaults.smooth);
             defaults.bone = ReadJsonInt(value, "bone", defaults.bone);
             defaults.autoBone = ReadJsonBool(value, "autoBone", defaults.autoBone);
-            defaults.hitbox = ReadJsonFloat(value, "hitbox", defaults.hitbox);
+            defaults.hitbox = ReadJsonHitboxScaleCompat(
+                value,
+                "hitboxScale",
+                "hitbox",
+                defaults.hitbox);
             defaults.aimMode = ReadJsonInt(value, "aimMode", defaults.aimMode);
             const bool hasAimBehavior = value.HasMember("aimBehavior");
             defaults.aimBehavior = ReadJsonInt(value, "aimBehavior", hasAimBehavior ? defaults.aimBehavior : defaults.aimMode);
@@ -3044,6 +3115,71 @@ namespace OW { namespace Config {
             color.w = ReadFixedFloat(ini, section, w.c_str(), color.w);
         }
 
+        std::string FovRingStyleKeyPrefix(FovRingSlotKind kind, int slotIndex)
+        {
+            char buffer[32] = {};
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "%sSlot%d",
+                          kind == FovRingSlotKind::Trigger ? "trigger" : "aim",
+                          slotIndex + 1);
+            return buffer;
+        }
+
+        void LoadFovRingStyle(const IniFile& ini,
+                              FovRingSlotKind kind,
+                              int slotIndex,
+                              FovRingSlotStyle& style)
+        {
+            constexpr const char* section = "Theme.FovRings";
+            const std::string prefix = FovRingStyleKeyPrefix(kind, slotIndex);
+            style.visible = ReadBool(ini, section, (prefix + "Visible").c_str(), style.visible);
+            LoadColor(ini, section, (prefix + "Color").c_str(), style.color);
+            style.thickness = ReadFixedFloat(ini, section, (prefix + "Thickness").c_str(), style.thickness);
+            style.lineStyle = ReadInt(ini, section, (prefix + "LineStyle").c_str(), style.lineStyle);
+            style.showLabel = ReadBool(ini, section, (prefix + "ShowLabel").c_str(), style.showLabel);
+            style = ClampFovRingStyle(style, kind, slotIndex);
+        }
+
+        void LoadFovRingStyles(const IniFile& ini)
+        {
+            for (int slotIndex = 0; slotIndex < kMaxHeroPresetSlots; ++slotIndex) {
+                LoadFovRingStyle(ini, FovRingSlotKind::Aim, slotIndex,
+                                 aimFovRingStyles[static_cast<size_t>(slotIndex)]);
+                LoadFovRingStyle(ini, FovRingSlotKind::Trigger, slotIndex,
+                                 triggerFovRingStyles[static_cast<size_t>(slotIndex)]);
+            }
+        }
+
+        void SaveFovRingStyle(const std::string& path,
+                              FovRingSlotKind kind,
+                              int slotIndex,
+                              const FovRingSlotStyle& rawStyle)
+        {
+            constexpr const char* section = "Theme.FovRings";
+            const FovRingSlotStyle style = ClampFovRingStyle(rawStyle, kind, slotIndex);
+            const std::string prefix = FovRingStyleKeyPrefix(kind, slotIndex);
+            WriteBoolValue(path, section, (prefix + "Visible").c_str(), style.visible);
+            WriteColor(path, section, (prefix + "Color").c_str(), style.color);
+            WriteFixedFloatValue(path, section, (prefix + "Thickness").c_str(), style.thickness);
+            WriteIntValue(path, section, (prefix + "LineStyle").c_str(), style.lineStyle);
+            WriteBoolValue(path, section, (prefix + "ShowLabel").c_str(), style.showLabel);
+        }
+
+        void SaveFovRingStyles(const std::string& path)
+        {
+            for (int slotIndex = 0; slotIndex < kMaxHeroPresetSlots; ++slotIndex) {
+                SaveFovRingStyle(path,
+                                 FovRingSlotKind::Aim,
+                                 slotIndex,
+                                 aimFovRingStyles[static_cast<size_t>(slotIndex)]);
+                SaveFovRingStyle(path,
+                                 FovRingSlotKind::Trigger,
+                                 slotIndex,
+                                 triggerFovRingStyles[static_cast<size_t>(slotIndex)]);
+            }
+        }
+
         void LoadHeroSettingsUnlocked(const IniFile& ini, const char* section, uint64_t heroId)
         {
             highPriority = ReadBool(ini, section, "highPriority", highPriority);
@@ -3054,9 +3190,9 @@ namespace OW { namespace Config {
             trackcompensate = ReadBool(ini, section, "trackc", trackcompensate);
             comarea = ReadFixedFloat(ini, section, "comarea", comarea);
             comspeed = ReadFixedFloat(ini, section, "comspeed", comspeed);
-            Fov = static_cast<float>(ReadInt(ini, section, "FOV", static_cast<int>(Fov)));
+            Fov = ReadFov2Compat(ini, section, "FOV", Fov);
             minFov1 = Fov;
-            hitbox = ReadFixedFloat(ini, section, "hitbox", hitbox);
+            hitbox = ReadHitboxScaleCompat(ini, section, "hitboxScale", "hitbox", hitbox);
             missbox = ReadFixedFloat(ini, section, "missbox", missbox);
             Tracking_smooth = ReadFixedFloat(ini, section, "Tracking_smooth", Tracking_smooth);
             Flick_smooth = ReadFixedFloat(ini, section, "Flick_smooth", Flick_smooth);
@@ -3101,7 +3237,7 @@ namespace OW { namespace Config {
             Tracking_smooth2 = ReadFixedFloat(ini, section, "Tracking_smooth2", Tracking_smooth2);
             Flick_smooth2 = ReadFixedFloat(ini, section, "Flick_smooth2", Flick_smooth2);
             accvalue2 = ReadFixedFloat(ini, section, "accvalue2", accvalue2);
-            hitbox2 = ReadFixedFloat(ini, section, "hitbox2", hitbox2);
+            hitbox2 = ReadHitboxScaleCompat(ini, section, "hitbox2Scale", "hitbox2", hitbox2);
             Fov2 = ReadFov2Compat(ini, section, "Fov2", Fov2);
             minFov2 = Fov2;
 
@@ -3219,7 +3355,8 @@ namespace OW { namespace Config {
                 "pidAngularSpeedScale",
                 "bezierAngularSpeedScale",
                 "piecewiseAngularSpeedScale",
-                "accelLimitedAngularSpeedScale"
+                "accelLimitedAngularSpeedScale",
+                "constantAngularSpeedScale"
             };
 
             aimMethod = ReadInt(ini, section, "aimMethod", aimMethod);
@@ -3238,6 +3375,7 @@ namespace OW { namespace Config {
             aimPiecewiseMidScale = ReadFixedFloat(ini, section, "aimPiecewiseMidScale", aimPiecewiseMidScale);
             aimPiecewiseFarScale = ReadFixedFloat(ini, section, "aimPiecewiseFarScale", aimPiecewiseFarScale);
             aimAccelLimitedAcceleration = ReadFixedFloat(ini, section, "aimAccelLimitedAcceleration", aimAccelLimitedAcceleration);
+            aimConstantAngularSpeedDeg = ReadFixedFloat(ini, section, "aimConstantAngularSpeedDeg", aimConstantAngularSpeedDeg);
 
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
                 aimBehaviorMethod[index] = ReadInt(ini, section, methodKeys[index], aimMethod);
@@ -3336,7 +3474,8 @@ namespace OW { namespace Config {
                 "pidAngularSpeedScale",
                 "bezierAngularSpeedScale",
                 "piecewiseAngularSpeedScale",
-                "accelLimitedAngularSpeedScale"
+                "accelLimitedAngularSpeedScale",
+                "constantAngularSpeedScale"
             };
 
             WriteIntValue(path, section, "aimMethod", aimMethod);
@@ -3355,6 +3494,7 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "aimPiecewiseMidScale", AimPiecewiseMidScale());
             WriteFixedFloatValue(path, section, "aimPiecewiseFarScale", AimPiecewiseFarScale());
             WriteFixedFloatValue(path, section, "aimAccelLimitedAcceleration", AimMethodAcceleration(4));
+            WriteFixedFloatValue(path, section, "aimConstantAngularSpeedDeg", AimConstantAngularSpeedDeg());
 
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
                 WriteIntValue(path, section, methodKeys[index], AimBehaviorMethod(static_cast<int>(index)));
@@ -3412,6 +3552,7 @@ namespace OW { namespace Config {
             LoadColor(ini, section, "enargb", enargb);
             LoadColor(ini, section, "targetargb", targetargb);
             LoadColor(ini, section, "allyargb", allyargb);
+            LoadFovRingStyles(ini);
         }
 
         void LoadKmboxSettingsUnlocked(const IniFile& ini)
@@ -3577,13 +3718,13 @@ namespace OW { namespace Config {
             }
             ClampSetting("gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId, 0, 64, 0);
 
-            ClampFloatSetting("Fov", Fov, 0.0f, 500.0f, 200.0f);
-            ClampFloatSetting("Fov2", Fov2, 0.0f, 500.0f, 200.0f);
-            ClampFloatSetting("minFov1", minFov1, 0.0f, 500.0f, 200.0f);
-            ClampFloatSetting("minFov2", minFov2, 0.0f, 500.0f, 200.0f);
+            ClampFloatSetting("Fov", Fov, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
+            ClampFloatSetting("Fov2", Fov2, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
+            ClampFloatSetting("minFov1", minFov1, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
+            ClampFloatSetting("minFov2", minFov2, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
             ClampFloatSetting("Smooth", Smooth, 0.0f, 100.0f, 5.0f);
-            ClampFloatSetting("hitbox", hitbox, 0.0f, 5.0f, 0.13f);
-            ClampFloatSetting("hitbox2", hitbox2, 0.0f, 5.0f, 0.13f);
+            ClampFloatSetting("hitbox", hitbox, kMinHitboxScalePercent, kMaxHitboxScalePercent, kDefaultHitboxScalePercent);
+            ClampFloatSetting("hitbox2", hitbox2, kMinHitboxScalePercent, kMaxHitboxScalePercent, kDefaultHitboxScalePercent);
             ClampFloatSetting("missbox", missbox, 0.0f, 5.0f, 0.6f);
             ClampFloatSetting("Tracking_smooth", Tracking_smooth, 0.0f, 20.0f, 0.1f);
             ClampFloatSetting("Tracking_smooth2", Tracking_smooth2, 0.0f, 20.0f, 0.1f);
@@ -3612,6 +3753,7 @@ namespace OW { namespace Config {
             ClampFloatSetting("aimPiecewiseMidScale", aimPiecewiseMidScale, 0.0f, 1.0f, 0.45f);
             ClampFloatSetting("aimPiecewiseFarScale", aimPiecewiseFarScale, 0.0f, 1.0f, 0.75f);
             ClampFloatSetting("aimAccelLimitedAcceleration", aimAccelLimitedAcceleration, 0.0f, 20.0f, 0.1f);
+            ClampFloatSetting("aimConstantAngularSpeedDeg", aimConstantAngularSpeedDeg, 0.0f, 720.0f, 30.0f);
             ClampFloatSetting("aimbotStickiness", aimbotStickiness, 0.0f, 100.0f, 100.0f);
             ClampFloatSetting("aimbotSmoothY", aimbotSmoothY, 0.0f, 100.0f, 50.0f);
             ClampFloatSetting("aimbotPitchScale", aimbotPitchScale, 0.1f, 3.0f, 1.0f);
@@ -3667,9 +3809,9 @@ namespace OW { namespace Config {
             ClampSetting("doingentity", doingentity, 0, 1, 1);
             ClampSetting("lastheroid", lastheroid, -2, (std::numeric_limits<int>::max)(), -2);
             ClampSetting("targetPriority", targetPriority, 0, 2, 0);
-            ClampSetting("aimMethod", aimMethod, 0, 4, 0);
+            ClampSetting("aimMethod", aimMethod, 0, kAimMethodCount - 1, 0);
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
-                aimBehaviorMethod[index] = std::clamp(aimBehaviorMethod[index], 0, 4);
+                aimBehaviorMethod[index] = ClampAimMethodIndex(aimBehaviorMethod[index]);
                 if (!std::isfinite(aimBehaviorBaseSpeed[index]))
                     aimBehaviorBaseSpeed[index] = 100.0f;
                 if (!std::isfinite(aimBehaviorAcceleration[index]))
@@ -3755,6 +3897,16 @@ namespace OW { namespace Config {
             ClampColor("allyargb", allyargb);
             ClampColor("EnemyCol", EnemyCol);
             ClampColor("fovcol", fovcol);
+            for (int slotIndex = 0; slotIndex < kMaxHeroPresetSlots; ++slotIndex) {
+                aimFovRingStyles[static_cast<size_t>(slotIndex)] = ClampFovRingStyle(
+                    aimFovRingStyles[static_cast<size_t>(slotIndex)],
+                    FovRingSlotKind::Aim,
+                    slotIndex);
+                triggerFovRingStyles[static_cast<size_t>(slotIndex)] = ClampFovRingStyle(
+                    triggerFovRingStyles[static_cast<size_t>(slotIndex)],
+                    FovRingSlotKind::Trigger,
+                    slotIndex);
+            }
         }
 
         std::string ColorText(const ImVec4& value)
@@ -3779,7 +3931,7 @@ namespace OW { namespace Config {
                 ToText(hanzoautospeed).c_str());
             LogConfig(level, "Dump: keys AimKey=%d aim_key=%d aim_key2=%d togglekey=%d MenuToggleKey=%d",
                 AimKey, aim_key, aim_key2, togglekey, MenuToggleKey);
-            LogConfig(level, "Dump: aim Fov=%.3f Fov2=%.3f minFov1=%.3f minFov2=%.3f Smooth=%.3f autoscalefov=%s hitbox=%.3f hitbox2=%.3f missbox=%.3f",
+            LogConfig(level, "Dump: aim FovDeg=%.3f Fov2Deg=%.3f minFov1Deg=%.3f minFov2Deg=%.3f Smooth=%.3f autoscalefov=%s hitboxScalePct=%.3f hitbox2ScalePct=%.3f missbox=%.3f",
                 Fov, Fov2, minFov1, minFov2, Smooth, ToText(autoscalefov).c_str(),
                 hitbox, hitbox2, missbox);
             LogConfig(level, "Dump: smoothing Tracking_smooth=%.3f Tracking_smooth2=%.3f Flick_smooth=%.3f Flick_smooth2=%.3f accvalue=%.3f accvalue2=%.3f bladespeed=%.3f",
@@ -3802,15 +3954,16 @@ namespace OW { namespace Config {
                 ToText(aimbotTwoStage).c_str(), ToText(aimbotTwoStageTriggerGate).c_str(),
                 aimbotTwoStageBoxPadding, aimbotTwoStageInnerRadius, aimbotTwoStageInnerSmoothScale,
                 ToText(aimOvershootCurve).c_str(), aimOvershootGain, aimOvershootResetPixels);
-            LogConfig(level, "Dump: aim method method=%d pidP=%.3f pidI=%.3f pidD=%.3f pidMaxIntegral=%.3f pidDeadzone=%.3f bezierControlPoints=%d bezierCurvature=%.3f bezierSpeed=%.3f piecewiseDeg=(%.3f,%.3f,%.3f) piecewiseScale=(%.3f,%.3f,%.3f) accelLimited=%.3f speedScale=(%.3f,%.3f,%.3f,%.3f,%.3f)",
+            LogConfig(level, "Dump: aim method method=%d pidP=%.3f pidI=%.3f pidD=%.3f pidMaxIntegral=%.3f pidDeadzone=%.3f bezierControlPoints=%d bezierCurvature=%.3f bezierSpeed=%.3f piecewiseDeg=(%.3f,%.3f,%.3f) piecewiseScale=(%.3f,%.3f,%.3f) accelLimited=%.3f constantDegPerSec=%.3f speedScale=(%.3f,%.3f,%.3f,%.3f,%.3f,%.3f)",
                 aimMethod, aimPidP, aimPidI, aimPidD, aimPidMaxIntegral, aimPidDeadzone,
                 aimBezierControlPoints, aimBezierCurvature, aimBezierSpeed,
                 AimPiecewiseNearDegrees(), AimPiecewiseMidDegrees(), AimPiecewiseFarDegrees(),
                 AimPiecewiseNearScale(), AimPiecewiseMidScale(), AimPiecewiseFarScale(),
                 AimMethodAcceleration(4),
+                AimConstantAngularSpeedDeg(),
                 aimMethodAngularSpeedScale[0], aimMethodAngularSpeedScale[1],
                 aimMethodAngularSpeedScale[2], aimMethodAngularSpeedScale[3],
-                aimMethodAngularSpeedScale[4]);
+                aimMethodAngularSpeedScale[4], aimMethodAngularSpeedScale[5]);
             LogConfig(level, "Dump: hero GenjiBlade=%s AutoShiftGenji=%s widowautounscope=%s",
                 ToText(GenjiBlade).c_str(), ToText(AutoShiftGenji).c_str(), ToText(widowautounscope).c_str());
             LogConfig(level, "Dump: shoot AutoShoot=%s Shoottime=%d shooted=%s shooted2=%s lasttime=%d lasthealth=%.3f skilled=%s slasttime=%d sskilled=%s reloading=%s",
@@ -4350,6 +4503,7 @@ namespace OW { namespace Config {
             WriteColor(path, "Global", "enargb", enargb);
             WriteColor(path, "Global", "targetargb", targetargb);
             WriteColor(path, "Global", "allyargb", allyargb);
+            SaveFovRingStyles(path);
         }
 
         void LoadSystemConfigUnlocked(const IniFile& ini)

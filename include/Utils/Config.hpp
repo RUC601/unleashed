@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -21,9 +22,80 @@ namespace OW { namespace Config {
     inline constexpr int kAimBoneChest = 0;
     inline constexpr int kAimBoneHead  = 1;
     inline constexpr int kAimBoneNeck  = 2;
+    inline constexpr int kMaxHeroPresetSlots = 12;
+    inline constexpr float kMinFovDeg = 0.0f;
+    inline constexpr float kMaxFovDeg = 360.0f;
+    inline constexpr float kDefaultFovDeg = 200.0f;
+    inline constexpr float kLegacyDefaultHitboxRadius = 0.13f;
+    inline constexpr float kMinHitboxScalePercent = 0.0f;
+    inline constexpr float kMaxHitboxScalePercent = 150.0f;
+    inline constexpr float kDefaultHitboxScalePercent = 100.0f;
 
     int NormalizeAimBone(int aimBone);
     const char* AimBoneName(int aimBone);
+    inline float ClampFovDeg(float fovDeg)
+    {
+        return std::clamp(std::isfinite(fovDeg) ? fovDeg : kDefaultFovDeg,
+                          kMinFovDeg,
+                          kMaxFovDeg);
+    }
+
+    inline float ClampHitboxScalePercent(float scalePercent)
+    {
+        return std::clamp(std::isfinite(scalePercent) ? scalePercent : kDefaultHitboxScalePercent,
+                          kMinHitboxScalePercent,
+                          kMaxHitboxScalePercent);
+    }
+
+    inline float HitboxScaleMultiplier(float scalePercent)
+    {
+        return ClampHitboxScalePercent(scalePercent) / 100.0f;
+    }
+
+    struct RuntimeDrawFovState {
+        bool active = false;
+        float fovDeg = kDefaultFovDeg;
+        int slotKind = 0;
+        int slotIndex = -1;
+    };
+
+    inline std::atomic<float> runtimeDrawFovDeg{ kDefaultFovDeg };
+    inline std::atomic<bool> runtimeDrawFovActive{ false };
+    inline std::atomic<int> runtimeDrawFovSlotKind{ 0 };
+    inline std::atomic<int> runtimeDrawFovSlotIndex{ -1 };
+
+    inline RuntimeDrawFovState SnapshotRuntimeDrawFov()
+    {
+        return {
+            runtimeDrawFovActive.load(std::memory_order_acquire),
+            ClampFovDeg(runtimeDrawFovDeg.load(std::memory_order_acquire)),
+            runtimeDrawFovSlotKind.load(std::memory_order_acquire),
+            runtimeDrawFovSlotIndex.load(std::memory_order_acquire)
+        };
+    }
+
+    inline void SetRuntimeDrawFov(float fovDeg, int slotKind = 0, int slotIndex = -1)
+    {
+        runtimeDrawFovDeg.store(ClampFovDeg(fovDeg), std::memory_order_release);
+        runtimeDrawFovSlotKind.store(slotKind, std::memory_order_release);
+        runtimeDrawFovSlotIndex.store(slotIndex, std::memory_order_release);
+        runtimeDrawFovActive.store(true, std::memory_order_release);
+    }
+
+    inline void RestoreRuntimeDrawFov(const RuntimeDrawFovState& state)
+    {
+        runtimeDrawFovDeg.store(ClampFovDeg(state.fovDeg), std::memory_order_release);
+        runtimeDrawFovSlotKind.store(state.slotKind, std::memory_order_release);
+        runtimeDrawFovSlotIndex.store(state.slotIndex, std::memory_order_release);
+        runtimeDrawFovActive.store(state.active, std::memory_order_release);
+    }
+
+    inline float RuntimeDrawFovOrDefault(float fallbackFovDeg)
+    {
+        return runtimeDrawFovActive.load(std::memory_order_acquire)
+            ? ClampFovDeg(runtimeDrawFovDeg.load(std::memory_order_acquire))
+            : ClampFovDeg(fallbackFovDeg);
+    }
 
     inline std::string configFileName = "config.ini";
     inline std::string lastConfigProfile = "config.ini";
@@ -87,14 +159,14 @@ namespace OW { namespace Config {
     inline int gafAsyncKeyStateSessionId = 0;   // 0 = auto from interactive proxy process
 
     // ---- General aim ----
-    inline float Fov        = 200.f;
-    inline float Fov2       = 200.f;
-    inline float minFov1    = 200.f;
-    inline float minFov2    = 200.f;
+    inline float Fov        = kDefaultFovDeg;
+    inline float Fov2       = kDefaultFovDeg;
+    inline float minFov1    = kDefaultFovDeg;
+    inline float minFov2    = kDefaultFovDeg;
     inline float Smooth     = 5.0f;
     inline bool  autoscalefov = false;
-    inline float hitbox     = 0.13f;
-    inline float hitbox2    = 0.13f;
+    inline float hitbox     = kDefaultHitboxScalePercent; // scale applied to resolved bone+projectile window
+    inline float hitbox2    = kDefaultHitboxScalePercent;
     inline float missbox    = 0.6f;
 
     inline float Tracking_smooth  = 0.1f;
@@ -138,17 +210,19 @@ namespace OW { namespace Config {
     inline int   aimbotFirePolicy = 1;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
     inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
     inline float aimbotMaxHead = 100.0f;
-    inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited
+    inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited, 5=Constant
     inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
     inline constexpr int kAimBehaviorCount = 5;
-    inline constexpr int kAimMethodCount = 5;
+    inline constexpr int kAimMethodCount = 6;
     inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0, 0 };
     inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
     // Legacy behavior acceleration is kept for config compatibility; method-level
     // acceleration now owns the Accel Limited controller tuning.
     inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
-    inline std::array<float, kAimMethodCount> aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
-    inline std::array<int, 2> secondaryAimMethodOverride = { -1, -1 }; // -1=inherit, 0-4=kAimMethod
+    inline std::array<float, kAimMethodCount> aimMethodAngularSpeedScale = {
+        100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f
+    };
+    inline std::array<int, 2> secondaryAimMethodOverride = { -1, -1 }; // -1=inherit, 0-5=kAimMethod
     inline float aimPidP = 0.5f;
     inline float aimPidI = 0.01f;
     inline float aimPidD = 0.1f;
@@ -164,6 +238,7 @@ namespace OW { namespace Config {
     inline float aimPiecewiseMidScale = 0.45f;
     inline float aimPiecewiseFarScale = 0.75f;
     inline float aimAccelLimitedAcceleration = 0.1f;
+    inline float aimConstantAngularSpeedDeg = 30.0f;
     inline float aimbotStickiness = 100.0f;
     inline float aimbotSmoothY = 50.0f;
     inline float aimbotPitchScale = 1.0f;
@@ -179,7 +254,8 @@ namespace OW { namespace Config {
     inline int   aimbotAttack = 0; // action profile: primary/secondary/scoped/unscoped/ability/ultimate
     inline int   aimbotTeam = 0; // 0=Enemies, 1=Allies, 2=All
     inline int   aimbotPriority = 0; // 0=FOV, 1=HP, 2=Distance
-    inline float aimbotEffectiveHitWindow = 0.13f; // runtime-only TargetCandidate resolved window
+    inline float aimbotEffectiveHitWindow = kLegacyDefaultHitboxRadius; // runtime-only scaled TargetCandidate window
+    inline float aimbotEffectiveHitWindow2 = kLegacyDefaultHitboxRadius;
     inline bool  aimbotTwoStage = false;
     inline bool  aimbotTwoStageTriggerGate = true;
     inline float aimbotTwoStageBoxPadding = 8.0f;
@@ -234,6 +310,12 @@ namespace OW { namespace Config {
             return 0.0f;
         const float value = aimAccelLimitedAcceleration;
         return std::isfinite(value) ? std::clamp(value, 0.0f, 20.0f) : 0.1f;
+    }
+
+    inline float AimConstantAngularSpeedDeg()
+    {
+        const float value = aimConstantAngularSpeedDeg;
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 720.0f) : 30.0f;
     }
 
     inline float AimBehaviorAcceleration(int behavior)
@@ -362,6 +444,97 @@ namespace OW { namespace Config {
     inline ImVec4 EnemyCol   = ImVec4(1.f, 1.f, 1.f, 1.f);
     inline ImVec4 fovcol     = ImVec4(1.f, 1.f, 1.f, 1.f);
 
+    enum class FovRingSlotKind : int {
+        Aim = 0,
+        Trigger = 1
+    };
+
+    struct FovRingSlotStyle {
+        bool visible = true;
+        ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 0.75f);
+        float thickness = 1.5f;
+        int lineStyle = 0; // 0=solid, 1=dashed
+        bool showLabel = false;
+    };
+
+    inline ImVec4 DefaultFovRingColor(FovRingSlotKind kind, int slotIndex)
+    {
+        constexpr float palette[][3] = {
+            { 1.00f, 0.92f, 0.20f },
+            { 0.15f, 0.78f, 1.00f },
+            { 1.00f, 0.38f, 0.74f },
+            { 0.35f, 1.00f, 0.55f },
+            { 1.00f, 0.56f, 0.22f },
+            { 0.62f, 0.54f, 1.00f },
+            { 0.24f, 0.92f, 0.82f },
+            { 1.00f, 0.28f, 0.28f },
+            { 0.76f, 1.00f, 0.26f },
+            { 0.30f, 0.48f, 1.00f },
+            { 1.00f, 0.72f, 0.90f },
+            { 0.62f, 1.00f, 0.34f }
+        };
+        constexpr int paletteCount = static_cast<int>(sizeof(palette) / sizeof(palette[0]));
+        const int paletteIndex = std::clamp(slotIndex, 0, kMaxHeroPresetSlots - 1) % paletteCount;
+        const int shiftedIndex = kind == FovRingSlotKind::Trigger
+            ? (paletteIndex + 4) % paletteCount
+            : paletteIndex;
+        const float alpha = kind == FovRingSlotKind::Trigger ? 0.62f : 0.78f;
+        return ImVec4(
+            palette[shiftedIndex][0],
+            palette[shiftedIndex][1],
+            palette[shiftedIndex][2],
+            alpha);
+    }
+
+    inline FovRingSlotStyle DefaultFovRingStyle(FovRingSlotKind kind, int slotIndex)
+    {
+        FovRingSlotStyle style{};
+        style.visible = true;
+        style.color = DefaultFovRingColor(kind, slotIndex);
+        style.thickness = kind == FovRingSlotKind::Trigger ? 1.25f : 1.5f;
+        style.lineStyle = kind == FovRingSlotKind::Trigger ? 1 : 0;
+        style.showLabel = false;
+        return style;
+    }
+
+    inline std::array<FovRingSlotStyle, kMaxHeroPresetSlots> MakeDefaultFovRingStyles(FovRingSlotKind kind)
+    {
+        std::array<FovRingSlotStyle, kMaxHeroPresetSlots> styles{};
+        for (int slotIndex = 0; slotIndex < kMaxHeroPresetSlots; ++slotIndex)
+            styles[static_cast<size_t>(slotIndex)] = DefaultFovRingStyle(kind, slotIndex);
+        return styles;
+    }
+
+    inline FovRingSlotStyle ClampFovRingStyle(FovRingSlotStyle style, FovRingSlotKind kind, int slotIndex)
+    {
+        const FovRingSlotStyle fallback = DefaultFovRingStyle(kind, slotIndex);
+        auto clampChannel = [](float value, float fallbackValue) {
+            return std::clamp(std::isfinite(value) ? value : fallbackValue, 0.0f, 1.0f);
+        };
+        style.color.x = clampChannel(style.color.x, fallback.color.x);
+        style.color.y = clampChannel(style.color.y, fallback.color.y);
+        style.color.z = clampChannel(style.color.z, fallback.color.z);
+        style.color.w = clampChannel(style.color.w, fallback.color.w);
+        style.thickness = std::clamp(std::isfinite(style.thickness) ? style.thickness : fallback.thickness,
+                                     0.5f,
+                                     6.0f);
+        style.lineStyle = std::clamp(style.lineStyle, 0, 1);
+        return style;
+    }
+
+    inline std::array<FovRingSlotStyle, kMaxHeroPresetSlots> aimFovRingStyles =
+        MakeDefaultFovRingStyles(FovRingSlotKind::Aim);
+    inline std::array<FovRingSlotStyle, kMaxHeroPresetSlots> triggerFovRingStyles =
+        MakeDefaultFovRingStyles(FovRingSlotKind::Trigger);
+
+    inline FovRingSlotStyle& FovRingStyleFor(FovRingSlotKind kind, int slotIndex)
+    {
+        const int clampedSlot = std::clamp(slotIndex, 0, kMaxHeroPresetSlots - 1);
+        return kind == FovRingSlotKind::Trigger
+            ? triggerFovRingStyles[static_cast<size_t>(clampedSlot)]
+            : aimFovRingStyles[static_cast<size_t>(clampedSlot)];
+    }
+
     // ---- Targeting state ----
     inline int  Targetenemyi    = -1;
     inline int  Targetenemyifov = -1;
@@ -452,8 +625,6 @@ namespace OW { namespace Config {
     inline int moveSplitDelayUs = 800;         // Microsecond delay between chunks (100-5000)
 
     // ---- Per-hero aim/trigger presets ----
-    inline constexpr int kMaxHeroPresetSlots = 12;
-
     struct TriggerPreset {
         bool enabled = false;
         int action = 0;          // 0=Primary, 1=Secondary, 2=Scoped, 3=Unscoped, 4-6=Abilities, 7=Ultimate
@@ -467,11 +638,11 @@ namespace OW { namespace Config {
     };
 
     struct HeroPreset {
-        float fov = 200.f;       // FOV circle size
+        float fov = kDefaultFovDeg; // FOV aperture in degrees; 360 covers the full sphere
         float smooth = 5.0f;     // aim smoothing, 0-100
         int bone = kAimBoneHead;  // aim-bone choice: 0=chest, 1=head, 2=neck
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
-        float hitbox = 0.13f;    // hitbox radius/size
+        float hitbox = kDefaultHitboxScalePercent; // percentage of resolved bone+projectile window
         int aimMode = 0;         // 0=Tracking, 1=Flick
         int aimBehavior = 0;     // 0=Tracking, 1=Flick, 2=FlickClamp, 3=FlickDelay, 4=ReacquireAtApex
         int aimMethod = 0;       // legacy: smoothing method now comes from Misc behavior profiles
@@ -533,7 +704,7 @@ namespace OW { namespace Config {
         float smooth = 0.0f;
         float fov = 0.0f;
         int bone = kAimBoneChest;
-        float hitbox = 0.0f;
+        float hitbox = 0.0f;     // percentage of resolved bone+projectile window; 0 disables the gate
     };
 
     struct HeroSkillSettings {

@@ -139,7 +139,7 @@ inline Config::HeroSkillSettings MakeAsheComboSequenceDefaults()
     settings.prediction = true;
     settings.minTargets = 1;
     settings.radius = 0.0f;
-    settings.tracking = { 0, 5.0f, 0.0f, Config::kAimBoneHead, 0.13f };
+    settings.tracking = { 0, 5.0f, 0.0f, Config::kAimBoneHead, Config::kDefaultHitboxScalePercent };
     settings.ammoGuard = true;
     settings.ammoGuardReserve = 1;
 
@@ -235,7 +235,7 @@ inline Config::HeroSkillSettings MakeFrejaSequenceSetDefaults()
     settings.prediction = true;
     settings.minTargets = 1;
     settings.radius = 0.0f;
-    settings.tracking = { 0, 5.0f, 0.0f, Config::kAimBoneChest, 0.13f };
+    settings.tracking = { 0, 5.0f, 0.0f, Config::kAimBoneChest, Config::kDefaultHitboxScalePercent };
     settings.ammoGuard = false;
     settings.ammoGuardReserve = 1;
 
