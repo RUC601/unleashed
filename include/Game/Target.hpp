@@ -2112,13 +2112,13 @@ namespace OW {
     inline Vector3 SmoothPiecewise(Vector3 current, Vector3 target, float speed) {
         const Vector3 error = target - current;
         const float errorDegrees = RAD2DEG(error.Size());
-        float scale = 0.20f;
-        if (errorDegrees > 12.0f)
+        float scale = Config::AimPiecewiseNearScale();
+        if (errorDegrees > Config::AimPiecewiseFarDegrees())
             scale = 1.00f;
-        else if (errorDegrees > 6.0f)
-            scale = 0.75f;
-        else if (errorDegrees > 2.0f)
-            scale = 0.45f;
+        else if (errorDegrees > Config::AimPiecewiseMidDegrees())
+            scale = Config::AimPiecewiseFarScale();
+        else if (errorDegrees > Config::AimPiecewiseNearDegrees())
+            scale = Config::AimPiecewiseMidScale();
 
         return SmoothLinear(current, target, std::clamp(speed * scale, 0.0f, 1.0f));
     }
@@ -2142,15 +2142,22 @@ namespace OW {
 
         const Vector3 adjustedTarget = AimSmoothingDetail::ApplyOvershootCurveTarget(local, target);
         const Vector3 error = adjustedTarget - local;
+        const float methodSpeedScale = Config::AimMethodAngularSpeedScale(method);
+        const float effectiveSpeed = std::clamp(speed * methodSpeedScale, 0.0f, 1.0f);
+        const float effectiveAccel = method == 4 ? Config::AimMethodAcceleration(method) : accel;
         const float bezierSpeed = bezierSpeedOverride > 0.0f
             ? bezierSpeedOverride
             : Config::aimBezierSpeed;
-        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f accel=%.9f dt=%.9f bezierSpeed=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
+        const float effectiveBezierSpeed = std::clamp(bezierSpeed * methodSpeedScale, 1.0f, 200.0f);
+        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f speedScale=%.9f effectiveSpeed=%.9f accel=%.9f effectiveAccel=%.9f dt=%.9f bezierSpeed=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
             method,
             speed,
+            methodSpeedScale,
+            effectiveSpeed,
             accel,
+            effectiveAccel,
             deltaTime,
-            bezierSpeed,
+            effectiveBezierSpeed,
             local.X,
             local.Y,
             local.Z,
@@ -2168,22 +2175,22 @@ namespace OW {
         Vector3 result{};
         switch (method) {
         case 0:
-            result = SmoothLinear(local, adjustedTarget, speed);
+            result = SmoothLinear(local, adjustedTarget, effectiveSpeed);
             break;
         case 1:
             result = SmoothPID(local, adjustedTarget, deltaTime);
             break;
         case 2:
-            result = SmoothBezier(local, adjustedTarget, deltaTime, bezierSpeed);
+            result = SmoothBezier(local, adjustedTarget, deltaTime, effectiveBezierSpeed);
             break;
         case 3:
-            result = SmoothPiecewise(local, adjustedTarget, speed);
+            result = SmoothPiecewise(local, adjustedTarget, effectiveSpeed);
             break;
         case 4:
-            result = SmoothAccelerate(local, adjustedTarget, speed, accel);
+            result = SmoothAccelerate(local, adjustedTarget, effectiveSpeed, effectiveAccel);
             break;
         default:
-            result = SmoothLinear(local, adjustedTarget, speed);
+            result = SmoothLinear(local, adjustedTarget, effectiveSpeed);
             break;
         }
 

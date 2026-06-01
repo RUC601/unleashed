@@ -630,6 +630,15 @@ namespace OW { namespace Config {
                    setting == "accvalue2" ||
                    setting == "aimPidDeadzone" ||
                    setting == "aimBezierSpeed" ||
+                   setting == "aimPiecewiseNearDegrees" ||
+                   setting == "aimPiecewiseMidDegrees" ||
+                   setting == "aimPiecewiseFarDegrees" ||
+                   setting == "aimAccelLimitedAcceleration" ||
+                   setting == "linearAngularSpeedScale" ||
+                   setting == "pidAngularSpeedScale" ||
+                   setting == "bezierAngularSpeedScale" ||
+                   setting == "piecewiseAngularSpeedScale" ||
+                   setting == "accelLimitedAngularSpeedScale" ||
                    setting == "aim_key" ||
                    setting == "aim_key2" ||
                    setting == "kmboxDeviceType" ||
@@ -1501,6 +1510,7 @@ namespace OW { namespace Config {
             aimBehaviorMethod = { 0, 0, 0, 0, 0 };
             aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
+            aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             secondaryAimMethodOverride = { -1, -1 };
             aimPidP = 0.5f;
             aimPidI = 0.01f;
@@ -1510,6 +1520,13 @@ namespace OW { namespace Config {
             aimBezierControlPoints = 2;
             aimBezierCurvature = 0.5f;
             aimBezierSpeed = 50.0f;
+            aimPiecewiseNearDegrees = 2.0f;
+            aimPiecewiseMidDegrees = 6.0f;
+            aimPiecewiseFarDegrees = 12.0f;
+            aimPiecewiseNearScale = 0.20f;
+            aimPiecewiseMidScale = 0.45f;
+            aimPiecewiseFarScale = 0.75f;
+            aimAccelLimitedAcceleration = 0.1f;
         }
 
         void ResetGlobalDefaultsUnlocked()
@@ -3197,6 +3214,13 @@ namespace OW { namespace Config {
                 "flickDelayAcceleration",
                 "reacquireAcceleration"
             };
+            constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
+                "linearAngularSpeedScale",
+                "pidAngularSpeedScale",
+                "bezierAngularSpeedScale",
+                "piecewiseAngularSpeedScale",
+                "accelLimitedAngularSpeedScale"
+            };
 
             aimMethod = ReadInt(ini, section, "aimMethod", aimMethod);
             aimPidP = ReadFixedFloat(ini, section, "aimPidP", aimPidP);
@@ -3207,12 +3231,21 @@ namespace OW { namespace Config {
             aimBezierControlPoints = ReadInt(ini, section, "aimBezierControlPoints", aimBezierControlPoints);
             aimBezierCurvature = ReadFixedFloat(ini, section, "aimBezierCurvature", aimBezierCurvature);
             aimBezierSpeed = ReadFixedFloat(ini, section, "aimBezierSpeed", aimBezierSpeed);
+            aimPiecewiseNearDegrees = ReadFixedFloat(ini, section, "aimPiecewiseNearDegrees", aimPiecewiseNearDegrees);
+            aimPiecewiseMidDegrees = ReadFixedFloat(ini, section, "aimPiecewiseMidDegrees", aimPiecewiseMidDegrees);
+            aimPiecewiseFarDegrees = ReadFixedFloat(ini, section, "aimPiecewiseFarDegrees", aimPiecewiseFarDegrees);
+            aimPiecewiseNearScale = ReadFixedFloat(ini, section, "aimPiecewiseNearScale", aimPiecewiseNearScale);
+            aimPiecewiseMidScale = ReadFixedFloat(ini, section, "aimPiecewiseMidScale", aimPiecewiseMidScale);
+            aimPiecewiseFarScale = ReadFixedFloat(ini, section, "aimPiecewiseFarScale", aimPiecewiseFarScale);
+            aimAccelLimitedAcceleration = ReadFixedFloat(ini, section, "aimAccelLimitedAcceleration", aimAccelLimitedAcceleration);
 
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
                 aimBehaviorMethod[index] = ReadInt(ini, section, methodKeys[index], aimMethod);
                 aimBehaviorBaseSpeed[index] = ReadFixedFloat(ini, section, speedKeys[index], 100.0f);
                 aimBehaviorAcceleration[index] = ReadFixedFloat(ini, section, accelerationKeys[index], accvalue);
             }
+            for (size_t index = 0; index < aimMethodAngularSpeedScale.size(); ++index)
+                aimMethodAngularSpeedScale[index] = ReadFixedFloat(ini, section, angularSpeedKeys[index], 100.0f);
             secondaryAimMethodOverride[0] = ReadInt(
                 ini, section, "secondaryTrackingMethod", secondaryAimMethodOverride[0]);
             secondaryAimMethodOverride[1] = ReadInt(
@@ -3298,6 +3331,13 @@ namespace OW { namespace Config {
                 "flickDelayAcceleration",
                 "reacquireAcceleration"
             };
+            constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
+                "linearAngularSpeedScale",
+                "pidAngularSpeedScale",
+                "bezierAngularSpeedScale",
+                "piecewiseAngularSpeedScale",
+                "accelLimitedAngularSpeedScale"
+            };
 
             WriteIntValue(path, section, "aimMethod", aimMethod);
             WriteFixedFloatValue(path, section, "aimPidP", aimPidP);
@@ -3308,12 +3348,25 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "aimBezierControlPoints", aimBezierControlPoints);
             WriteFixedFloatValue(path, section, "aimBezierCurvature", aimBezierCurvature);
             WriteFixedFloatValue(path, section, "aimBezierSpeed", aimBezierSpeed);
+            WriteFixedFloatValue(path, section, "aimPiecewiseNearDegrees", AimPiecewiseNearDegrees());
+            WriteFixedFloatValue(path, section, "aimPiecewiseMidDegrees", AimPiecewiseMidDegrees());
+            WriteFixedFloatValue(path, section, "aimPiecewiseFarDegrees", AimPiecewiseFarDegrees());
+            WriteFixedFloatValue(path, section, "aimPiecewiseNearScale", AimPiecewiseNearScale());
+            WriteFixedFloatValue(path, section, "aimPiecewiseMidScale", AimPiecewiseMidScale());
+            WriteFixedFloatValue(path, section, "aimPiecewiseFarScale", AimPiecewiseFarScale());
+            WriteFixedFloatValue(path, section, "aimAccelLimitedAcceleration", AimMethodAcceleration(4));
 
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
                 WriteIntValue(path, section, methodKeys[index], AimBehaviorMethod(static_cast<int>(index)));
                 WriteFixedFloatValue(path, section, speedKeys[index], AimBehaviorBaseSpeed(static_cast<int>(index)));
-                WriteFixedFloatValue(path, section, accelerationKeys[index], AimBehaviorAcceleration(static_cast<int>(index)));
+                const float legacyAcceleration = std::isfinite(aimBehaviorAcceleration[index])
+                    ? std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f)
+                    : 0.1f;
+                WriteFixedFloatValue(path, section, accelerationKeys[index], legacyAcceleration);
             }
+            for (size_t index = 0; index < aimMethodAngularSpeedScale.size(); ++index)
+                WriteFixedFloatValue(path, section, angularSpeedKeys[index],
+                    AimMethodAngularSpeedScale(static_cast<int>(index)) * 100.0f);
             WriteIntValue(path, section, "secondaryTrackingMethod", ClampAimMethodOverride(secondaryAimMethodOverride[0]));
             WriteIntValue(path, section, "secondaryFlickMethod", ClampAimMethodOverride(secondaryAimMethodOverride[1]));
         }
@@ -3552,6 +3605,13 @@ namespace OW { namespace Config {
             ClampFloatSetting("aimPidDeadzone", aimPidDeadzone, 0.0f, 10.0f, 1.0f);
             ClampFloatSetting("aimBezierCurvature", aimBezierCurvature, 0.0f, 1.0f, 0.5f);
             ClampFloatSetting("aimBezierSpeed", aimBezierSpeed, 1.0f, 200.0f, 50.0f);
+            ClampFloatSetting("aimPiecewiseNearDegrees", aimPiecewiseNearDegrees, 0.0f, 30.0f, 2.0f);
+            ClampFloatSetting("aimPiecewiseMidDegrees", aimPiecewiseMidDegrees, aimPiecewiseNearDegrees, 45.0f, 6.0f);
+            ClampFloatSetting("aimPiecewiseFarDegrees", aimPiecewiseFarDegrees, aimPiecewiseMidDegrees, 60.0f, 12.0f);
+            ClampFloatSetting("aimPiecewiseNearScale", aimPiecewiseNearScale, 0.0f, 1.0f, 0.20f);
+            ClampFloatSetting("aimPiecewiseMidScale", aimPiecewiseMidScale, 0.0f, 1.0f, 0.45f);
+            ClampFloatSetting("aimPiecewiseFarScale", aimPiecewiseFarScale, 0.0f, 1.0f, 0.75f);
+            ClampFloatSetting("aimAccelLimitedAcceleration", aimAccelLimitedAcceleration, 0.0f, 20.0f, 0.1f);
             ClampFloatSetting("aimbotStickiness", aimbotStickiness, 0.0f, 100.0f, 100.0f);
             ClampFloatSetting("aimbotSmoothY", aimbotSmoothY, 0.0f, 100.0f, 50.0f);
             ClampFloatSetting("aimbotPitchScale", aimbotPitchScale, 0.1f, 3.0f, 1.0f);
@@ -3616,6 +3676,11 @@ namespace OW { namespace Config {
                     aimBehaviorAcceleration[index] = 0.1f;
                 aimBehaviorBaseSpeed[index] = std::clamp(aimBehaviorBaseSpeed[index], 0.0f, 100.0f);
                 aimBehaviorAcceleration[index] = std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f);
+            }
+            for (float& speedScale : aimMethodAngularSpeedScale) {
+                if (!std::isfinite(speedScale))
+                    speedScale = 100.0f;
+                speedScale = std::clamp(speedScale, 0.0f, 200.0f);
             }
             for (int& method : secondaryAimMethodOverride)
                 method = ClampAimMethodOverride(method);
@@ -3737,9 +3802,15 @@ namespace OW { namespace Config {
                 ToText(aimbotTwoStage).c_str(), ToText(aimbotTwoStageTriggerGate).c_str(),
                 aimbotTwoStageBoxPadding, aimbotTwoStageInnerRadius, aimbotTwoStageInnerSmoothScale,
                 ToText(aimOvershootCurve).c_str(), aimOvershootGain, aimOvershootResetPixels);
-            LogConfig(level, "Dump: aim method method=%d pidP=%.3f pidI=%.3f pidD=%.3f pidMaxIntegral=%.3f pidDeadzone=%.3f bezierControlPoints=%d bezierCurvature=%.3f bezierSpeed=%.3f",
+            LogConfig(level, "Dump: aim method method=%d pidP=%.3f pidI=%.3f pidD=%.3f pidMaxIntegral=%.3f pidDeadzone=%.3f bezierControlPoints=%d bezierCurvature=%.3f bezierSpeed=%.3f piecewiseDeg=(%.3f,%.3f,%.3f) piecewiseScale=(%.3f,%.3f,%.3f) accelLimited=%.3f speedScale=(%.3f,%.3f,%.3f,%.3f,%.3f)",
                 aimMethod, aimPidP, aimPidI, aimPidD, aimPidMaxIntegral, aimPidDeadzone,
-                aimBezierControlPoints, aimBezierCurvature, aimBezierSpeed);
+                aimBezierControlPoints, aimBezierCurvature, aimBezierSpeed,
+                AimPiecewiseNearDegrees(), AimPiecewiseMidDegrees(), AimPiecewiseFarDegrees(),
+                AimPiecewiseNearScale(), AimPiecewiseMidScale(), AimPiecewiseFarScale(),
+                AimMethodAcceleration(4),
+                aimMethodAngularSpeedScale[0], aimMethodAngularSpeedScale[1],
+                aimMethodAngularSpeedScale[2], aimMethodAngularSpeedScale[3],
+                aimMethodAngularSpeedScale[4]);
             LogConfig(level, "Dump: hero GenjiBlade=%s AutoShiftGenji=%s widowautounscope=%s",
                 ToText(GenjiBlade).c_str(), ToText(AutoShiftGenji).c_str(), ToText(widowautounscope).c_str());
             LogConfig(level, "Dump: shoot AutoShoot=%s Shoottime=%d shooted=%s shooted2=%s lasttime=%d lasthealth=%.3f skilled=%s slasttime=%d sskilled=%s reloading=%s",

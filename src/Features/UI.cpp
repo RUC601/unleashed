@@ -1109,7 +1109,7 @@ static constexpr float kGroupContentIndent = 14.0f;
 static constexpr float kGroupBorderClipInset = 2.0f;
 static constexpr float kControlRightPadding = 10.0f;
 static constexpr int kAimingSubTabCount = 4;
-static constexpr int kMiscSubTabCount = 5;
+static constexpr int kMiscSubTabCount = 6;
 static constexpr int kVisualsPageKey = kAimingSubTabCount;
 static constexpr int kThemePageKey = kVisualsPageKey + 1;
 static constexpr int kMiscPageKeyBase = kThemePageKey + 1;
@@ -3815,7 +3815,8 @@ void UI::ThemePage() {
 // =====================================================================
 static void DrawMiscGeneralPage();
 static void DrawMiscDiagnosticsPage();
-static void DrawMiscSmoothingPage();
+static void DrawMiscBehaviorPage();
+static void DrawMiscMethodPage();
 static void DrawMiscKmboxPage();
 static void DrawMiscScreenPage();
 
@@ -3831,12 +3832,15 @@ void UI::MiscPage() {
             DrawMiscDiagnosticsPage();
             break;
         case 2:
-            DrawMiscSmoothingPage();
+            DrawMiscBehaviorPage();
             break;
         case 3:
-            DrawMiscKmboxPage();
+            DrawMiscMethodPage();
             break;
         case 4:
+            DrawMiscKmboxPage();
+            break;
+        case 5:
             DrawMiscScreenPage();
             break;
         default:
@@ -4057,15 +4061,15 @@ static void DrawMiscDiagnosticsPage() {
     CloseGroupBox();
 }
 
-static void DrawMiscSmoothingPage() {
-    UIGroupBox("Smoothing Controller");
+static void DrawMiscBehaviorPage() {
+    UIGroupBox("Behavior");
     {
         static int selectedBehavior = 0;
         selectedBehavior = OW::Config::ClampAimBehaviorIndex(selectedBehavior);
 
         SettingRow("Behavior");
         PushControlWidth();
-        UISelect("##miscSmoothingBehavior", &selectedBehavior,
+        UISelect("##miscBehaviorSelector", &selectedBehavior,
                  kAimBehavior, IM_ARRAYSIZE(kAimBehavior));
         ImGui::PopItemWidth();
 
@@ -4073,13 +4077,12 @@ static void DrawMiscSmoothingPage() {
         const int behaviorIndex = selectedBehavior;
         int& behaviorMethod = OW::Config::aimBehaviorMethod[static_cast<size_t>(behaviorIndex)];
         float& behaviorBaseSpeed = OW::Config::aimBehaviorBaseSpeed[static_cast<size_t>(behaviorIndex)];
-        float& behaviorAcceleration = OW::Config::aimBehaviorAcceleration[static_cast<size_t>(behaviorIndex)];
         behaviorMethod = OW::Config::ClampAimMethodIndex(behaviorMethod);
         OW::Config::aimMethod = behaviorMethod;
 
         SettingRow("Method");
         PushControlWidth();
-        if (UISelect("##miscSmoothingMethod", &behaviorMethod,
+        if (UISelect("##miscBehaviorMethod", &behaviorMethod,
                      kAimMethod, IM_ARRAYSIZE(kAimMethod))) {
             behaviorMethod = OW::Config::ClampAimMethodIndex(behaviorMethod);
             OW::Config::aimMethod = behaviorMethod;
@@ -4110,73 +4113,6 @@ static void DrawMiscSmoothingPage() {
                 AimMethodOverrideUiToConfig(secondaryFlickMethodUi);
         }
         ImGui::PopItemWidth();
-
-        const int secondaryTrackingMethod = OW::Config::SecondaryAimMethod(0);
-        const int secondaryFlickMethod = OW::Config::SecondaryAimMethod(1);
-        const bool showPid = behaviorMethod == 1 ||
-            secondaryTrackingMethod == 1 ||
-            secondaryFlickMethod == 1;
-        const bool showBezier = behaviorMethod == 2 ||
-            secondaryTrackingMethod == 2 ||
-            secondaryFlickMethod == 2;
-
-        if (showPid) {
-            SettingRow("P Gain");
-            PushControlWidth();
-            UISlider("##miscPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
-            ImGui::PopItemWidth();
-
-            SettingRow("I Gain");
-            PushControlWidth();
-            UISlider("##miscPidI", &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
-            ImGui::PopItemWidth();
-
-            SettingRow("D Gain");
-            PushControlWidth();
-            UISlider("##miscPidD", &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
-            ImGui::PopItemWidth();
-
-            SettingRow("Max Integral");
-            PushControlWidth();
-            UISlider("##miscPidMaxI", &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
-            ImGui::PopItemWidth();
-
-            SettingRow("Deadzone");
-            PushControlWidth();
-            UISlider("##miscPidDz", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
-            ImGui::PopItemWidth();
-        }
-
-        if (showBezier) {
-            SettingRow("Control Points");
-            PushControlWidth();
-            UISlider("##miscBezCP", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
-            ImGui::PopItemWidth();
-
-            SettingRow("Curvature");
-            PushControlWidth();
-            UISlider("##miscBezCurve", &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
-            ImGui::PopItemWidth();
-
-            SettingRow("Speed");
-            PushControlWidth();
-            UISlider("##miscBezSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
-            ImGui::PopItemWidth();
-        }
-
-        if (behaviorMethod == 4) {
-            SettingRow("Acceleration");
-            PushControlWidth();
-            UISlider("##miscAcceleration", &behaviorAcceleration, 0.0f, 20.0f, "0.10");
-            ImGui::PopItemWidth();
-        }
-
-        if (secondaryTrackingMethod == 4 || secondaryFlickMethod == 4) {
-            SettingRow("Second Acceleration");
-            PushControlWidth();
-            UISlider("##miscSecondAcceleration", &OW::Config::accvalue2, 0.0f, 20.0f, "0.10");
-            ImGui::PopItemWidth();
-        }
 
         SettingRow("Pitch Scale");
         PushControlWidth();
@@ -4219,6 +4155,129 @@ static void DrawMiscSmoothingPage() {
             PushControlWidth();
             UISlider("##miscOvershootReset", &OW::Config::aimOvershootResetPixels, 1.0f, 250.0f, "56 px");
             ImGui::PopItemWidth();
+        }
+    }
+    CloseGroupBox();
+}
+
+static void DrawMiscMethodPage() {
+    UIGroupBox("Method");
+    {
+        static int selectedMethod = 0;
+        selectedMethod = OW::Config::ClampAimMethodIndex(selectedMethod);
+
+        SettingRow("Method");
+        PushControlWidth();
+        UISelect("##miscMethodSelector", &selectedMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod));
+        ImGui::PopItemWidth();
+
+        selectedMethod = OW::Config::ClampAimMethodIndex(selectedMethod);
+        float& angularSpeedScale = OW::Config::aimMethodAngularSpeedScale[static_cast<size_t>(selectedMethod)];
+
+        auto drawAngularSpeed = [&](const char* id) {
+            SettingRow("Angular Speed");
+            PushControlWidth();
+            UISlider(id, &angularSpeedScale, 0.0f, 200.0f, "100 %");
+            ImGui::PopItemWidth();
+        };
+
+        switch (selectedMethod) {
+        case 0:
+            drawAngularSpeed("##methodLinearAngularSpeed");
+            break;
+        case 1:
+            SettingRow("P Gain");
+            PushControlWidth();
+            UISlider("##methodPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
+            ImGui::PopItemWidth();
+
+            SettingRow("I Gain");
+            PushControlWidth();
+            UISlider("##methodPidI", &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
+            ImGui::PopItemWidth();
+
+            SettingRow("D Gain");
+            PushControlWidth();
+            UISlider("##methodPidD", &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
+            ImGui::PopItemWidth();
+
+            SettingRow("Max Integral");
+            PushControlWidth();
+            UISlider("##methodPidMaxI", &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
+            ImGui::PopItemWidth();
+
+            SettingRow("Deadzone");
+            PushControlWidth();
+            UISlider("##methodPidDeadzone", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
+            ImGui::PopItemWidth();
+            break;
+        case 2:
+            SettingRow("Control Points");
+            PushControlWidth();
+            UISlider("##methodBezierControlPoints", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
+            ImGui::PopItemWidth();
+
+            SettingRow("Curvature");
+            PushControlWidth();
+            UISlider("##methodBezierCurvature", &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
+            ImGui::PopItemWidth();
+
+            SettingRow("Curve Speed");
+            PushControlWidth();
+            UISlider("##methodBezierSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
+            ImGui::PopItemWidth();
+            break;
+        case 3:
+            drawAngularSpeed("##methodPiecewiseAngularSpeed");
+
+            SettingRow("Near Degrees");
+            PushControlWidth();
+            UISlider("##methodPiecewiseNearDegrees", &OW::Config::aimPiecewiseNearDegrees, 0.0f, 30.0f, "2.0 deg");
+            ImGui::PopItemWidth();
+
+            OW::Config::aimPiecewiseMidDegrees = (std::max)(
+                OW::Config::aimPiecewiseMidDegrees,
+                OW::Config::AimPiecewiseNearDegrees());
+            SettingRow("Mid Degrees");
+            PushControlWidth();
+            UISlider("##methodPiecewiseMidDegrees", &OW::Config::aimPiecewiseMidDegrees,
+                     OW::Config::AimPiecewiseNearDegrees(), 45.0f, "6.0 deg");
+            ImGui::PopItemWidth();
+
+            OW::Config::aimPiecewiseFarDegrees = (std::max)(
+                OW::Config::aimPiecewiseFarDegrees,
+                OW::Config::AimPiecewiseMidDegrees());
+            SettingRow("Far Degrees");
+            PushControlWidth();
+            UISlider("##methodPiecewiseFarDegrees", &OW::Config::aimPiecewiseFarDegrees,
+                     OW::Config::AimPiecewiseMidDegrees(), 60.0f, "12.0 deg");
+            ImGui::PopItemWidth();
+
+            SettingRow("Near Scale");
+            PushControlWidth();
+            UISlider("##methodPiecewiseNearScale", &OW::Config::aimPiecewiseNearScale, 0.0f, 1.0f, "0.20");
+            ImGui::PopItemWidth();
+
+            SettingRow("Mid Scale");
+            PushControlWidth();
+            UISlider("##methodPiecewiseMidScale", &OW::Config::aimPiecewiseMidScale, 0.0f, 1.0f, "0.45");
+            ImGui::PopItemWidth();
+
+            SettingRow("Far Scale");
+            PushControlWidth();
+            UISlider("##methodPiecewiseFarScale", &OW::Config::aimPiecewiseFarScale, 0.0f, 1.0f, "0.75");
+            ImGui::PopItemWidth();
+            break;
+        case 4:
+            drawAngularSpeed("##methodAccelAngularSpeed");
+
+            SettingRow("Acceleration");
+            PushControlWidth();
+            UISlider("##methodAccelAcceleration", &OW::Config::aimAccelLimitedAcceleration, 0.0f, 20.0f, "0.10");
+            ImGui::PopItemWidth();
+            break;
+        default:
+            break;
         }
     }
     CloseGroupBox();
@@ -4714,7 +4773,7 @@ void UI::Render() {
     ImGui::SetCursorScreenPos(ImVec2(winPos.x, contentBandY));
 
     // Determine which sub-tabs to show
-    const char* subTabNames[5] = { nullptr };
+    const char* subTabNames[6] = { nullptr };
     int subTabCount = 0;
     int* activeSub  = nullptr;
 
@@ -4739,9 +4798,10 @@ void UI::Render() {
         case TAB_MISC:
             subTabNames[0] = "General";
             subTabNames[1] = "Diagnostics";
-            subTabNames[2] = "Smoothing";
-            subTabNames[3] = "KMBox";
-            subTabNames[4] = "Screen";
+            subTabNames[2] = "Behavior";
+            subTabNames[3] = "Method";
+            subTabNames[4] = "KMBox";
+            subTabNames[5] = "Screen";
             subTabCount = kMiscSubTabCount;
             state.miscSubTab = ImClamp(state.miscSubTab, 0, subTabCount - 1);
             activeSub   = &state.miscSubTab;

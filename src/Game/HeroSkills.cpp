@@ -1094,7 +1094,7 @@ namespace {
             targetVector,
             false,
             params.smooth / 10.0f,
-            Config::AimBehaviorAcceleration(0),
+            Config::AimMethodAcceleration(params.method),
             params.method);
         if (!AimbotDetail::IsZeroVector(aim.smoothed_angle))
             AimbotDetail::MoveAimDelta(aim.local_angle, aim.smoothed_angle);

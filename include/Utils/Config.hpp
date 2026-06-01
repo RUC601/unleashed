@@ -144,7 +144,10 @@ namespace OW { namespace Config {
     inline constexpr int kAimMethodCount = 5;
     inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0, 0 };
     inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+    // Legacy behavior acceleration is kept for config compatibility; method-level
+    // acceleration now owns the Accel Limited controller tuning.
     inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
+    inline std::array<float, kAimMethodCount> aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
     inline std::array<int, 2> secondaryAimMethodOverride = { -1, -1 }; // -1=inherit, 0-4=kAimMethod
     inline float aimPidP = 0.5f;
     inline float aimPidI = 0.01f;
@@ -154,6 +157,13 @@ namespace OW { namespace Config {
     inline int   aimBezierControlPoints = 2;
     inline float aimBezierCurvature = 0.5f;
     inline float aimBezierSpeed = 50.0f;
+    inline float aimPiecewiseNearDegrees = 2.0f;
+    inline float aimPiecewiseMidDegrees = 6.0f;
+    inline float aimPiecewiseFarDegrees = 12.0f;
+    inline float aimPiecewiseNearScale = 0.20f;
+    inline float aimPiecewiseMidScale = 0.45f;
+    inline float aimPiecewiseFarScale = 0.75f;
+    inline float aimAccelLimitedAcceleration = 0.1f;
     inline float aimbotStickiness = 100.0f;
     inline float aimbotSmoothY = 50.0f;
     inline float aimbotPitchScale = 1.0f;
@@ -212,10 +222,55 @@ namespace OW { namespace Config {
         return std::isfinite(value) ? std::clamp(value, 0.0f, 100.0f) : 100.0f;
     }
 
+    inline float AimMethodAngularSpeedScale(int method)
+    {
+        const float value = aimMethodAngularSpeedScale[static_cast<size_t>(ClampAimMethodIndex(method))];
+        return (std::isfinite(value) ? std::clamp(value, 0.0f, 200.0f) : 100.0f) / 100.0f;
+    }
+
+    inline float AimMethodAcceleration(int method)
+    {
+        if (ClampAimMethodIndex(method) != 4)
+            return 0.0f;
+        const float value = aimAccelLimitedAcceleration;
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 20.0f) : 0.1f;
+    }
+
     inline float AimBehaviorAcceleration(int behavior)
     {
-        const float value = aimBehaviorAcceleration[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
-        return std::isfinite(value) ? std::clamp(value, 0.0f, 20.0f) : 0.1f;
+        return AimMethodAcceleration(AimBehaviorMethod(behavior));
+    }
+
+    inline float AimPiecewiseNearDegrees()
+    {
+        return std::isfinite(aimPiecewiseNearDegrees) ? std::clamp(aimPiecewiseNearDegrees, 0.0f, 30.0f) : 2.0f;
+    }
+
+    inline float AimPiecewiseMidDegrees()
+    {
+        const float value = std::isfinite(aimPiecewiseMidDegrees) ? aimPiecewiseMidDegrees : 6.0f;
+        return std::clamp(value, AimPiecewiseNearDegrees(), 45.0f);
+    }
+
+    inline float AimPiecewiseFarDegrees()
+    {
+        const float value = std::isfinite(aimPiecewiseFarDegrees) ? aimPiecewiseFarDegrees : 12.0f;
+        return std::clamp(value, AimPiecewiseMidDegrees(), 60.0f);
+    }
+
+    inline float AimPiecewiseNearScale()
+    {
+        return std::isfinite(aimPiecewiseNearScale) ? std::clamp(aimPiecewiseNearScale, 0.0f, 1.0f) : 0.20f;
+    }
+
+    inline float AimPiecewiseMidScale()
+    {
+        return std::isfinite(aimPiecewiseMidScale) ? std::clamp(aimPiecewiseMidScale, 0.0f, 1.0f) : 0.45f;
+    }
+
+    inline float AimPiecewiseFarScale()
+    {
+        return std::isfinite(aimPiecewiseFarScale) ? std::clamp(aimPiecewiseFarScale, 0.0f, 1.0f) : 0.75f;
     }
 
     inline float AimBehaviorSmoothInput(int behavior, float scalePercent, float runtimeScale = 1.0f)

@@ -4365,7 +4365,9 @@ namespace AimbotDetail {
         const int dispatchMethod = methodOverride >= 0
             ? std::clamp(methodOverride, 0, 4)
             : OW::Config::AimBehaviorMethod(behavior);
-        const float dispatchAcceleration = (accelerated || dispatchMethod == 4) ? acceleration : 0.0f;
+        const float dispatchAcceleration = dispatchMethod == 4
+            ? OW::Config::AimMethodAcceleration(dispatchMethod)
+            : (accelerated ? acceleration : 0.0f);
         data.smoothed_angle = OW::SmoothDispatchWithMethod(
             data.local_angle,
             data.target_angle,
@@ -5195,7 +5197,7 @@ namespace AimbotDetail {
                         vec,
                         false,
                         OW::Config::AimBehaviorSmoothInput(0, OW::Config::Tracking_smooth2),
-                        method == 4 ? OW::Config::accvalue2 : OW::Config::AimBehaviorAcceleration(0),
+                        OW::Config::AimMethodAcceleration(method),
                         method);
                 } else if (OW::Config::Flick2) {
                     const int method = OW::Config::SecondaryAimMethod(1);
@@ -5203,7 +5205,7 @@ namespace AimbotDetail {
                         vec,
                         true,
                         OW::Config::AimBehaviorSmoothInput(1, OW::Config::Flick_smooth2),
-                        method == 4 ? OW::Config::accvalue2 : OW::Config::AimBehaviorAcceleration(1),
+                        OW::Config::AimMethodAcceleration(method),
                         method);
                 } else
                     aim = BuildAimData(vec, false, 1.0f, 0.0f);
