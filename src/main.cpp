@@ -509,6 +509,35 @@ namespace {
         return drewAny;
     }
 
+    static bool DrawHeroTrackingDeadzoneRings(uint64_t heroId,
+                                              const OW::Vector2& center)
+    {
+        if (!OW::Config::drawTrackingDeadzones)
+            return false;
+
+        bool drewAny = false;
+        for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
+            OW::Config::HeroSlotPreset slot{};
+            const bool found = OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot);
+            if (!found || !slot.enabled ||
+                !OW::Config::IsTrackingBehavior(slot.preset.aimBehavior)) {
+                continue;
+            }
+
+            const float radius = OW::Config::ClampTrackingDeadzonePixels(slot.preset.trackingDeadzone);
+            if (radius <= 0.0f)
+                continue;
+
+            const OW::Config::FovRingSlotStyle style = OW::Config::ClampFovRingStyle(
+                OW::Config::FovRingStyleFor(OW::Config::FovRingSlotKind::Aim, slotIndex),
+                OW::Config::FovRingSlotKind::Aim,
+                slotIndex);
+            DrawDashedCircle(center, radius, ToRenderColor(style.color), (std::max)(1.0f, style.thickness));
+            drewAny = true;
+        }
+        return drewAny;
+    }
+
     static void DrawFovCircle()
     {
         if (!OW::Config::draw_fov)
@@ -546,6 +575,24 @@ namespace {
                           fallbackStyle,
                           false,
                           nullptr);
+    }
+
+    static void DrawTrackingDeadzoneCircles()
+    {
+        if (!OW::Config::drawTrackingDeadzones)
+            return;
+
+        const float width = CanvasWidth();
+        const float height = CanvasHeight();
+        if (width <= 0.0f || height <= 0.0f)
+            return;
+
+        const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
+        if (localSnapshot.HeroID == 0)
+            return;
+
+        const OW::Vector2 center(width * 0.5f, height * 0.5f);
+        DrawHeroTrackingDeadzoneRings(localSnapshot.HeroID, center);
     }
 
     static void DrawCrosshair()
@@ -754,6 +801,7 @@ void RenderCallback()
     DrawAimTriggerStatusPanel();
     DrawHealthPacks();
     DrawFovCircle();
+    DrawTrackingDeadzoneCircles();
     DrawCrosshair();
     Diagnostics::SetRenderPipelineStatus(true, playerInfoCalled, skillInfoCalled, entityListEmpty);
 

@@ -3362,6 +3362,9 @@ namespace AimbotDetail {
         int hitbotdelaytime = 0;
         int afterdelaytime = 0;
         bool dodelay = false;
+        DWORD lastFlickFireTick = 0;
+        uint64_t trajectoryWaitEntityKey = 0;
+        DWORD trajectoryWaitStartedTick = 0;
     };
 
     inline OW::c_entity LocalEntity();
@@ -4092,7 +4095,7 @@ namespace AimbotDetail {
         if (box.points < 2)
             return false;
 
-        const float padding = std::clamp(OW::Config::aimbotTwoStageBoxPadding, 0.0f, 80.0f);
+        const float padding = std::clamp(OW::Config::aimbotFlick2ndBoxPadding, 0.0f, 80.0f);
         box.left -= padding;
         box.top -= padding;
         box.right += padding;
@@ -4161,7 +4164,8 @@ namespace AimbotDetail {
     }
 
     inline bool TwoStageTriggerOpenForTarget(c_entity target) {
-        if (!OW::Config::aimbotTwoStage || !OW::Config::aimbotTwoStageTriggerGate)
+        if (!OW::Config::IsFlick2ndBehavior(OW::Config::aimBehavior) ||
+            !OW::Config::aimbotFlick2ndTriggerGate)
             return true;
 
         const uint64_t entityKey = TwoStageEntityKey(target);
@@ -4190,7 +4194,7 @@ namespace AimbotDetail {
                                                   bool prediction) {
         TwoStageAimPlan plan{};
         plan.target = defaultTarget;
-        if (!OW::Config::aimbotTwoStage)
+        if (!OW::Config::IsFlick2ndBehavior(OW::Config::aimBehavior))
             return plan;
 
         const uint64_t entityKey = TwoStageEntityKey(target);
@@ -4221,15 +4225,17 @@ namespace AimbotDetail {
         const float headDistance = hasHeadScreen
             ? crosshair.Distance(headScreen)
             : (std::numeric_limits<float>::max)();
-        const float innerRadius = std::clamp(OW::Config::aimbotTwoStageInnerRadius, 0.0f, 250.0f);
+        const float innerRadius = std::clamp(OW::Config::aimbotFlick2ndInnerRadius, 0.0f, 250.0f);
         const bool innerStage = state.torsoReached || headDistance <= innerRadius;
 
         plan.active = true;
-        plan.triggerOpen = !OW::Config::aimbotTwoStageTriggerGate || state.torsoReached;
+        plan.triggerOpen = !OW::Config::aimbotFlick2ndTriggerGate || state.torsoReached;
         plan.innerStage = innerStage;
-        plan.methodOverride = innerStage ? 2 : 0;
+        plan.methodOverride = innerStage
+            ? OW::Config::ClampAimMethodIndex(OW::Config::aimbotFlick2ndInnerMethod)
+            : -1;
         plan.smoothScale = innerStage
-            ? std::clamp(OW::Config::aimbotTwoStageInnerSmoothScale, 0.1f, 1.0f)
+            ? std::clamp(OW::Config::aimbotFlick2ndInnerSmoothScale, 0.1f, 1.0f)
             : 1.0f;
         plan.bezierSpeed = innerStage
             ? (std::max)(1.0f, OW::Config::aimBezierSpeed * plan.smoothScale)
@@ -4560,6 +4566,95 @@ namespace AimbotDetail {
                !OW::Config::doingdelay;
     }
 
+    inline DWORD ResolveFlickRestartDelayMs() {
+        const DWORD shotClampMs = static_cast<DWORD>(OW::Config::ClampFlickShotClampMs(
+            OW::Config::aimbotFlickShotClampMs));
+        const DWORD postFireDelayMs = static_cast<DWORD>(OW::Config::ClampFlickPostFireDelayMs(
+            OW::Config::aimbotFlickPostFireDelayMs));
+        return (std::max)(shotClampMs, postFireDelayMs);
+    }
+
+    inline void StampFlickFire(RuntimeState& state) {
+        state.lastFlickFireTick = GetTickCount();
+        state.trajectoryWaitEntityKey = 0;
+        state.trajectoryWaitStartedTick = 0;
+    }
+
+    inline void UpdateFlickShotCooldown(RuntimeState& state) {
+        if (!OW::Config::shooted || !OW::Config::aimbotKeepFiring)
+            return;
+        if (state.lastFlickFireTick == 0) {
+            OW::Config::shooted = false;
+            return;
+        }
+
+        const DWORD elapsed = GetTickCount() - state.lastFlickFireTick;
+        if (elapsed >= ResolveFlickRestartDelayMs()) {
+            OW::Config::shooted = false;
+            OW::Config::lasttime = 0;
+        }
+    }
+
+    inline bool FlickPostFireLockoutActive(const RuntimeState& state) {
+        const DWORD delayMs = static_cast<DWORD>(OW::Config::ClampFlickPostFireDelayMs(
+            OW::Config::aimbotFlickPostFireDelayMs));
+        if (delayMs == 0 || state.lastFlickFireTick == 0)
+            return false;
+        return GetTickCount() - state.lastFlickFireTick < delayMs;
+    }
+
+    inline bool TrackingDeadzoneContains(const Vector3& aimTarget) {
+        const float radius = OW::Config::ClampTrackingDeadzonePixels(OW::Config::aimbotTrackingDeadzone);
+        if (radius <= 0.0f)
+            return false;
+
+        Vector2 screen{};
+        if (!ProjectAimPoint(aimTarget, screen))
+            return false;
+
+        return OW::TargetingDetail::CrosshairCenter().Distance(screen) <= radius;
+    }
+
+    inline bool FlickTrajectoryWaitReady(RuntimeState& state, const c_entity& target) {
+        if (!OW::Config::aimbotFlickTrajectoryWait)
+            return true;
+
+        Vector2 screen{};
+        ProjectAimPoint(!IsZeroVector(target.head_pos) ? target.head_pos : target.chest_pos, screen);
+        const OW::EntityMotionState motion = OW::TargetingDetail::EstimateMotionState(target, screen);
+        const uint64_t entityKey = TwoStageEntityKey(target);
+        const DWORD now = GetTickCount();
+        if (state.trajectoryWaitEntityKey != entityKey) {
+            state.trajectoryWaitEntityKey = entityKey;
+            state.trajectoryWaitStartedTick = now;
+        }
+
+        const DWORD maxWaitMs = static_cast<DWORD>(OW::Config::ClampTrajectoryWaitMs(
+            OW::Config::aimbotFlickTrajectoryWaitMs));
+        if (maxWaitMs == 0 || now - state.trajectoryWaitStartedTick >= maxWaitMs)
+            return true;
+
+        if (motion.kind != OW::EntityMotionState::Kind::AirborneRising)
+            return true;
+
+        constexpr float kGravityMetersPerSecond = 9.8f;
+        const float verticalSpeed = (std::max)(0.0f, motion.verticalVelocity);
+        const float timeToApexMs = (verticalSpeed / kGravityMetersPerSecond) * 1000.0f;
+        const float apexWindowMs = OW::Config::ClampTrajectoryApexWindowMs(
+            OW::Config::aimbotFlickTrajectoryApexWindowMs);
+        if (!std::isfinite(timeToApexMs) || timeToApexMs <= apexWindowMs)
+            return true;
+
+        Diagnostics::Aim("flick trajectory_wait target=0x%llX vertical=%.3f timeToApexMs=%.3f windowMs=%.3f elapsedMs=%lu maxWaitMs=%lu",
+            static_cast<unsigned long long>(entityKey),
+            motion.verticalVelocity,
+            timeToApexMs,
+            apexWindowMs,
+            static_cast<unsigned long>(now - state.trajectoryWaitStartedTick),
+            static_cast<unsigned long>(maxWaitMs));
+        return false;
+    }
+
     inline void FireHanzo();
 
     inline void FirePrimaryNormal() {
@@ -4716,7 +4811,7 @@ namespace AimbotDetail {
         const float hitbox = secondary
             ? OW::Config::aimbotEffectiveHitWindow2
             : OW::Config::aimbotEffectiveHitWindow;
-        const bool triggerReady = (!secondary && OW::Config::aimbotTwoStage)
+        const bool triggerReady = (!secondary && OW::Config::IsFlick2ndBehavior(OW::Config::aimBehavior))
             ? TwoStageTriggerOpenForTarget(target)
             : OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox);
         if (!triggerReady)
@@ -4856,22 +4951,30 @@ namespace AimbotDetail {
                     vec.Z);
                 releaseHeldFire();
             } else {
-                const TwoStageAimPlan twoStagePlan = ResolveTwoStageAimPlan(vec, target, OW::Config::Prediction);
-                const Vector3 aimTarget = twoStagePlan.active ? twoStagePlan.target : vec;
+                const Vector3 aimTarget = vec;
                 const float smoothInput = OW::Config::AimBehaviorSmoothInput(
                     behavior,
-                    OW::Config::Tracking_smooth,
-                    twoStagePlan.smoothScale);
+                    OW::Config::Tracking_smooth);
+                if (TrackingDeadzoneContains(aimTarget)) {
+                    holdThisTick = ShouldHoldFireWhileTracking();
+                    if (holdThisTick && !fireHeld && holdFireButton >= 0) {
+                        OW::SendMouseButton(holdFireButton, true);
+                        fireHeld = true;
+                    } else if (!holdThisTick) {
+                        releaseHeldFire();
+                    }
+                    Sleep(1);
+                    RunAutoScaleFov();
+                    if (ShouldYieldToSecondaryAim()) break;
+                    continue;
+                }
                 AimData aim = BuildAimData(
                     aimTarget,
                     false,
                     smoothInput,
-                    OW::Config::AimBehaviorAcceleration(behavior),
-                    twoStagePlan.methodOverride,
-                    twoStagePlan.bezierSpeed);
+                    OW::Config::AimBehaviorAcceleration(behavior));
                 ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
-                holdThisTick = ShouldHoldFireWhileTracking() &&
-                    (!twoStagePlan.active || twoStagePlan.triggerOpen);
+                holdThisTick = ShouldHoldFireWhileTracking();
                 if (holdThisTick && !fireHeld && holdFireButton >= 0) {
                     OW::SendMouseButton(holdFireButton, true);
                     fireHeld = true;
@@ -4913,6 +5016,9 @@ namespace AimbotDetail {
 
     inline void RunFlick(RuntimeState& state, float origin_sens) {
         if (InputSequenceBlocksAim("flick"))
+            return;
+        UpdateFlickShotCooldown(state);
+        if (FlickPostFireLockoutActive(state))
             return;
         if (!IsAimKeyPressed() || OW::Config::shooted || OW::Config::reloading)
             return;
@@ -4987,6 +5093,10 @@ namespace AimbotDetail {
             c_entity target{};
             if (IsPrimaryTargetActionable(target)) {
                 if (!TargetDelayReady(&state, true, true)) continue;
+                if (!FlickTrajectoryWaitReady(state, target)) {
+                    Sleep(1);
+                    continue;
+                }
                 PrimeDelayedShot(state);
 
                 const TwoStageAimPlan twoStagePlan = ResolveTwoStageAimPlan(vec, target, OW::Config::Prediction);
@@ -5016,6 +5126,7 @@ namespace AimbotDetail {
                         } else {
                             ClickConfiguredFire();
                         }
+                        StampFlickFire(state);
                         OW::Config::shooted = true;
                         continue;
                     }
@@ -5027,12 +5138,14 @@ namespace AimbotDetail {
                         Diagnostics::Aim("flick.tick delta_deg=(%.4f,%.4f) hitbox=%.4f missbox=%.4f",
                             deltaDegX, deltaDegY, hitWindow, OW::Config::missbox);
                     }
-                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow)) {
+                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow) &&
+                        (!twoStagePlan.active || twoStagePlan.triggerOpen)) {
                         if (OW::Config::aimVerboseLog) {
                             Diagnostics::Aim("flick.fire hitbox_check=passed");
                         }
                         SetSensitivityLocked(true, origin_sens);
                         FirePrimaryNormal();
+                        StampFlickFire(state);
                         g_flickFires++;
                         SetSensitivityLocked(false, origin_sens);
                         OW::Config::shooted = true;
@@ -5055,6 +5168,7 @@ namespace AimbotDetail {
                         } else {
                             ClickConfiguredFire();
                         }
+                        StampFlickFire(state);
                         OW::Config::shooted = true;
                         continue;
                     }

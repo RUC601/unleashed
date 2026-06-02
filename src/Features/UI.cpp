@@ -859,9 +859,8 @@ static constexpr int kBonePreferenceAimBones[] = {
     OW::Config::kAimBoneChest
 };
 static constexpr int kBonePreferenceClosestIndex = 3;
-static const char* kAimBehavior[]  = { "Tracking", "Flick", "FlickClamp", "FlickDelay", "Reacquire" };
+static const char* kAimBehavior[]  = { "Tracking", "Flick", "Flick2nd", "Reacquire" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant" };
-static const char* kAimMethodOverride[] = { "Inherit", "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPredictionMode[] = { "Auto", "Force On", "Force Off" };
 static const char* kFirePolicy[] = {
@@ -895,14 +894,6 @@ static int InputSourceUiIndexToConfig(int uiIndex) {
     if (uiIndex < 0 || uiIndex >= IM_ARRAYSIZE(kInputSourceConfigOrder))
         return 0;
     return kInputSourceConfigOrder[uiIndex];
-}
-
-static int AimMethodOverrideConfigToUi(int method) {
-    return method < 0 ? 0 : ImClamp(method + 1, 1, IM_ARRAYSIZE(kAimMethodOverride) - 1);
-}
-
-static int AimMethodOverrideUiToConfig(int uiIndex) {
-    return uiIndex <= 0 ? -1 : ImClamp(uiIndex - 1, 0, IM_ARRAYSIZE(kAimMethod) - 1);
 }
 
 static void DrawProbeState(const char* label, bool available, bool down) {
@@ -2986,9 +2977,10 @@ void UI::AimbotPage() {
             PushControlWidth();
             if (UISelect("##aimBehavior", &activePreset.aimBehavior,
                          kAimBehavior, IM_ARRAYSIZE(kAimBehavior))) {
-                activePreset.aimMode = activePreset.aimBehavior == 0 ? 0 : 1;
+                activePreset.aimBehavior = OW::Config::ClampAimBehaviorIndex(activePreset.aimBehavior);
+                activePreset.aimMode = OW::Config::IsTrackingBehavior(activePreset.aimBehavior) ? 0 : 1;
                 if (activePreset.firePolicy == 0 || activePreset.firePolicy == 1 || activePreset.firePolicy == 2) {
-                    activePreset.firePolicy = activePreset.aimBehavior == 0 ? 1 : 2;
+                    activePreset.firePolicy = OW::Config::IsTrackingBehavior(activePreset.aimBehavior) ? 1 : 2;
                     activePreset.keepFiring = activePreset.firePolicy == 1;
                     activePreset.autoshot = activePreset.firePolicy >= 2;
                 }
@@ -3059,6 +3051,40 @@ void UI::AimbotPage() {
             presetChanged |= UISlider("##aimSmooth", &activePreset.smooth, 0.0f, 100.0f, "50.00 %");
             ImGui::PopItemWidth();
 
+            if (OW::Config::IsTrackingBehavior(activePreset.aimBehavior)) {
+                SettingRow("Deadzone", kAimbotLeftLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimTrackingDeadzone", &activePreset.trackingDeadzone, 0.0f, 250.0f, "0 px");
+                ImGui::PopItemWidth();
+            }
+
+            if (OW::Config::IsFlickBehavior(activePreset.aimBehavior)) {
+                SettingRow("Shot Clamp", kAimbotLeftLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimFlickShotClamp", &activePreset.flickShotClampMs, 0.0f, 100.0f, "0 ms");
+                ImGui::PopItemWidth();
+
+                SettingRow("Post-fire Delay", kAimbotLeftLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimFlickPostFireDelay", &activePreset.flickPostFireDelayMs, 0.0f, 1000.0f, "0 ms");
+                ImGui::PopItemWidth();
+
+                SettingRow("Trajectory Wait", kAimbotLeftLabelWidth);
+                presetChanged |= UICheckbox("##aimFlickTrajectoryWait", &activePreset.flickTrajectoryWait);
+
+                if (activePreset.flickTrajectoryWait) {
+                    SettingRow("Wait Limit", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimFlickTrajectoryWaitMs", &activePreset.flickTrajectoryWaitMs, 0.0f, 1000.0f, "120 ms");
+                    ImGui::PopItemWidth();
+
+                    SettingRow("Apex Window", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimFlickTrajectoryApexWindow", &activePreset.flickTrajectoryApexWindowMs, 0.0f, 300.0f, "60 ms");
+                    ImGui::PopItemWidth();
+                }
+            }
+
             // FOV
             SettingRow("FOV (deg)", kAimbotLeftLabelWidth);
             PushControlWidth();
@@ -3098,6 +3124,32 @@ void UI::AimbotPage() {
                                       OW::Config::kMaxHitboxScalePercent,
                                       "100 %");
             ImGui::PopItemWidth();
+
+            if (OW::Config::IsFlick2ndBehavior(activePreset.aimBehavior)) {
+                SettingRow("Second Method", kAimbotRightLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISelect("##aimFlick2ndInnerMethod", &activePreset.flick2ndInnerMethod,
+                                          kAimMethod, IM_ARRAYSIZE(kAimMethod));
+                ImGui::PopItemWidth();
+
+                SettingRow("Trigger Gate", kAimbotRightLabelWidth);
+                presetChanged |= UICheckbox("##aimFlick2ndTriggerGate", &activePreset.flick2ndTriggerGate);
+
+                SettingRow("Box Padding", kAimbotRightLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimFlick2ndBoxPadding", &activePreset.flick2ndBoxPadding, 0.0f, 80.0f, "8 px");
+                ImGui::PopItemWidth();
+
+                SettingRow("Inner Radius", kAimbotRightLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimFlick2ndInnerRadius", &activePreset.flick2ndInnerRadius, 0.0f, 250.0f, "34 px");
+                ImGui::PopItemWidth();
+
+                SettingRow("Inner Smooth", kAimbotRightLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimFlick2ndInnerSmooth", &activePreset.flick2ndInnerSmoothScale, 0.1f, 1.0f, "0.55x");
+                ImGui::PopItemWidth();
+            }
 
             const bool showAimChargeSettings =
                 activePreset.firePolicy == static_cast<int>(OW::FirePolicyType::ChargeRelease);
@@ -3768,7 +3820,7 @@ void UI::VisualsPage() {
             "Distance", "Ultimate", "Skill Info",
             "Skeleton", "Snapline", "Eye Ray",
             "Radar", "Radar Lines", "FOV Circle",
-            "Crosshair", "Health Packs", nullptr
+            "Tracking Deadzone", "Crosshair", "Health Packs", nullptr
         };
         bool* values[] = {
             &OW::Config::draw_info, &OW::Config::name, &OW::Config::drawbattletag,
@@ -3776,7 +3828,7 @@ void UI::VisualsPage() {
             &OW::Config::dist, &OW::Config::ult, &OW::Config::skillinfo,
             &OW::Config::draw_skel, &OW::Config::drawline, &OW::Config::eyeray,
             &OW::Config::radar, &OW::Config::radarline, &OW::Config::draw_fov,
-            &OW::Config::crosscircle, &OW::Config::draw_hp_pack, nullptr
+            &OW::Config::drawTrackingDeadzones, &OW::Config::crosscircle, &OW::Config::draw_hp_pack, nullptr
         };
         const float ratios[] = { 1.0f, 1.0f, 1.2f };
         DrawCheckboxGrid3(labels, values, 6, 26.0f, ratios);
@@ -4244,53 +4296,10 @@ static void DrawMiscBehaviorPage() {
         UISlider("##miscBaseAngularSpeed", &behaviorBaseSpeed, 0.0f, 100.0f, "100");
         ImGui::PopItemWidth();
 
-        int secondaryTrackingMethodUi = AimMethodOverrideConfigToUi(OW::Config::secondaryAimMethodOverride[0]);
-        SettingRow("Second Tracking Method");
-        PushControlWidth();
-        if (UISelect("##miscSecondTrackingMethod", &secondaryTrackingMethodUi,
-                     kAimMethodOverride, IM_ARRAYSIZE(kAimMethodOverride))) {
-            OW::Config::secondaryAimMethodOverride[0] =
-                AimMethodOverrideUiToConfig(secondaryTrackingMethodUi);
-        }
-        ImGui::PopItemWidth();
-
-        int secondaryFlickMethodUi = AimMethodOverrideConfigToUi(OW::Config::secondaryAimMethodOverride[1]);
-        SettingRow("Second Flick Method");
-        PushControlWidth();
-        if (UISelect("##miscSecondFlickMethod", &secondaryFlickMethodUi,
-                     kAimMethodOverride, IM_ARRAYSIZE(kAimMethodOverride))) {
-            OW::Config::secondaryAimMethodOverride[1] =
-                AimMethodOverrideUiToConfig(secondaryFlickMethodUi);
-        }
-        ImGui::PopItemWidth();
-
         SettingRow("Pitch Scale");
         PushControlWidth();
         UISlider("##miscPitchScale", &OW::Config::aimbotPitchScale, 0.1f, 3.0f, "1.00");
         ImGui::PopItemWidth();
-
-        SettingRow("Two Stage Aim");
-        UICheckbox("##miscTwoStageAim", &OW::Config::aimbotTwoStage);
-
-        if (OW::Config::aimbotTwoStage) {
-            SettingRow("Trigger Gate");
-            UICheckbox("##miscTwoStageTriggerGate", &OW::Config::aimbotTwoStageTriggerGate);
-
-            SettingRow("Box Padding");
-            PushControlWidth();
-            UISlider("##miscTwoStageBoxPadding", &OW::Config::aimbotTwoStageBoxPadding, 0.0f, 80.0f, "8 px");
-            ImGui::PopItemWidth();
-
-            SettingRow("Inner Radius");
-            PushControlWidth();
-            UISlider("##miscTwoStageInnerRadius", &OW::Config::aimbotTwoStageInnerRadius, 0.0f, 250.0f, "34 px");
-            ImGui::PopItemWidth();
-
-            SettingRow("Inner Smooth");
-            PushControlWidth();
-            UISlider("##miscTwoStageInnerSmooth", &OW::Config::aimbotTwoStageInnerSmoothScale, 0.1f, 1.0f, "0.55x");
-            ImGui::PopItemWidth();
-        }
 
         SettingRow("Overshoot Curve");
         UICheckbox("##miscOvershootCurve", &OW::Config::aimOvershootCurve);

@@ -210,22 +210,26 @@ namespace OW { namespace Config {
     inline int  shotmanydont = 3;
 
     // ---- Aimbot UI options ----
+    inline constexpr int kAimBehaviorTracking = 0;
+    inline constexpr int kAimBehaviorFlick = 1;
+    inline constexpr int kAimBehaviorFlick2nd = 2;
+    inline constexpr int kAimBehaviorReacquire = 3;
+    inline constexpr int kAimBehaviorCount = 4;
     inline bool  aimbotAutoshot = false;
     inline bool  aimbotKeepFiring = true;
     inline int   aimbotPredictionMode = 0; // 0=Auto, 1=Force On, 2=Force Off
-    inline int   aimBehavior = 0;          // 0=Tracking, 1=Flick, 2=FlickClamp, 3=FlickDelay, 4=ReacquireAtApex
+    inline int   aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire
     inline int   aimbotFirePolicy = 1;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
     inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
     inline float aimbotMaxHead = 100.0f;
     inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited, 5=Constant
     inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
-    inline constexpr int kAimBehaviorCount = 5;
     inline constexpr int kAimMethodCount = 6;
-    inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0, 0 };
-    inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0 };
+    inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
     // Legacy behavior acceleration is kept for config compatibility; method-level
     // acceleration now owns the Accel Limited controller tuning.
-    inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
+    inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f };
     inline std::array<float, kAimMethodCount> aimMethodAngularSpeedScale = {
         100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f
     };
@@ -263,7 +267,18 @@ namespace OW { namespace Config {
     inline int   aimbotPriority = 0; // 0=FOV, 1=HP, 2=Distance
     inline float aimbotEffectiveHitWindow = kLegacyDefaultHitboxRadius; // runtime-only scaled TargetCandidate window
     inline float aimbotEffectiveHitWindow2 = kLegacyDefaultHitboxRadius;
-    inline bool  aimbotTwoStage = false;
+    inline float aimbotTrackingDeadzone = 0.0f;
+    inline float aimbotFlickShotClampMs = 0.0f;
+    inline float aimbotFlickPostFireDelayMs = 0.0f;
+    inline bool  aimbotFlickTrajectoryWait = false;
+    inline float aimbotFlickTrajectoryWaitMs = 120.0f;
+    inline float aimbotFlickTrajectoryApexWindowMs = 60.0f;
+    inline bool  aimbotFlick2ndTriggerGate = true;
+    inline float aimbotFlick2ndBoxPadding = 8.0f;
+    inline float aimbotFlick2ndInnerRadius = 34.0f;
+    inline float aimbotFlick2ndInnerSmoothScale = 0.55f;
+    inline int   aimbotFlick2ndInnerMethod = 2;
+    inline bool  aimbotTwoStage = false; // legacy mirror: true only when active behavior is Flick2nd
     inline bool  aimbotTwoStageTriggerGate = true;
     inline float aimbotTwoStageBoxPadding = 8.0f;
     inline float aimbotTwoStageInnerRadius = 34.0f;
@@ -275,6 +290,48 @@ namespace OW { namespace Config {
     inline int ClampAimBehaviorIndex(int value)
     {
         return std::clamp(value, 0, kAimBehaviorCount - 1);
+    }
+
+    inline bool IsTrackingBehavior(int behavior)
+    {
+        return ClampAimBehaviorIndex(behavior) == kAimBehaviorTracking;
+    }
+
+    inline bool IsFlickBehavior(int behavior)
+    {
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        return normalized == kAimBehaviorFlick ||
+               normalized == kAimBehaviorFlick2nd;
+    }
+
+    inline bool IsFlick2ndBehavior(int behavior)
+    {
+        return ClampAimBehaviorIndex(behavior) == kAimBehaviorFlick2nd;
+    }
+
+    inline float ClampTrackingDeadzonePixels(float value)
+    {
+        return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 250.0f);
+    }
+
+    inline float ClampFlickShotClampMs(float value)
+    {
+        return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 100.0f);
+    }
+
+    inline float ClampFlickPostFireDelayMs(float value)
+    {
+        return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 1000.0f);
+    }
+
+    inline float ClampTrajectoryWaitMs(float value)
+    {
+        return std::clamp(std::isfinite(value) ? value : 120.0f, 0.0f, 1000.0f);
+    }
+
+    inline float ClampTrajectoryApexWindowMs(float value)
+    {
+        return std::clamp(std::isfinite(value) ? value : 60.0f, 0.0f, 300.0f);
     }
 
     inline int ClampAimMethodIndex(int value)
@@ -432,6 +489,7 @@ namespace OW { namespace Config {
     inline bool radarline       = false;
     inline bool drawline        = false;
     inline bool draw_fov        = false;
+    inline bool drawTrackingDeadzones = false;
     inline bool draw_hp_pack    = false;
     inline bool crosscircle     = false;
     inline bool eyeray          = false;
@@ -645,7 +703,7 @@ namespace OW { namespace Config {
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         float hitbox = kDefaultHitboxScalePercent; // percentage of resolved bone+projectile window
         int aimMode = 0;         // 0=Tracking, 1=Flick
-        int aimBehavior = 0;     // 0=Tracking, 1=Flick, 2=FlickClamp, 3=FlickDelay, 4=ReacquireAtApex
+        int aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire
         int aimMethod = 0;       // legacy: smoothing method now comes from Misc behavior profiles
         int smoothType = 0;      // legacy
         float pidP = 0.5f;
@@ -676,6 +734,17 @@ namespace OW { namespace Config {
         float lockTime = 20.0f;
         float maxDistance = 100.0f;
         float minDistance = 0.0f;
+        float trackingDeadzone = 0.0f;
+        float flickShotClampMs = 0.0f;
+        float flickPostFireDelayMs = 0.0f;
+        bool flickTrajectoryWait = false;
+        float flickTrajectoryWaitMs = 120.0f;
+        float flickTrajectoryApexWindowMs = 60.0f;
+        bool flick2ndTriggerGate = true;
+        float flick2ndBoxPadding = 8.0f;
+        float flick2ndInnerRadius = 34.0f;
+        float flick2ndInnerSmoothScale = 0.55f;
+        int flick2ndInnerMethod = 2;
         TriggerPreset trigger{};
     };
 

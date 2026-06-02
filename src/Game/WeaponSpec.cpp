@@ -202,9 +202,8 @@ const char* AimBehaviorName(AimBehaviorType value)
     switch (value) {
     case AimBehaviorType::Tracking: return "Tracking";
     case AimBehaviorType::Flick: return "Flick";
-    case AimBehaviorType::FlickClamp: return "FlickClamp";
-    case AimBehaviorType::FlickDelay: return "FlickDelay";
-    case AimBehaviorType::ReacquireAtApex: return "ReacquireAtApex";
+    case AimBehaviorType::Flick2nd: return "Flick2nd";
+    case AimBehaviorType::Reacquire: return "Reacquire";
     default: return "Tracking";
     }
 }

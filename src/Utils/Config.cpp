@@ -50,7 +50,7 @@
 
 namespace OW { namespace Config {
 
-    int config_version = 5;
+    int config_version = 6;
     bool draw_edge = false;
     bool drawbox3d = false;
     bool manualsave = false;
@@ -278,11 +278,13 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 5;
+        constexpr int kCurrentConfigVersion = 6;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
-        constexpr int kCurrentHeroConfigVersion = 2;
+        constexpr int kAimBehaviorSemanticsVersion = 6;
+        constexpr int kCurrentHeroConfigVersion = 3;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
+        constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -296,6 +298,25 @@ namespace OW { namespace Config {
         constexpr float kDefaultHostMouseDpi = 1600.0f;
 
         using SectionValues = std::unordered_map<std::string, std::string>;
+
+        int MigrateLegacyAimBehavior(int value)
+        {
+            switch (value) {
+            case 0: return kAimBehaviorTracking;
+            case 1:
+            case 2:
+            case 3: return kAimBehaviorFlick;
+            case 4: return kAimBehaviorReacquire;
+            default: return kAimBehaviorTracking;
+            }
+        }
+
+        int NormalizeAimBehaviorForLoad(int value, bool legacySemantics)
+        {
+            return ClampAimBehaviorIndex(legacySemantics
+                ? MigrateLegacyAimBehavior(value)
+                : value);
+        }
 
         struct HeroPresetDefinition {
             uint64_t heroId;
@@ -1171,6 +1192,14 @@ namespace OW { namespace Config {
             if (!std::isfinite(preset.lockTime)) preset.lockTime = 20.0f;
             if (!std::isfinite(preset.maxDistance)) preset.maxDistance = 100.0f;
             if (!std::isfinite(preset.minDistance)) preset.minDistance = 0.0f;
+            if (!std::isfinite(preset.trackingDeadzone)) preset.trackingDeadzone = 0.0f;
+            if (!std::isfinite(preset.flickShotClampMs)) preset.flickShotClampMs = 0.0f;
+            if (!std::isfinite(preset.flickPostFireDelayMs)) preset.flickPostFireDelayMs = 0.0f;
+            if (!std::isfinite(preset.flickTrajectoryWaitMs)) preset.flickTrajectoryWaitMs = 120.0f;
+            if (!std::isfinite(preset.flickTrajectoryApexWindowMs)) preset.flickTrajectoryApexWindowMs = 60.0f;
+            if (!std::isfinite(preset.flick2ndBoxPadding)) preset.flick2ndBoxPadding = 8.0f;
+            if (!std::isfinite(preset.flick2ndInnerRadius)) preset.flick2ndInnerRadius = 34.0f;
+            if (!std::isfinite(preset.flick2ndInnerSmoothScale)) preset.flick2ndInnerSmoothScale = 0.55f;
 
             preset.fov = ClampFovDeg(preset.fov);
             preset.smooth = std::clamp(preset.smooth, 0.0f, 100.0f);
@@ -1178,9 +1207,9 @@ namespace OW { namespace Config {
             preset.hitbox = ClampHitboxScalePercent(preset.hitbox);
             preset.aimMode = std::clamp(preset.aimMode, 0, 1);
             if (preset.aimMode == 1 && preset.aimBehavior == 0)
-                preset.aimBehavior = 1;
-            preset.aimBehavior = std::clamp(preset.aimBehavior, 0, 4);
-            preset.aimMode = preset.aimBehavior == 0 ? 0 : 1;
+                preset.aimBehavior = kAimBehaviorFlick;
+            preset.aimBehavior = ClampAimBehaviorIndex(preset.aimBehavior);
+            preset.aimMode = IsTrackingBehavior(preset.aimBehavior) ? 0 : 1;
             preset.aimMethod = ClampAimMethodIndex(preset.aimMethod);
             preset.smoothType = std::clamp(preset.smoothType, 0, 2);
             preset.pidP = std::clamp(preset.pidP, 0.0f, 2.0f);
@@ -1211,6 +1240,15 @@ namespace OW { namespace Config {
             preset.lockTime = std::clamp(preset.lockTime, 0.0f, 5000.0f);
             preset.maxDistance = std::clamp(preset.maxDistance, 0.0f, 500.0f);
             preset.minDistance = std::clamp(preset.minDistance, 0.0f, 500.0f);
+            preset.trackingDeadzone = ClampTrackingDeadzonePixels(preset.trackingDeadzone);
+            preset.flickShotClampMs = ClampFlickShotClampMs(preset.flickShotClampMs);
+            preset.flickPostFireDelayMs = ClampFlickPostFireDelayMs(preset.flickPostFireDelayMs);
+            preset.flickTrajectoryWaitMs = ClampTrajectoryWaitMs(preset.flickTrajectoryWaitMs);
+            preset.flickTrajectoryApexWindowMs = ClampTrajectoryApexWindowMs(preset.flickTrajectoryApexWindowMs);
+            preset.flick2ndBoxPadding = std::clamp(preset.flick2ndBoxPadding, 0.0f, 80.0f);
+            preset.flick2ndInnerRadius = std::clamp(preset.flick2ndInnerRadius, 0.0f, 250.0f);
+            preset.flick2ndInnerSmoothScale = std::clamp(preset.flick2ndInnerSmoothScale, 0.1f, 1.0f);
+            preset.flick2ndInnerMethod = ClampAimMethodIndex(preset.flick2ndInnerMethod);
             preset.trigger = ValidateTriggerPresetValue(preset.trigger);
             return preset;
         }
@@ -1548,6 +1586,17 @@ namespace OW { namespace Config {
             aimbotAttack = 0;
             aimbotTeam = 0;
             aimbotPriority = 0;
+            aimbotTrackingDeadzone = 0.0f;
+            aimbotFlickShotClampMs = 0.0f;
+            aimbotFlickPostFireDelayMs = 0.0f;
+            aimbotFlickTrajectoryWait = false;
+            aimbotFlickTrajectoryWaitMs = 120.0f;
+            aimbotFlickTrajectoryApexWindowMs = 60.0f;
+            aimbotFlick2ndTriggerGate = true;
+            aimbotFlick2ndBoxPadding = 8.0f;
+            aimbotFlick2ndInnerRadius = 34.0f;
+            aimbotFlick2ndInnerSmoothScale = 0.55f;
+            aimbotFlick2ndInnerMethod = 2;
             aimbotTwoStage = false;
             aimbotTwoStageTriggerGate = true;
             aimbotTwoStageBoxPadding = 8.0f;
@@ -1577,9 +1626,9 @@ namespace OW { namespace Config {
         void ResetAimMethodDefaultsUnlocked()
         {
             aimMethod = 0;
-            aimBehaviorMethod = { 0, 0, 0, 0, 0 };
-            aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
-            aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
+            aimBehaviorMethod = { 0, 0, 0, 0 };
+            aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
+            aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f };
             aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             secondaryAimMethodOverride = { -1, -1 };
             aimPidP = 0.5f;
@@ -1622,6 +1671,7 @@ namespace OW { namespace Config {
             radarline = false;            // default: false
             drawline = false;             // default: false
             draw_fov = false;             // default: false
+            drawTrackingDeadzones = false; // default: false
             draw_hp_pack = false;         // default: false
             crosscircle = false;          // default: false
             eyeray = false;               // default: false
@@ -1731,6 +1781,17 @@ namespace OW { namespace Config {
             preset.lockTime = aimbotLockTime;
             preset.maxDistance = aimbotMaxDist;
             preset.minDistance = aimbotMinDist;
+            preset.trackingDeadzone = aimbotTrackingDeadzone;
+            preset.flickShotClampMs = aimbotFlickShotClampMs;
+            preset.flickPostFireDelayMs = aimbotFlickPostFireDelayMs;
+            preset.flickTrajectoryWait = aimbotFlickTrajectoryWait;
+            preset.flickTrajectoryWaitMs = aimbotFlickTrajectoryWaitMs;
+            preset.flickTrajectoryApexWindowMs = aimbotFlickTrajectoryApexWindowMs;
+            preset.flick2ndTriggerGate = aimbotFlick2ndTriggerGate;
+            preset.flick2ndBoxPadding = aimbotFlick2ndBoxPadding;
+            preset.flick2ndInnerRadius = aimbotFlick2ndInnerRadius;
+            preset.flick2ndInnerSmoothScale = aimbotFlick2ndInnerSmoothScale;
+            preset.flick2ndInnerMethod = aimbotFlick2ndInnerMethod;
             preset.trigger.enabled = triggerbot;
             preset.trigger.action = aimbotAttack;
             preset.trigger.mode = triggerbotMode;
@@ -1788,7 +1849,23 @@ namespace OW { namespace Config {
             aimbotLockTime = preset.lockTime;
             aimbotMaxDist = preset.maxDistance;
             aimbotMinDist = preset.minDistance;
-            ApplyAimMode(preset.aimBehavior == 0 ? 0 : 1);
+            aimbotTrackingDeadzone = preset.trackingDeadzone;
+            aimbotFlickShotClampMs = preset.flickShotClampMs;
+            aimbotFlickPostFireDelayMs = preset.flickPostFireDelayMs;
+            aimbotFlickTrajectoryWait = preset.flickTrajectoryWait;
+            aimbotFlickTrajectoryWaitMs = preset.flickTrajectoryWaitMs;
+            aimbotFlickTrajectoryApexWindowMs = preset.flickTrajectoryApexWindowMs;
+            aimbotFlick2ndTriggerGate = preset.flick2ndTriggerGate;
+            aimbotFlick2ndBoxPadding = preset.flick2ndBoxPadding;
+            aimbotFlick2ndInnerRadius = preset.flick2ndInnerRadius;
+            aimbotFlick2ndInnerSmoothScale = preset.flick2ndInnerSmoothScale;
+            aimbotFlick2ndInnerMethod = preset.flick2ndInnerMethod;
+            aimbotTwoStage = IsFlick2ndBehavior(preset.aimBehavior);
+            aimbotTwoStageTriggerGate = aimbotFlick2ndTriggerGate;
+            aimbotTwoStageBoxPadding = aimbotFlick2ndBoxPadding;
+            aimbotTwoStageInnerRadius = aimbotFlick2ndInnerRadius;
+            aimbotTwoStageInnerSmoothScale = aimbotFlick2ndInnerSmoothScale;
+            ApplyAimMode(IsTrackingBehavior(preset.aimBehavior) ? 0 : 1);
         }
 
         void ApplyHeroTriggerPresetUnlocked(const HeroPreset& rawPreset)
@@ -1818,7 +1895,8 @@ namespace OW { namespace Config {
         HeroSlotPreset ReadHeroPresetSectionUnlocked(const IniFile& ini, const char* section,
                                                      HeroSlotPreset defaults, int slotIndex,
                                                      bool storedBoneUsesLegacyPresetIndex,
-                                                     bool legacyFovApertureValues)
+                                                     bool legacyFovApertureValues,
+                                                     bool legacyAimBehaviorValues)
         {
             HeroSlotPreset slot = defaults;
             slot.name = NormalizeHeroSlotName(
@@ -1843,11 +1921,12 @@ namespace OW { namespace Config {
                 slot.preset.hitbox);
             slot.preset.aimMode = ReadInt(ini, section, "aimMode", slot.preset.aimMode);
             const bool hasAimBehavior = KeyExists(ini, section, "aimBehavior");
-            slot.preset.aimBehavior = ReadInt(
+            slot.preset.aimBehavior = NormalizeAimBehaviorForLoad(ReadInt(
                 ini,
                 section,
                 "aimBehavior",
-                hasAimBehavior ? slot.preset.aimBehavior : slot.preset.aimMode);
+                hasAimBehavior ? slot.preset.aimBehavior : slot.preset.aimMode),
+                legacyAimBehaviorValues);
             slot.preset.aimMethod = ReadInt(ini, section, "aimMethod", slot.preset.aimMethod);
             slot.preset.smoothType = ReadInt(ini, section, "aimbotSmoothType", slot.preset.smoothType);
             slot.preset.pidP = ReadFixedFloat(ini, section, "aimPidP", slot.preset.pidP);
@@ -1886,6 +1965,26 @@ namespace OW { namespace Config {
             slot.preset.lockTime = ReadFixedFloat(ini, section, "aimbotLockTime", slot.preset.lockTime);
             slot.preset.maxDistance = ReadFixedFloat(ini, section, "aimbotMaxDist", slot.preset.maxDistance);
             slot.preset.minDistance = ReadFixedFloat(ini, section, "aimbotMinDist", slot.preset.minDistance);
+            slot.preset.trackingDeadzone = ReadFixedFloat(ini, section, "trackingDeadzone", slot.preset.trackingDeadzone);
+            slot.preset.flickShotClampMs = ReadFixedFloat(ini, section, "flickShotClampMs", slot.preset.flickShotClampMs);
+            slot.preset.flickPostFireDelayMs = ReadFixedFloat(ini, section, "flickPostFireDelayMs", slot.preset.flickPostFireDelayMs);
+            slot.preset.flickTrajectoryWait = ReadBool(ini, section, "flickTrajectoryWait", slot.preset.flickTrajectoryWait);
+            slot.preset.flickTrajectoryWaitMs = ReadFixedFloat(ini, section, "flickTrajectoryWaitMs", slot.preset.flickTrajectoryWaitMs);
+            slot.preset.flickTrajectoryApexWindowMs = ReadFixedFloat(ini, section, "flickTrajectoryApexWindowMs", slot.preset.flickTrajectoryApexWindowMs);
+            slot.preset.flick2ndTriggerGate = ReadBool(ini, section, "flick2ndTriggerGate",
+                ReadBool(ini, section, "aimbotTwoStageTriggerGate", slot.preset.flick2ndTriggerGate));
+            slot.preset.flick2ndBoxPadding = ReadFixedFloat(ini, section, "flick2ndBoxPadding",
+                ReadFixedFloat(ini, section, "aimbotTwoStageBoxPadding", slot.preset.flick2ndBoxPadding));
+            slot.preset.flick2ndInnerRadius = ReadFixedFloat(ini, section, "flick2ndInnerRadius",
+                ReadFixedFloat(ini, section, "aimbotTwoStageInnerRadius", slot.preset.flick2ndInnerRadius));
+            slot.preset.flick2ndInnerSmoothScale = ReadFixedFloat(ini, section, "flick2ndInnerSmoothScale",
+                ReadFixedFloat(ini, section, "aimbotTwoStageInnerSmoothScale", slot.preset.flick2ndInnerSmoothScale));
+            slot.preset.flick2ndInnerMethod = ReadInt(ini, section, "flick2ndInnerMethod", slot.preset.flick2ndInnerMethod);
+            if (KeyExists(ini, section, "aimbotTwoStage") &&
+                ReadBool(ini, section, "aimbotTwoStage", false) &&
+                IsFlickBehavior(slot.preset.aimBehavior)) {
+                slot.preset.aimBehavior = kAimBehaviorFlick2nd;
+            }
             slot.preset.trigger.enabled = ReadBool(ini, section, "triggerEnabled", slot.preset.trigger.enabled);
             slot.preset.trigger.action = ReadInt(ini, section, "triggerAction", slot.preset.trigger.action);
             slot.preset.trigger.mode = ReadInt(ini, section, "triggerMode", slot.preset.trigger.mode);
@@ -1902,7 +2001,8 @@ namespace OW { namespace Config {
         HeroPreset ReadLegacyHeroPresetSectionUnlocked(const IniFile& ini,
                                                        const char* section,
                                                        HeroPreset defaults,
-                                                       bool legacyFovApertureValues)
+                                                       bool legacyFovApertureValues,
+                                                       bool legacyAimBehaviorValues)
         {
             HeroPreset preset = defaults;
             preset.fov = ReadFov2Compat(ini, section, "FOV", preset.fov, legacyFovApertureValues);
@@ -1919,7 +2019,9 @@ namespace OW { namespace Config {
                 "hitbox",
                 preset.hitbox);
             preset.aimMode = aimMode;
-            preset.aimBehavior = ReadInt(ini, section, "aimBehavior", preset.aimMode);
+            preset.aimBehavior = NormalizeAimBehaviorForLoad(
+                ReadInt(ini, section, "aimBehavior", preset.aimMode),
+                legacyAimBehaviorValues);
             preset.aimMethod = ReadInt(ini, section, "aimMethod", preset.aimMethod);
             preset.smoothType = ReadInt(ini, section, "aimbotSmoothType", preset.smoothType);
             preset.pidP = ReadFixedFloat(ini, section, "aimPidP", preset.pidP);
@@ -1949,6 +2051,26 @@ namespace OW { namespace Config {
             preset.lockTime = ReadFixedFloat(ini, section, "aimbotLockTime", preset.lockTime);
             preset.maxDistance = ReadFixedFloat(ini, section, "aimbotMaxDist", preset.maxDistance);
             preset.minDistance = ReadFixedFloat(ini, section, "aimbotMinDist", preset.minDistance);
+            preset.trackingDeadzone = ReadFixedFloat(ini, section, "trackingDeadzone", preset.trackingDeadzone);
+            preset.flickShotClampMs = ReadFixedFloat(ini, section, "flickShotClampMs", preset.flickShotClampMs);
+            preset.flickPostFireDelayMs = ReadFixedFloat(ini, section, "flickPostFireDelayMs", preset.flickPostFireDelayMs);
+            preset.flickTrajectoryWait = ReadBool(ini, section, "flickTrajectoryWait", preset.flickTrajectoryWait);
+            preset.flickTrajectoryWaitMs = ReadFixedFloat(ini, section, "flickTrajectoryWaitMs", preset.flickTrajectoryWaitMs);
+            preset.flickTrajectoryApexWindowMs = ReadFixedFloat(ini, section, "flickTrajectoryApexWindowMs", preset.flickTrajectoryApexWindowMs);
+            preset.flick2ndTriggerGate = ReadBool(ini, section, "flick2ndTriggerGate",
+                ReadBool(ini, section, "aimbotTwoStageTriggerGate", preset.flick2ndTriggerGate));
+            preset.flick2ndBoxPadding = ReadFixedFloat(ini, section, "flick2ndBoxPadding",
+                ReadFixedFloat(ini, section, "aimbotTwoStageBoxPadding", preset.flick2ndBoxPadding));
+            preset.flick2ndInnerRadius = ReadFixedFloat(ini, section, "flick2ndInnerRadius",
+                ReadFixedFloat(ini, section, "aimbotTwoStageInnerRadius", preset.flick2ndInnerRadius));
+            preset.flick2ndInnerSmoothScale = ReadFixedFloat(ini, section, "flick2ndInnerSmoothScale",
+                ReadFixedFloat(ini, section, "aimbotTwoStageInnerSmoothScale", preset.flick2ndInnerSmoothScale));
+            preset.flick2ndInnerMethod = ReadInt(ini, section, "flick2ndInnerMethod", preset.flick2ndInnerMethod);
+            if (KeyExists(ini, section, "aimbotTwoStage") &&
+                ReadBool(ini, section, "aimbotTwoStage", false) &&
+                IsFlickBehavior(preset.aimBehavior)) {
+                preset.aimBehavior = kAimBehaviorFlick2nd;
+            }
             preset.trigger.enabled = ReadBool(ini, section, "triggerbot", preset.trigger.enabled);
             preset.trigger.action = ReadInt(ini, section, "aimbotAttack", preset.trigger.action);
             preset.trigger.ignoreInvisible = ReadBool(ini, section, "triggerIgnoreInvisible", preset.trigger.ignoreInvisible);
@@ -1991,6 +2113,17 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "aimbotLockTime", preset.lockTime);
             WriteFixedFloatValue(path, section, "aimbotMaxDist", preset.maxDistance);
             WriteFixedFloatValue(path, section, "aimbotMinDist", preset.minDistance);
+            WriteFixedFloatValue(path, section, "trackingDeadzone", preset.trackingDeadzone);
+            WriteFixedFloatValue(path, section, "flickShotClampMs", preset.flickShotClampMs);
+            WriteFixedFloatValue(path, section, "flickPostFireDelayMs", preset.flickPostFireDelayMs);
+            WriteBoolValue(path, section, "flickTrajectoryWait", preset.flickTrajectoryWait);
+            WriteFixedFloatValue(path, section, "flickTrajectoryWaitMs", preset.flickTrajectoryWaitMs);
+            WriteFixedFloatValue(path, section, "flickTrajectoryApexWindowMs", preset.flickTrajectoryApexWindowMs);
+            WriteBoolValue(path, section, "flick2ndTriggerGate", preset.flick2ndTriggerGate);
+            WriteFixedFloatValue(path, section, "flick2ndBoxPadding", preset.flick2ndBoxPadding);
+            WriteFixedFloatValue(path, section, "flick2ndInnerRadius", preset.flick2ndInnerRadius);
+            WriteFixedFloatValue(path, section, "flick2ndInnerSmoothScale", preset.flick2ndInnerSmoothScale);
+            WriteIntValue(path, section, "flick2ndInnerMethod", preset.flick2ndInnerMethod);
             WriteBoolValue(path, section, "triggerEnabled", preset.trigger.enabled);
             WriteIntValue(path, section, "triggerAction", preset.trigger.action);
             WriteIntValue(path, section, "triggerMode", preset.trigger.mode);
@@ -2085,6 +2218,17 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "lockTime", preset.lockTime, allocator);
             AddJsonFloat(value, "maxDistance", preset.maxDistance, allocator);
             AddJsonFloat(value, "minDistance", preset.minDistance, allocator);
+            AddJsonFloat(value, "trackingDeadzone", preset.trackingDeadzone, allocator);
+            AddJsonFloat(value, "flickShotClampMs", preset.flickShotClampMs, allocator);
+            AddJsonFloat(value, "flickPostFireDelayMs", preset.flickPostFireDelayMs, allocator);
+            AddJsonBool(value, "flickTrajectoryWait", preset.flickTrajectoryWait, allocator);
+            AddJsonFloat(value, "flickTrajectoryWaitMs", preset.flickTrajectoryWaitMs, allocator);
+            AddJsonFloat(value, "flickTrajectoryApexWindowMs", preset.flickTrajectoryApexWindowMs, allocator);
+            AddJsonBool(value, "flick2ndTriggerGate", preset.flick2ndTriggerGate, allocator);
+            AddJsonFloat(value, "flick2ndBoxPadding", preset.flick2ndBoxPadding, allocator);
+            AddJsonFloat(value, "flick2ndInnerRadius", preset.flick2ndInnerRadius, allocator);
+            AddJsonFloat(value, "flick2ndInnerSmoothScale", preset.flick2ndInnerSmoothScale, allocator);
+            AddJsonInt(value, "flick2ndInnerMethod", preset.flick2ndInnerMethod, allocator);
             rapidjson::Value trigger = TriggerPresetToJson(preset.trigger, allocator);
             rapidjson::Value triggerKey;
             triggerKey.SetString("trigger", allocator);
@@ -2448,6 +2592,7 @@ namespace OW { namespace Config {
                                               const HeroPresetDefinition& def,
                                               HeroPreset defaults,
                                               bool legacyFovApertureValues,
+                                              bool legacyAimBehaviorValues,
                                               HeroPreset& outPreset)
         {
             if (def.legacyName && SectionExists(ini, def.legacyName)) {
@@ -2455,7 +2600,8 @@ namespace OW { namespace Config {
                     ini,
                     def.legacyName,
                     defaults,
-                    legacyFovApertureValues);
+                    legacyFovApertureValues,
+                    legacyAimBehaviorValues);
                 return true;
             }
             if (def.legacyAlias && SectionExists(ini, def.legacyAlias)) {
@@ -2463,7 +2609,8 @@ namespace OW { namespace Config {
                     ini,
                     def.legacyAlias,
                     defaults,
-                    legacyFovApertureValues);
+                    legacyFovApertureValues,
+                    legacyAimBehaviorValues);
                 return true;
             }
             return false;
@@ -2810,7 +2957,8 @@ namespace OW { namespace Config {
 
         HeroPreset ReadHeroPresetJson(const rapidjson::Value& value,
                                       HeroPreset defaults,
-                                      bool legacyFovApertureValues)
+                                      bool legacyFovApertureValues,
+                                      bool legacyAimBehaviorValues)
         {
             if (!value.IsObject())
                 return ValidateHeroPresetValue(defaults);
@@ -2826,7 +2974,9 @@ namespace OW { namespace Config {
                 defaults.hitbox);
             defaults.aimMode = ReadJsonInt(value, "aimMode", defaults.aimMode);
             const bool hasAimBehavior = value.HasMember("aimBehavior");
-            defaults.aimBehavior = ReadJsonInt(value, "aimBehavior", hasAimBehavior ? defaults.aimBehavior : defaults.aimMode);
+            defaults.aimBehavior = NormalizeAimBehaviorForLoad(
+                ReadJsonInt(value, "aimBehavior", hasAimBehavior ? defaults.aimBehavior : defaults.aimMode),
+                legacyAimBehaviorValues);
             defaults.aimMethod = ReadJsonInt(value, "aimMethod", defaults.aimMethod);
             defaults.smoothType = ReadJsonInt(value, "smoothType", defaults.smoothType);
             defaults.pidP = ReadJsonFloat(value, "pidP", defaults.pidP);
@@ -2861,6 +3011,17 @@ namespace OW { namespace Config {
             defaults.lockTime = ReadJsonFloat(value, "lockTime", defaults.lockTime);
             defaults.maxDistance = ReadJsonFloat(value, "maxDistance", defaults.maxDistance);
             defaults.minDistance = ReadJsonFloat(value, "minDistance", defaults.minDistance);
+            defaults.trackingDeadzone = ReadJsonFloat(value, "trackingDeadzone", defaults.trackingDeadzone);
+            defaults.flickShotClampMs = ReadJsonFloat(value, "flickShotClampMs", defaults.flickShotClampMs);
+            defaults.flickPostFireDelayMs = ReadJsonFloat(value, "flickPostFireDelayMs", defaults.flickPostFireDelayMs);
+            defaults.flickTrajectoryWait = ReadJsonBool(value, "flickTrajectoryWait", defaults.flickTrajectoryWait);
+            defaults.flickTrajectoryWaitMs = ReadJsonFloat(value, "flickTrajectoryWaitMs", defaults.flickTrajectoryWaitMs);
+            defaults.flickTrajectoryApexWindowMs = ReadJsonFloat(value, "flickTrajectoryApexWindowMs", defaults.flickTrajectoryApexWindowMs);
+            defaults.flick2ndTriggerGate = ReadJsonBool(value, "flick2ndTriggerGate", defaults.flick2ndTriggerGate);
+            defaults.flick2ndBoxPadding = ReadJsonFloat(value, "flick2ndBoxPadding", defaults.flick2ndBoxPadding);
+            defaults.flick2ndInnerRadius = ReadJsonFloat(value, "flick2ndInnerRadius", defaults.flick2ndInnerRadius);
+            defaults.flick2ndInnerSmoothScale = ReadJsonFloat(value, "flick2ndInnerSmoothScale", defaults.flick2ndInnerSmoothScale);
+            defaults.flick2ndInnerMethod = ReadJsonInt(value, "flick2ndInnerMethod", defaults.flick2ndInnerMethod);
             const auto trigger = value.FindMember("trigger");
             if (trigger != value.MemberEnd())
                 defaults.trigger = ReadTriggerPresetJson(trigger->value, defaults.trigger);
@@ -2870,7 +3031,8 @@ namespace OW { namespace Config {
         HeroSlotPreset ReadHeroSlotJson(const rapidjson::Value& value,
                                         HeroSlotPreset defaults,
                                         int slotIndex,
-                                        bool legacyFovApertureValues)
+                                        bool legacyFovApertureValues,
+                                        bool legacyAimBehaviorValues)
         {
             if (!value.IsObject())
                 return defaults;
@@ -2885,7 +3047,8 @@ namespace OW { namespace Config {
                 defaults.preset = ReadHeroPresetJson(
                     preset->value,
                     defaults.preset,
-                    legacyFovApertureValues);
+                    legacyFovApertureValues,
+                    legacyAimBehaviorValues);
             defaults.preset = ValidateHeroPresetValue(defaults.preset);
             return defaults;
         }
@@ -2893,7 +3056,8 @@ namespace OW { namespace Config {
         void LoadHeroPresetStoreJson(const rapidjson::Value& storeObject,
                                      HeroPresetSlotKind kind,
                                      HeroPresetStore& store,
-                                     bool legacyFovApertureValues)
+                                     bool legacyFovApertureValues,
+                                     bool legacyAimBehaviorValues)
         {
             if (!storeObject.IsObject())
                 return;
@@ -2920,7 +3084,8 @@ namespace OW { namespace Config {
                             slotArray->value[index],
                             slots[static_cast<size_t>(index)],
                             static_cast<int>(index),
-                            legacyFovApertureValues);
+                            legacyFovApertureValues,
+                            legacyAimBehaviorValues);
                     }
                 }
 
@@ -2995,6 +3160,8 @@ namespace OW { namespace Config {
             const int heroConfigVersion = ReadJsonInt(document, "version", 1);
             const bool legacyFovApertureValues =
                 heroConfigVersion < kHeroFovAnglesStoredAsHalfAnglesVersion;
+            const bool legacyAimBehaviorValues =
+                heroConfigVersion < kHeroAimBehaviorSemanticsVersion;
             gLastHeroConfigNeedsSave = heroConfigVersion < kCurrentHeroConfigVersion;
 
             const auto storeHasEntries = [&](const char* key) {
@@ -3017,7 +3184,8 @@ namespace OW { namespace Config {
                     aimStore->value,
                     HeroPresetSlotKind::Aim,
                     heroAimPresets,
-                    legacyFovApertureValues);
+                    legacyFovApertureValues,
+                    legacyAimBehaviorValues);
 
             const auto triggerStore = document.FindMember("heroTriggerPresets");
             if (triggerStore != document.MemberEnd())
@@ -3025,7 +3193,8 @@ namespace OW { namespace Config {
                     triggerStore->value,
                     HeroPresetSlotKind::Trigger,
                     heroTriggerPresets,
-                    legacyFovApertureValues);
+                    legacyFovApertureValues,
+                    legacyAimBehaviorValues);
 
             const auto skillStore = document.FindMember("heroSkillPresets");
             if (skillStore != document.MemberEnd())
@@ -3069,6 +3238,8 @@ namespace OW { namespace Config {
                 fileVersion < kPresetBonesStoredAsAimBonesVersion;
             const bool legacyFovApertureValues =
                 fileVersion < kFovAnglesStoredAsHalfAnglesVersion;
+            const bool legacyAimBehaviorValues =
+                fileVersion < kAimBehaviorSemanticsVersion;
 
             for (const HeroPresetDefinition& def : kHeroPresetDefinitions) {
                 bool legacyAutoBone = false;
@@ -3114,7 +3285,8 @@ namespace OW { namespace Config {
                                 slots[static_cast<size_t>(slotIndex)],
                                 slotIndex,
                                 storedBoneUsesLegacyPresetIndex,
-                                legacyFovApertureValues);
+                                legacyFovApertureValues,
+                                legacyAimBehaviorValues);
                             loadedAnySlot = true;
                         }
                     }
@@ -3125,7 +3297,8 @@ namespace OW { namespace Config {
                             slots[0] = ReadHeroPresetSectionUnlocked(
                                 ini, legacyPresetSection.c_str(), slots[0], 0,
                                 storedBoneUsesLegacyPresetIndex,
-                                legacyFovApertureValues);
+                                legacyFovApertureValues,
+                                legacyAimBehaviorValues);
                             loadedAnySlot = true;
                         } else {
                             HeroPreset legacyPreset{};
@@ -3134,6 +3307,7 @@ namespace OW { namespace Config {
                                     def,
                                     presetDefaults,
                                     legacyFovApertureValues,
+                                    legacyAimBehaviorValues,
                                     legacyPreset)) {
                                 slots[0].present = true;
                                 slots[0].enabled = true;
@@ -3372,7 +3546,9 @@ namespace OW { namespace Config {
             if (!KeyExists(ini, kAimbotSection, "aimBehavior") && !KeyExists(ini, section, "aimBehavior"))
                 aimBehavior = CurrentAimMode();
             else
-                aimBehavior = ReadInt(ini, section, "aimBehavior", aimBehavior);
+                aimBehavior = NormalizeAimBehaviorForLoad(
+                    ReadInt(ini, section, "aimBehavior", aimBehavior),
+                    ReadInt(ini, kMetaSection, kVersionKey, 0) < kAimBehaviorSemanticsVersion);
             AutoShoot = ReadBool(ini, section, "autoshootonoff", AutoShoot);
             Prediction = ReadBool(ini, section, "predictdec", Prediction);
 
@@ -3419,11 +3595,36 @@ namespace OW { namespace Config {
             aimbotAttack = ReadInt(ini, section, "aimbotAttack", aimbotAttack);
             aimbotTeam = ReadInt(ini, section, "aimbotTeam", aimbotTeam);
             aimbotPriority = ReadInt(ini, section, "aimbotPriority", aimbotPriority);
+            aimbotTrackingDeadzone = ReadFixedFloat(ini, section, "aimbotTrackingDeadzone", aimbotTrackingDeadzone);
+            aimbotFlickShotClampMs = ReadFixedFloat(ini, section, "aimbotFlickShotClampMs", aimbotFlickShotClampMs);
+            aimbotFlickPostFireDelayMs = ReadFixedFloat(ini, section, "aimbotFlickPostFireDelayMs", aimbotFlickPostFireDelayMs);
+            aimbotFlickTrajectoryWait = ReadBool(ini, section, "aimbotFlickTrajectoryWait", aimbotFlickTrajectoryWait);
+            aimbotFlickTrajectoryWaitMs = ReadFixedFloat(ini, section, "aimbotFlickTrajectoryWaitMs", aimbotFlickTrajectoryWaitMs);
+            aimbotFlickTrajectoryApexWindowMs = ReadFixedFloat(ini, section, "aimbotFlickTrajectoryApexWindowMs", aimbotFlickTrajectoryApexWindowMs);
+            aimbotFlick2ndTriggerGate = ReadBool(ini, section, "aimbotFlick2ndTriggerGate", aimbotFlick2ndTriggerGate);
+            aimbotFlick2ndBoxPadding = ReadFixedFloat(ini, section, "aimbotFlick2ndBoxPadding", aimbotFlick2ndBoxPadding);
+            aimbotFlick2ndInnerRadius = ReadFixedFloat(ini, section, "aimbotFlick2ndInnerRadius", aimbotFlick2ndInnerRadius);
+            aimbotFlick2ndInnerSmoothScale = ReadFixedFloat(ini, section, "aimbotFlick2ndInnerSmoothScale", aimbotFlick2ndInnerSmoothScale);
+            aimbotFlick2ndInnerMethod = ReadInt(ini, section, "aimbotFlick2ndInnerMethod", aimbotFlick2ndInnerMethod);
             aimbotTwoStage = ReadBool(ini, section, "aimbotTwoStage", aimbotTwoStage);
             aimbotTwoStageTriggerGate = ReadBool(ini, section, "aimbotTwoStageTriggerGate", aimbotTwoStageTriggerGate);
             aimbotTwoStageBoxPadding = ReadFixedFloat(ini, section, "aimbotTwoStageBoxPadding", aimbotTwoStageBoxPadding);
             aimbotTwoStageInnerRadius = ReadFixedFloat(ini, section, "aimbotTwoStageInnerRadius", aimbotTwoStageInnerRadius);
             aimbotTwoStageInnerSmoothScale = ReadFixedFloat(ini, section, "aimbotTwoStageInnerSmoothScale", aimbotTwoStageInnerSmoothScale);
+            if (!KeyExists(ini, section, "aimbotFlick2ndTriggerGate"))
+                aimbotFlick2ndTriggerGate = aimbotTwoStageTriggerGate;
+            if (!KeyExists(ini, section, "aimbotFlick2ndBoxPadding"))
+                aimbotFlick2ndBoxPadding = aimbotTwoStageBoxPadding;
+            if (!KeyExists(ini, section, "aimbotFlick2ndInnerRadius"))
+                aimbotFlick2ndInnerRadius = aimbotTwoStageInnerRadius;
+            if (!KeyExists(ini, section, "aimbotFlick2ndInnerSmoothScale"))
+                aimbotFlick2ndInnerSmoothScale = aimbotTwoStageInnerSmoothScale;
+            const int fileVersion = ReadInt(ini, kMetaSection, kVersionKey, 0);
+            aimBehavior = NormalizeAimBehaviorForLoad(
+                aimBehavior,
+                fileVersion < kAimBehaviorSemanticsVersion);
+            if (aimbotTwoStage && IsFlickBehavior(aimBehavior))
+                aimBehavior = kAimBehaviorFlick2nd;
             aimOvershootCurve = ReadBool(ini, section, "aimOvershootCurve", aimOvershootCurve);
             aimOvershootGain = ReadFixedFloat(ini, section, "aimOvershootGain", aimOvershootGain);
             aimOvershootResetPixels = ReadFixedFloat(ini, section, "aimOvershootResetPixels", aimOvershootResetPixels);
@@ -3458,22 +3659,19 @@ namespace OW { namespace Config {
             constexpr std::array<const char*, kAimBehaviorCount> methodKeys = {
                 "trackingMethod",
                 "flickMethod",
-                "flickClampMethod",
-                "flickDelayMethod",
+                "flick2ndMethod",
                 "reacquireMethod"
             };
             constexpr std::array<const char*, kAimBehaviorCount> speedKeys = {
                 "trackingBaseSpeed",
                 "flickBaseSpeed",
-                "flickClampBaseSpeed",
-                "flickDelayBaseSpeed",
+                "flick2ndBaseSpeed",
                 "reacquireBaseSpeed"
             };
             constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
                 "trackingAcceleration",
                 "flickAcceleration",
-                "flickClampAcceleration",
-                "flickDelayAcceleration",
+                "flick2ndAcceleration",
                 "reacquireAcceleration"
             };
             constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
@@ -3508,6 +3706,15 @@ namespace OW { namespace Config {
                 aimBehaviorBaseSpeed[index] = ReadFixedFloat(ini, section, speedKeys[index], 100.0f);
                 aimBehaviorAcceleration[index] = ReadFixedFloat(ini, section, accelerationKeys[index], accvalue);
             }
+            if (!KeyExists(ini, section, "flick2ndMethod"))
+                aimBehaviorMethod[static_cast<size_t>(kAimBehaviorFlick2nd)] =
+                    ReadInt(ini, section, "flickClampMethod", aimBehaviorMethod[static_cast<size_t>(kAimBehaviorFlick2nd)]);
+            if (!KeyExists(ini, section, "flick2ndBaseSpeed"))
+                aimBehaviorBaseSpeed[static_cast<size_t>(kAimBehaviorFlick2nd)] =
+                    ReadFixedFloat(ini, section, "flickClampBaseSpeed", aimBehaviorBaseSpeed[static_cast<size_t>(kAimBehaviorFlick2nd)]);
+            if (!KeyExists(ini, section, "flick2ndAcceleration"))
+                aimBehaviorAcceleration[static_cast<size_t>(kAimBehaviorFlick2nd)] =
+                    ReadFixedFloat(ini, section, "flickClampAcceleration", aimBehaviorAcceleration[static_cast<size_t>(kAimBehaviorFlick2nd)]);
             for (size_t index = 0; index < aimMethodAngularSpeedScale.size(); ++index)
                 aimMethodAngularSpeedScale[index] = ReadFixedFloat(ini, section, angularSpeedKeys[index], 100.0f);
             secondaryAimMethodOverride[0] = ReadInt(
@@ -3543,6 +3750,17 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "aimbotAttack", aimbotAttack);
             WriteIntValue(path, section, "aimbotTeam", aimbotTeam);
             WriteIntValue(path, section, "aimbotPriority", aimbotPriority);
+            WriteFixedFloatValue(path, section, "aimbotTrackingDeadzone", aimbotTrackingDeadzone);
+            WriteFixedFloatValue(path, section, "aimbotFlickShotClampMs", aimbotFlickShotClampMs);
+            WriteFixedFloatValue(path, section, "aimbotFlickPostFireDelayMs", aimbotFlickPostFireDelayMs);
+            WriteBoolValue(path, section, "aimbotFlickTrajectoryWait", aimbotFlickTrajectoryWait);
+            WriteFixedFloatValue(path, section, "aimbotFlickTrajectoryWaitMs", aimbotFlickTrajectoryWaitMs);
+            WriteFixedFloatValue(path, section, "aimbotFlickTrajectoryApexWindowMs", aimbotFlickTrajectoryApexWindowMs);
+            WriteBoolValue(path, section, "aimbotFlick2ndTriggerGate", aimbotFlick2ndTriggerGate);
+            WriteFixedFloatValue(path, section, "aimbotFlick2ndBoxPadding", aimbotFlick2ndBoxPadding);
+            WriteFixedFloatValue(path, section, "aimbotFlick2ndInnerRadius", aimbotFlick2ndInnerRadius);
+            WriteFixedFloatValue(path, section, "aimbotFlick2ndInnerSmoothScale", aimbotFlick2ndInnerSmoothScale);
+            WriteIntValue(path, section, "aimbotFlick2ndInnerMethod", ClampAimMethodIndex(aimbotFlick2ndInnerMethod));
             WriteBoolValue(path, section, "aimbotTwoStage", aimbotTwoStage);
             WriteBoolValue(path, section, "aimbotTwoStageTriggerGate", aimbotTwoStageTriggerGate);
             WriteFixedFloatValue(path, section, "aimbotTwoStageBoxPadding", aimbotTwoStageBoxPadding);
@@ -3577,22 +3795,19 @@ namespace OW { namespace Config {
             constexpr std::array<const char*, kAimBehaviorCount> methodKeys = {
                 "trackingMethod",
                 "flickMethod",
-                "flickClampMethod",
-                "flickDelayMethod",
+                "flick2ndMethod",
                 "reacquireMethod"
             };
             constexpr std::array<const char*, kAimBehaviorCount> speedKeys = {
                 "trackingBaseSpeed",
                 "flickBaseSpeed",
-                "flickClampBaseSpeed",
-                "flickDelayBaseSpeed",
+                "flick2ndBaseSpeed",
                 "reacquireBaseSpeed"
             };
             constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
                 "trackingAcceleration",
                 "flickAcceleration",
-                "flickClampAcceleration",
-                "flickDelayAcceleration",
+                "flick2ndAcceleration",
                 "reacquireAcceleration"
             };
             constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
@@ -3663,6 +3878,7 @@ namespace OW { namespace Config {
             radarline = ReadBool(ini, section, "radarline", radarline);
             drawline = ReadBool(ini, section, "drawline", drawline);
             draw_fov = ReadBool(ini, section, "draw_fov", draw_fov);
+            drawTrackingDeadzones = ReadBool(ini, section, "drawTrackingDeadzones", drawTrackingDeadzones);
             targetPriority = ReadInt(ini, section, "targetPriority", targetPriority);
             MenuToggleKey = ReadInt(ini, section, "MenuToggleKey", MenuToggleKey);
             gafAsyncKeyStateOffset = ReadUInt64(ini, section, "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
@@ -3889,6 +4105,15 @@ namespace OW { namespace Config {
             ClampFloatSetting("aimbotLockTime", aimbotLockTime, 0.0f, 5000.0f, 20.0f);
             ClampFloatSetting("aimbotMaxDist", aimbotMaxDist, 0.0f, 500.0f, 100.0f);
             ClampFloatSetting("aimbotMinDist", aimbotMinDist, 0.0f, 500.0f, 0.0f);
+            aimbotTrackingDeadzone = ClampTrackingDeadzonePixels(aimbotTrackingDeadzone);
+            aimbotFlickShotClampMs = ClampFlickShotClampMs(aimbotFlickShotClampMs);
+            aimbotFlickPostFireDelayMs = ClampFlickPostFireDelayMs(aimbotFlickPostFireDelayMs);
+            aimbotFlickTrajectoryWaitMs = ClampTrajectoryWaitMs(aimbotFlickTrajectoryWaitMs);
+            aimbotFlickTrajectoryApexWindowMs = ClampTrajectoryApexWindowMs(aimbotFlickTrajectoryApexWindowMs);
+            ClampFloatSetting("aimbotFlick2ndBoxPadding", aimbotFlick2ndBoxPadding, 0.0f, 80.0f, 8.0f);
+            ClampFloatSetting("aimbotFlick2ndInnerRadius", aimbotFlick2ndInnerRadius, 0.0f, 250.0f, 34.0f);
+            ClampFloatSetting("aimbotFlick2ndInnerSmoothScale", aimbotFlick2ndInnerSmoothScale, 0.1f, 1.0f, 0.55f);
+            aimbotFlick2ndInnerMethod = ClampAimMethodIndex(aimbotFlick2ndInnerMethod);
             ClampFloatSetting("aimbotTwoStageBoxPadding", aimbotTwoStageBoxPadding, 0.0f, 80.0f, 8.0f);
             ClampFloatSetting("aimbotTwoStageInnerRadius", aimbotTwoStageInnerRadius, 0.0f, 250.0f, 34.0f);
             ClampFloatSetting("aimbotTwoStageInnerSmoothScale", aimbotTwoStageInnerSmoothScale, 0.1f, 1.0f, 0.55f);
@@ -3954,9 +4179,14 @@ namespace OW { namespace Config {
                 method = ClampAimMethodOverride(method);
             ClampSetting("aimbotSmoothType", aimbotSmoothType, 0, 2, 0);
             ClampSetting("aimbotPredictionMode", aimbotPredictionMode, 0, 2, 0);
-            ClampSetting("aimBehavior", aimBehavior, 0, 4, 0);
+            aimBehavior = ClampAimBehaviorIndex(aimBehavior);
             ClampSetting("aimbotFirePolicy", aimbotFirePolicy, 0, 5, 1);
-            ApplyAimMode(aimBehavior == 0 ? 0 : 1);
+            aimbotTwoStage = IsFlick2ndBehavior(aimBehavior);
+            aimbotTwoStageTriggerGate = aimbotFlick2ndTriggerGate;
+            aimbotTwoStageBoxPadding = aimbotFlick2ndBoxPadding;
+            aimbotTwoStageInnerRadius = aimbotFlick2ndInnerRadius;
+            aimbotTwoStageInnerSmoothScale = aimbotFlick2ndInnerSmoothScale;
+            ApplyAimMode(IsTrackingBehavior(aimBehavior) ? 0 : 1);
             ClampSetting("aimBezierControlPoints", aimBezierControlPoints, 2, 6, 2);
             ClampSetting("aimbotTrace", aimbotTrace, 0, 2, 0);
             ClampSetting("aimbotUnlock", aimbotUnlock, 0, 2, 0);
@@ -4114,9 +4344,9 @@ namespace OW { namespace Config {
                 ToText(draw_info).c_str(), ToText(drawbattletag).c_str(), ToText(drawhealth).c_str(), ToText(healthbar).c_str(),
                 ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), visualMaxDist, ToText(name).c_str(), ToText(ult).c_str(),
                 ToText(draw_skel).c_str(), ToText(skillinfo).c_str());
-            LogConfig(level, "Dump: overlays radar=%s radarline=%s drawline=%s draw_fov=%s draw_hp_pack=%s crosscircle=%s eyeray=%s",
+            LogConfig(level, "Dump: overlays radar=%s radarline=%s drawline=%s draw_fov=%s drawTrackingDeadzones=%s draw_hp_pack=%s crosscircle=%s eyeray=%s",
                 ToText(radar).c_str(), ToText(radarline).c_str(),
-                ToText(drawline).c_str(), ToText(draw_fov).c_str(), ToText(draw_hp_pack).c_str(),
+                ToText(drawline).c_str(), ToText(draw_fov).c_str(), ToText(drawTrackingDeadzones).c_str(), ToText(draw_hp_pack).c_str(),
                 ToText(crosscircle).c_str(), ToText(eyeray).c_str());
             LogConfig(level, "Dump: colors EnemyCol=%s fovcol=%s enargb=%s invisnenargb=%s targetargb=%s allyargb=%s",
                 ColorText(EnemyCol).c_str(), ColorText(fovcol).c_str(),
@@ -4611,6 +4841,7 @@ namespace OW { namespace Config {
             WriteBoolValue(path, "Global", "radarline", radarline);
             WriteBoolValue(path, "Global", "drawline", drawline);
             WriteBoolValue(path, "Global", "draw_fov", draw_fov);
+            WriteBoolValue(path, "Global", "drawTrackingDeadzones", drawTrackingDeadzones);
             WriteIntValue(path, "Global", "targetPriority", targetPriority);
             WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);
             WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
