@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <unordered_map>
 #include <unordered_set>
 #include <emmintrin.h>
@@ -826,7 +827,8 @@ namespace OW {
             records.push_back(std::move(record));
         };
 
-        constexpr size_t kEntityListReadSize = 0x10000;
+        const size_t kEntityListReadSize =
+            offset::IsCnNeProfile() ? 0x40000 : 0x10000;
         constexpr size_t kEntityListChunkSize = 0x1000;
         std::vector<uint8_t> entity_chunk(kEntityListChunkSize);
         size_t readable_bytes = 0;
@@ -916,7 +918,14 @@ namespace OW {
             case eHero::TOBTERT: return "Tob";
             case eHero::SYMTERT: return "Sym";
             case eHero::Bob:     return "Bob";
-            default:             return "Unknown";
+            default:
+                if (GameData::HasHeroIdPrefix(HeroID)) {
+                    char fallback[16] = {};
+                    std::snprintf(fallback, sizeof(fallback), "Hero_%04llX",
+                        static_cast<unsigned long long>(HeroID & 0xFFFFull));
+                    return fallback;
+                }
+                return "Unknown";
         }
     }
 

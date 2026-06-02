@@ -257,6 +257,7 @@ inline Config::HeroSkillSettings MakeZaryaPropelJumpDefaults()
     Config::HeroSkillSettings settings{};
     settings.enabled = false;
     settings.key = HeroSkillHotkey::Mouse4;
+    settings.skillKey = HeroSkillHotkey::RightMouse;
     settings.healthThreshold = 50.0f;
     settings.enemyHealthThreshold = 50.0f;
     settings.allyHealthThreshold = 50.0f;

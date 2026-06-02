@@ -24,8 +24,8 @@ namespace OW { namespace Config {
     inline constexpr int kAimBoneNeck  = 2;
     inline constexpr int kMaxHeroPresetSlots = 12;
     inline constexpr float kMinFovDeg = 0.0f;
-    inline constexpr float kMaxFovDeg = 360.0f;
-    inline constexpr float kDefaultFovDeg = 200.0f;
+    inline constexpr float kMaxFovDeg = 180.0f;
+    inline constexpr float kDefaultFovDeg = 100.0f;
     inline constexpr float kLegacyDefaultHitboxRadius = 0.13f;
     inline constexpr float kMinHitboxScalePercent = 0.0f;
     inline constexpr float kMaxHitboxScalePercent = 150.0f;
@@ -38,6 +38,13 @@ namespace OW { namespace Config {
         return std::clamp(std::isfinite(fovDeg) ? fovDeg : kDefaultFovDeg,
                           kMinFovDeg,
                           kMaxFovDeg);
+    }
+
+    inline float LegacyFovApertureToAngleDeg(float fovApertureDeg)
+    {
+        return ClampFovDeg(std::isfinite(fovApertureDeg)
+            ? fovApertureDeg * 0.5f
+            : kDefaultFovDeg);
     }
 
     inline float ClampHitboxScalePercent(float scalePercent)
@@ -359,7 +366,7 @@ namespace OW { namespace Config {
     {
         const float scale = std::isfinite(scalePercent) ? std::clamp(scalePercent, 0.0f, 100.0f) : 100.0f;
         const float extraScale = std::isfinite(runtimeScale) ? std::clamp(runtimeScale, 0.0f, 2.0f) : 1.0f;
-        return (AimBehaviorBaseSpeed(behavior) * (scale / 100.0f) * extraScale) / 10.0f;
+        return (AimBehaviorBaseSpeed(behavior) / 100.0f) * (scale / 100.0f) * extraScale;
     }
 
     // ---- Hero-specific ----
@@ -445,8 +452,7 @@ namespace OW { namespace Config {
     inline ImVec4 fovcol     = ImVec4(1.f, 1.f, 1.f, 1.f);
 
     enum class FovRingSlotKind : int {
-        Aim = 0,
-        Trigger = 1
+        Aim = 0
     };
 
     struct FovRingSlotStyle {
@@ -459,6 +465,7 @@ namespace OW { namespace Config {
 
     inline ImVec4 DefaultFovRingColor(FovRingSlotKind kind, int slotIndex)
     {
+        (void)kind;
         constexpr float palette[][3] = {
             { 1.00f, 0.92f, 0.20f },
             { 0.15f, 0.78f, 1.00f },
@@ -475,15 +482,12 @@ namespace OW { namespace Config {
         };
         constexpr int paletteCount = static_cast<int>(sizeof(palette) / sizeof(palette[0]));
         const int paletteIndex = std::clamp(slotIndex, 0, kMaxHeroPresetSlots - 1) % paletteCount;
-        const int shiftedIndex = kind == FovRingSlotKind::Trigger
-            ? (paletteIndex + 4) % paletteCount
-            : paletteIndex;
-        const float alpha = kind == FovRingSlotKind::Trigger ? 0.62f : 0.78f;
+        const int shiftedIndex = paletteIndex;
         return ImVec4(
             palette[shiftedIndex][0],
             palette[shiftedIndex][1],
             palette[shiftedIndex][2],
-            alpha);
+            0.78f);
     }
 
     inline FovRingSlotStyle DefaultFovRingStyle(FovRingSlotKind kind, int slotIndex)
@@ -491,8 +495,8 @@ namespace OW { namespace Config {
         FovRingSlotStyle style{};
         style.visible = true;
         style.color = DefaultFovRingColor(kind, slotIndex);
-        style.thickness = kind == FovRingSlotKind::Trigger ? 1.25f : 1.5f;
-        style.lineStyle = kind == FovRingSlotKind::Trigger ? 1 : 0;
+        style.thickness = 1.5f;
+        style.lineStyle = 0;
         style.showLabel = false;
         return style;
     }
@@ -524,15 +528,12 @@ namespace OW { namespace Config {
 
     inline std::array<FovRingSlotStyle, kMaxHeroPresetSlots> aimFovRingStyles =
         MakeDefaultFovRingStyles(FovRingSlotKind::Aim);
-    inline std::array<FovRingSlotStyle, kMaxHeroPresetSlots> triggerFovRingStyles =
-        MakeDefaultFovRingStyles(FovRingSlotKind::Trigger);
 
     inline FovRingSlotStyle& FovRingStyleFor(FovRingSlotKind kind, int slotIndex)
     {
         const int clampedSlot = std::clamp(slotIndex, 0, kMaxHeroPresetSlots - 1);
-        return kind == FovRingSlotKind::Trigger
-            ? triggerFovRingStyles[static_cast<size_t>(clampedSlot)]
-            : aimFovRingStyles[static_cast<size_t>(clampedSlot)];
+        (void)kind;
+        return aimFovRingStyles[static_cast<size_t>(clampedSlot)];
     }
 
     // ---- Targeting state ----
@@ -638,7 +639,7 @@ namespace OW { namespace Config {
     };
 
     struct HeroPreset {
-        float fov = kDefaultFovDeg; // FOV aperture in degrees; 360 covers the full sphere
+        float fov = kDefaultFovDeg; // angular separation from current view direction, in degrees
         float smooth = 5.0f;     // aim smoothing, 0-100
         int bone = kAimBoneHead;  // aim-bone choice: 0=chest, 1=head, 2=neck
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
@@ -730,6 +731,7 @@ namespace OW { namespace Config {
         int jumpKeyCode = VK_SPACE;
         bool ammoGuard = false;
         int ammoGuardReserve = 1;
+        int skillKey = -1;
     };
 
     using HeroSkillPresetStore = std::unordered_map<uint64_t, std::unordered_map<std::string, HeroSkillSettings>>;

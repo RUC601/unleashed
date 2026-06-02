@@ -1446,6 +1446,8 @@ inline void entity_thread() {
             if (detailedProcessLog && processStats.boneCandidates > 0) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu name_done name=%s.", i, name.c_str());
             }
+            if (name.rfind("Hero_", 0) == 0)
+                processStats.nameUnknown++;
             if (ComponentParent && LinkParent && name != "Unknown") {
                 entity.roster_state = entity.Alive
                     ? OW::EntityRosterState::Fresh
@@ -2625,14 +2627,13 @@ namespace OverlayRenderDetail {
                 const OW::Config::HeroSlotPreset& slot = item.second;
                 const OW::Config::TriggerPreset& trigger = slot.preset.trigger;
                 const bool active = slot.enabled && trigger.enabled && slotIndex == runtimeTriggerSlot;
-                char line[320]{};
+                char line[280]{};
                 std::snprintf(line, sizeof(line),
-                              "#%d %s | %s | %s | FOV %.0f deg | charge:%s | invis:%s | slot:%s trig:%s%s",
+                              "#%d %s | %s | %s | charge:%s | invis:%s | slot:%s trig:%s%s",
                               slotIndex + 1,
                               OW::Labels::AttackActionCompactName(trigger.action),
                               OW::Labels::TriggerbotModeName(trigger.mode),
                               OW::Labels::AimActivationKeyName(trigger.key),
-                              slot.preset.fov,
                               YesNo(trigger.chargeAware),
                               YesNo(trigger.ignoreInvisible),
                               YesNo(slot.enabled),
@@ -3390,7 +3391,8 @@ namespace AimbotDetail {
 
         static LastState aimState{};
         static LastState triggerState{};
-        LastState& state = (kind && std::strcmp(kind, "trigger") == 0) ? triggerState : aimState;
+        const bool isTriggerKind = kind && std::strcmp(kind, "trigger") == 0;
+        LastState& state = isTriggerKind ? triggerState : aimState;
 
         const OW::Config::HeroPreset& preset = selection.preset;
         const bool changed = !state.initialized ||
@@ -3398,7 +3400,7 @@ namespace AimbotDetail {
             state.slotIndex != selection.slotIndex ||
             state.matchedInput != selection.matchedInput ||
             state.key != preset.key ||
-            std::fabs(state.fov - preset.fov) > 0.001f ||
+            (!isTriggerKind && std::fabs(state.fov - preset.fov) > 0.001f) ||
             state.aimBehavior != preset.aimBehavior ||
             state.triggerMode != preset.trigger.mode ||
             state.triggerKey != preset.trigger.key ||
@@ -3408,19 +3410,34 @@ namespace AimbotDetail {
             return;
 
         const int behaviorMethod = OW::Config::AimBehaviorMethod(preset.aimBehavior);
-        Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d fovDeg=%.2f aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
-            kind ? kind : "unknown",
-            static_cast<unsigned long long>(heroId),
-            selection.slotIndex + 1,
-            selection.matchedInput ? 1 : 0,
-            preset.key,
-            preset.fov,
-            preset.aimMode,
-            preset.aimBehavior,
-            behaviorMethod,
-            preset.trigger.enabled ? 1 : 0,
-            preset.trigger.mode,
-            preset.trigger.key);
+        if (isTriggerKind) {
+            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+                kind,
+                static_cast<unsigned long long>(heroId),
+                selection.slotIndex + 1,
+                selection.matchedInput ? 1 : 0,
+                preset.key,
+                preset.aimMode,
+                preset.aimBehavior,
+                behaviorMethod,
+                preset.trigger.enabled ? 1 : 0,
+                preset.trigger.mode,
+                preset.trigger.key);
+        } else {
+            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d fovDeg=%.2f aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+                kind ? kind : "unknown",
+                static_cast<unsigned long long>(heroId),
+                selection.slotIndex + 1,
+                selection.matchedInput ? 1 : 0,
+                preset.key,
+                preset.fov,
+                preset.aimMode,
+                preset.aimBehavior,
+                behaviorMethod,
+                preset.trigger.enabled ? 1 : 0,
+                preset.trigger.mode,
+                preset.trigger.key);
+        }
 
         state.initialized = true;
         state.heroId = heroId;
@@ -3608,16 +3625,6 @@ namespace AimbotDetail {
             originalMinFov2 = OW::Config::minFov2;
             originalDrawFov = OW::Config::SnapshotRuntimeDrawFov();
             OW::Config::ApplyHeroTriggerPresetToGlobals(selection.preset);
-            const float triggerFovDeg = OW::Config::ClampFovDeg(selection.preset.fov);
-            OW::Config::Fov = triggerFovDeg;
-            OW::Config::Fov2 = triggerFovDeg;
-            OW::Config::minFov1 = triggerFovDeg;
-            OW::Config::minFov2 = triggerFovDeg;
-            if (selection.matchedInput && selection.preset.trigger.enabled)
-                OW::Config::SetRuntimeDrawFov(
-                    triggerFovDeg,
-                    static_cast<int>(OW::Config::FovRingSlotKind::Trigger),
-                    selection.slotIndex);
             LogRuntimePresetSelection("trigger", local.HeroID, selection);
             active = true;
         }

@@ -16,12 +16,18 @@ struct NamedInt {
 };
 
 inline constexpr uint64_t kHeroIdPrefix = 0x02E0000000000000ull;
+inline constexpr uint64_t kHeroIdPrefixMask = 0xFFFF000000000000ull;
 
 constexpr uint64_t MakeHeroId(uint16_t lowId) noexcept {
     return kHeroIdPrefix | static_cast<uint64_t>(lowId);
 }
 
+constexpr bool HasHeroIdPrefix(uint64_t heroId) noexcept {
+    return (heroId & kHeroIdPrefixMask) == kHeroIdPrefix;
+}
+
 // Source: D:\Desktop\uc\grap\516727\332.txt, plexies, 2026-05-27 04:18 AM.
+// Live CN probe additions, 2026-06-02: Vendetta/Anran.
 inline constexpr NamedU64 kHeroIds[] = {
     { "Reaper", MakeHeroId(0x002) },
     { "Tracer", MakeHeroId(0x003) },
@@ -67,6 +73,8 @@ inline constexpr NamedU64 kHeroIds[] = {
     { "Hazard", MakeHeroId(0x362) },
     { "Juno", MakeHeroId(0x365) },
     { "Wuyang", MakeHeroId(0x3C3) },
+    { "Vendetta", MakeHeroId(0x472) },
+    { "Anran", MakeHeroId(0x4DD) },
     { "Jetpack Cat", MakeHeroId(0x516) },
     { "Standard Bot", MakeHeroId(0x33C) },
     { "Tank Bot", MakeHeroId(0x337) },

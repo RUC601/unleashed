@@ -805,8 +805,8 @@ namespace OW {
             return context;
         }
 
-        inline float FovHalfAngleDeg(float fovApertureDeg) {
-            return Config::ClampFovDeg(fovApertureDeg) * 0.5f;
+        inline float FovAngleLimitDeg(float fovDeg) {
+            return Config::ClampFovDeg(fovDeg);
         }
 
         inline float AngularSeparationDegFromCamera(const Vector3& camera,
@@ -835,12 +835,12 @@ namespace OW {
 
         inline bool IsWithinFovDeg(const FovRuntimeContext& context,
                                    const Vector3& position,
-                                   float fovApertureDeg,
+                                   float fovDeg,
                                    float* outScoreDeg = nullptr) {
             const float scoreDeg = FovScoreDeg(context, position);
             if (outScoreDeg)
                 *outScoreDeg = scoreDeg;
-            return scoreDeg <= FovHalfAngleDeg(fovApertureDeg) + 0.0001f;
+            return scoreDeg <= FovAngleLimitDeg(fovDeg) + 0.0001f;
         }
 
         inline bool IsTrainingBot(uint64_t heroId) {
@@ -1185,7 +1185,7 @@ namespace OW {
                 Vector3 aimPosition = ApplyPrediction(entity, rootPosition, predit, secondary);
                 const float score = CandidateScore(aimPosition, fovContext);
                 if (score >= result.score) continue;
-                if (score > FovHalfAngleDeg(fov)) continue;
+                if (score > FovAngleLimitDeg(fov)) continue;
 
                 result.index = static_cast<int>(i);
                 result.target = aimPosition;
@@ -2250,7 +2250,7 @@ namespace OW {
         }
 
         state.t = std::clamp(
-            state.t + std::clamp(speed, 1.0f, 200.0f) * deltaTime,
+            state.t + std::clamp(speed, 0.0f, 200.0f) * deltaTime,
             0.0f,
             1.0f
         );
@@ -2316,23 +2316,29 @@ namespace OW {
         const Vector3 adjustedTarget = AimSmoothingDetail::ApplyOvershootCurveTarget(local, target);
         const Vector3 error = adjustedTarget - local;
         const float methodSpeedScale = Config::AimMethodAngularSpeedScale(method);
-        const float effectiveSpeed = std::clamp(speed * methodSpeedScale, 0.0f, 1.0f);
+        const float slotSpeedScale = std::isfinite(speed) ? std::clamp(speed, 0.0f, 2.0f) : 0.0f;
+        const float effectiveSpeed = std::clamp(slotSpeedScale * methodSpeedScale, 0.0f, 1.0f);
         const float effectiveAccel = method == 4 ? Config::AimMethodAcceleration(method) : accel;
         const float bezierSpeed = bezierSpeedOverride > 0.0f
             ? bezierSpeedOverride
             : Config::aimBezierSpeed;
-        const float effectiveBezierSpeed = std::clamp(bezierSpeed * methodSpeedScale, 1.0f, 200.0f);
+        const float effectiveBezierSpeed = std::clamp(bezierSpeed * slotSpeedScale * methodSpeedScale, 0.0f, 200.0f);
         const float constantAngularSpeedDeg = Config::AimConstantAngularSpeedDeg();
-        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f speedScale=%.9f effectiveSpeed=%.9f accel=%.9f effectiveAccel=%.9f dt=%.9f bezierSpeed=%.9f constantDegPerSec=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
+        const float effectiveConstantAngularSpeedDeg = std::clamp(
+            constantAngularSpeedDeg * slotSpeedScale * methodSpeedScale,
+            0.0f,
+            720.0f);
+        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f slotSpeedScale=%.9f speedScale=%.9f effectiveSpeed=%.9f accel=%.9f effectiveAccel=%.9f dt=%.9f bezierSpeed=%.9f constantDegPerSec=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
             method,
             speed,
+            slotSpeedScale,
             methodSpeedScale,
             effectiveSpeed,
             accel,
             effectiveAccel,
             deltaTime,
             effectiveBezierSpeed,
-            constantAngularSpeedDeg,
+            effectiveConstantAngularSpeedDeg,
             local.X,
             local.Y,
             local.Z,
@@ -2347,13 +2353,18 @@ namespace OW {
             error.Z,
             error.Size());
 
+        auto scaleCandidateStep = [&](const Vector3& candidate) {
+            const Vector3 candidateDelta = candidate - local;
+            return local + AimSmoothingDetail::ClampStepToError(candidateDelta * effectiveSpeed, error);
+        };
+
         Vector3 result{};
         switch (method) {
         case 0:
             result = SmoothLinear(local, adjustedTarget, effectiveSpeed);
             break;
         case 1:
-            result = SmoothPID(local, adjustedTarget, deltaTime);
+            result = scaleCandidateStep(SmoothPID(local, adjustedTarget, deltaTime));
             break;
         case 2:
             result = SmoothBezier(local, adjustedTarget, deltaTime, effectiveBezierSpeed);
@@ -2365,7 +2376,7 @@ namespace OW {
             result = SmoothAccelerate(local, adjustedTarget, effectiveSpeed, effectiveAccel);
             break;
         case 5:
-            result = SmoothConstantAngularVelocity(local, adjustedTarget, deltaTime, constantAngularSpeedDeg);
+            result = SmoothConstantAngularVelocity(local, adjustedTarget, deltaTime, effectiveConstantAngularSpeedDeg);
             break;
         default:
             result = SmoothLinear(local, adjustedTarget, effectiveSpeed);

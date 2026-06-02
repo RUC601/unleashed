@@ -411,7 +411,7 @@ namespace {
     static float FovRadiusForViewport(float width, float height, float fovDeg)
     {
         const float fullViewportRadius = std::sqrt(width * width + height * height) * 0.5f;
-        return fullViewportRadius * ((OW::Config::ClampFovDeg(fovDeg) * 0.5f) / 180.0f);
+        return fullViewportRadius * (OW::Config::ClampFovDeg(fovDeg) / OW::Config::kMaxFovDeg);
     }
 
     static void DrawDashedCircle(const OW::Vector2& center,
@@ -476,37 +476,31 @@ namespace {
         }
     }
 
-    static bool DrawHeroFovRings(uint64_t heroId,
-                                 OW::Config::FovRingSlotKind kind,
-                                 const OW::Vector2& center,
-                                 float width,
-                                 float height,
-                                 const OW::Config::RuntimeDrawFovState& activeState)
+    static bool DrawHeroAimFovRings(uint64_t heroId,
+                                    const OW::Vector2& center,
+                                    float width,
+                                    float height,
+                                    const OW::Config::RuntimeDrawFovState& activeState)
     {
         bool drewAny = false;
         for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
             OW::Config::HeroSlotPreset slot{};
-            const bool found = kind == OW::Config::FovRingSlotKind::Trigger
-                ? OW::Config::TryGetHeroTriggerSlot(heroId, slotIndex, slot)
-                : OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot);
+            const bool found = OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot);
             if (!found || !slot.enabled)
-                continue;
-            if (kind == OW::Config::FovRingSlotKind::Trigger && !slot.preset.trigger.enabled)
                 continue;
 
             const OW::Config::FovRingSlotStyle style = OW::Config::ClampFovRingStyle(
-                OW::Config::FovRingStyleFor(kind, slotIndex),
-                kind,
+                OW::Config::FovRingStyleFor(OW::Config::FovRingSlotKind::Aim, slotIndex),
+                OW::Config::FovRingSlotKind::Aim,
                 slotIndex);
             const bool active = activeState.active &&
-                activeState.slotKind == static_cast<int>(kind) &&
+                activeState.slotKind == static_cast<int>(OW::Config::FovRingSlotKind::Aim) &&
                 activeState.slotIndex == slotIndex;
 
             char label[32] = {};
             std::snprintf(label,
                           sizeof(label),
-                          "%c%d %.0f deg",
-                          kind == OW::Config::FovRingSlotKind::Trigger ? 'T' : 'A',
+                          "A%d %.0f deg",
                           slotIndex + 1,
                           OW::Config::ClampFovDeg(slot.preset.fov));
             DrawStyledFovRing(center, width, height, slot.preset.fov, style, active, label);
@@ -530,18 +524,11 @@ namespace {
         const OW::Config::RuntimeDrawFovState activeState = OW::Config::SnapshotRuntimeDrawFov();
         bool drewAny = false;
         if (localSnapshot.HeroID != 0) {
-            drewAny |= DrawHeroFovRings(localSnapshot.HeroID,
-                                        OW::Config::FovRingSlotKind::Aim,
-                                        center,
-                                        width,
-                                        height,
-                                        activeState);
-            drewAny |= DrawHeroFovRings(localSnapshot.HeroID,
-                                        OW::Config::FovRingSlotKind::Trigger,
-                                        center,
-                                        width,
-                                        height,
-                                        activeState);
+            drewAny |= DrawHeroAimFovRings(localSnapshot.HeroID,
+                                           center,
+                                           width,
+                                           height,
+                                           activeState);
         }
         if (drewAny)
             return;

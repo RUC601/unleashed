@@ -93,17 +93,16 @@ add_executable(Unleashed
     ${IMGUI_SOURCES}
 )
 
-add_executable(CnOffsetProbe
-    src/Tools/CnOffsetProbe.cpp
-    src/Memory/Memory.cpp
-    src/Utils/Diagnostics.cpp
-)
-
 add_executable(MotionEstimatorSelfTest
     src/Tools/MotionEstimatorSelfTest.cpp
 )
 
+add_executable(FovConfigSelfTest
+    src/Tools/FovConfigSelfTest.cpp
+)
+
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
+add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 
 # ============================================================================
 # Include directories
@@ -118,12 +117,12 @@ target_include_directories(Unleashed PRIVATE
     vendor/stb
 )
 
-target_include_directories(CnOffsetProbe PRIVATE
+target_include_directories(MotionEstimatorSelfTest PRIVATE
     include
-    vendor/leechcore
+    vendor/imgui
 )
 
-target_include_directories(MotionEstimatorSelfTest PRIVATE
+target_include_directories(FovConfigSelfTest PRIVATE
     include
     vendor/imgui
 )
@@ -144,11 +143,6 @@ target_link_libraries(Unleashed PRIVATE
     shell32
     dwmapi
     setupapi
-)
-
-target_link_libraries(CnOffsetProbe PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/leechcore.lib"
-    "${CMAKE_SOURCE_DIR}/vendor/leechcore/vmm.lib"
 )
 
 # ============================================================================
@@ -190,7 +184,6 @@ function(copy_leechcore_runtime target_name)
 endfunction()
 
 copy_leechcore_runtime(Unleashed)
-copy_leechcore_runtime(CnOffsetProbe)
 
 add_custom_command(TARGET Unleashed POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -224,14 +217,12 @@ if(MSVC)
     endfunction()
 
     enable_release_symbols(Unleashed)
-    enable_release_symbols(CnOffsetProbe)
 endif()
 
 target_compile_options(Unleashed PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(Unleashed PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-target_compile_options(CnOffsetProbe PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
-target_compile_definitions(CnOffsetProbe PRIVATE _CRT_SECURE_NO_WARNINGS)
-
 target_compile_options(MotionEstimatorSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(MotionEstimatorSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(FovConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(FovConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)

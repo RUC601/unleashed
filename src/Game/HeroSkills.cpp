@@ -104,6 +104,7 @@ namespace {
         float pitchDownSpeedDeg = 0.0f;
         float pitchUpTargetAngle = 0.0f;
         float pitchUpSpeedDeg = 0.0f;
+        int skillVk = VK_RBUTTON;
         int jumpVk = 0;
         bool fired = false;
         bool jumped = false;
@@ -237,6 +238,8 @@ namespace {
     }
 
     bool SendKeyboardState(int vk, bool down);
+    int MapHotkeyToVK(int hotkey);
+    bool SetHotkeyState(int vk, bool down);
 
     SequenceSelfTestRuntime& SequenceSelfTest()
     {
@@ -405,10 +408,15 @@ namespace {
         case VK_RCONTROL: return 0xE0; // KEY_LEFT_CONTROL
         case VK_LSHIFT:
         case VK_RSHIFT:   return 0xE1; // KEY_LEFT_SHIFT
+        case VK_LMENU:
+        case VK_RMENU:    return 0xE2; // KEY_LEFT_ALT
+        case 0x46:        return 0x09; // F key
         case 0x45:        return 0x08; // E key
         case 0x51:        return 0x14; // Q key
         case 0x52:        return 0x15; // R key
+        case 0x56:        return 0x19; // V key
         case VK_TAB:      return 0x2B; // KEY_TAB
+        case VK_CAPITAL:  return 0x39; // KEY_CAPS_LOCK
         default:          return 0;
         }
     }
@@ -436,8 +444,16 @@ namespace {
         if (runtime.secondaryDown)
             return;
 
-        Diagnostics::Info("Hero skill viewpoint secondary pulse start. skill=%s", skillId.c_str());
-        OW::SendMouseButton(1, true);
+        if (runtime.skillVk <= 0 || !SetHotkeyState(runtime.skillVk, true)) {
+            Diagnostics::Warn("Hero skill viewpoint skill pulse failed. skill=%s vk=%d",
+                skillId.c_str(),
+                runtime.skillVk);
+            return;
+        }
+
+        Diagnostics::Info("Hero skill viewpoint skill pulse start. skill=%s vk=%d",
+            skillId.c_str(),
+            runtime.skillVk);
         runtime.secondaryDown = true;
         runtime.secondaryPressedAt = now;
     }
@@ -464,7 +480,7 @@ namespace {
     void UpdateViewpointPulses(const std::string& skillId, ViewpointRuntime& runtime, Clock::time_point now)
     {
         if (runtime.secondaryDown && now - runtime.secondaryPressedAt >= kBriefPulse) {
-            OW::SendMouseButton(1, false);
+            SetHotkeyState(runtime.skillVk, false);
             runtime.secondaryDown = false;
             runtime.fired = true;
             runtime.fireDelayStarted = now;
@@ -648,7 +664,7 @@ namespace {
     void ReleaseViewpointOutputs(ViewpointRuntime& runtime)
     {
         if (runtime.secondaryDown) {
-            OW::SendMouseButton(1, false);
+            SetHotkeyState(runtime.skillVk, false);
             runtime.secondaryDown = false;
         }
         if (runtime.jumpDown) {
@@ -966,6 +982,7 @@ namespace {
         runtime.pitchUpTargetAngle = ClampViewPitchTarget(runtime.initialAngles.X + pitchUpReturnJitterDeg * kDegToRad);
         const float pitchUpTravelDeg = std::fabs(effectivePitchDownTargetDeg - runtime.pitchUpTargetAngle * kRadToDeg);
         runtime.pitchUpSpeedDeg = std::clamp((pitchUpTravelDeg / durationMs) * 1000.0f, 0.0f, 4000.0f);
+        runtime.skillVk = MapHotkeyToVK(params.skillKey >= 0 ? params.skillKey : params.key);
         runtime.jumpVk = std::clamp(params.jumpKeyCode, 0, 255);
         runtime.phase = ViewpointPhase::PitchDown;
         runtime.phaseStarted = Clock::now();
@@ -1256,6 +1273,11 @@ namespace {
     int MapHotkeyToVK(int hotkey)
     {
         return Labels::AimActivationKeyVk(hotkey);
+    }
+
+    int SkillOutputVk(const Config::HeroSkillSettings& settings)
+    {
+        return MapHotkeyToVK(settings.skillKey >= 0 ? settings.skillKey : settings.key);
     }
 
     bool SendMouseVkState(int vk, bool down)
@@ -1976,7 +1998,7 @@ namespace {
         if (!IsUsablePosition(targetPosition) || source.DistTo(targetPosition) > effectiveRange)
             return false;
 
-        const int vk = MapHotkeyToVK(settings.key);
+        const int vk = SkillOutputVk(settings);
         if (!StartTimedHotkey(runtimeKey, vk, kBriefPulse))
             return false;
 
@@ -2006,7 +2028,7 @@ namespace {
 
         const float chargeScale = std::clamp(candidate.distance / effectiveRange, 0.0f, 1.0f);
         const int chargeMs = std::clamp(static_cast<int>(chargeScale * 1000.0f), 200, 1000);
-        const int vk = MapHotkeyToVK(settings.key);
+        const int vk = SkillOutputVk(settings);
         if (!StartTimedHotkey(runtimeKey, vk, std::chrono::milliseconds(chargeMs)))
             return false;
 
@@ -2051,7 +2073,7 @@ namespace {
         if (!IsUsablePosition(targetPosition) || source.DistTo(targetPosition) > effectiveRange)
             return false;
 
-        const int vk = MapHotkeyToVK(settings.key);
+        const int vk = SkillOutputVk(settings);
         if (!StartTimedHotkey(runtimeKey, vk, kBriefPulse))
             return false;
 

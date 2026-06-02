@@ -4,6 +4,7 @@
 
 #include "Utils/Config.hpp"
 
+#include "Game/HeroSkills.hpp"
 #include "Game/Structs.hpp"
 #include "Game/Target.hpp"
 #include "Game/WeaponSpec.hpp"
@@ -49,7 +50,7 @@
 
 namespace OW { namespace Config {
 
-    int config_version = 4;
+    int config_version = 5;
     bool draw_edge = false;
     bool drawbox3d = false;
     bool manualsave = false;
@@ -277,8 +278,11 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 4;
+        constexpr int kCurrentConfigVersion = 5;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
+        constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
+        constexpr int kCurrentHeroConfigVersion = 2;
+        constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -320,6 +324,8 @@ namespace OW { namespace Config {
             { OW::eHero::HERO_VENTURE,      "Venture",      "Venture",        nullptr },
             { OW::eHero::HERO_ECHO,         "Echo",         "Echo",           nullptr },
             { OW::eHero::HERO_FREJA,        "Freja",        nullptr,          nullptr },
+            { OW::eHero::HERO_VENDETTA,     "Vendetta",     nullptr,          nullptr },
+            { OW::eHero::HERO_ANRAN,        "Anran",        nullptr,          nullptr },
             { OW::eHero::HERO_REINHARDT,    "Reinhardt",    "Reinhardt",      nullptr },
             { OW::eHero::HERO_WINSTON,      "Winston",      "Winston",        nullptr },
             { OW::eHero::HERO_ZARYA,        "Zarya",        "Zarya",          nullptr },
@@ -353,6 +359,7 @@ namespace OW { namespace Config {
         HeroPreset MakeHeroAimPresetFromCurrentUnlocked();
         HeroPreset MakeHeroTriggerPresetFromCurrentUnlocked();
         bool gLastHeroConfigHadAimOrTriggerPresets = false;
+        bool gLastHeroConfigNeedsSave = false;
 
         struct IniFile {
             std::unordered_map<std::string, SectionValues> sections;
@@ -661,6 +668,22 @@ namespace OW { namespace Config {
             return value ? std::string(value) : std::string();
         }
 
+        float DecodeFovDeg(float value, bool legacyApertureValue, const char* section, const char* key)
+        {
+            const float decoded = legacyApertureValue
+                ? LegacyFovApertureToAngleDeg(value)
+                : ClampFovDeg(value);
+            if (legacyApertureValue && std::isfinite(value)) {
+                LogConfig(Diagnostics::LogLevel::Info,
+                    "Migrated legacy [%s] %s FOV aperture %.4f deg to angle %.4f deg.",
+                    section,
+                    key,
+                    value,
+                    decoded);
+            }
+            return decoded;
+        }
+
         template <size_t N>
         void CopyString(char (&dest)[N], const std::string& value)
         {
@@ -764,7 +787,11 @@ namespace OW { namespace Config {
             return value;
         }
 
-        float ReadFov2Compat(const IniFile& ini, const char* section, const char* key, float def)
+        float ReadFov2Compat(const IniFile& ini,
+                             const char* section,
+                             const char* key,
+                             float def,
+                             bool legacyApertureValue = false)
         {
             std::string raw;
             if (!ini.TryGet(section, key, raw)) {
@@ -778,8 +805,11 @@ namespace OW { namespace Config {
                     LogInvalid(section, key, raw, ToText(def));
                     return def;
                 }
-                LogLoaded(section, key, ToText(plainValue));
-                return plainValue;
+                const float decoded = legacyApertureValue
+                    ? DecodeFovDeg(plainValue, true, section, key)
+                    : plainValue;
+                LogLoaded(section, key, ToText(decoded));
+                return decoded;
             }
 
             int intValue = 0;
@@ -791,8 +821,11 @@ namespace OW { namespace Config {
             const float value = std::abs(intValue) > 10000
                 ? static_cast<float>(intValue) / 10000.0f
                 : static_cast<float>(intValue);
-            LogLoaded(section, key, ToText(value));
-            return value;
+            const float decoded = legacyApertureValue
+                ? DecodeFovDeg(value, true, section, key)
+                : value;
+            LogLoaded(section, key, ToText(decoded));
+            return decoded;
         }
 
         bool WriteValue(const std::string& path, const char* section, const char* key, const char* value)
@@ -1207,6 +1240,9 @@ namespace OW { namespace Config {
             if (!std::isfinite(settings.pitchUpOffsetJitter)) settings.pitchUpOffsetJitter = 1.5f;
 
             settings.key = std::clamp(settings.key, 0, MaxActivationKeyIndex());
+            settings.skillKey = settings.skillKey < 0
+                ? settings.key
+                : std::clamp(settings.skillKey, 0, MaxActivationKeyIndex());
             settings.healthThreshold = std::clamp(settings.healthThreshold, 0.0f, 500.0f);
             settings.enemyHealthThreshold = std::clamp(settings.enemyHealthThreshold, 0.0f, 500.0f);
             settings.allyHealthThreshold = std::clamp(settings.allyHealthThreshold, 0.0f, 500.0f);
@@ -1408,10 +1444,10 @@ namespace OW { namespace Config {
             aim_key2 = 1;                 // default: Left Mouse
             togglekey = 0;                // default: disabled
 
-            Fov = kDefaultFovDeg;         // default: 200 deg
-            Fov2 = kDefaultFovDeg;        // default: 200 deg
-            minFov1 = kDefaultFovDeg;     // default: 200 deg
-            minFov2 = kDefaultFovDeg;     // default: 200 deg
+            Fov = kDefaultFovDeg;         // default: 100 deg
+            Fov2 = kDefaultFovDeg;        // default: 100 deg
+            minFov1 = kDefaultFovDeg;     // default: 100 deg
+            minFov2 = kDefaultFovDeg;     // default: 100 deg
             Smooth = 5.0f;                // default: 5
             autoscalefov = false;         // default: false
             hitbox = kDefaultHitboxScalePercent;  // default: 100%
@@ -1602,7 +1638,6 @@ namespace OW { namespace Config {
             EnemyCol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);     // default: 1,1,1,1
             fovcol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);       // default: 1,1,1,1
             aimFovRingStyles = MakeDefaultFovRingStyles(FovRingSlotKind::Aim);
-            triggerFovRingStyles = MakeDefaultFovRingStyles(FovRingSlotKind::Trigger);
 
             kmboxEnabled = false;         // default: disabled
             kmboxDeviceType = 0;          // default: Network/UDP
@@ -1771,7 +1806,6 @@ namespace OW { namespace Config {
             triggerbotToggleActive2 = false;
             hitbox = preset.hitbox;
             Prediction = preset.prediction;
-            aimbotPriority = preset.priority;
             aimbotTeam = preset.targetTeam;
         }
 
@@ -1783,7 +1817,8 @@ namespace OW { namespace Config {
 
         HeroSlotPreset ReadHeroPresetSectionUnlocked(const IniFile& ini, const char* section,
                                                      HeroSlotPreset defaults, int slotIndex,
-                                                     bool storedBoneUsesLegacyPresetIndex)
+                                                     bool storedBoneUsesLegacyPresetIndex,
+                                                     bool legacyFovApertureValues)
         {
             HeroSlotPreset slot = defaults;
             slot.name = NormalizeHeroSlotName(
@@ -1794,7 +1829,7 @@ namespace OW { namespace Config {
             slot.present = hasPresentKey
                 ? ReadBool(ini, section, "present", slot.present)
                 : slot.enabled;
-            slot.preset.fov = ReadFov2Compat(ini, section, "fov", slot.preset.fov);
+            slot.preset.fov = ReadFov2Compat(ini, section, "fov", slot.preset.fov, legacyFovApertureValues);
             slot.preset.smooth = ReadFov2Compat(ini, section, "smooth", slot.preset.smooth);
             slot.preset.bone = ReadInt(ini, section, "bone", slot.preset.bone);
             if (storedBoneUsesLegacyPresetIndex)
@@ -1864,10 +1899,13 @@ namespace OW { namespace Config {
             return slot;
         }
 
-        HeroPreset ReadLegacyHeroPresetSectionUnlocked(const IniFile& ini, const char* section, HeroPreset defaults)
+        HeroPreset ReadLegacyHeroPresetSectionUnlocked(const IniFile& ini,
+                                                       const char* section,
+                                                       HeroPreset defaults,
+                                                       bool legacyFovApertureValues)
         {
             HeroPreset preset = defaults;
-            preset.fov = ReadFov2Compat(ini, section, "FOV", preset.fov);
+            preset.fov = ReadFov2Compat(ini, section, "FOV", preset.fov, legacyFovApertureValues);
             const int aimMode = std::clamp(ReadInt(ini, section, "Aim Mode", preset.aimMode), 0, 1);
             const float trackingSmooth = ReadFixedFloat(ini, section, "Tracking_smooth", preset.smooth);
             const float flickSmooth = ReadFixedFloat(ini, section, "Flick_smooth", trackingSmooth);
@@ -2126,6 +2164,7 @@ namespace OW { namespace Config {
             rapidjson::Value value(rapidjson::kObjectType);
             AddJsonBool(value, "enabled", settings.enabled, allocator);
             AddJsonInt(value, "key", settings.key, allocator);
+            AddJsonInt(value, "skillKey", settings.skillKey, allocator);
             AddJsonFloat(value, "healthThreshold", settings.healthThreshold, allocator);
             AddJsonFloat(value, "enemyHealthThreshold", settings.enemyHealthThreshold, allocator);
             AddJsonFloat(value, "allyHealthThreshold", settings.allyHealthThreshold, allocator);
@@ -2276,9 +2315,9 @@ namespace OW { namespace Config {
             auto& allocator = document.GetAllocator();
             auto version = document.FindMember("version");
             if (version != document.MemberEnd())
-                version->value.SetInt(1);
+                version->value.SetInt(kCurrentHeroConfigVersion);
             else
-                AddJsonInt(document, "version", 1, allocator);
+                AddJsonInt(document, "version", kCurrentHeroConfigVersion, allocator);
 
             auto profile = document.FindMember("profile");
             if (profile != document.MemberEnd()) {
@@ -2405,14 +2444,26 @@ namespace OW { namespace Config {
             WriteJsonDocument(heroConfigPath, document);
         }
 
-        bool TryLoadLegacyPresetForDefinition(const IniFile& ini, const HeroPresetDefinition& def, HeroPreset defaults, HeroPreset& outPreset)
+        bool TryLoadLegacyPresetForDefinition(const IniFile& ini,
+                                              const HeroPresetDefinition& def,
+                                              HeroPreset defaults,
+                                              bool legacyFovApertureValues,
+                                              HeroPreset& outPreset)
         {
             if (def.legacyName && SectionExists(ini, def.legacyName)) {
-                outPreset = ReadLegacyHeroPresetSectionUnlocked(ini, def.legacyName, defaults);
+                outPreset = ReadLegacyHeroPresetSectionUnlocked(
+                    ini,
+                    def.legacyName,
+                    defaults,
+                    legacyFovApertureValues);
                 return true;
             }
             if (def.legacyAlias && SectionExists(ini, def.legacyAlias)) {
-                outPreset = ReadLegacyHeroPresetSectionUnlocked(ini, def.legacyAlias, defaults);
+                outPreset = ReadLegacyHeroPresetSectionUnlocked(
+                    ini,
+                    def.legacyAlias,
+                    defaults,
+                    legacyFovApertureValues);
                 return true;
             }
             return false;
@@ -2440,6 +2491,20 @@ namespace OW { namespace Config {
             return item != object.MemberEnd() && item->value.IsNumber()
                 ? item->value.GetFloat()
                 : def;
+        }
+
+        float ReadJsonFov(const rapidjson::Value& object,
+                          const char* key,
+                          float def,
+                          bool legacyApertureValue)
+        {
+            const auto item = object.FindMember(key);
+            if (item == object.MemberEnd() || !item->value.IsNumber())
+                return def;
+            const float value = item->value.GetFloat();
+            return legacyApertureValue
+                ? DecodeFovDeg(value, true, "HeroConfig", key)
+                : value;
         }
 
         float ReadJsonHitboxScaleCompat(const rapidjson::Value& object,
@@ -2479,7 +2544,9 @@ namespace OW { namespace Config {
             return defaults;
         }
 
-        HeroSkillSettings ReadHeroSkillSettingsJson(const rapidjson::Value& value, HeroSkillSettings defaults)
+        HeroSkillSettings ReadHeroSkillSettingsJson(const rapidjson::Value& value,
+                                                    HeroSkillSettings defaults,
+                                                    bool legacyFovApertureValues)
         {
             if (!value.IsObject())
                 return ValidateHeroSkillSettingsValue(defaults);
@@ -2489,6 +2556,7 @@ namespace OW { namespace Config {
             defaults.key = keyItem != value.MemberEnd()
                 ? ReadJsonInt(value, "key", defaults.key)
                 : ReadJsonInt(value, "activationKey", defaults.key);
+            defaults.skillKey = ReadJsonInt(value, "skillKey", defaults.skillKey);
             defaults.healthThreshold = ReadJsonFloat(value, "healthThreshold", defaults.healthThreshold);
             defaults.enemyHealthThreshold = ReadJsonFloat(value, "enemyHealthThreshold", defaults.enemyHealthThreshold);
             defaults.allyHealthThreshold = ReadJsonFloat(value, "allyHealthThreshold", defaults.allyHealthThreshold);
@@ -2515,7 +2583,11 @@ namespace OW { namespace Config {
 
             defaults.tracking.method = ReadJsonInt(value, "trackingMethod", defaults.tracking.method);
             defaults.tracking.smooth = ReadJsonFloat(value, "trackingSmooth", defaults.tracking.smooth);
-            defaults.tracking.fov = ReadJsonFloat(value, "trackingFov", defaults.tracking.fov);
+            defaults.tracking.fov = ReadJsonFov(
+                value,
+                "trackingFov",
+                defaults.tracking.fov,
+                legacyFovApertureValues);
             defaults.tracking.bone = ReadJsonInt(value, "trackingBone", defaults.tracking.bone);
             defaults.tracking.hitbox = ReadJsonHitboxScaleCompat(
                 value,
@@ -2736,12 +2808,14 @@ namespace OW { namespace Config {
             return ValidateTriggerPresetValue(defaults);
         }
 
-        HeroPreset ReadHeroPresetJson(const rapidjson::Value& value, HeroPreset defaults)
+        HeroPreset ReadHeroPresetJson(const rapidjson::Value& value,
+                                      HeroPreset defaults,
+                                      bool legacyFovApertureValues)
         {
             if (!value.IsObject())
                 return ValidateHeroPresetValue(defaults);
 
-            defaults.fov = ReadJsonFloat(value, "fov", defaults.fov);
+            defaults.fov = ReadJsonFov(value, "fov", defaults.fov, legacyFovApertureValues);
             defaults.smooth = ReadJsonFloat(value, "smooth", defaults.smooth);
             defaults.bone = ReadJsonInt(value, "bone", defaults.bone);
             defaults.autoBone = ReadJsonBool(value, "autoBone", defaults.autoBone);
@@ -2793,7 +2867,10 @@ namespace OW { namespace Config {
             return ValidateHeroPresetValue(defaults);
         }
 
-        HeroSlotPreset ReadHeroSlotJson(const rapidjson::Value& value, HeroSlotPreset defaults, int slotIndex)
+        HeroSlotPreset ReadHeroSlotJson(const rapidjson::Value& value,
+                                        HeroSlotPreset defaults,
+                                        int slotIndex,
+                                        bool legacyFovApertureValues)
         {
             if (!value.IsObject())
                 return defaults;
@@ -2805,14 +2882,18 @@ namespace OW { namespace Config {
             defaults.enabled = ReadJsonBool(value, "enabled", defaults.enabled);
             const auto preset = value.FindMember("preset");
             if (preset != value.MemberEnd())
-                defaults.preset = ReadHeroPresetJson(preset->value, defaults.preset);
+                defaults.preset = ReadHeroPresetJson(
+                    preset->value,
+                    defaults.preset,
+                    legacyFovApertureValues);
             defaults.preset = ValidateHeroPresetValue(defaults.preset);
             return defaults;
         }
 
         void LoadHeroPresetStoreJson(const rapidjson::Value& storeObject,
                                      HeroPresetSlotKind kind,
-                                     HeroPresetStore& store)
+                                     HeroPresetStore& store,
+                                     bool legacyFovApertureValues)
         {
             if (!storeObject.IsObject())
                 return;
@@ -2838,7 +2919,8 @@ namespace OW { namespace Config {
                         slots[static_cast<size_t>(index)] = ReadHeroSlotJson(
                             slotArray->value[index],
                             slots[static_cast<size_t>(index)],
-                            static_cast<int>(index));
+                            static_cast<int>(index),
+                            legacyFovApertureValues);
                     }
                 }
 
@@ -2847,7 +2929,8 @@ namespace OW { namespace Config {
             }
         }
 
-        void LoadHeroSkillPresetStoreJson(const rapidjson::Value& storeObject)
+        void LoadHeroSkillPresetStoreJson(const rapidjson::Value& storeObject,
+                                          bool legacyFovApertureValues)
         {
             if (!storeObject.IsObject())
                 return;
@@ -2869,7 +2952,18 @@ namespace OW { namespace Config {
                     if (skillId.empty())
                         continue;
 
-                    HeroSkillSettings settings = ReadHeroSkillSettingsJson(skill->value, HeroSkillSettings{});
+                    const bool hasSkillKey = skill->value.IsObject() &&
+                        skill->value.FindMember("skillKey") != skill->value.MemberEnd();
+                    HeroSkillSettings settings = ReadHeroSkillSettingsJson(
+                        skill->value,
+                        HeroSkillSettings{},
+                        legacyFovApertureValues);
+                    if (!hasSkillKey &&
+                        heroId == static_cast<uint64_t>(OW::eHero::HERO_ZARYA) &&
+                        skillId == "propel-jump") {
+                        settings.skillKey = OW::HeroSkillHotkey::RightMouse;
+                        settings = ValidateHeroSkillSettingsValue(settings);
+                    }
                     if (ShouldMigrateAsheFirePatternSequence(heroId, skillId, skill->value, settings)) {
                         settings.sequenceSteps = MakeMeasuredAsheFirePatternSteps();
                         settings.cooldownGuard = true;
@@ -2893,10 +2987,15 @@ namespace OW { namespace Config {
         bool LoadHeroConfigUnlocked(const std::string& heroConfigPath)
         {
             gLastHeroConfigHadAimOrTriggerPresets = false;
+            gLastHeroConfigNeedsSave = false;
 
             rapidjson::Document document;
             if (!LoadJsonDocument(heroConfigPath, document))
                 return false;
+            const int heroConfigVersion = ReadJsonInt(document, "version", 1);
+            const bool legacyFovApertureValues =
+                heroConfigVersion < kHeroFovAnglesStoredAsHalfAnglesVersion;
+            gLastHeroConfigNeedsSave = heroConfigVersion < kCurrentHeroConfigVersion;
 
             const auto storeHasEntries = [&](const char* key) {
                 const auto store = document.FindMember(key);
@@ -2914,15 +3013,23 @@ namespace OW { namespace Config {
 
             const auto aimStore = document.FindMember("heroAimPresets");
             if (aimStore != document.MemberEnd())
-                LoadHeroPresetStoreJson(aimStore->value, HeroPresetSlotKind::Aim, heroAimPresets);
+                LoadHeroPresetStoreJson(
+                    aimStore->value,
+                    HeroPresetSlotKind::Aim,
+                    heroAimPresets,
+                    legacyFovApertureValues);
 
             const auto triggerStore = document.FindMember("heroTriggerPresets");
             if (triggerStore != document.MemberEnd())
-                LoadHeroPresetStoreJson(triggerStore->value, HeroPresetSlotKind::Trigger, heroTriggerPresets);
+                LoadHeroPresetStoreJson(
+                    triggerStore->value,
+                    HeroPresetSlotKind::Trigger,
+                    heroTriggerPresets,
+                    legacyFovApertureValues);
 
             const auto skillStore = document.FindMember("heroSkillPresets");
             if (skillStore != document.MemberEnd())
-                LoadHeroSkillPresetStoreJson(skillStore->value);
+                LoadHeroSkillPresetStoreJson(skillStore->value, legacyFovApertureValues);
 
             ValidateHeroPresetsUnlocked();
             ValidateHeroSkillPresetsUnlocked();
@@ -2936,11 +3043,14 @@ namespace OW { namespace Config {
             rapidjson::Document document;
             if (!LoadJsonDocument(heroConfigPath, document))
                 return false;
+            const int heroConfigVersion = ReadJsonInt(document, "version", 1);
+            const bool legacyFovApertureValues =
+                heroConfigVersion < kHeroFovAnglesStoredAsHalfAnglesVersion;
 
             heroSkillPresets.clear();
             const auto skillStore = document.FindMember("heroSkillPresets");
             if (skillStore != document.MemberEnd())
-                LoadHeroSkillPresetStoreJson(skillStore->value);
+                LoadHeroSkillPresetStoreJson(skillStore->value, legacyFovApertureValues);
 
             ValidateHeroSkillPresetsUnlocked();
             LogConfig(Diagnostics::LogLevel::Info,
@@ -2957,6 +3067,8 @@ namespace OW { namespace Config {
             const int fileVersion = ReadInt(ini, kMetaSection, kVersionKey, 0);
             const bool storedBoneUsesLegacyPresetIndex =
                 fileVersion < kPresetBonesStoredAsAimBonesVersion;
+            const bool legacyFovApertureValues =
+                fileVersion < kFovAnglesStoredAsHalfAnglesVersion;
 
             for (const HeroPresetDefinition& def : kHeroPresetDefinitions) {
                 bool legacyAutoBone = false;
@@ -3001,7 +3113,8 @@ namespace OW { namespace Config {
                                 sectionToRead,
                                 slots[static_cast<size_t>(slotIndex)],
                                 slotIndex,
-                                storedBoneUsesLegacyPresetIndex);
+                                storedBoneUsesLegacyPresetIndex,
+                                legacyFovApertureValues);
                             loadedAnySlot = true;
                         }
                     }
@@ -3011,11 +3124,17 @@ namespace OW { namespace Config {
                         if (SectionExists(ini, legacyPresetSection.c_str())) {
                             slots[0] = ReadHeroPresetSectionUnlocked(
                                 ini, legacyPresetSection.c_str(), slots[0], 0,
-                                storedBoneUsesLegacyPresetIndex);
+                                storedBoneUsesLegacyPresetIndex,
+                                legacyFovApertureValues);
                             loadedAnySlot = true;
                         } else {
                             HeroPreset legacyPreset{};
-                            if (TryLoadLegacyPresetForDefinition(ini, def, presetDefaults, legacyPreset)) {
+                            if (TryLoadLegacyPresetForDefinition(
+                                    ini,
+                                    def,
+                                    presetDefaults,
+                                    legacyFovApertureValues,
+                                    legacyPreset)) {
                                 slots[0].present = true;
                                 slots[0].enabled = true;
                                 slots[0].preset = legacyPreset;
@@ -3075,9 +3194,18 @@ namespace OW { namespace Config {
         bool LoadHeroConfigOrMigrateUnlocked(const std::string& heroConfigPath, const IniFile* legacyIni)
         {
             if (FileExists(heroConfigPath) && LoadHeroConfigUnlocked(heroConfigPath)) {
+                const bool saveLoadedHeroConfig = gLastHeroConfigNeedsSave;
                 if (HasLoadedAimOrTriggerPresetsUnlocked() ||
                     legacyIni == nullptr ||
                     !IniHasHeroPresetSections(*legacyIni)) {
+                    if (saveLoadedHeroConfig) {
+                        SaveHeroPresetsUnlocked(heroConfigPath);
+                        gLastHeroConfigNeedsSave = false;
+                        LogConfig(Diagnostics::LogLevel::Info,
+                            "Migrated hero config JSON to version %d at %s.",
+                            kCurrentHeroConfigVersion,
+                            heroConfigPath.c_str());
+                    }
                     return true;
                 }
 
@@ -3121,8 +3249,9 @@ namespace OW { namespace Config {
             std::snprintf(buffer,
                           sizeof(buffer),
                           "%sSlot%d",
-                          kind == FovRingSlotKind::Trigger ? "trigger" : "aim",
+                          "aim",
                           slotIndex + 1);
+            (void)kind;
             return buffer;
         }
 
@@ -3146,8 +3275,6 @@ namespace OW { namespace Config {
             for (int slotIndex = 0; slotIndex < kMaxHeroPresetSlots; ++slotIndex) {
                 LoadFovRingStyle(ini, FovRingSlotKind::Aim, slotIndex,
                                  aimFovRingStyles[static_cast<size_t>(slotIndex)]);
-                LoadFovRingStyle(ini, FovRingSlotKind::Trigger, slotIndex,
-                                 triggerFovRingStyles[static_cast<size_t>(slotIndex)]);
             }
         }
 
@@ -3173,14 +3300,13 @@ namespace OW { namespace Config {
                                  FovRingSlotKind::Aim,
                                  slotIndex,
                                  aimFovRingStyles[static_cast<size_t>(slotIndex)]);
-                SaveFovRingStyle(path,
-                                 FovRingSlotKind::Trigger,
-                                 slotIndex,
-                                 triggerFovRingStyles[static_cast<size_t>(slotIndex)]);
             }
         }
 
-        void LoadHeroSettingsUnlocked(const IniFile& ini, const char* section, uint64_t heroId)
+        void LoadHeroSettingsUnlocked(const IniFile& ini,
+                                      const char* section,
+                                      uint64_t heroId,
+                                      bool legacyFovApertureValues)
         {
             highPriority = ReadBool(ini, section, "highPriority", highPriority);
             aiaim = ReadBool(ini, section, "aiaim", aiaim);
@@ -3190,7 +3316,7 @@ namespace OW { namespace Config {
             trackcompensate = ReadBool(ini, section, "trackc", trackcompensate);
             comarea = ReadFixedFloat(ini, section, "comarea", comarea);
             comspeed = ReadFixedFloat(ini, section, "comspeed", comspeed);
-            Fov = ReadFov2Compat(ini, section, "FOV", Fov);
+            Fov = ReadFov2Compat(ini, section, "FOV", Fov, legacyFovApertureValues);
             minFov1 = Fov;
             hitbox = ReadHitboxScaleCompat(ini, section, "hitboxScale", "hitbox", hitbox);
             missbox = ReadFixedFloat(ini, section, "missbox", missbox);
@@ -3238,7 +3364,7 @@ namespace OW { namespace Config {
             Flick_smooth2 = ReadFixedFloat(ini, section, "Flick_smooth2", Flick_smooth2);
             accvalue2 = ReadFixedFloat(ini, section, "accvalue2", accvalue2);
             hitbox2 = ReadHitboxScaleCompat(ini, section, "hitbox2Scale", "hitbox2", hitbox2);
-            Fov2 = ReadFov2Compat(ini, section, "Fov2", Fov2);
+            Fov2 = ReadFov2Compat(ini, section, "Fov2", Fov2, legacyFovApertureValues);
             minFov2 = Fov2;
 
             const int legacyAimMode = ReadInt(ini, section, "Aim Mode", CurrentAimMode());
@@ -3901,10 +4027,6 @@ namespace OW { namespace Config {
                 aimFovRingStyles[static_cast<size_t>(slotIndex)] = ClampFovRingStyle(
                     aimFovRingStyles[static_cast<size_t>(slotIndex)],
                     FovRingSlotKind::Aim,
-                    slotIndex);
-                triggerFovRingStyles[static_cast<size_t>(slotIndex)] = ClampFovRingStyle(
-                    triggerFovRingStyles[static_cast<size_t>(slotIndex)],
-                    FovRingSlotKind::Trigger,
                     slotIndex);
             }
         }

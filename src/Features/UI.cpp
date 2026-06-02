@@ -10,6 +10,7 @@
 #include "Kmbox/KmboxTimerResolution.h"
 #include "Utils/Config.hpp"
 #include "Game/HeroSkills.hpp"
+#include "Game/Offsets.hpp"
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
 #include "Game/Structs.hpp"
@@ -824,6 +825,8 @@ static const HeroOption kHeroOptions[] = {
     { "Venture", OW::eHero::HERO_VENTURE, "Damage" },
     { "Echo", OW::eHero::HERO_ECHO, "Damage" },
     { "Freja", OW::eHero::HERO_FREJA, "Damage" },
+    { "Vendetta", OW::eHero::HERO_VENDETTA, "Damage" },
+    { "Anran", OW::eHero::HERO_ANRAN, "Damage" },
     { "Mercy", OW::eHero::HERO_MERCY, "Support" },
     { "Lucio", OW::eHero::HERO_LUCIO, "Support" },
     { "Zenyatta", OW::eHero::HERO_ZENYATTA, "Support" },
@@ -3061,7 +3064,7 @@ void UI::AimbotPage() {
             PushControlWidth();
             presetChanged |= UISlider("##aimFov", &activePreset.fov,
                                       OW::Config::kMinFovDeg, OW::Config::kMaxFovDeg,
-                                      "200 deg");
+                                      "100 deg");
             ImGui::PopItemWidth();
 
             // Target Priority
@@ -3096,17 +3099,21 @@ void UI::AimbotPage() {
                                       "100 %");
             ImGui::PopItemWidth();
 
-            // Aim Min Charge
-            SettingRow("Aim Min Charge", kAimbotRightLabelWidth);
-            PushControlWidth();
-            presetChanged |= UISlider("##aimMinChg", &activePreset.minCharge, 0.0f, 100.0f, "5 %");
-            ImGui::PopItemWidth();
+            const bool showAimChargeSettings =
+                activePreset.firePolicy == static_cast<int>(OW::FirePolicyType::ChargeRelease);
+            if (showAimChargeSettings) {
+                // Aim Min Charge
+                SettingRow("Aim Min Charge", kAimbotRightLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimMinChg", &activePreset.minCharge, 0.0f, 100.0f, "5 %");
+                ImGui::PopItemWidth();
 
-            // Autoshot Max Charge
-            SettingRow("Autoshot Max Charge", kAimbotRightLabelWidth);
-            PushControlWidth();
-            presetChanged |= UISlider("##aimMaxChg", &activePreset.maxCharge, 0.0f, 100.0f, "100 %");
-            ImGui::PopItemWidth();
+                // Autoshot Max Charge
+                SettingRow("Autoshot Max Charge", kAimbotRightLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimMaxChg", &activePreset.maxCharge, 0.0f, 100.0f, "100 %");
+                ImGui::PopItemWidth();
+            }
 
             // Ignore Invisible Targets
             SettingRow("Ignore Invisible Targets", kAimbotRightLabelWidth);
@@ -3249,23 +3256,10 @@ void UI::TriggerPage() {
                                       "100 %");
             ImGui::PopItemWidth();
 
-            SettingRow("FOV (deg)", kAimbotRightLabelWidth);
-            PushControlWidth();
-            presetChanged |= UISlider("##triggerSlotFov", &activePreset.fov,
-                                      OW::Config::kMinFovDeg, OW::Config::kMaxFovDeg,
-                                      "200 deg");
-            ImGui::PopItemWidth();
-
             SettingRow("Target Filter", kAimbotRightLabelWidth);
             PushControlWidth();
             presetChanged |= UISelect("##triggerSlotTeam", &activePreset.targetTeam,
                                       kTeam, IM_ARRAYSIZE(kTeam));
-            ImGui::PopItemWidth();
-
-            SettingRow("Priority", kAimbotRightLabelWidth);
-            PushControlWidth();
-            presetChanged |= UISelect("##triggerSlotPriority", &activePreset.priority,
-                                      kPriority, IM_ARRAYSIZE(kPriority));
             ImGui::PopItemWidth();
 
             SettingRow("Ignore Invisible Targets", kAimbotRightLabelWidth);
@@ -3393,8 +3387,15 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         changed |= UICheckbox("##skillEnabled", &settings.enabled);
     }
 
+    const bool hasSequenceControls = hasControl(OW::HeroSkillControls::SequenceSteps);
+    const bool hasTrackingOverlay = hasControl(OW::HeroSkillControls::TrackingOverlay);
+    const bool hasPitchControls = hasControl(OW::HeroSkillControls::PitchControl);
+    const bool hasPhaseTiming = hasControl(OW::HeroSkillControls::PhaseTiming);
+    const bool hasSkillOutputKey = !hasSequenceControls &&
+        (hasControl(OW::HeroSkillControls::Key) || hasPitchControls || hasPhaseTiming);
+
     if (hasControl(OW::HeroSkillControls::Key)) {
-        SettingRow("Key", kAimbotRightLabelWidth);
+        SettingRow("Activation Key", kAimbotRightLabelWidth);
         PushControlWidth();
         changed |= UISelect("##skillKey", &settings.key,
                             OW::Labels::kAimActivationKeys,
@@ -3402,10 +3403,14 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         ImGui::PopItemWidth();
     }
 
-    const bool hasSequenceControls = hasControl(OW::HeroSkillControls::SequenceSteps);
-    const bool hasTrackingOverlay = hasControl(OW::HeroSkillControls::TrackingOverlay);
-    const bool hasPitchControls = hasControl(OW::HeroSkillControls::PitchControl);
-    const bool hasPhaseTiming = hasControl(OW::HeroSkillControls::PhaseTiming);
+    if (hasSkillOutputKey) {
+        SettingRow("Skill Key", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISelect("##skillOutputKey", &settings.skillKey,
+                            OW::Labels::kAimActivationKeys,
+                            OW::Labels::AimActivationKeyCount());
+        ImGui::PopItemWidth();
+    }
 
     if ((hasSequenceControls || hasPitchControls || hasPhaseTiming) &&
         !hasControl(OW::HeroSkillControls::Key)) {
@@ -3513,7 +3518,7 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         PushControlWidth();
         changed |= UISlider("##skillTrackingFov", &settings.tracking.fov,
                             OW::Config::kMinFovDeg, OW::Config::kMaxFovDeg,
-                            "200 deg");
+                            "100 deg");
         ImGui::PopItemWidth();
 
         SettingRow("Tracking Bone", kAimbotRightLabelWidth);
@@ -3907,25 +3912,19 @@ static bool UIFovRingStyleRow(OW::Config::FovRingSlotKind kind,
 
 static void DrawFovRingStyleGroup(OW::Config::FovRingSlotKind kind,
                                   const HeroOption& selectedHero) {
-    const bool isTrigger = kind == OW::Config::FovRingSlotKind::Trigger;
-    UIGroupBox(isTrigger ? "Trigger Slot Rings" : "Aim Slot Rings");
+    UIGroupBox("Aim Slot Rings");
     {
         const int slotCount = selectedHero.heroId == 0
             ? OW::Config::kMaxHeroPresetSlots
-            : ImClamp(isTrigger
-                ? OW::Config::GetHeroTriggerSlotCount(selectedHero.heroId)
-                : OW::Config::GetHeroAimSlotCount(selectedHero.heroId),
+            : ImClamp(OW::Config::GetHeroAimSlotCount(selectedHero.heroId),
                 1,
                 OW::Config::kMaxHeroPresetSlots);
 
         for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex) {
             OW::Config::HeroSlotPreset slot{};
-            const bool hasSlot = selectedHero.heroId != 0 && (isTrigger
-                ? OW::Config::TryGetHeroTriggerSlot(selectedHero.heroId, slotIndex, slot)
-                : OW::Config::TryGetHeroAimSlot(selectedHero.heroId, slotIndex, slot));
-            const bool slotEnabled = hasSlot &&
-                slot.enabled &&
-                (!isTrigger || slot.preset.trigger.enabled);
+            const bool hasSlot = selectedHero.heroId != 0 &&
+                OW::Config::TryGetHeroAimSlot(selectedHero.heroId, slotIndex, slot);
+            const bool slotEnabled = hasSlot && slot.enabled;
             const float fovDeg = hasSlot ? slot.preset.fov : OW::Config::kDefaultFovDeg;
 
             UIFovRingStyleRow(kind, slotIndex, selectedHero.heroId == 0 || slotEnabled, fovDeg);
@@ -3937,7 +3936,6 @@ static void DrawFovRingStyleGroup(OW::Config::FovRingSlotKind kind,
 static void DrawThemeFovRingsPage() {
     const HeroOption& selectedHero = CurrentHeroOption();
     DrawFovRingStyleGroup(OW::Config::FovRingSlotKind::Aim, selectedHero);
-    DrawFovRingStyleGroup(OW::Config::FovRingSlotKind::Trigger, selectedHero);
 }
 
 void UI::ThemePage() {
@@ -4110,6 +4108,16 @@ static void DrawMiscGeneralPage() {
             ImGui::EndDisabled();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Force a fresh target-process PID scan and SDK attach.");
+
+        SettingRow("Runtime Version");
+        const bool cnNeProfile = OW::offset::IsCnNeProfile();
+        ImGui::TextColored(
+            cnNeProfile ? ImVec4(0.25f, 1.0f, 0.45f, 1.0f)
+                        : ImVec4(0.45f, 0.75f, 1.0f, 1.0f),
+            "%s",
+            cnNeProfile ? "NE" : "BZ");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", OW::offset::ActiveProfileName());
 
         SettingRow("Process");
         const bool connected = OW::ProcessConnection::IsConnected();
@@ -4943,7 +4951,7 @@ void UI::Render() {
             break;
         case TAB_THEME:
             subTabNames[0] = "General";
-            subTabNames[1] = "FOV Rings";
+            subTabNames[1] = "Aim FOV";
             subTabCount = kThemeSubTabCount;
             state.themeSubTab = ImClamp(state.themeSubTab, 0, subTabCount - 1);
             activeSub   = &state.themeSubTab;
