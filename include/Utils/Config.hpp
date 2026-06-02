@@ -854,6 +854,10 @@ namespace OW { namespace Config {
         bool ammoGuard = false;
         int ammoGuardReserve = 1;
         int skillKey = -1;
+        float projectileSpeed = 0.0f;
+        float projectileRadius = 0.0f;
+        bool projectileGravity = false;
+        float preFireDelayMs = 0.0f;
     };
 
     using HeroSkillPresetStore = std::unordered_map<uint64_t, std::unordered_map<std::string, HeroSkillSettings>>;

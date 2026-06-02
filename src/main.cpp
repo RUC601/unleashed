@@ -112,8 +112,21 @@ namespace {
 
     static Render::Color EntityRadarColor(const OW::c_entity& entity, size_t index)
     {
-        if (entity.Team && OW::Config::Targetenemyi >= 0 &&
-            index == static_cast<size_t>(OW::Config::Targetenemyi)) {
+        const OW::TargetingDetail::TargetLockRuntime targetLock =
+            OW::TargetingDetail::SnapshotTargetLockRuntime();
+        const uint64_t entityKey = entity.address
+            ? entity.address
+            : (entity.LinkBase ? entity.LinkBase : entity.roster_key);
+        const bool selectedByKey =
+            targetLock.active &&
+            targetLock.entityKey != 0 &&
+            entityKey != 0 &&
+            targetLock.entityKey == entityKey;
+        const bool selectedByIndex =
+            OW::Config::Targetenemyi >= 0 &&
+            index == static_cast<size_t>(OW::Config::Targetenemyi);
+
+        if (entity.Team && (selectedByKey || selectedByIndex)) {
             return ToRenderColor(OW::Config::targetargb);
         }
         return ToRenderColor(entity.Team ? OW::Config::enargb : OW::Config::allyargb);

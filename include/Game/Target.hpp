@@ -1250,7 +1250,8 @@ namespace OW {
                                                           Vector3 rawAimPoint,
                                                           const ProjectileRuntimeSpec& projectile,
                                                           bool predictionEnabled,
-                                                          bool secondary) {
+                                                          bool secondary,
+                                                          float extraPreFireDelayMs = 0.0f) {
             LeadPredictionResult result{};
             result.predictionEnabled = predictionEnabled;
             result.secondary = secondary;
@@ -1267,10 +1268,15 @@ namespace OW {
             const Motion::EntityMotionEstimate motion = Motion::EstimateEntityMotion(entity);
             result.targetVelocity = AccelerationAwareVelocity(entity, result.distance, projectile.projectileSpeed);
             result.timing = EstimateLeadTimingForAimPoint(rawAimPoint, secondary);
+            const float preFireMaxMs = extraPreFireDelayMs > 0.0f ? 1000.0f : kLeadMaxPreFireDelayMs;
+            result.timing.preFireDelayMs = ClampLeadDelayMs(
+                result.timing.preFireDelayMs + extraPreFireDelayMs,
+                preFireMaxMs);
             result.preFireAimPoint = ApplyTargetMotionPreFireDelay(
                 rawAimPoint,
                 result.targetVelocity,
-                result.timing.preFireDelayMs);
+                result.timing.preFireDelayMs,
+                preFireMaxMs);
             result.finalAimPoint = result.preFireAimPoint;
 
             if (projectile.projectileSpeed > 0.0f) {
@@ -1292,7 +1298,7 @@ namespace OW {
                 }
             }
 
-            Diagnostics::Aim("lead.solve enabled=%d secondary=%d projectile(source=%s speed=%.3f gravity=%d) motion(source=%s confidence=%.3f velocity=(%.3f,%.3f,%.3f)) timing(settleMs=%.3f inputMs=%d preFireMs=%.3f) raw=(%.3f,%.3f,%.3f) preFire=(%.3f,%.3f,%.3f) final=(%.3f,%.3f,%.3f)",
+            Diagnostics::Aim("lead.solve enabled=%d secondary=%d projectile(source=%s speed=%.3f gravity=%d) motion(source=%s confidence=%.3f velocity=(%.3f,%.3f,%.3f)) timing(settleMs=%.3f inputMs=%d extraPreFireMs=%.3f preFireMs=%.3f) raw=(%.3f,%.3f,%.3f) preFire=(%.3f,%.3f,%.3f) final=(%.3f,%.3f,%.3f)",
                 predictionEnabled ? 1 : 0,
                 secondary ? 1 : 0,
                 projectile.fromWeaponSpec ? "weapon" : "legacy",
@@ -1305,6 +1311,7 @@ namespace OW {
                 result.targetVelocity.Z,
                 result.timing.estimatedSettleMs,
                 result.timing.inputDelayMs,
+                extraPreFireDelayMs,
                 result.timing.preFireDelayMs,
                 result.rawAimPoint.X,
                 result.rawAimPoint.Y,

@@ -49,8 +49,11 @@ namespace {
     constexpr double kZaryaSecondaryAmmoCost = 25.0;
     constexpr int kZaryaAutoRightThresholdMin = 1;
     constexpr int kZaryaAutoRightThresholdMax = 5;
-    constexpr auto kZaryaAutoRightLeftReleaseSettle = std::chrono::milliseconds(20);
-    constexpr auto kZaryaAutoRightPulse = std::chrono::milliseconds(50);
+    constexpr int kZaryaAutoRightThresholdLeadAmmo = 3;
+    constexpr int kZaryaAutoRightHoldBaseMs = 200;
+    constexpr int kZaryaAutoRightHoldJitterMs = 10;
+    constexpr int kZaryaAutoRightLeftReleaseBaseMs = 100;
+    constexpr int kZaryaAutoRightLeftReleaseJitterMs = 5;
     constexpr auto kZaryaAutoRightRestoreSettle = std::chrono::milliseconds(10);
     constexpr auto kZaryaReloadSuccessMinDuration = std::chrono::milliseconds(900);
     constexpr auto kZaryaBudgetLogInterval = std::chrono::milliseconds(250);
@@ -131,6 +134,30 @@ namespace {
         float speed = 60.0f;
         float maxRange = 45.0f;
         float gravity = 0.0f;
+        float projectileRadius = 0.0f;
+        float preFireDelayMs = 0.0f;
+    };
+
+    struct SkillProjectileRuntime {
+        float speed = 0.0f;
+        float maxRange = 0.0f;
+        bool gravity = false;
+        float projectileRadius = 0.0f;
+        float preFireDelayMs = 0.0f;
+    };
+
+    struct SkillAimCandidate {
+        bool valid = false;
+        c_entity entity{};
+        int entityIndex = -1;
+        uint64_t entityKey = 0;
+        int boneId = 0;
+        float distance = 0.0f;
+        float vitalityPercent = 0.0f;
+        float fovScore = 0.0f;
+        float hitWindow = 0.0f;
+        Vector3 rawAimPoint{};
+        Vector3 aimPoint{};
     };
 
     struct AmmoGuardSample {
@@ -171,6 +198,12 @@ namespace {
         Clock::time_point lastObserved{};
         Clock::time_point lastBudgetLog{};
         int lastLoggedAmmo = -1000;
+    };
+
+    struct ZaryaAutoRightTiming {
+        std::chrono::milliseconds rightHold{};
+        std::chrono::milliseconds leftReleaseDelay{};
+        std::chrono::milliseconds afterLeftRelease{};
     };
 
     struct SequenceAmmoBudgetState {
@@ -331,6 +364,32 @@ namespace {
             kZaryaAutoRightThresholdMax);
         std::lock_guard<std::mutex> lock(g_randomMutex);
         return distribution(g_random);
+    }
+
+    int PickZaryaJitteredMs(int baseMs, int jitterMs, int minMs, int maxMs)
+    {
+        std::uniform_int_distribution<int> distribution(-jitterMs, jitterMs);
+        std::lock_guard<std::mutex> lock(g_randomMutex);
+        return std::clamp(baseMs + distribution(g_random), minMs, maxMs);
+    }
+
+    ZaryaAutoRightTiming PickZaryaAutoRightTiming()
+    {
+        const int rightHoldMs = PickZaryaJitteredMs(
+            kZaryaAutoRightHoldBaseMs,
+            kZaryaAutoRightHoldJitterMs,
+            1,
+            1000);
+        const int leftReleaseDelayMs = PickZaryaJitteredMs(
+            kZaryaAutoRightLeftReleaseBaseMs,
+            kZaryaAutoRightLeftReleaseJitterMs,
+            0,
+            rightHoldMs);
+        return {
+            std::chrono::milliseconds(rightHoldMs),
+            std::chrono::milliseconds(leftReleaseDelayMs),
+            std::chrono::milliseconds(rightHoldMs - leftReleaseDelayMs)
+        };
     }
 
     bool IsActivationKeyHeld(int activationKey)
@@ -1243,12 +1302,28 @@ namespace {
     {
         const std::string skill = skillId ? skillId : "";
         if (skill == "sleep-dart")
-            return { 60.0f, 45.0f, 0.0f };
+            return { 60.0f, 45.0f, 0.0f, 0.2f, 320.0f };
         if (skill == "chain-hook")
-            return { 40.0f, 20.0f, 0.0f };
+            return { 62.0f, 20.0f, 0.0f, 0.5f, 100.0f };
         if (skill == "pulse-bomb")
-            return { 15.0f, 5.0f, 20.0f };
-        return { 60.0f, 40.0f, 0.0f };
+            return { 15.0f, 5.0f, 20.0f, 0.0f, 0.0f };
+        return { 60.0f, 40.0f, 0.0f, 0.0f, 0.0f };
+    }
+
+    SkillProjectileRuntime ResolveSkillProjectileRuntime(const Config::HeroSkillSettings& settings,
+                                                         const TrajectoryParams& params)
+    {
+        SkillProjectileRuntime runtime{};
+        runtime.speed = settings.projectileSpeed > 0.0f ? settings.projectileSpeed : params.speed;
+        runtime.maxRange = params.maxRange;
+        runtime.gravity = settings.projectileGravity || params.gravity > 0.0f;
+        runtime.projectileRadius = settings.projectileRadius > 0.0f
+            ? settings.projectileRadius
+            : params.projectileRadius;
+        runtime.preFireDelayMs = settings.preFireDelayMs > 0.0f
+            ? settings.preFireDelayMs
+            : params.preFireDelayMs;
+        return runtime;
     }
 
     Vector3 ComputePredictedPosition(const Vector3& targetPos,
@@ -1327,6 +1402,210 @@ namespace {
         return best;
     }
 
+    Vector3 SkillAimPointForEntity(c_entity& entity, int boneSetting)
+    {
+        Vector3 aimPoint = TargetingDetail::ConfiguredBonePosition(entity, boneSetting);
+        if (IsUsablePosition(aimPoint))
+            return aimPoint;
+        return CandidatePositionForAction(entity);
+    }
+
+    float ResolveSkillHitWindow(const c_entity& entity,
+                                int boneId,
+                                const SkillProjectileRuntime& projectile,
+                                float hitboxScalePercent)
+    {
+        const float boneRadius = ResolveBoneHitboxRadius(
+            entity.HeroID,
+            boneId,
+            Config::kLegacyDefaultHitboxRadius);
+        const float resolvedWindow = (std::max)(0.0f, boneRadius + projectile.projectileRadius);
+        return resolvedWindow * Config::HitboxScaleMultiplier(hitboxScalePercent);
+    }
+
+    SkillAimCandidate FindBestSkillAimCandidate(const Config::HeroSkillSettings& settings,
+                                                const SkillProjectileRuntime& projectile)
+    {
+        SkillAimCandidate best{};
+        const float effectiveRange = settings.distance > 0.0f
+            ? (std::min)(settings.distance, projectile.maxRange)
+            : projectile.maxRange;
+        if (!std::isfinite(effectiveRange) || effectiveRange <= 0.0f)
+            return best;
+
+        const c_entity local = TargetingDetail::SnapshotLocalEntity();
+        const Vector3 source = SourcePositionForAction(local);
+        if (!IsUsablePosition(source))
+            return best;
+
+        const std::vector<c_entity> snapshot = TargetingDetail::SnapshotEntities();
+        const int requiredTargets = (std::max)(1, settings.minTargets);
+        const int boneSetting = Config::NormalizeAimBone(settings.tracking.bone);
+        const int boneId = AimBoneToSkeletonBoneId(boneSetting);
+        const TargetingDetail::FovRuntimeContext fovContext =
+            TargetingDetail::SnapshotFovRuntimeContext();
+        const ProjectileRuntimeSpec projectileSpec{
+            projectile.speed,
+            projectile.gravity,
+            false
+        };
+
+        int matchingTargets = 0;
+        float bestScore = (std::numeric_limits<float>::max)();
+        float bestDistance = (std::numeric_limits<float>::max)();
+
+        for (size_t index = 0; index < snapshot.size(); ++index) {
+            c_entity entity = snapshot[index];
+            if (!TargetingDetail::IsSelectableCandidate(entity, 0, local))
+                continue;
+            if (Config::aimbotIgnoreInvisible && !entity.Vis)
+                continue;
+            if ((entity.imort || entity.barrprot) && !Config::switch_team)
+                continue;
+
+            const float vitality = VitalityPercent(entity);
+            if (vitality > settings.enemyHealthThreshold)
+                continue;
+
+            const Vector3 rawAimPoint = SkillAimPointForEntity(entity, boneSetting);
+            if (!IsUsablePosition(rawAimPoint))
+                continue;
+
+            const float rawDistance = source.DistTo(rawAimPoint);
+            if (!std::isfinite(rawDistance) || rawDistance > effectiveRange)
+                continue;
+
+            ++matchingTargets;
+
+            Vector3 aimPoint = rawAimPoint;
+            if (settings.prediction && projectile.speed > 0.0f) {
+                const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                    entity,
+                    rawAimPoint,
+                    projectileSpec,
+                    true,
+                    false,
+                    projectile.preFireDelayMs);
+                aimPoint = lead.finalAimPoint;
+            }
+
+            if (!IsUsablePosition(aimPoint))
+                continue;
+
+            const float aimedDistance = source.DistTo(aimPoint);
+            if (!std::isfinite(aimedDistance) ||
+                aimedDistance > effectiveRange + projectile.projectileRadius) {
+                continue;
+            }
+
+            float fovScore = 0.0f;
+            if (!TargetingDetail::IsWithinFovDeg(
+                    fovContext,
+                    aimPoint,
+                    settings.tracking.fov,
+                    &fovScore)) {
+                continue;
+            }
+
+            if (fovScore < bestScore ||
+                (std::fabs(fovScore - bestScore) <= 0.001f && aimedDistance < bestDistance)) {
+                best.valid = true;
+                best.entity = entity;
+                best.entityIndex = static_cast<int>(index);
+                best.entityKey = entity.address ? entity.address : entity.LinkBase;
+                best.boneId = boneId;
+                best.distance = aimedDistance;
+                best.vitalityPercent = vitality;
+                best.fovScore = fovScore;
+                best.rawAimPoint = rawAimPoint;
+                best.aimPoint = aimPoint;
+                best.hitWindow = ResolveSkillHitWindow(
+                    entity,
+                    boneId,
+                    projectile,
+                    settings.tracking.hitbox);
+                bestScore = fovScore;
+                bestDistance = aimedDistance;
+            }
+        }
+
+        if (matchingTargets < requiredTargets)
+            return SkillAimCandidate{};
+        return best;
+    }
+
+    bool MoveSkillAimAndCheckReady(const std::string& runtimeKey,
+                                   const Config::HeroSkillSettings& settings,
+                                   const SkillAimCandidate& candidate,
+                                   const SkillProjectileRuntime& projectile)
+    {
+        if (!candidate.valid || !IsUsablePosition(candidate.aimPoint))
+            return false;
+
+        const int behavior = Config::ClampAimBehaviorIndex(settings.tracking.aimBehavior);
+        if (settings.tracking.fov <= 0.0f || settings.tracking.speedScale <= 0.0f)
+            return false;
+
+        const float smoothInput = Config::AimBehaviorSmoothInput(
+            behavior,
+            settings.tracking.speedScale);
+        AimbotDetail::AimData aim = AimbotDetail::BuildAimData(
+            candidate.aimPoint,
+            Config::IsFlickBehavior(behavior),
+            smoothInput,
+            Config::AimBehaviorAcceleration(behavior),
+            Config::AimBehaviorMethod(behavior));
+        if (!IsFiniteVector(aim.local_angle) ||
+            !IsFiniteVector(aim.target_angle) ||
+            !IsFiniteVector(aim.local_pos) ||
+            candidate.hitWindow <= 0.0f) {
+            return false;
+        }
+
+        const bool hitBeforeMove = OW::in_range(
+            aim.local_angle,
+            aim.target_angle,
+            aim.local_pos,
+            candidate.aimPoint,
+            candidate.hitWindow);
+
+        bool hitAfterMove = hitBeforeMove;
+        if (!AimbotDetail::IsZeroVector(aim.smoothed_angle)) {
+            AimbotDetail::MoveAimDelta(aim.local_angle, aim.smoothed_angle);
+            hitAfterMove = OW::in_range(
+                aim.smoothed_angle,
+                aim.target_angle,
+                aim.local_pos,
+                candidate.aimPoint,
+                candidate.hitWindow);
+        }
+
+        if (Config::aimVerboseLog) {
+            Diagnostics::Aim("skill.aim_tick skill=%s behavior=%d speedScale=%.3f fov=%.3f prediction=%d projectileSpeed=%.3f preFireMs=%.3f targetIndex=%d fovScore=%.3f distance=%.3f hitWindow=%.3f ready[before/after]=%d/%d raw=(%.3f,%.3f,%.3f) aim=(%.3f,%.3f,%.3f)",
+                runtimeKey.c_str(),
+                behavior,
+                settings.tracking.speedScale,
+                settings.tracking.fov,
+                settings.prediction ? 1 : 0,
+                projectile.speed,
+                projectile.preFireDelayMs,
+                candidate.entityIndex,
+                candidate.fovScore,
+                candidate.distance,
+                candidate.hitWindow,
+                hitBeforeMove ? 1 : 0,
+                hitAfterMove ? 1 : 0,
+                candidate.rawAimPoint.X,
+                candidate.rawAimPoint.Y,
+                candidate.rawAimPoint.Z,
+                candidate.aimPoint.X,
+                candidate.aimPoint.Y,
+                candidate.aimPoint.Z);
+        }
+
+        return hitBeforeMove || hitAfterMove;
+    }
+
     int MapHotkeyToVK(int hotkey)
     {
         return Labels::AimActivationKeyVk(hotkey);
@@ -1403,24 +1682,27 @@ namespace {
         return true;
     }
 
-    bool StartZaryaAutoRightPulse(const std::string& runtimeKey, bool releaseLeftFirst)
+    bool StartZaryaAutoRightPulse(const std::string& runtimeKey,
+                                  bool releaseLeftDuringPulse,
+                                  ZaryaAutoRightTiming timing)
     {
         if (!TryBeginTimedAction(runtimeKey))
             return false;
 
-        std::thread([runtimeKey, releaseLeftFirst]() {
+        std::thread([runtimeKey, releaseLeftDuringPulse, timing]() {
             bool releasedLeft = false;
             bool rightPressed = false;
             bool restoredLeft = false;
 
-            if (releaseLeftFirst) {
-                releasedLeft = SetHotkeyState(VK_LBUTTON, false);
-                std::this_thread::sleep_for(kZaryaAutoRightLeftReleaseSettle);
-            }
-
             rightPressed = SetHotkeyState(VK_RBUTTON, true);
             if (rightPressed) {
-                std::this_thread::sleep_for(kZaryaAutoRightPulse);
+                if (releaseLeftDuringPulse) {
+                    std::this_thread::sleep_for(timing.leftReleaseDelay);
+                    releasedLeft = SetHotkeyState(VK_LBUTTON, false);
+                    std::this_thread::sleep_for(timing.afterLeftRelease);
+                } else {
+                    std::this_thread::sleep_for(timing.rightHold);
+                }
                 SetHotkeyState(VK_RBUTTON, false);
             }
 
@@ -1431,14 +1713,15 @@ namespace {
             }
 
             Diagnostics::Aim(
-                "zarya.ammo_probe pulse_done skill=%s releaseLeft=%d releasedLeft=%d rightPressed=%d restoredLeft=%d pulseMs=%lld leftSettleMs=%lld",
+                "zarya.ammo_probe pulse_done skill=%s releaseLeft=%d releasedLeft=%d rightPressed=%d restoredLeft=%d xMs=%lld yMs=%lld zMs=%lld",
                 runtimeKey.c_str(),
-                releaseLeftFirst ? 1 : 0,
+                releaseLeftDuringPulse ? 1 : 0,
                 releasedLeft ? 1 : 0,
                 rightPressed ? 1 : 0,
                 restoredLeft ? 1 : 0,
-                static_cast<long long>(kZaryaAutoRightPulse.count()),
-                static_cast<long long>(kZaryaAutoRightLeftReleaseSettle.count()));
+                static_cast<long long>(timing.rightHold.count()),
+                static_cast<long long>(timing.leftReleaseDelay.count()),
+                static_cast<long long>(timing.afterLeftRelease.count()));
             EndTimedAction(runtimeKey);
         }).detach();
         return true;
@@ -1641,30 +1924,39 @@ namespace {
         const int thresholdAmmo = runtime.autoRightThreshold > 0
             ? runtime.autoRightThreshold
             : kZaryaAutoRightThresholdMin;
-        if (!runtime.autoRightSent && runtime.ammo <= static_cast<double>(thresholdAmmo) && !rightDown) {
+        const int triggerAmmo = leftDown
+            ? std::clamp(thresholdAmmo + kZaryaAutoRightThresholdLeadAmmo, 1, kZaryaAmmoClipSize)
+            : thresholdAmmo;
+        if (!runtime.autoRightSent && runtime.ammo <= static_cast<double>(triggerAmmo) && !rightDown) {
             const std::string pulseKey = runtimeKey + ":auto_right";
             runtime.autoRightSent = true;
-            const bool releaseLeftFirst = leftDown;
-            if (StartZaryaAutoRightPulse(pulseKey, releaseLeftFirst)) {
+            const bool releaseLeftDuringPulse = leftDown;
+            const ZaryaAutoRightTiming timing = PickZaryaAutoRightTiming();
+            if (StartZaryaAutoRightPulse(pulseKey, releaseLeftDuringPulse, timing)) {
                 runtime.ammo = std::clamp(
                     runtime.ammo - kZaryaSecondaryAmmoCost,
                     0.0,
                     static_cast<double>(kZaryaAmmoClipSize));
                 MarkActionExecuted(runtimeKey);
-                Diagnostics::Aim("zarya.ammo_probe auto_right skill=%s threshold=%d pulseMs=%lld releaseLeft=%d leftSettleMs=%lld ammoAfter=%.1f",
+                Diagnostics::Aim("zarya.ammo_probe auto_right skill=%s threshold=%d triggerAmmo=%d xMs=%lld yMs=%lld zMs=%lld releaseLeft=%d ammoAfter=%.1f",
                     runtimeKey.c_str(),
                     thresholdAmmo,
-                    static_cast<long long>(kZaryaAutoRightPulse.count()),
-                    releaseLeftFirst ? 1 : 0,
-                    static_cast<long long>(kZaryaAutoRightLeftReleaseSettle.count()),
+                    triggerAmmo,
+                    static_cast<long long>(timing.rightHold.count()),
+                    static_cast<long long>(timing.leftReleaseDelay.count()),
+                    static_cast<long long>(timing.afterLeftRelease.count()),
+                    releaseLeftDuringPulse ? 1 : 0,
                     runtime.ammo);
                 LogZaryaAmmoProbeBudget(runtimeKey, runtime, "auto_right", leftDown, true, now);
             } else {
-                Diagnostics::Aim("zarya.ammo_probe auto_right_skip skill=%s threshold=%d pulseMs=%lld releaseLeft=%d ammo=%.1f reason=timed_action_active",
+                Diagnostics::Aim("zarya.ammo_probe auto_right_skip skill=%s threshold=%d triggerAmmo=%d xMs=%lld yMs=%lld zMs=%lld releaseLeft=%d ammo=%.1f reason=timed_action_active",
                     runtimeKey.c_str(),
                     thresholdAmmo,
-                    static_cast<long long>(kZaryaAutoRightPulse.count()),
-                    releaseLeftFirst ? 1 : 0,
+                    triggerAmmo,
+                    static_cast<long long>(timing.rightHold.count()),
+                    static_cast<long long>(timing.leftReleaseDelay.count()),
+                    static_cast<long long>(timing.afterLeftRelease.count()),
+                    releaseLeftDuringPulse ? 1 : 0,
                     runtime.ammo);
             }
         }
@@ -2090,6 +2382,38 @@ namespace {
     {
         if (!IsActivationKeyHeld(settings.key))
             return false;
+
+        if (SkillControls(definition, HeroSkillControls::TrackingOverlay)) {
+            const SkillProjectileRuntime projectile =
+                ResolveSkillProjectileRuntime(settings, params);
+            ScopedTrackingConfig trackingOverride(settings.tracking);
+            const SkillAimCandidate candidate = FindBestSkillAimCandidate(settings, projectile);
+            if (!candidate.valid)
+                return false;
+
+            if (!MoveSkillAimAndCheckReady(runtimeKey, settings, candidate, projectile))
+                return false;
+
+            if (IsActionDebounced(runtimeKey))
+                return false;
+
+            const int vk = SkillOutputVk(settings);
+            if (!StartTimedHotkey(runtimeKey, vk, kBriefPulse))
+                return false;
+
+            MarkActionExecuted(runtimeKey);
+            Diagnostics::Info("Hero skill aimed trajectory fired. skill=%s targetIndex=%d distance=%.2f hp=%.1f fovScore=%.2f hitWindow=%.3f projectileSpeed=%.1f preFireMs=%.1f vk=%d",
+                definition.skillId ? definition.skillId : "",
+                candidate.entityIndex,
+                candidate.distance,
+                candidate.vitalityPercent,
+                candidate.fovScore,
+                candidate.hitWindow,
+                projectile.speed,
+                projectile.preFireDelayMs,
+                vk);
+            return true;
+        }
 
         const float effectiveRange = settings.distance > 0.0f
             ? (std::min)(settings.distance, params.maxRange)

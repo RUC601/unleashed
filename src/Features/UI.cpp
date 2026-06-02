@@ -3591,6 +3591,26 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
                             OW::Config::kMaxHitboxScalePercent,
                             "100 %");
         ImGui::PopItemWidth();
+
+        if (hasControl(OW::HeroSkillControls::Prediction)) {
+            SettingRow("Projectile Speed", kAimbotRightLabelWidth);
+            PushControlWidth();
+            changed |= UISlider("##skillProjectileSpeed", &settings.projectileSpeed, 0.0f, 300.0f, "60 m/s");
+            ImGui::PopItemWidth();
+
+            SettingRow("Projectile Radius", kAimbotRightLabelWidth);
+            PushControlWidth();
+            changed |= UISlider("##skillProjectileRadius", &settings.projectileRadius, 0.0f, 2.0f, "0.2 m");
+            ImGui::PopItemWidth();
+
+            SettingRow("Projectile Gravity", kAimbotRightLabelWidth);
+            changed |= UICheckbox("##skillProjectileGravity", &settings.projectileGravity);
+
+            SettingRow("Pre-fire Delay", kAimbotRightLabelWidth);
+            PushControlWidth();
+            changed |= UISlider("##skillPreFireDelay", &settings.preFireDelayMs, 0.0f, 1000.0f, "320 ms");
+            ImGui::PopItemWidth();
+        }
     }
 
     auto drawFloatSlider = [&](const char* rowLabel,

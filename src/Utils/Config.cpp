@@ -1277,6 +1277,9 @@ namespace OW { namespace Config {
             if (!std::isfinite(settings.pitchDownDurationJitter)) settings.pitchDownDurationJitter = 10.0f;
             if (!std::isfinite(settings.pitchDownTargetAngle)) settings.pitchDownTargetAngle = 90.0f;
             if (!std::isfinite(settings.pitchUpOffsetJitter)) settings.pitchUpOffsetJitter = 1.5f;
+            if (!std::isfinite(settings.projectileSpeed)) settings.projectileSpeed = 0.0f;
+            if (!std::isfinite(settings.projectileRadius)) settings.projectileRadius = 0.0f;
+            if (!std::isfinite(settings.preFireDelayMs)) settings.preFireDelayMs = 0.0f;
 
             settings.key = std::clamp(settings.key, 0, MaxActivationKeyIndex());
             settings.skillKey = settings.skillKey < 0
@@ -1313,6 +1316,9 @@ namespace OW { namespace Config {
             settings.fireDelayMs = std::clamp(settings.fireDelayMs, 0, 100);
             settings.jumpKeyCode = std::clamp(settings.jumpKeyCode, 0, 255);
             settings.ammoGuardReserve = std::clamp(settings.ammoGuardReserve, 0, 50);
+            settings.projectileSpeed = std::clamp(settings.projectileSpeed, 0.0f, 300.0f);
+            settings.projectileRadius = std::clamp(settings.projectileRadius, 0.0f, 2.0f);
+            settings.preFireDelayMs = std::clamp(settings.preFireDelayMs, 0.0f, 1000.0f);
             return settings;
         }
 
@@ -2345,6 +2351,10 @@ namespace OW { namespace Config {
             AddJsonInt(value, "jumpKeyCode", settings.jumpKeyCode, allocator);
             AddJsonBool(value, "ammoGuard", settings.ammoGuard, allocator);
             AddJsonInt(value, "ammoGuardReserve", settings.ammoGuardReserve, allocator);
+            AddJsonFloat(value, "projectileSpeed", settings.projectileSpeed, allocator);
+            AddJsonFloat(value, "projectileRadius", settings.projectileRadius, allocator);
+            AddJsonBool(value, "projectileGravity", settings.projectileGravity, allocator);
+            AddJsonFloat(value, "preFireDelayMs", settings.preFireDelayMs, allocator);
             return value;
         }
 
@@ -2760,6 +2770,10 @@ namespace OW { namespace Config {
             defaults.jumpKeyCode = ReadJsonInt(value, "jumpKeyCode", defaults.jumpKeyCode);
             defaults.ammoGuard = ReadJsonBool(value, "ammoGuard", defaults.ammoGuard);
             defaults.ammoGuardReserve = ReadJsonInt(value, "ammoGuardReserve", defaults.ammoGuardReserve);
+            defaults.projectileSpeed = ReadJsonFloat(value, "projectileSpeed", defaults.projectileSpeed);
+            defaults.projectileRadius = ReadJsonFloat(value, "projectileRadius", defaults.projectileRadius);
+            defaults.projectileGravity = ReadJsonBool(value, "projectileGravity", defaults.projectileGravity);
+            defaults.preFireDelayMs = ReadJsonFloat(value, "preFireDelayMs", defaults.preFireDelayMs);
             return ValidateHeroSkillSettingsValue(defaults);
         }
 
@@ -2947,6 +2961,35 @@ namespace OW { namespace Config {
                 value.FindMember("trackingAimBehavior") != value.MemberEnd() ||
                 value.FindMember("trackingSpeedScale") != value.MemberEnd();
             return !hasNewAimAssistKeys && settings.tracking.fov <= 0.001f;
+        }
+
+        bool IsProjectileAimSkill(uint64_t heroId, const std::string& skillId)
+        {
+            return (heroId == static_cast<uint64_t>(OW::eHero::HERO_ANA) && skillId == "sleep-dart") ||
+                (heroId == static_cast<uint64_t>(OW::eHero::HERO_ROADHOG) && skillId == "chain-hook");
+        }
+
+        HeroSkillSettings ProjectileAimSkillDefaults(uint64_t heroId, const std::string& skillId)
+        {
+            if (heroId == static_cast<uint64_t>(OW::eHero::HERO_ANA) && skillId == "sleep-dart")
+                return OW::MakeAnaSleepDartDefaults();
+            if (heroId == static_cast<uint64_t>(OW::eHero::HERO_ROADHOG) && skillId == "chain-hook")
+                return OW::MakeRoadhogChainHookDefaults();
+            return HeroSkillSettings{};
+        }
+
+        bool ShouldRestoreProjectileAimDefaults(uint64_t heroId,
+                                                const std::string& skillId,
+                                                const rapidjson::Value& value)
+        {
+            if (!IsProjectileAimSkill(heroId, skillId))
+                return false;
+            if (!value.IsObject())
+                return true;
+
+            return value.FindMember("trackingAimBehavior") == value.MemberEnd() ||
+                value.FindMember("projectileSpeed") == value.MemberEnd() ||
+                value.FindMember("preFireDelayMs") == value.MemberEnd();
         }
 
         TriggerPreset ReadTriggerPresetJson(const rapidjson::Value& value, TriggerPreset defaults)
@@ -3138,6 +3181,22 @@ namespace OW { namespace Config {
                         heroId == static_cast<uint64_t>(OW::eHero::HERO_ZARYA) &&
                         skillId == "propel-jump") {
                         settings.skillKey = OW::HeroSkillHotkey::RightMouse;
+                        settings = ValidateHeroSkillSettingsValue(settings);
+                    }
+                    if (IsProjectileAimSkill(heroId, skillId)) {
+                        const HeroSkillSettings defaults = ProjectileAimSkillDefaults(heroId, skillId);
+                        if (!hasSkillKey ||
+                            (settings.skillKey == settings.key &&
+                             settings.key != defaults.skillKey)) {
+                            settings.skillKey = defaults.skillKey;
+                        }
+                        if (ShouldRestoreProjectileAimDefaults(heroId, skillId, skill->value)) {
+                            settings.tracking = defaults.tracking;
+                            settings.projectileSpeed = defaults.projectileSpeed;
+                            settings.projectileRadius = defaults.projectileRadius;
+                            settings.projectileGravity = defaults.projectileGravity;
+                            settings.preFireDelayMs = defaults.preFireDelayMs;
+                        }
                         settings = ValidateHeroSkillSettingsValue(settings);
                     }
                     if (ShouldMigrateAsheFirePatternSequence(heroId, skillId, skill->value, settings)) {

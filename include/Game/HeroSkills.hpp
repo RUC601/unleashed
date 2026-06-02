@@ -310,6 +310,52 @@ inline Config::HeroSkillSettings MakeZaryaReloadAmmoProbeDefaults()
     return settings;
 }
 
+inline Config::HeroSkillSettings MakeProjectileAimSkillDefaults(float distance,
+                                                                float cooldown,
+                                                                float projectileSpeed,
+                                                                float projectileRadius,
+                                                                float preFireDelayMs)
+{
+    Config::HeroSkillSettings settings{};
+    settings.enabled = false;
+    settings.key = HeroSkillHotkey::Mouse4;
+    settings.skillKey = HeroSkillHotkey::LeftShift;
+    settings.healthThreshold = 50.0f;
+    settings.enemyHealthThreshold = 50.0f;
+    settings.allyHealthThreshold = 50.0f;
+    settings.distance = distance;
+    settings.mode = 0;
+    settings.cooldown = cooldown;
+    settings.cooldownGuard = true;
+    settings.prediction = true;
+    settings.minTargets = 1;
+    settings.radius = 0.0f;
+    settings.tracking = {
+        Config::kAimBehaviorFlick,
+        0,
+        0.0f,
+        100.0f,
+        Config::kDefaultFovDeg,
+        Config::kAimBoneChest,
+        Config::kDefaultHitboxScalePercent
+    };
+    settings.projectileSpeed = projectileSpeed;
+    settings.projectileRadius = projectileRadius;
+    settings.projectileGravity = false;
+    settings.preFireDelayMs = preFireDelayMs;
+    return settings;
+}
+
+inline Config::HeroSkillSettings MakeAnaSleepDartDefaults()
+{
+    return MakeProjectileAimSkillDefaults(45.0f, 14.0f, 60.0f, 0.2f, 320.0f);
+}
+
+inline Config::HeroSkillSettings MakeRoadhogChainHookDefaults()
+{
+    return MakeProjectileAimSkillDefaults(20.0f, 7.0f, 62.0f, 0.5f, 100.0f);
+}
+
 inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
     {
         OW::eHero::HERO_ASHE,
@@ -447,8 +493,9 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         HeroSkillControls::Enabled | HeroSkillControls::Key |
             HeroSkillControls::EnemyHealthThreshold | HeroSkillControls::Distance |
             HeroSkillControls::CooldownGuard | HeroSkillControls::Prediction |
-            HeroSkillControls::MinTargets | HeroSkillControls::Cooldown,
-        { false, HeroSkillHotkey::LeftShift, 50.0f, 50.0f, 50.0f, 45.0f, 0, 14.0f, true, true, 1, 0.0f }
+            HeroSkillControls::MinTargets | HeroSkillControls::Cooldown |
+            HeroSkillControls::TrackingOverlay,
+        MakeAnaSleepDartDefaults()
     },
     {
         OW::eHero::HERO_ANA,
@@ -500,8 +547,8 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         HeroSkillControls::Enabled | HeroSkillControls::Key |
             HeroSkillControls::EnemyHealthThreshold | HeroSkillControls::Distance |
             HeroSkillControls::CooldownGuard | HeroSkillControls::Prediction |
-            HeroSkillControls::Cooldown,
-        { false, HeroSkillHotkey::LeftShift, 50.0f, 50.0f, 50.0f, 20.0f, 0, 6.0f, true, true, 1, 0.0f }
+            HeroSkillControls::Cooldown | HeroSkillControls::TrackingOverlay,
+        MakeRoadhogChainHookDefaults()
     },
     {
         OW::eHero::HERO_DOOMFIST,

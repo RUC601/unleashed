@@ -2078,13 +2078,34 @@ namespace OverlayRenderDetail {
         return entity.HeroID == 0x16dd || entity.HeroID == 0x16ee || entity.HeroID == 0x16bb;
     }
 
-    inline bool IsSelectedEnemyTarget(const OW::c_entity& entity, size_t index) {
-        return entity.Team && OW::Config::Targetenemyi >= 0 &&
-               index == static_cast<size_t>(OW::Config::Targetenemyi);
+    inline uint64_t EntitySelectionKey(const OW::c_entity& entity) {
+        if (entity.address)
+            return entity.address;
+        if (entity.LinkBase)
+            return entity.LinkBase;
+        return entity.roster_key;
     }
 
-    inline ImVec4 EntityBaseColor(const OW::c_entity& entity, size_t index) {
-        if (IsSelectedEnemyTarget(entity, index)) {
+    inline bool IsSelectedEnemyTarget(const OW::c_entity& entity,
+                                      size_t index,
+                                      uint64_t selectedTargetKey,
+                                      int selectedTargetIndex) {
+        if (!entity.Team)
+            return false;
+
+        const uint64_t entityKey = EntitySelectionKey(entity);
+        if (selectedTargetKey != 0 && entityKey != 0)
+            return entityKey == selectedTargetKey;
+
+        return selectedTargetIndex >= 0 &&
+               index == static_cast<size_t>(selectedTargetIndex);
+    }
+
+    inline ImVec4 EntityBaseColor(const OW::c_entity& entity,
+                                  size_t index,
+                                  uint64_t selectedTargetKey,
+                                  int selectedTargetIndex) {
+        if (IsSelectedEnemyTarget(entity, index, selectedTargetKey, selectedTargetIndex)) {
             return OW::Config::targetargb;
         }
         if (entity.Team && !entity.Vis)
@@ -2118,16 +2139,27 @@ namespace OverlayRenderDetail {
         return Clamp01(1.0f - Clamp01(distance / OW::Config::visualMaxDist));
     }
 
-    inline ImU32 EntityColor(const OW::c_entity& entity, size_t index, float opacity = 1.0f) {
-        return ToImU32(ApplyVisualState(EntityBaseColor(entity, index), entity, opacity));
+    inline ImU32 EntityColor(const OW::c_entity& entity,
+                             size_t index,
+                             uint64_t selectedTargetKey,
+                             int selectedTargetIndex,
+                             float opacity = 1.0f) {
+        return ToImU32(ApplyVisualState(
+            EntityBaseColor(entity, index, selectedTargetKey, selectedTargetIndex),
+            entity,
+            opacity));
     }
 
-    inline ImU32 EntityBoxColor(const OW::c_entity& entity, size_t index, float opacity) {
-        if (IsSelectedEnemyTarget(entity, index))
-            return EntityColor(entity, index, opacity);
+    inline ImU32 EntityBoxColor(const OW::c_entity& entity,
+                                size_t index,
+                                uint64_t selectedTargetKey,
+                                int selectedTargetIndex,
+                                float opacity) {
+        if (IsSelectedEnemyTarget(entity, index, selectedTargetKey, selectedTargetIndex))
+            return EntityColor(entity, index, selectedTargetKey, selectedTargetIndex, opacity);
         if (OW::Config::drawhealth)
             return ToImU32(ApplyVisualState(HealthGradientColor(entity), entity, opacity));
-        return EntityColor(entity, index, opacity);
+        return EntityColor(entity, index, selectedTargetKey, selectedTargetIndex, opacity);
     }
 
     inline ImU32 BoxOutlineColor(float opacity) {
@@ -2136,8 +2168,15 @@ namespace OverlayRenderDetail {
         return ToImU32(color);
     }
 
-    inline Render::Color EntityRenderColor(const OW::c_entity& entity, size_t index, float opacity = 1.0f) {
-        return ToRenderColor(ApplyVisualState(EntityBaseColor(entity, index), entity, opacity));
+    inline Render::Color EntityRenderColor(const OW::c_entity& entity,
+                                           size_t index,
+                                           uint64_t selectedTargetKey,
+                                           int selectedTargetIndex,
+                                           float opacity = 1.0f) {
+        return ToRenderColor(ApplyVisualState(
+            EntityBaseColor(entity, index, selectedTargetKey, selectedTargetIndex),
+            entity,
+            opacity));
     }
 
     inline void DrawCenteredText(const ImVec2& center, ImU32 color, const std::string& text, float fontSize) {
@@ -2759,6 +2798,10 @@ inline void PlayerInfo() {
     static DWORD lastPlayerInfoLogTick = 0;
     static std::unordered_map<uint64_t, OverlayRenderDetail::ProjectedBoundsState> projectedBoundsStates;
     const DWORD renderTick = GetTickCount();
+    const OW::TargetingDetail::TargetLockRuntime targetLock =
+        OW::TargetingDetail::SnapshotTargetLockRuntime();
+    const uint64_t selectedTargetKey = targetLock.active ? targetLock.entityKey : 0;
+    const int selectedTargetIndex = OW::Config::Targetenemyi;
 
     OW::Matrix renderViewMatrix{}, renderViewMatrixXor{};
     OW::GetViewMatricesSnapshot(renderViewMatrix, renderViewMatrixXor);
@@ -2770,7 +2813,13 @@ inline void PlayerInfo() {
 
         const DWORD now = GetTickCount();
         if (lastPlayerInfoLogTick == 0 || now - lastPlayerInfoLogTick >= 1000) {
-            Diagnostics::Info("[PIPELINE] Stage 5 PlayerInfo input=%zu projected=%zu drawn=%zu skip[dead/localhp/self/dist/opacity/w2s/box/window]=%zu/%zu/%zu/%zu/%zu/%zu/%zu/%zu w2s[low/high]=%zu/%zu.",
+            Diagnostics::Info("[PIPELINE] Stage 5 PlayerInfo hero=0x%llX target[index/key]=%d/0x%llX colorA[enemy/hidden/target]=%.2f/%.2f/%.2f input=%zu projected=%zu drawn=%zu skip[dead/localhp/self/dist/opacity/w2s/box/window]=%zu/%zu/%zu/%zu/%zu/%zu/%zu/%zu w2s[low/high]=%zu/%zu.",
+                static_cast<unsigned long long>(local_snapshot.HeroID),
+                selectedTargetIndex,
+                static_cast<unsigned long long>(selectedTargetKey),
+                OW::Config::enargb.w,
+                OW::Config::invisnenargb.w,
+                OW::Config::targetargb.w,
                 renderStats.input,
                 renderStats.projected,
                 renderStats.drawn,
@@ -2848,10 +2897,13 @@ inline void PlayerInfo() {
         float centerX = bounds.centerX;
         float left = bounds.left;
 
-        ImU32 color = OverlayRenderDetail::EntityColor(entity, index, distanceOpacity);
-        ImU32 boxColor = OverlayRenderDetail::EntityBoxColor(entity, index, distanceOpacity);
+        ImU32 color = OverlayRenderDetail::EntityColor(
+            entity, index, selectedTargetKey, selectedTargetIndex, distanceOpacity);
+        ImU32 boxColor = OverlayRenderDetail::EntityBoxColor(
+            entity, index, selectedTargetKey, selectedTargetIndex, distanceOpacity);
         ImU32 boxOutlineColor = OverlayRenderDetail::BoxOutlineColor(distanceOpacity);
-        Render::Color lineColor = OverlayRenderDetail::EntityRenderColor(entity, index, distanceOpacity);
+        Render::Color lineColor = OverlayRenderDetail::EntityRenderColor(
+            entity, index, selectedTargetKey, selectedTargetIndex, distanceOpacity);
         const float visualOpacity = OverlayRenderDetail::VisibilityAlpha(entity, distanceOpacity);
         const float outlineThickness = entity.Vis ? 1.8f : 1.2f;
         const float skeletonThickness = entity.Vis ? 1.5f : 1.0f;
@@ -5167,10 +5219,21 @@ namespace AimbotDetail {
                         Diagnostics::Aim("flick.tick delta_deg=(%.4f,%.4f) hitbox=%.4f missbox=%.4f",
                             deltaDegX, deltaDegY, hitWindow, OW::Config::missbox);
                     }
-                    if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow) &&
+                    const bool hitBeforeMove = OW::in_range(
+                        aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow);
+                    const bool hitAfterMove = OW::in_range(
+                        aim.smoothed_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow);
+                    if (!hitBeforeMove && hitAfterMove) {
+                        Diagnostics::Aim("flick.fire predicted_post_move_hit target=%d hitbox=%.6f",
+                            OW::Config::Targetenemyi,
+                            hitWindow);
+                    }
+                    if ((hitBeforeMove || hitAfterMove) &&
                         (!twoStagePlan.active || twoStagePlan.triggerOpen)) {
                         if (OW::Config::aimVerboseLog) {
-                            Diagnostics::Aim("flick.fire hitbox_check=passed");
+                            Diagnostics::Aim("flick.fire hitbox_check=passed before=%d after=%d",
+                                hitBeforeMove ? 1 : 0,
+                                hitAfterMove ? 1 : 0);
                         }
                         SetSensitivityLocked(true, origin_sens);
                         FirePrimaryNormal();
@@ -5462,12 +5525,12 @@ namespace AimbotDetail {
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     if (OW::Config::Flick2 &&
                         OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::aimbotEffectiveHitWindow2)) {
-                        const int tk = OW::Config::togglekey;
-                        if (tk == 0)       ClickMouseButton(0);
-                        else if (tk == 1)  ClickMouseButton(1);
-                        else if (tk == 2)  OW::SetKey(0x8);
-                        else if (tk == 3)  OW::SetKey(0x10);
-                        else if (tk == 4)  OW::SetKey(0x20);
+                        if (OW::Config::aimVerboseLog) {
+                            Diagnostics::Aim("secondaim.fire action=%d keyMask=0x%X",
+                                OW::Config::aimbotAttack,
+                                FireKeyMaskForAttackAction(OW::Config::aimbotAttack));
+                        }
+                        ClickConfiguredFire();
                         Sleep(1);
                         OW::Config::shooted2 = true;
                     }

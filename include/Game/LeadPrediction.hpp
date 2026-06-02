@@ -134,12 +134,13 @@ inline LeadTimingEstimate BuildLeadTiming(float estimatedSettleMs, int inputDela
 
 inline Vector3 ApplyTargetMotionPreFireDelay(const Vector3& rawAimPoint,
                                              const Vector3& targetVelocity,
-                                             float preFireDelayMs)
+                                             float preFireDelayMs,
+                                             float maxPreFireDelayMs = kLeadMaxPreFireDelayMs)
 {
     if (!IsFiniteLeadVector(rawAimPoint))
         return rawAimPoint;
 
-    const float delaySeconds = ClampLeadDelayMs(preFireDelayMs, kLeadMaxPreFireDelayMs) / 1000.0f;
+    const float delaySeconds = ClampLeadDelayMs(preFireDelayMs, maxPreFireDelayMs) / 1000.0f;
     if (delaySeconds <= 0.0f)
         return rawAimPoint;
 
