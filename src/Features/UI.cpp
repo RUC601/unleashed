@@ -3061,12 +3061,12 @@ void UI::AimbotPage() {
             if (OW::Config::IsFlickBehavior(activePreset.aimBehavior)) {
                 SettingRow("Shot Clamp", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                presetChanged |= UISlider("##aimFlickShotClamp", &activePreset.flickShotClampMs, 0.0f, 100.0f, "0 ms");
+                presetChanged |= UISlider("##aimFlickShotClamp", &activePreset.flickShotClampMs, 0.0f, 1000.0f, "0 ms");
                 ImGui::PopItemWidth();
 
                 SettingRow("Post-fire Delay", kAimbotLeftLabelWidth);
                 PushControlWidth();
-                presetChanged |= UISlider("##aimFlickPostFireDelay", &activePreset.flickPostFireDelayMs, 0.0f, 1000.0f, "0 ms");
+                presetChanged |= UISlider("##aimFlickPostFireDelay", &activePreset.flickPostFireDelayMs, 0.0f, 500.0f, "0 ms");
                 ImGui::PopItemWidth();
 
                 SettingRow("Trajectory Wait", kAimbotLeftLabelWidth);
@@ -3554,32 +3554,37 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
 
     if (hasTrackingOverlay && settings.enabled) {
         ImGui::Spacing();
-        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Tracking Overlay");
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kColTextMuted), "Skill Aim");
 
-        SettingRow("Tracking Method", kAimbotRightLabelWidth);
+        SettingRow("Aim Behavior", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISelect("##skillTrackingMethod", &settings.tracking.method, kAimMethod, IM_ARRAYSIZE(kAimMethod));
+        if (UISelect("##skillTrackingBehavior", &settings.tracking.aimBehavior,
+                     kAimBehavior, IM_ARRAYSIZE(kAimBehavior))) {
+            settings.tracking.aimBehavior =
+                OW::Config::ClampAimBehaviorIndex(settings.tracking.aimBehavior);
+            changed = true;
+        }
         ImGui::PopItemWidth();
 
-        SettingRow("Tracking Smooth", kAimbotRightLabelWidth);
+        SettingRow("Speed Scale", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISlider("##skillTrackingSmooth", &settings.tracking.smooth, 0.0f, 100.0f, "5.00 %");
+        changed |= UISlider("##skillTrackingSpeedScale", &settings.tracking.speedScale, 0.0f, 100.0f, "100 %");
         ImGui::PopItemWidth();
 
-        SettingRow("Tracking FOV (deg)", kAimbotRightLabelWidth);
+        SettingRow("FOV (deg)", kAimbotRightLabelWidth);
         PushControlWidth();
         changed |= UISlider("##skillTrackingFov", &settings.tracking.fov,
                             OW::Config::kMinFovDeg, OW::Config::kMaxFovDeg,
                             "100 deg");
         ImGui::PopItemWidth();
 
-        SettingRow("Tracking Bone", kAimbotRightLabelWidth);
+        SettingRow("Bone", kAimbotRightLabelWidth);
         PushControlWidth();
         changed |= UISelect("##skillTrackingBone", &settings.tracking.bone,
                             kHeroSkillTrackingBones, IM_ARRAYSIZE(kHeroSkillTrackingBones));
         ImGui::PopItemWidth();
 
-        SettingRow("Tracking Hitbox Scale", kAimbotRightLabelWidth);
+        SettingRow("Hitbox Scale", kAimbotRightLabelWidth);
         PushControlWidth();
         changed |= UISlider("##skillTrackingHitbox", &settings.tracking.hitbox,
                             OW::Config::kMinHitboxScalePercent,

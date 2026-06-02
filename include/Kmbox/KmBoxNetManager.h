@@ -112,6 +112,7 @@ public:
     ~KmBoxNetManager();
     int ForceReleaseMouseButton(int button);
     int ForceReleaseMouseButtons();
+    int SetMouseButtonStateMask(unsigned int StateMask, bool Force = false);
     int SendKeyboardKey(unsigned char hidCode, bool down);
     KmBoxConnectionState GetConnectionState() const;
     bool IsConnected() const;

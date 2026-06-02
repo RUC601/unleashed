@@ -114,6 +114,7 @@ void RunInputSequence(const std::string& skillId,
                       const std::vector<Config::HeroSkillSequenceStep>& steps,
                       int key,
                       const Config::HeroSkillTrackingParams& trackingParams,
+                      bool prediction,
                       bool ammoGuardEnabled,
                       int ammoGuardReserve);
 HeroSkillRunState RunViewpointController(const std::string& skillId,
@@ -139,7 +140,15 @@ inline Config::HeroSkillSettings MakeAsheComboSequenceDefaults()
     settings.prediction = true;
     settings.minTargets = 1;
     settings.radius = 0.0f;
-    settings.tracking = { 0, 5.0f, 0.0f, Config::kAimBoneHead, Config::kDefaultHitboxScalePercent };
+    settings.tracking = {
+        Config::kAimBehaviorTracking,
+        0,
+        0.0f,
+        100.0f,
+        Config::kDefaultFovDeg,
+        Config::kAimBoneHead,
+        Config::kDefaultHitboxScalePercent
+    };
     settings.ammoGuard = true;
     settings.ammoGuardReserve = 1;
 
@@ -235,7 +244,15 @@ inline Config::HeroSkillSettings MakeFrejaSequenceSetDefaults()
     settings.prediction = true;
     settings.minTargets = 1;
     settings.radius = 0.0f;
-    settings.tracking = { 0, 5.0f, 0.0f, Config::kAimBoneChest, Config::kDefaultHitboxScalePercent };
+    settings.tracking = {
+        Config::kAimBehaviorTracking,
+        0,
+        0.0f,
+        100.0f,
+        0.0f,
+        Config::kAimBoneChest,
+        Config::kDefaultHitboxScalePercent
+    };
     settings.ammoGuard = false;
     settings.ammoGuardReserve = 1;
 
@@ -289,7 +306,7 @@ inline Config::HeroSkillSettings MakeZaryaReloadAmmoProbeDefaults()
     settings.cooldown = 0.0f;
     settings.prediction = false;
     settings.ammoGuard = false;
-    settings.ammoGuardReserve = 10;
+    settings.ammoGuardReserve = 1;
     return settings;
 }
 
@@ -362,6 +379,7 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         HeroSkillControls::Enabled | HeroSkillControls::Key |
             HeroSkillControls::CooldownGuard | HeroSkillControls::Cooldown |
             HeroSkillControls::AmmoGuard |
+            HeroSkillControls::TrackingOverlay |
             HeroSkillControls::SequenceSteps,
         MakeAsheComboSequenceDefaults()
     },
@@ -464,7 +482,7 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         OW::eHero::HERO_ZARYA,
         "zarya",
         "reload-ammo-probe",
-        "Reload Ammo Probe",
+        "Low Ammo Right Click",
         "particle-cannon",
         HeroSkillInputAction::SecondaryFire,
         HeroSkillCategory::Skill,

@@ -474,6 +474,13 @@ namespace OW {
         }
     }
 
+    inline bool SendMouseButtonStateMask(uint32_t stateMask, bool force = false) {
+        if (!Config::kmboxEnabled || Config::kmboxDeviceType != 0)
+            return false;
+
+        return kmbox::KmBoxMgr.SetMouseButtonStateMask(stateMask & 0x7u, force) == success;
+    }
+
     inline bool SendMouseButtonMask(uint32_t keyMask, bool down) {
         if (!Config::kmboxEnabled || keyMask == 0 || (keyMask & ~0x7u) != 0)
             return false;

@@ -47,6 +47,11 @@ namespace {
     constexpr int kZaryaAmmoClipSize = 100;
     constexpr double kZaryaPrimaryAmmoPerSecond = 20.0;
     constexpr double kZaryaSecondaryAmmoCost = 25.0;
+    constexpr int kZaryaAutoRightThresholdMin = 1;
+    constexpr int kZaryaAutoRightThresholdMax = 5;
+    constexpr auto kZaryaAutoRightLeftReleaseSettle = std::chrono::milliseconds(20);
+    constexpr auto kZaryaAutoRightPulse = std::chrono::milliseconds(50);
+    constexpr auto kZaryaAutoRightRestoreSettle = std::chrono::milliseconds(10);
     constexpr auto kZaryaReloadSuccessMinDuration = std::chrono::milliseconds(900);
     constexpr auto kZaryaBudgetLogInterval = std::chrono::milliseconds(250);
     struct SequenceRuntime {
@@ -162,6 +167,7 @@ namespace {
         bool leftWasDown = false;
         bool rightWasDown = false;
         bool autoRightSent = false;
+        int autoRightThreshold = 0;
         Clock::time_point lastObserved{};
         Clock::time_point lastBudgetLog{};
         int lastLoggedAmmo = -1000;
@@ -318,6 +324,15 @@ namespace {
             std::string(definition.skillId ? definition.skillId : "") == "reload-ammo-probe";
     }
 
+    int PickZaryaAutoRightThreshold()
+    {
+        std::uniform_int_distribution<int> distribution(
+            kZaryaAutoRightThresholdMin,
+            kZaryaAutoRightThresholdMax);
+        std::lock_guard<std::mutex> lock(g_randomMutex);
+        return distribution(g_random);
+    }
+
     bool IsActivationKeyHeld(int activationKey)
     {
         const int vk = Labels::AimActivationKeyVk(activationKey);
@@ -383,13 +398,39 @@ namespace {
         return Config::aimVerboseLog || SequenceSelfTest().enabled;
     }
 
-    void ApplyButtonMaskDiff(int prevMask, int newMask)
+    void ApplyButtonMaskDiff(const std::string& skillId, int prevMask, int newMask)
     {
+        newMask &= 0x07;
+        prevMask &= 0x07;
         const int changed = prevMask ^ newMask;
+        if (changed == 0)
+            return;
+
+        const bool rightStateInvolved = ((prevMask | newMask) & 0x02) != 0;
+        if (rightStateInvolved &&
+            OW::SendMouseButtonStateMask(static_cast<uint32_t>(newMask))) {
+            if (SequenceDiagnosticsEnabled()) {
+                Diagnostics::Aim("sequence.button_state skill=%s prevMask=0x%02X newMask=0x%02X fullState=1",
+                    skillId.c_str(),
+                    prevMask,
+                    newMask);
+            }
+            return;
+        }
+
         for (int bit = 0; bit < 3; ++bit) {
             const int bitFlag = 1 << bit;
-            if (changed & bitFlag)
+            if (changed & bitFlag) {
+                if (SequenceDiagnosticsEnabled()) {
+                    Diagnostics::Aim("sequence.button_diff skill=%s prevMask=0x%02X newMask=0x%02X button=%d down=%d fullState=0",
+                        skillId.c_str(),
+                        prevMask,
+                        newMask,
+                        bit,
+                        (newMask & bitFlag) != 0 ? 1 : 0);
+                }
                 OW::SendMouseButton(bit, (newMask & bitFlag) != 0);
+            }
         }
     }
 
@@ -683,7 +724,7 @@ namespace {
         }
 
         if (runtime.currentMask != 0) {
-            ApplyButtonMaskDiff(runtime.currentMask, 0);
+            ApplyButtonMaskDiff(skillId, runtime.currentMask, 0);
             runtime.currentMask = 0;
         }
         if (shouldForceRelease)
@@ -885,9 +926,11 @@ namespace {
         return std::clamp(static_cast<int>(std::lround(duration)), 5, 1000);
     }
 
-    void EnterSequenceStep(int& currentMask, const Config::HeroSkillSequenceStep& step)
+    void EnterSequenceStep(const std::string& skillId,
+                           int& currentMask,
+                           const Config::HeroSkillSequenceStep& step)
     {
-        ApplyButtonMaskDiff(currentMask, step.buttonMask);
+        ApplyButtonMaskDiff(skillId, currentMask, step.buttonMask);
         currentMask = step.buttonMask;
     }
 
@@ -927,7 +970,7 @@ namespace {
             const int durationMs = PickSequenceDurationMs(step);
             if (ConsumeSequenceAmmoBudgetForStep(skillId, currentMask, step.buttonMask, ammoGuardEnabled, ammoGuardReserve))
                 break;
-            EnterSequenceStep(currentMask, step);
+            EnterSequenceStep(skillId, currentMask, step);
 
             if (SequenceDiagnosticsEnabled()) {
                 Diagnostics::Aim("sequence.step skill=%s step=%zu mask=0x%02X durationMs=%d baseMs=%d scale=%.3f jitterMs=%d",
@@ -944,7 +987,7 @@ namespace {
             ++stepIndex;
         }
 
-        ApplyButtonMaskDiff(currentMask, 0);
+        ApplyButtonMaskDiff(skillId, currentMask, 0);
         ReleaseAllButtons();
         timeEndPeriod(1);
         Diagnostics::Info("Hero skill sequence worker stopped. skill=%s", skillId.c_str());
@@ -1075,12 +1118,12 @@ namespace {
             originalPreset = Config::MakeHeroPresetFromCurrent();
 
             Config::HeroPreset overlay = originalPreset;
+            overlay.aimBehavior = Config::ClampAimBehaviorIndex(params.aimBehavior);
+            overlay.aimMode = Config::IsTrackingBehavior(overlay.aimBehavior) ? 0 : 1;
             overlay.fov = params.fov;
-            overlay.smooth = params.smooth;
+            overlay.smooth = params.speedScale;
             overlay.bone = params.bone;
             overlay.hitbox = params.hitbox;
-            overlay.aimMode = 0;
-            overlay.aimBehavior = 0;
             Config::ApplyHeroPresetToGlobals(overlay);
             active = true;
         }
@@ -1094,27 +1137,41 @@ namespace {
         }
     };
 
-    void RunTrackingOverlayTick(const Config::HeroSkillTrackingParams& params)
+    void RunTrackingOverlayTick(const std::string& skillId,
+                                const Config::HeroSkillTrackingParams& params,
+                                bool prediction)
     {
-        if (params.fov <= 0.0f)
+        const int behavior = Config::ClampAimBehaviorIndex(params.aimBehavior);
+        if (params.fov <= 0.0f || params.speedScale <= 0.0f)
             return;
 
         ScopedTrackingConfig trackingOverride(params);
-        const Vector3 targetVector = GetVector3(false);
+        const Vector3 targetVector = GetVector3(prediction);
         c_entity target{};
         if (AimbotDetail::IsZeroVector(targetVector) ||
             !AimbotDetail::IsPrimaryTargetActionable(target)) {
             return;
         }
 
+        const float smoothInput = Config::AimBehaviorSmoothInput(behavior, params.speedScale);
         AimbotDetail::AimData aim = AimbotDetail::BuildAimData(
             targetVector,
-            false,
-            params.smooth / 10.0f,
-            Config::AimMethodAcceleration(params.method),
-            params.method);
-        if (!AimbotDetail::IsZeroVector(aim.smoothed_angle))
+            Config::IsFlickBehavior(behavior),
+            smoothInput,
+            Config::AimBehaviorAcceleration(behavior),
+            Config::AimBehaviorMethod(behavior));
+        if (!AimbotDetail::IsZeroVector(aim.smoothed_angle)) {
             AimbotDetail::MoveAimDelta(aim.local_angle, aim.smoothed_angle);
+            if (Config::aimVerboseLog) {
+                Diagnostics::Aim("sequence.aim_tick skill=%s behavior=%d speedScale=%.3f fov=%.3f prediction=%d targetIndex=%d",
+                    skillId.c_str(),
+                    behavior,
+                    params.speedScale,
+                    params.fov,
+                    prediction ? 1 : 0,
+                    Config::Targetenemyi);
+            }
+        }
     }
 
     bool IsFiniteVector(const Vector3& value)
@@ -1346,6 +1403,47 @@ namespace {
         return true;
     }
 
+    bool StartZaryaAutoRightPulse(const std::string& runtimeKey, bool releaseLeftFirst)
+    {
+        if (!TryBeginTimedAction(runtimeKey))
+            return false;
+
+        std::thread([runtimeKey, releaseLeftFirst]() {
+            bool releasedLeft = false;
+            bool rightPressed = false;
+            bool restoredLeft = false;
+
+            if (releaseLeftFirst) {
+                releasedLeft = SetHotkeyState(VK_LBUTTON, false);
+                std::this_thread::sleep_for(kZaryaAutoRightLeftReleaseSettle);
+            }
+
+            rightPressed = SetHotkeyState(VK_RBUTTON, true);
+            if (rightPressed) {
+                std::this_thread::sleep_for(kZaryaAutoRightPulse);
+                SetHotkeyState(VK_RBUTTON, false);
+            }
+
+            if (releasedLeft) {
+                std::this_thread::sleep_for(kZaryaAutoRightRestoreSettle);
+                if (AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON))
+                    restoredLeft = SetHotkeyState(VK_LBUTTON, true);
+            }
+
+            Diagnostics::Aim(
+                "zarya.ammo_probe pulse_done skill=%s releaseLeft=%d releasedLeft=%d rightPressed=%d restoredLeft=%d pulseMs=%lld leftSettleMs=%lld",
+                runtimeKey.c_str(),
+                releaseLeftFirst ? 1 : 0,
+                releasedLeft ? 1 : 0,
+                rightPressed ? 1 : 0,
+                restoredLeft ? 1 : 0,
+                static_cast<long long>(kZaryaAutoRightPulse.count()),
+                static_cast<long long>(kZaryaAutoRightLeftReleaseSettle.count()));
+            EndTimedAction(runtimeKey);
+        }).detach();
+        return true;
+    }
+
     bool IsActionDebounced(const std::string& runtimeKey)
     {
         const auto item = g_lastActionExecutions.find(runtimeKey);
@@ -1400,10 +1498,11 @@ namespace {
 
         runtime.lastBudgetLog = now;
         runtime.lastLoggedAmmo = ammoInt;
-        Diagnostics::Aim("zarya.ammo_probe budget skill=%s reason=%s ammo=%.1f left=%d right=%d autoRight=%d",
+        Diagnostics::Aim("zarya.ammo_probe budget skill=%s reason=%s ammo=%.1f threshold=%d left=%d right=%d autoRight=%d",
             runtimeKey.c_str(),
             forced ? reason : "tick",
             runtime.ammo,
+            runtime.autoRightThreshold,
             leftDown ? 1 : 0,
             rightDown ? 1 : 0,
             runtime.autoRightSent ? 1 : 0);
@@ -1421,13 +1520,15 @@ namespace {
         runtime.leftWasDown = leftDown;
         runtime.rightWasDown = rightDown;
         runtime.autoRightSent = false;
+        runtime.autoRightThreshold = PickZaryaAutoRightThreshold();
         runtime.lastObserved = now;
         ResetZaryaAmmoProbeBudgetLog(runtime);
 
-        Diagnostics::Aim("zarya.ammo_probe reload_success skill=%s durationMs=%lld seedAmmo=%d",
+        Diagnostics::Aim("zarya.ammo_probe reload_success skill=%s durationMs=%lld seedAmmo=%d threshold=%d",
             runtimeKey.c_str(),
             reloadDurationMs,
-            kZaryaAmmoClipSize);
+            kZaryaAmmoClipSize,
+            runtime.autoRightThreshold);
         LogZaryaAmmoProbeBudget(runtimeKey, runtime, "reload_seed", leftDown, rightDown, now);
     }
 
@@ -1449,6 +1550,7 @@ namespace {
                 runtime.budgetArmed = false;
                 runtime.ammo = -1.0;
                 runtime.autoRightSent = false;
+                runtime.autoRightThreshold = 0;
                 ResetZaryaAmmoProbeBudgetLog(runtime);
                 Diagnostics::Aim("zarya.ammo_probe reload_start skill=%s source=%s skillBase=0x%llX",
                     runtimeKey.c_str(),
@@ -1489,6 +1591,7 @@ namespace {
                     static_cast<long long>(elapsed.count()));
                 runtime.budgetArmed = false;
                 runtime.ammo = -1.0;
+                runtime.autoRightThreshold = 0;
             }
 
             runtime.lastReloading = false;
@@ -1535,21 +1638,34 @@ namespace {
             rightDown,
             now);
 
-        const int thresholdAmmo = std::clamp(settings.ammoGuardReserve, 1, 50);
-        if (!runtime.autoRightSent && runtime.ammo < static_cast<double>(thresholdAmmo) && !rightDown) {
+        const int thresholdAmmo = runtime.autoRightThreshold > 0
+            ? runtime.autoRightThreshold
+            : kZaryaAutoRightThresholdMin;
+        if (!runtime.autoRightSent && runtime.ammo <= static_cast<double>(thresholdAmmo) && !rightDown) {
             const std::string pulseKey = runtimeKey + ":auto_right";
-            if (StartTimedHotkey(pulseKey, VK_RBUTTON, kBriefPulse)) {
-                runtime.autoRightSent = true;
+            runtime.autoRightSent = true;
+            const bool releaseLeftFirst = leftDown;
+            if (StartZaryaAutoRightPulse(pulseKey, releaseLeftFirst)) {
                 runtime.ammo = std::clamp(
                     runtime.ammo - kZaryaSecondaryAmmoCost,
                     0.0,
                     static_cast<double>(kZaryaAmmoClipSize));
                 MarkActionExecuted(runtimeKey);
-                Diagnostics::Aim("zarya.ammo_probe auto_right skill=%s threshold=%d ammoAfter=%.1f",
+                Diagnostics::Aim("zarya.ammo_probe auto_right skill=%s threshold=%d pulseMs=%lld releaseLeft=%d leftSettleMs=%lld ammoAfter=%.1f",
                     runtimeKey.c_str(),
                     thresholdAmmo,
+                    static_cast<long long>(kZaryaAutoRightPulse.count()),
+                    releaseLeftFirst ? 1 : 0,
+                    static_cast<long long>(kZaryaAutoRightLeftReleaseSettle.count()),
                     runtime.ammo);
                 LogZaryaAmmoProbeBudget(runtimeKey, runtime, "auto_right", leftDown, true, now);
+            } else {
+                Diagnostics::Aim("zarya.ammo_probe auto_right_skip skill=%s threshold=%d pulseMs=%lld releaseLeft=%d ammo=%.1f reason=timed_action_active",
+                    runtimeKey.c_str(),
+                    thresholdAmmo,
+                    static_cast<long long>(kZaryaAutoRightPulse.count()),
+                    releaseLeftFirst ? 1 : 0,
+                    runtime.ammo);
             }
         }
     }
@@ -2131,6 +2247,7 @@ void RunInputSequence(const std::string& skillId,
                       const std::vector<Config::HeroSkillSequenceStep>& steps,
                       int key,
                       const Config::HeroSkillTrackingParams& trackingParams,
+                      bool prediction,
                       bool ammoGuardEnabled,
                       int ammoGuardReserve)
 {
@@ -2165,7 +2282,7 @@ void RunInputSequence(const std::string& skillId,
                 CancelSequence(skillId, runtime, "ammo_guard_budget");
                 return;
             }
-            EnterSequenceStep(runtime.currentMask, steps.front());
+            EnterSequenceStep(skillId, runtime.currentMask, steps.front());
         }
 
         Diagnostics::Info("Hero skill sequence started. skill=%s steps=%zu activationKey=%d",
@@ -2192,7 +2309,7 @@ void RunInputSequence(const std::string& skillId,
                 CancelSequence(skillId, runtime, "ammo_guard_budget");
                 return;
             }
-            EnterSequenceStep(runtime.currentMask, steps.front());
+            EnterSequenceStep(skillId, runtime.currentMask, steps.front());
         }
 
         const Clock::time_point now = Clock::now();
@@ -2207,7 +2324,7 @@ void RunInputSequence(const std::string& skillId,
                 CancelSequence(skillId, runtime, "ammo_guard_budget");
                 return;
             }
-            EnterSequenceStep(runtime.currentMask, nextStep);
+            EnterSequenceStep(skillId, runtime.currentMask, nextStep);
 
             if (SequenceDiagnosticsEnabled()) {
                 Diagnostics::Aim("sequence.step skill=%s step=%zu mask=0x%02X durationMs=%d baseMs=%d scale=%.3f jitterMs=%d",
@@ -2222,7 +2339,7 @@ void RunInputSequence(const std::string& skillId,
         }
     }
 
-    (void)trackingParams;
+    RunTrackingOverlayTick(skillId, trackingParams, prediction);
     UpdateSequenceHitTiming(skillId, runtime);
 }
 
@@ -2454,6 +2571,7 @@ void ProcessHeroSkills()
                              settings.sequenceSteps,
                              settings.key,
                              settings.tracking,
+                             settings.prediction,
                              settings.ammoGuard,
                              settings.ammoGuardReserve);
         }

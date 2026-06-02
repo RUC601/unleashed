@@ -316,12 +316,12 @@ namespace OW { namespace Config {
 
     inline float ClampFlickShotClampMs(float value)
     {
-        return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 100.0f);
+        return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 1000.0f);
     }
 
     inline float ClampFlickPostFireDelayMs(float value)
     {
-        return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 1000.0f);
+        return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 500.0f);
     }
 
     inline float ClampTrajectoryWaitMs(float value)
@@ -770,8 +770,10 @@ namespace OW { namespace Config {
     };
 
     struct HeroSkillTrackingParams {
+        int aimBehavior = kAimBehaviorTracking;
         int method = 0;
         float smooth = 0.0f;
+        float speedScale = 100.0f;
         float fov = 0.0f;
         int bone = kAimBoneChest;
         float hitbox = 0.0f;     // percentage of resolved bone+projectile window; 0 disables the gate

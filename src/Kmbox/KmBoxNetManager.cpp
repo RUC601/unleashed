@@ -982,6 +982,47 @@ int KmBoxNetManager::ForceReleaseMouseButton(int button)
     }
 }
 
+int KmBoxNetManager::SetMouseButtonStateMask(unsigned int StateMask, bool Force)
+{
+    const int next = static_cast<int>(StateMask & 0x07u);
+    soft_mouse_t payload{};
+    int previousStateMask = 0;
+    {
+        std::lock_guard<std::mutex> lock(mouseStateMutex);
+        previousStateMask = Mouse.MouseData.button;
+        if (!Force && next == previousStateMask) {
+            Diagnostics::Trace("[KMBOX-NET] coalesced redundant mouse button state mask=0x%02X",
+                next);
+            return success;
+        }
+
+        Mouse.MouseData.button = next;
+        payload = Mouse.MouseData;
+    }
+
+    payload.button = next;
+    payload.x = 0;
+    payload.y = 0;
+    payload.wheel = 0;
+
+    client_data packet = BuildPacket(cmd_mouse_right, NextRandom());
+    memcpy_s(&packet.cmd_mouse, sizeof(soft_mouse_t), &payload, sizeof(soft_mouse_t));
+
+    Diagnostics::Aim("udp.mouse.button_state build prevMask=0x%02X stateMask=0x%02X payloadButton=%d force=%d",
+        previousStateMask,
+        next,
+        payload.button,
+        Force ? 1 : 0);
+
+    KmBoxQueuedNetCommand command{};
+    command.data = packet;
+    command.length = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
+    command.type = KmBoxCommandType::MouseButton;
+    command.mouseButtonStateMask = next;
+    command.enqueuedAt = std::chrono::steady_clock::now();
+    return EnqueueCommand(command);
+}
+
 int KmBoxNetManager::SendKeyboardKey(unsigned char hidCode, bool down)
 {
     client_data packet = BuildPacket(cmd_keyboard_all, NextRandom());

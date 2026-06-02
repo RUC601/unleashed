@@ -282,7 +282,7 @@ namespace OW { namespace Config {
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
-        constexpr int kCurrentHeroConfigVersion = 3;
+        constexpr int kCurrentHeroConfigVersion = 4;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr const char* kMetaSection = "Meta";
@@ -1271,6 +1271,7 @@ namespace OW { namespace Config {
             if (!std::isfinite(settings.cooldown)) settings.cooldown = 0.0f;
             if (!std::isfinite(settings.radius)) settings.radius = 0.0f;
             if (!std::isfinite(settings.tracking.smooth)) settings.tracking.smooth = 0.0f;
+            if (!std::isfinite(settings.tracking.speedScale)) settings.tracking.speedScale = 100.0f;
             if (!std::isfinite(settings.tracking.fov)) settings.tracking.fov = 0.0f;
             if (!std::isfinite(settings.tracking.hitbox)) settings.tracking.hitbox = 0.0f;
             if (!std::isfinite(settings.pitchDownDurationJitter)) settings.pitchDownDurationJitter = 10.0f;
@@ -1298,8 +1299,10 @@ namespace OW { namespace Config {
                 step.speedScale = std::clamp(step.speedScale, 0.5f, 2.0f);
                 step.jitterMs = std::clamp(step.jitterMs, 0, 50);
             }
+            settings.tracking.aimBehavior = ClampAimBehaviorIndex(settings.tracking.aimBehavior);
             settings.tracking.method = ClampAimMethodIndex(settings.tracking.method);
             settings.tracking.smooth = std::clamp(settings.tracking.smooth, 0.0f, 100.0f);
+            settings.tracking.speedScale = std::clamp(settings.tracking.speedScale, 0.0f, 100.0f);
             settings.tracking.fov = ClampFovDeg(settings.tracking.fov);
             settings.tracking.bone = NormalizeAimBone(settings.tracking.bone);
             settings.tracking.hitbox = ClampHitboxScalePercent(settings.tracking.hitbox);
@@ -2327,6 +2330,8 @@ namespace OW { namespace Config {
             sequenceStepsKey.SetString("sequenceSteps", allocator);
             value.AddMember(sequenceStepsKey, sequenceSteps, allocator);
 
+            AddJsonInt(value, "trackingAimBehavior", settings.tracking.aimBehavior, allocator);
+            AddJsonFloat(value, "trackingSpeedScale", settings.tracking.speedScale, allocator);
             AddJsonInt(value, "trackingMethod", settings.tracking.method, allocator);
             AddJsonFloat(value, "trackingSmooth", settings.tracking.smooth, allocator);
             AddJsonFloat(value, "trackingFov", settings.tracking.fov, allocator);
@@ -2728,6 +2733,12 @@ namespace OW { namespace Config {
                 }
             }
 
+            defaults.tracking.aimBehavior = ClampAimBehaviorIndex(
+                ReadJsonInt(value, "trackingAimBehavior", defaults.tracking.aimBehavior));
+            defaults.tracking.speedScale = ReadJsonFloat(
+                value,
+                "trackingSpeedScale",
+                defaults.tracking.speedScale);
             defaults.tracking.method = ReadJsonInt(value, "trackingMethod", defaults.tracking.method);
             defaults.tracking.smooth = ReadJsonFloat(value, "trackingSmooth", defaults.tracking.smooth);
             defaults.tracking.fov = ReadJsonFov(
@@ -2921,9 +2932,10 @@ namespace OW { namespace Config {
                 MatchesPreviousAsheFirePatternDefault(settings.sequenceSteps);
         }
 
-        bool ShouldDisableAsheFirePatternTrackingDefault(uint64_t heroId,
-                                                         const std::string& skillId,
-                                                         const HeroSkillSettings& settings)
+        bool ShouldRestoreAsheFirePatternAimAssistDefault(uint64_t heroId,
+                                                          const std::string& skillId,
+                                                          const rapidjson::Value& value,
+                                                          const HeroSkillSettings& settings)
         {
             if (heroId != static_cast<uint64_t>(OW::eHero::HERO_ASHE) || skillId != "fire-pattern")
                 return false;
@@ -2931,11 +2943,10 @@ namespace OW { namespace Config {
             if (!MatchesMeasuredAsheFirePattern(settings.sequenceSteps))
                 return false;
 
-            return settings.tracking.method == 0 &&
-                std::fabs(settings.tracking.smooth - 5.0f) < 0.001f &&
-                std::fabs(settings.tracking.fov - kDefaultFovDeg) < 0.001f &&
-                settings.tracking.bone == kAimBoneHead &&
-                std::fabs(settings.tracking.hitbox - kDefaultHitboxScalePercent) < 0.001f;
+            const bool hasNewAimAssistKeys =
+                value.FindMember("trackingAimBehavior") != value.MemberEnd() ||
+                value.FindMember("trackingSpeedScale") != value.MemberEnd();
+            return !hasNewAimAssistKeys && settings.tracking.fov <= 0.001f;
         }
 
         TriggerPreset ReadTriggerPresetJson(const rapidjson::Value& value, TriggerPreset defaults)
@@ -3138,11 +3149,15 @@ namespace OW { namespace Config {
                         LogConfig(Diagnostics::LogLevel::Info,
                             "Migrated Ashe fire-pattern sequence to locked tuned defaults.");
                     }
-                    if (ShouldDisableAsheFirePatternTrackingDefault(heroId, skillId, settings)) {
-                        settings.tracking.fov = 0.0f;
+                    if (ShouldRestoreAsheFirePatternAimAssistDefault(heroId, skillId, skill->value, settings)) {
+                        settings.tracking.aimBehavior = kAimBehaviorTracking;
+                        settings.tracking.speedScale = 100.0f;
+                        settings.tracking.fov = kDefaultFovDeg;
+                        settings.tracking.bone = kAimBoneHead;
+                        settings.tracking.hitbox = kDefaultHitboxScalePercent;
                         settings = ValidateHeroSkillSettingsValue(settings);
                         LogConfig(Diagnostics::LogLevel::Info,
-                            "Disabled Ashe fire-pattern tracking overlay default to keep button timing isolated.");
+                            "Restored Ashe fire-pattern aim assist defaults.");
                     }
                     skills[skillId] = settings;
                 }
