@@ -37,6 +37,7 @@ set(GAME_HEADERS
     include/Game/HeroGeometrySpec.hpp
     include/Game/HeroSkills.hpp
     include/Game/InputOrchestrator.hpp
+    include/Game/LeadPrediction.hpp
     include/Game/Offsets.hpp
     include/Game/Overwatch.hpp
     include/Game/SDK.hpp
@@ -101,12 +102,22 @@ add_executable(FovConfigSelfTest
     src/Tools/FovConfigSelfTest.cpp
 )
 
+add_executable(TrackingDeadzoneDampingSelfTest
+    src/Tools/TrackingDeadzoneDampingSelfTest.cpp
+)
+
+add_executable(LeadPredictionSelfTest
+    src/Tools/LeadPredictionSelfTest.cpp
+)
+
 add_executable(HeroSkillConfigSelfTest
     src/Tools/HeroSkillConfigSelfTest.cpp
 )
 
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
+add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
+add_test(NAME LeadPredictionSelfTest COMMAND LeadPredictionSelfTest)
 add_test(NAME HeroSkillConfigSelfTest COMMAND HeroSkillConfigSelfTest)
 
 # ============================================================================
@@ -129,6 +140,17 @@ target_include_directories(MotionEstimatorSelfTest PRIVATE
 
 target_include_directories(FovConfigSelfTest PRIVATE
     include
+    vendor/imgui
+)
+
+target_include_directories(TrackingDeadzoneDampingSelfTest PRIVATE
+    include
+    vendor/imgui
+)
+
+target_include_directories(LeadPredictionSelfTest PRIVATE
+    include
+    vendor/leechcore
     vendor/imgui
 )
 
@@ -237,5 +259,9 @@ target_compile_options(MotionEstimatorSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd43
 target_compile_definitions(MotionEstimatorSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(FovConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(FovConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(TrackingDeadzoneDampingSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(TrackingDeadzoneDampingSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(LeadPredictionSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(LeadPredictionSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(HeroSkillConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(HeroSkillConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)

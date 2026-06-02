@@ -1473,11 +1473,8 @@ namespace OW { namespace Config {
 
             projectile_arc = false;       // default: false
             Prediction = false;           // default: false
-            Prediction2 = false;          // default: false
             Gravitypredit = false;        // default: false
-            Gravitypredit2 = false;       // default: false
             predit_level = 110.0f;        // default: 110
-            predit_level2 = 110.0f;       // default: 110
             hanzoautospeed = false;       // default: false
 
             AimKey = 0x01;                // default: VK_LBUTTON
@@ -1632,6 +1629,9 @@ namespace OW { namespace Config {
             aimBehaviorMethod = { 0, 0, 0, 0 };
             aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
             aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f };
+            aimBehaviorMoveSplitEnabled = { true, false, false, true };
+            aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4 };
+            aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800 };
             aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             secondaryAimMethodOverride = { -1, -1 };
             aimPidP = 0.5f;
@@ -3544,11 +3544,8 @@ namespace OW { namespace Config {
             triggerbotIgnoreInvisible2 = ReadBool(ini, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
             Tracking2 = ReadBool(ini, section, "Tracking2", Tracking2);
             Flick2 = ReadBool(ini, section, "Flick2", Flick2);
-            Prediction2 = ReadBool(ini, section, "Prediction2", Prediction2);
-            Gravitypredit2 = ReadBool(ini, section, "Gravitypredit2", Gravitypredit2);
             aim_key2 = ReadInt(ini, section, "aim_key2", aim_key2);
             togglekey = ReadInt(ini, section, "togglekey", togglekey);
-            predit_level2 = ReadFixedFloat(ini, section, "predit_level2", predit_level2);
             Tracking_smooth2 = ReadFixedFloat(ini, section, "Tracking_smooth2", Tracking_smooth2);
             Flick_smooth2 = ReadFixedFloat(ini, section, "Flick_smooth2", Flick_smooth2);
             accvalue2 = ReadFixedFloat(ini, section, "accvalue2", accvalue2);
@@ -3689,6 +3686,24 @@ namespace OW { namespace Config {
                 "flick2ndAcceleration",
                 "reacquireAcceleration"
             };
+            constexpr std::array<const char*, kAimBehaviorCount> splitEnabledKeys = {
+                "trackingMoveSplitEnabled",
+                "flickMoveSplitEnabled",
+                "flick2ndMoveSplitEnabled",
+                "reacquireMoveSplitEnabled"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> splitMaxPixelsKeys = {
+                "trackingMoveSplitMaxPixels",
+                "flickMoveSplitMaxPixels",
+                "flick2ndMoveSplitMaxPixels",
+                "reacquireMoveSplitMaxPixels"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> splitDelayUsKeys = {
+                "trackingMoveSplitDelayUs",
+                "flickMoveSplitDelayUs",
+                "flick2ndMoveSplitDelayUs",
+                "reacquireMoveSplitDelayUs"
+            };
             constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
                 "linearAngularSpeedScale",
                 "pidAngularSpeedScale",
@@ -3720,6 +3735,21 @@ namespace OW { namespace Config {
                 aimBehaviorMethod[index] = ReadInt(ini, section, methodKeys[index], aimMethod);
                 aimBehaviorBaseSpeed[index] = ReadFixedFloat(ini, section, speedKeys[index], 100.0f);
                 aimBehaviorAcceleration[index] = ReadFixedFloat(ini, section, accelerationKeys[index], accvalue);
+                aimBehaviorMoveSplitEnabled[index] = ReadBool(
+                    ini,
+                    section,
+                    splitEnabledKeys[index],
+                    aimBehaviorMoveSplitEnabled[index]);
+                aimBehaviorMoveSplitMaxPixels[index] = ReadInt(
+                    ini,
+                    section,
+                    splitMaxPixelsKeys[index],
+                    aimBehaviorMoveSplitMaxPixels[index]);
+                aimBehaviorMoveSplitDelayUs[index] = ReadInt(
+                    ini,
+                    section,
+                    splitDelayUsKeys[index],
+                    aimBehaviorMoveSplitDelayUs[index]);
             }
             if (!KeyExists(ini, section, "flick2ndMethod"))
                 aimBehaviorMethod[static_cast<size_t>(kAimBehaviorFlick2nd)] =
@@ -3825,6 +3855,24 @@ namespace OW { namespace Config {
                 "flick2ndAcceleration",
                 "reacquireAcceleration"
             };
+            constexpr std::array<const char*, kAimBehaviorCount> splitEnabledKeys = {
+                "trackingMoveSplitEnabled",
+                "flickMoveSplitEnabled",
+                "flick2ndMoveSplitEnabled",
+                "reacquireMoveSplitEnabled"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> splitMaxPixelsKeys = {
+                "trackingMoveSplitMaxPixels",
+                "flickMoveSplitMaxPixels",
+                "flick2ndMoveSplitMaxPixels",
+                "reacquireMoveSplitMaxPixels"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> splitDelayUsKeys = {
+                "trackingMoveSplitDelayUs",
+                "flickMoveSplitDelayUs",
+                "flick2ndMoveSplitDelayUs",
+                "reacquireMoveSplitDelayUs"
+            };
             constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
                 "linearAngularSpeedScale",
                 "pidAngularSpeedScale",
@@ -3859,6 +3907,9 @@ namespace OW { namespace Config {
                     ? std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f)
                     : 0.1f;
                 WriteFixedFloatValue(path, section, accelerationKeys[index], legacyAcceleration);
+                WriteBoolValue(path, section, splitEnabledKeys[index], AimBehaviorMoveSplitEnabled(static_cast<int>(index)));
+                WriteIntValue(path, section, splitMaxPixelsKeys[index], AimBehaviorMoveSplitMaxPixels(static_cast<int>(index)));
+                WriteIntValue(path, section, splitDelayUsKeys[index], AimBehaviorMoveSplitDelayUs(static_cast<int>(index)));
             }
             for (size_t index = 0; index < aimMethodAngularSpeedScale.size(); ++index)
                 WriteFixedFloatValue(path, section, angularSpeedKeys[index],
@@ -4091,7 +4142,6 @@ namespace OW { namespace Config {
             ClampFloatSetting("accvalue2", accvalue2, 0.0f, 20.0f, 0.1f);
             ClampFloatSetting("bladespeed", bladespeed, 0.0f, 20.0f, 0.1f);
             ClampFloatSetting("predit_level", predit_level, 0.0f, 2000.0f, 110.0f);
-            ClampFloatSetting("predit_level2", predit_level2, 0.0f, 2000.0f, 110.0f);
             ClampFloatSetting("comarea", comarea, 0.0f, 20.0f, 0.01f);
             ClampFloatSetting("comspeed", comspeed, 0.0f, 20.0f, 0.5f);
             ClampFloatSetting("aimbotTriggerDelay", aimbotTriggerDelay, 0.0f, 5000.0f, 0.0f);
@@ -4184,6 +4234,8 @@ namespace OW { namespace Config {
                     aimBehaviorAcceleration[index] = 0.1f;
                 aimBehaviorBaseSpeed[index] = std::clamp(aimBehaviorBaseSpeed[index], 0.0f, 100.0f);
                 aimBehaviorAcceleration[index] = std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f);
+                aimBehaviorMoveSplitMaxPixels[index] = ClampMoveSplitMaxPixels(aimBehaviorMoveSplitMaxPixels[index]);
+                aimBehaviorMoveSplitDelayUs[index] = ClampMoveSplitDelayUs(aimBehaviorMoveSplitDelayUs[index]);
             }
             for (float& speedScale : aimMethodAngularSpeedScale) {
                 if (!std::isfinite(speedScale))
@@ -4292,9 +4344,9 @@ namespace OW { namespace Config {
                 ToText(triggerbotIgnoreInvisible).c_str(), ToText(triggerbotIgnoreInvisible2).c_str(),
                 ToText(Tracking).c_str(), ToText(Tracking2).c_str(), ToText(Flick).c_str(),
                 ToText(Flick2).c_str());
-            LogConfig(level, "Dump: prediction projectile_arc=%s Prediction=%s Prediction2=%s Gravitypredit=%s Gravitypredit2=%s predit_level=%.3f predit_level2=%.3f hanzoautospeed=%s",
-                ToText(projectile_arc).c_str(), ToText(Prediction).c_str(), ToText(Prediction2).c_str(),
-                ToText(Gravitypredit).c_str(), ToText(Gravitypredit2).c_str(), predit_level, predit_level2,
+            LogConfig(level, "Dump: prediction projectile_arc=%s Prediction=%s Gravitypredit=%s predit_level=%.3f hanzoautospeed=%s",
+                ToText(projectile_arc).c_str(), ToText(Prediction).c_str(),
+                ToText(Gravitypredit).c_str(), predit_level,
                 ToText(hanzoautospeed).c_str());
             LogConfig(level, "Dump: keys AimKey=%d aim_key=%d aim_key2=%d togglekey=%d MenuToggleKey=%d",
                 AimKey, aim_key, aim_key2, togglekey, MenuToggleKey);
@@ -4331,6 +4383,19 @@ namespace OW { namespace Config {
                 aimMethodAngularSpeedScale[0], aimMethodAngularSpeedScale[1],
                 aimMethodAngularSpeedScale[2], aimMethodAngularSpeedScale[3],
                 aimMethodAngularSpeedScale[4], aimMethodAngularSpeedScale[5]);
+            LogConfig(level, "Dump: aim behavior moveSplit enabled=(%s,%s,%s,%s) maxPixels=(%d,%d,%d,%d) delayUs=(%d,%d,%d,%d)",
+                ToText(AimBehaviorMoveSplitEnabled(0)).c_str(),
+                ToText(AimBehaviorMoveSplitEnabled(1)).c_str(),
+                ToText(AimBehaviorMoveSplitEnabled(2)).c_str(),
+                ToText(AimBehaviorMoveSplitEnabled(3)).c_str(),
+                AimBehaviorMoveSplitMaxPixels(0),
+                AimBehaviorMoveSplitMaxPixels(1),
+                AimBehaviorMoveSplitMaxPixels(2),
+                AimBehaviorMoveSplitMaxPixels(3),
+                AimBehaviorMoveSplitDelayUs(0),
+                AimBehaviorMoveSplitDelayUs(1),
+                AimBehaviorMoveSplitDelayUs(2),
+                AimBehaviorMoveSplitDelayUs(3));
             LogConfig(level, "Dump: hero GenjiBlade=%s AutoShiftGenji=%s widowautounscope=%s",
                 ToText(GenjiBlade).c_str(), ToText(AutoShiftGenji).c_str(), ToText(widowautounscope).c_str());
             LogConfig(level, "Dump: shoot AutoShoot=%s Shoottime=%d shooted=%s shooted2=%s lasttime=%d lasthealth=%.3f skilled=%s slasttime=%d sskilled=%s reloading=%s",

@@ -4603,16 +4603,25 @@ namespace AimbotDetail {
         return GetTickCount() - state.lastFlickFireTick < delayMs;
     }
 
-    inline bool TrackingDeadzoneContains(const Vector3& aimTarget) {
+    inline float TrackingDeadzoneDampingScale(const Vector3& aimTarget, float* outDistancePixels = nullptr) {
         const float radius = OW::Config::ClampTrackingDeadzonePixels(OW::Config::aimbotTrackingDeadzone);
-        if (radius <= 0.0f)
-            return false;
+        if (radius <= 0.0f) {
+            if (outDistancePixels)
+                *outDistancePixels = 0.0f;
+            return 1.0f;
+        }
 
         Vector2 screen{};
-        if (!ProjectAimPoint(aimTarget, screen))
-            return false;
+        if (!ProjectAimPoint(aimTarget, screen)) {
+            if (outDistancePixels)
+                *outDistancePixels = 0.0f;
+            return 1.0f;
+        }
 
-        return OW::TargetingDetail::CrosshairCenter().Distance(screen) <= radius;
+        const float distance = OW::TargetingDetail::CrosshairCenter().Distance(screen);
+        if (outDistancePixels)
+            *outDistancePixels = distance;
+        return OW::Config::TrackingDeadzoneDampingScale(distance, radius);
     }
 
     inline bool FlickTrajectoryWaitReady(RuntimeState& state, const c_entity& target) {
@@ -4738,6 +4747,15 @@ namespace AimbotDetail {
         return IsConfiguredAimKeyPressed(keySetting);
     }
 
+    inline bool ResolveCurrentAimSlotPredictionEnabled() {
+        const c_entity local = OW::TargetingDetail::SnapshotLocalEntity();
+        const WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
+        return OW::ResolvePredictionEnabled(
+            OW::ClampPredictionOverride(OW::Config::aimbotPredictionMode),
+            weapon,
+            OW::Config::Prediction);
+    }
+
     inline bool InputSequenceBlocksAim(const char* caller,
                                        ExecutionSource requester = ExecutionSource::GlobalAim) {
         if (!OW::ShouldBlockForActiveSequence(requester))
@@ -4801,7 +4819,7 @@ namespace AimbotDetail {
         }
 
         // 3. Find target
-        const bool predit = secondary ? OW::Config::Prediction2 : OW::Config::Prediction;
+        const bool predit = ResolveCurrentAimSlotPredictionEnabled();
         const Vector3 vec = secondary ? OW::GetVector3aim2(predit, ignoreInvisible) : OW::GetVector3(predit, ignoreInvisible);
         c_entity target{};
         if (IsZeroVector(vec) || !IsTriggerTargetActionable() || !CurrentTarget(target)) return;
@@ -4952,10 +4970,10 @@ namespace AimbotDetail {
                 releaseHeldFire();
             } else {
                 const Vector3 aimTarget = vec;
-                const float smoothInput = OW::Config::AimBehaviorSmoothInput(
-                    behavior,
-                    OW::Config::Tracking_smooth);
-                if (TrackingDeadzoneContains(aimTarget)) {
+                float deadzoneDistance = 0.0f;
+                const float deadzoneDampingScale = TrackingDeadzoneDampingScale(aimTarget, &deadzoneDistance);
+                if (deadzoneDampingScale <= 0.0f) {
+                    OW::ResetAimSmoothingState();
                     holdThisTick = ShouldHoldFireWhileTracking();
                     if (holdThisTick && !fireHeld && holdFireButton >= 0) {
                         OW::SendMouseButton(holdFireButton, true);
@@ -4967,6 +4985,17 @@ namespace AimbotDetail {
                     RunAutoScaleFov();
                     if (ShouldYieldToSecondaryAim()) break;
                     continue;
+                }
+                const float smoothInput = OW::Config::AimBehaviorSmoothInput(
+                    behavior,
+                    OW::Config::Tracking_smooth,
+                    deadzoneDampingScale);
+                if (OW::Config::aimVerboseLog && deadzoneDampingScale < 1.0f) {
+                    Diagnostics::Aim("tracking.deadzone_damping distancePx=%.3f radiusPx=%.3f scale=%.6f smoothInput=%.6f",
+                        deadzoneDistance,
+                        OW::Config::ClampTrackingDeadzonePixels(OW::Config::aimbotTrackingDeadzone),
+                        deadzoneDampingScale,
+                        smoothInput);
                 }
                 AimData aim = BuildAimData(
                     aimTarget,
@@ -5402,7 +5431,7 @@ namespace AimbotDetail {
             if (AimSessionTimedOut(sessionStartedTick, "secondaim")) {
                 break;
             }
-            const Vector3 vec = OW::GetVector3aim2(OW::Config::Prediction2);
+            const Vector3 vec = OW::GetVector3aim2(ResolveCurrentAimSlotPredictionEnabled());
             c_entity target{};
             if (!IsZeroVector(vec) && CurrentTarget(target) &&
                 !(target.skill2act && target.HeroID == OW::eHero::HERO_GENJI)) {
@@ -5657,11 +5686,8 @@ inline void configsavenloadthread() {
                 saveHero(sec, "triggerbotIgnoreInvisible2", OW::Config::triggerbotIgnoreInvisible2);
                 saveHero(sec, "Tracking2",    OW::Config::Tracking2);
                 saveHero(sec, "Flick2",       OW::Config::Flick2);
-                saveHero(sec, "Prediction2",  OW::Config::Prediction2);
-                saveHero(sec, "Gravitypredit2", OW::Config::Gravitypredit2);
                 saveHero(sec, "aim_key2",     OW::Config::aim_key2);
                 saveHero(sec, "togglekey",    OW::Config::togglekey);
-                saveHeroFloat(sec, "predit_level2",    OW::Config::predit_level2);
                 saveHeroFloat(sec, "Tracking_smooth2", OW::Config::Tracking_smooth2);
                 saveHeroFloat(sec, "Flick_smooth2",    OW::Config::Flick_smooth2);
                 saveHeroFloat(sec, "accvalue2",        OW::Config::accvalue2);
@@ -5810,11 +5836,8 @@ inline void configsavenloadthread() {
             OW::Config::triggerbotIgnoreInvisible2 = loadHero(sec, "triggerbotIgnoreInvisible2", 1);
             OW::Config::Tracking2       = loadHero(sec, "Tracking2", 0);
             OW::Config::Flick2          = loadHero(sec, "Flick2", 0);
-            OW::Config::Prediction2     = loadHero(sec, "Prediction2", 0);
-            OW::Config::Gravitypredit2  = loadHero(sec, "Gravitypredit2", 0);
             OW::Config::aim_key2        = loadHero(sec, "aim_key2", 5);
             OW::Config::togglekey       = loadHero(sec, "togglekey", 0);
-            OW::Config::predit_level2   = loadHeroFloat(sec, "predit_level2", 11000);
             OW::Config::Tracking_smooth2 = loadHeroFloat(sec, "Tracking_smooth2", 1000);
             OW::Config::Flick_smooth2   = loadHeroFloat(sec, "Flick_smooth2", 1000);
             OW::Config::accvalue2       = loadHeroFloat(sec, "accvalue2", 1000);

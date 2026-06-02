@@ -4284,7 +4284,12 @@ static void DrawMiscBehaviorPage() {
         const int behaviorIndex = selectedBehavior;
         int& behaviorMethod = OW::Config::aimBehaviorMethod[static_cast<size_t>(behaviorIndex)];
         float& behaviorBaseSpeed = OW::Config::aimBehaviorBaseSpeed[static_cast<size_t>(behaviorIndex)];
+        bool& behaviorMoveSplitEnabled = OW::Config::aimBehaviorMoveSplitEnabled[static_cast<size_t>(behaviorIndex)];
+        int& behaviorMoveSplitMaxPixels = OW::Config::aimBehaviorMoveSplitMaxPixels[static_cast<size_t>(behaviorIndex)];
+        int& behaviorMoveSplitDelayUs = OW::Config::aimBehaviorMoveSplitDelayUs[static_cast<size_t>(behaviorIndex)];
         behaviorMethod = OW::Config::ClampAimMethodIndex(behaviorMethod);
+        behaviorMoveSplitMaxPixels = OW::Config::ClampMoveSplitMaxPixels(behaviorMoveSplitMaxPixels);
+        behaviorMoveSplitDelayUs = OW::Config::ClampMoveSplitDelayUs(behaviorMoveSplitDelayUs);
         OW::Config::aimMethod = behaviorMethod;
 
         SettingRow("Method");
@@ -4300,6 +4305,21 @@ static void DrawMiscBehaviorPage() {
         PushControlWidth();
         UISlider("##miscBaseAngularSpeed", &behaviorBaseSpeed, 0.0f, 100.0f, "100");
         ImGui::PopItemWidth();
+
+        SettingRow("Move Split");
+        UICheckbox("##miscBehaviorMoveSplit", &behaviorMoveSplitEnabled);
+
+        if (behaviorMoveSplitEnabled) {
+            SettingRow("Split Chunk");
+            PushControlWidth();
+            UISlider("##miscBehaviorMoveSplitMax", &behaviorMoveSplitMaxPixels, 1.0f, 50.0f, "4 px");
+            ImGui::PopItemWidth();
+
+            SettingRow("Split Delay");
+            PushControlWidth();
+            UISlider("##miscBehaviorMoveSplitDelay", &behaviorMoveSplitDelayUs, 0.0f, 10000.0f, "800 us");
+            ImGui::PopItemWidth();
+        }
 
         SettingRow("Pitch Scale");
         PushControlWidth();

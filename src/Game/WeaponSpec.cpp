@@ -19,19 +19,19 @@ constexpr std::string_view kWikiBase = "https://overwatch.fandom.com/wiki/";
 constexpr std::string_view kTemporaryProjectileFallbackNote =
     "Temporary radius fallback from data/aim_public_weapon_projectiles_0530.tsv; verify against live/source data later.";
 
-constexpr PredictionSpec Hitscan(float radius)
+constexpr ProjectileSpec Hitscan(float radius)
 {
-    return PredictionSpec{ false, 0.0f, false, radius, 0.0f, 0.0f, true };
+    return ProjectileSpec{ false, 0.0f, false, radius, 0.0f, 0.0f, true };
 }
 
-constexpr PredictionSpec Projectile(float speed, float radius, bool gravity = false)
+constexpr ProjectileSpec Projectile(float speed, float radius, bool gravity = false)
 {
-    return PredictionSpec{ true, speed, gravity, radius, 0.0f, 0.0f, true };
+    return ProjectileSpec{ true, speed, gravity, radius, 0.0f, 0.0f, true };
 }
 
-constexpr PredictionSpec ChargedProjectile(float minSpeed, float maxSpeed, float radius, bool gravity = false)
+constexpr ProjectileSpec ChargedProjectile(float minSpeed, float maxSpeed, float radius, bool gravity = false)
 {
-    return PredictionSpec{ true, maxSpeed, gravity, radius, minSpeed, maxSpeed, true };
+    return ProjectileSpec{ true, maxSpeed, gravity, radius, minSpeed, maxSpeed, true };
 }
 
 constexpr FirePolicy Policy(FP type)
@@ -46,7 +46,7 @@ constexpr WeaponSpec W(uint64_t heroId,
                        int action,
                        int order,
                        AC aimClass,
-                       PredictionSpec prediction,
+                       ProjectileSpec projectile,
                        AB behavior,
                        FP firePolicy,
                        float confidence = 0.75f,
@@ -60,7 +60,7 @@ constexpr WeaponSpec W(uint64_t heroId,
         action,
         order,
         aimClass,
-        prediction,
+        projectile,
         Policy(firePolicy),
         behavior,
         kWikiBase,

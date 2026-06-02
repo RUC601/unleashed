@@ -80,7 +80,7 @@ float ResolveEffectiveHitWindow(uint64_t heroId,
                                 float fallbackBoneRadius)
 {
     const float boneRadius = ResolveBoneHitboxRadius(heroId, boneId, fallbackBoneRadius);
-    const float projectileRadius = weapon ? (std::max)(0.0f, weapon->prediction.projectileRadius) : 0.0f;
+    const float projectileRadius = weapon ? (std::max)(0.0f, weapon->projectile.projectileRadius) : 0.0f;
     const float resolvedWindow = (std::max)(0.0f, boneRadius + projectileRadius);
     return resolvedWindow * Config::HitboxScaleMultiplier(hitboxScalePercent);
 }

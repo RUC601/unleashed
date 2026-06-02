@@ -80,7 +80,7 @@ enum class ExecutionSource : int {
     SequenceInternal = 3,
 };
 
-struct PredictionSpec {
+struct ProjectileSpec {
     bool enabledByDefault = false;
     float projectileSpeed = 0.0f;
     bool gravity = false;
@@ -130,7 +130,7 @@ struct WeaponSpec {
     int action = 0;
     int order = 0;
     AimClass aimClass = AimClass::Unknown;
-    PredictionSpec prediction{};
+    ProjectileSpec projectile{};
     FirePolicy firePolicy{};
     AimBehaviorType defaultBehavior = AimBehaviorType::Tracking;
     std::string_view sourceUrl{};
@@ -233,7 +233,7 @@ inline bool ResolvePredictionEnabled(PredictionOverrideMode mode,
         return false;
     case PredictionOverrideMode::Auto:
     default:
-        return weapon ? weapon->prediction.enabledByDefault : legacyFallback;
+        return weapon ? weapon->projectile.enabledByDefault : legacyFallback;
     }
 }
 

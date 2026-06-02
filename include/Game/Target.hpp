@@ -17,6 +17,7 @@
 #include "Game/Decrypt.hpp"
 #include "Game/Entity.hpp"
 #include "Game/HeroGeometrySpec.hpp"
+#include "Game/LeadPrediction.hpp"
 #include "Game/Motion.hpp"
 #include "Game/WeaponSpec.hpp"
 #include "Kmbox/KmBoxNetManager.h"
@@ -218,34 +219,39 @@ namespace OW {
             }
 
             // ---- Micro-split mouse movement ----
-            const int maxPixels = std::clamp(Config::moveSplitMaxPixels, 1, 50);
-            const int delayUs = std::clamp(Config::moveSplitDelayUs, 0, 10000);
+            const int splitBehavior = Config::ClampAimBehaviorIndex(Config::aimBehavior);
+            const bool splitEnabled = Config::AimBehaviorMoveSplitEnabled(splitBehavior);
+            const int maxPixels = Config::AimBehaviorMoveSplitMaxPixels(splitBehavior);
+            const int delayUs = Config::AimBehaviorMoveSplitDelayUs(splitBehavior);
             const int absX = std::abs(pixelX);
             const int absY = std::abs(pixelY);
             const int maxComponent = (std::max)(absX, absY);
-            const int steps = Config::moveSplitEnabled
+            const int steps = splitEnabled
                 ? (std::max)(1, (maxComponent + maxPixels - 1) / maxPixels)
                 : 1;
 
             if (steps <= 1) {
                 const int status = EnqueueKmboxPixelMove(pixelX, pixelY, automoveRuntimeMs);
-                Diagnostics::Aim("mouse.enqueue transport=%s command=%s pixel=(%d,%d) runtimeMs=%d status=%d",
+                Diagnostics::Aim("mouse.enqueue transport=%s command=%s pixel=(%d,%d) runtimeMs=%d behavior=%d splitEnabled=%d status=%d",
                     Config::kmboxDeviceType == 0 ? "network" : "serial",
                     automoveRuntimeMs > 0 ? "automove" : "move",
                     pixelX,
                     pixelY,
                     automoveRuntimeMs,
+                    splitBehavior,
+                    splitEnabled ? 1 : 0,
                     status);
             } else {
                 // Split into micro-movements
-                Diagnostics::Aim("mouse.move.split total_pixels=(%d,%d) steps=%d max_pixels_per_step=%d delay_us=%d runtimeMs=%d command=%s",
+                Diagnostics::Aim("mouse.move.split total_pixels=(%d,%d) steps=%d max_pixels_per_step=%d delay_us=%d runtimeMs=%d command=%s behavior=%d",
                     pixelX,
                     pixelY,
                     steps,
                     maxPixels,
                     delayUs,
                     automoveRuntimeMs,
-                    automoveRuntimeMs > 0 ? "automove" : "move");
+                    automoveRuntimeMs > 0 ? "automove" : "move",
+                    splitBehavior);
                 int remainingX = pixelX;
                 int remainingY = pixelY;
                 for (int i = 0; i < steps; i++) {
@@ -732,12 +738,6 @@ namespace OW {
             bool initialized = false;
         };
 
-        struct PredictionRuntimeSpec {
-            float projectileSpeed = 0.0f;
-            bool gravity = false;
-            bool fromWeaponSpec = false;
-        };
-
         inline std::mutex velocity_history_mutex;
         inline std::unordered_map<uint64_t, VelocitySample> velocity_history;
 
@@ -1112,60 +1112,226 @@ namespace OW {
             return adjusted;
         }
 
-        inline PredictionRuntimeSpec ResolvePredictionRuntimeSpec(const WeaponSpec* weapon,
+        inline ProjectileRuntimeSpec ResolveProjectileRuntimeSpec(const WeaponSpec* weapon,
                                                                   const c_entity& local,
                                                                   bool secondary) {
-            if (!secondary &&
-                Config::hanzoautospeed &&
+            if (Config::hanzoautospeed &&
                 local.HeroID == eHero::HERO_HANJO) {
                 Config::predit_level = readult(local.SkillBase + 0x40, 0xB, 0x2A5) * 85.f + 25.f;
                 if (local.skill2act) Config::predit_level = 110.f;
             }
 
-            const float fallbackSpeed = secondary ? Config::predit_level2 : Config::predit_level;
-            const bool fallbackGravity = secondary
-                ? Config::Gravitypredit2
-                : (Config::projectile_arc || local.HeroID == eHero::HERO_HANJO || Config::Gravitypredit);
+            const float fallbackSpeed = Config::predit_level;
+            const bool fallbackGravity = Config::projectile_arc ||
+                local.HeroID == eHero::HERO_HANJO ||
+                Config::Gravitypredit;
 
             if (!secondary &&
                 Config::hanzoautospeed &&
                 local.HeroID == eHero::HERO_HANJO &&
                 fallbackSpeed > 0.0f) {
-                return PredictionRuntimeSpec{
+                return ProjectileRuntimeSpec{
                     fallbackSpeed,
-                    weapon ? weapon->prediction.gravity : true,
+                    weapon ? weapon->projectile.gravity : true,
                     weapon != nullptr
                 };
             }
 
-            if (weapon && weapon->prediction.projectileSpeed > 0.0f) {
-                return PredictionRuntimeSpec{
-                    weapon->prediction.projectileSpeed,
-                    weapon->prediction.gravity,
+            if (weapon && weapon->projectile.projectileSpeed > 0.0f) {
+                return ProjectileRuntimeSpec{
+                    weapon->projectile.projectileSpeed,
+                    weapon->projectile.gravity,
                     true
                 };
             }
 
-            return PredictionRuntimeSpec{
+            return ProjectileRuntimeSpec{
                 fallbackSpeed,
                 fallbackGravity,
                 false
             };
         }
 
+        inline Vector3 SnapshotLocalAimAngleForLeadEstimate() {
+            const uint64_t playerControllerBase = SDK ? SDK->g_player_controller : 0;
+            if (playerControllerBase) {
+                const Vector3 viewDir = ReadPlayerControllerViewDirection(playerControllerBase);
+                const float dirLen = viewDir.Size();
+                if (std::isfinite(viewDir.X) &&
+                    std::isfinite(viewDir.Y) &&
+                    std::isfinite(viewDir.Z) &&
+                    dirLen > 0.5f &&
+                    dirLen < 1.5f) {
+                    return DirectionToAimEuler(viewDir);
+                }
+            }
+
+            Matrix view{}, viewXor{};
+            SnapshotViewMatrices(view, viewXor);
+            const XMFLOAT3 forward = viewXor.get_rotation();
+            const float forwardLen = sqrtf(
+                forward.x * forward.x +
+                forward.y * forward.y +
+                forward.z * forward.z);
+            if (std::isfinite(forward.x) &&
+                std::isfinite(forward.y) &&
+                std::isfinite(forward.z) &&
+                forwardLen > 0.5f &&
+                forwardLen < 1.5f) {
+                return DirectionToAimEuler(Vector3(forward.x, forward.y, forward.z));
+            }
+
+            return Vector3{};
+        }
+
+        inline Vector3 AimAngleForWorldPoint(const Vector3& worldPoint) {
+            const Vector3 camera = CameraPosition();
+            const Vector3 delta = worldPoint - camera;
+            const float distance = delta.Size();
+            if (!std::isfinite(distance) || distance <= 0.0001f)
+                return Vector3{};
+            return DirectionToAimEuler(delta / distance);
+        }
+
+        inline int ResolveLeadAimMethod(bool secondary) {
+            if (secondary) {
+                return Config::SecondaryAimMethod(Config::Flick2 ? 1 : 0);
+            }
+
+            const int behavior = Config::ClampAimBehaviorIndex(Config::aimBehavior);
+            return Config::AimBehaviorMethod(behavior);
+        }
+
+        inline float ResolveLeadSmoothInput(bool secondary) {
+            if (secondary) {
+                if (Config::Flick2)
+                    return Config::AimBehaviorSmoothInput(Config::kAimBehaviorFlick, Config::Flick_smooth2);
+                if (Config::Tracking2)
+                    return Config::AimBehaviorSmoothInput(Config::kAimBehaviorTracking, Config::Tracking_smooth2);
+                return 1.0f;
+            }
+
+            const int behavior = Config::ClampAimBehaviorIndex(Config::aimBehavior);
+            const float scalePercent = Config::IsFlickBehavior(behavior)
+                ? Config::Flick_smooth
+                : Config::Tracking_smooth;
+            return Config::AimBehaviorSmoothInput(behavior, scalePercent);
+        }
+
+        inline LeadTimingEstimate EstimateLeadTimingForAimPoint(const Vector3& rawAimPoint, bool secondary) {
+            const int method = ResolveLeadAimMethod(secondary);
+            AimSettleEstimateInput input{};
+            input.localAngle = SnapshotLocalAimAngleForLeadEstimate();
+            input.targetAngle = AimAngleForWorldPoint(rawAimPoint);
+            input.method = method;
+            input.slotSpeedScale = ResolveLeadSmoothInput(secondary);
+            input.methodSpeedScale = Config::AimMethodAngularSpeedScale(method);
+            input.constantAngularSpeedDeg = Config::AimConstantAngularSpeedDeg();
+            input.frameSeconds = kLeadDefaultFrameSeconds;
+
+            return BuildLeadTiming(
+                EstimateAimSettleTimeMs(input),
+                Config::kmboxInputDelayMs);
+        }
+
+        inline const char* MotionVelocitySourceName(Motion::VelocitySource source) {
+            switch (source) {
+            case Motion::VelocitySource::Reported:
+                return "reported";
+            case Motion::VelocitySource::WorldDeltaFallback:
+                return "world_delta";
+            case Motion::VelocitySource::None:
+            default:
+                return "none";
+            }
+        }
+
+        inline LeadPredictionResult ResolveLeadPrediction(c_entity& entity,
+                                                          Vector3 rawAimPoint,
+                                                          const ProjectileRuntimeSpec& projectile,
+                                                          bool predictionEnabled,
+                                                          bool secondary) {
+            LeadPredictionResult result{};
+            result.predictionEnabled = predictionEnabled;
+            result.secondary = secondary;
+            result.rawAimPoint = rawAimPoint;
+            result.preFireAimPoint = rawAimPoint;
+            result.finalAimPoint = rawAimPoint;
+            result.projectile = projectile;
+
+            if (!predictionEnabled || IsZeroVector(rawAimPoint))
+                return result;
+
+            const Vector3 camera = CameraPosition();
+            result.distance = camera.DistTo(rawAimPoint);
+            const Motion::EntityMotionEstimate motion = Motion::EstimateEntityMotion(entity);
+            result.targetVelocity = AccelerationAwareVelocity(entity, result.distance, projectile.projectileSpeed);
+            result.timing = EstimateLeadTimingForAimPoint(rawAimPoint, secondary);
+            result.preFireAimPoint = ApplyTargetMotionPreFireDelay(
+                rawAimPoint,
+                result.targetVelocity,
+                result.timing.preFireDelayMs);
+            result.finalAimPoint = result.preFireAimPoint;
+
+            if (projectile.projectileSpeed > 0.0f) {
+                const float leadDistance = camera.DistTo(result.preFireAimPoint);
+                if (secondary) {
+                    AimCorrection22(
+                        &result.finalAimPoint,
+                        result.targetVelocity,
+                        leadDistance,
+                        projectile.projectileSpeed,
+                        projectile.gravity);
+                } else {
+                    AimCorrection(
+                        &result.finalAimPoint,
+                        result.targetVelocity,
+                        leadDistance,
+                        projectile.projectileSpeed,
+                        projectile.gravity);
+                }
+            }
+
+            Diagnostics::Aim("lead.solve enabled=%d secondary=%d projectile(source=%s speed=%.3f gravity=%d) motion(source=%s confidence=%.3f velocity=(%.3f,%.3f,%.3f)) timing(settleMs=%.3f inputMs=%d preFireMs=%.3f) raw=(%.3f,%.3f,%.3f) preFire=(%.3f,%.3f,%.3f) final=(%.3f,%.3f,%.3f)",
+                predictionEnabled ? 1 : 0,
+                secondary ? 1 : 0,
+                projectile.fromWeaponSpec ? "weapon" : "legacy",
+                projectile.projectileSpeed,
+                projectile.gravity ? 1 : 0,
+                MotionVelocitySourceName(motion.velocitySource),
+                motion.confidence,
+                result.targetVelocity.X,
+                result.targetVelocity.Y,
+                result.targetVelocity.Z,
+                result.timing.estimatedSettleMs,
+                result.timing.inputDelayMs,
+                result.timing.preFireDelayMs,
+                result.rawAimPoint.X,
+                result.rawAimPoint.Y,
+                result.rawAimPoint.Z,
+                result.preFireAimPoint.X,
+                result.preFireAimPoint.Y,
+                result.preFireAimPoint.Z,
+                result.finalAimPoint.X,
+                result.finalAimPoint.Y,
+                result.finalAimPoint.Z);
+
+            return result;
+        }
+
         inline Vector3 ApplyPrediction(c_entity& entity, Vector3 position, bool predit, bool secondary) {
-            if (!predit || IsZeroVector(position)) return position;
+            if (IsZeroVector(position)) return position;
 
             const c_entity local = SnapshotLocalEntity();
             const WeaponSpec* weapon = ResolveWeaponSpec(local.HeroID, Config::aimbotAttack);
-            const PredictionRuntimeSpec prediction = ResolvePredictionRuntimeSpec(weapon, local, secondary);
-            const float distance = CameraPosition().DistTo(position);
-            const Vector3 velocity = AccelerationAwareVelocity(entity, distance, prediction.projectileSpeed);
+            const bool resolvedPrediction = ResolvePredictionEnabled(
+                ClampPredictionOverride(Config::aimbotPredictionMode),
+                weapon,
+                predit);
+            if (!resolvedPrediction) return position;
 
-            if (secondary) AimCorrection22(&position, velocity, distance, prediction.projectileSpeed, prediction.gravity);
-            else AimCorrection(&position, velocity, distance, prediction.projectileSpeed, prediction.gravity);
-
-            return position;
+            const ProjectileRuntimeSpec projectile = ResolveProjectileRuntimeSpec(weapon, local, secondary);
+            return ResolveLeadPrediction(entity, position, projectile, true, secondary).finalAimPoint;
         }
 
         inline float CandidateScore(const Vector3& position, const FovRuntimeContext& fovContext) {
@@ -1354,10 +1520,10 @@ namespace OW {
             static_cast<int>(lockPolicy.unlockMode),
             CrossHair.X,
             CrossHair.Y);
-        const TargetingDetail::PredictionRuntimeSpec predictionSpec =
-            TargetingDetail::ResolvePredictionRuntimeSpec(weaponSpec, local_entity, false);
+        const ProjectileRuntimeSpec projectileSpec =
+            TargetingDetail::ResolveProjectileRuntimeSpec(weaponSpec, local_entity, false);
         if (entities.size() > 0) {
-            Vector3 Vel, PreditPos, RootPos;
+            Vector3 PreditPos, RootPos;
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
@@ -1378,13 +1544,14 @@ namespace OW {
                     PreditPos = TargetingDetail::ConfiguredBonePosition(entities[i], resolvedAimBone);
                     RootPos = PreditPos;
 
-                    Vel = entities[i].velocity;
-                    if (resolvedPrediction) {
-                        float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
-                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, predictionSpec.projectileSpeed);
-                        AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                    }
-                    const Vector3 fovPoint = resolvedPrediction ? PreditPos : RootPos;
+                    const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                        entities[i],
+                        RootPos,
+                        projectileSpec,
+                        resolvedPrediction,
+                        false);
+                    PreditPos = lead.finalAimPoint;
+                    const Vector3 fovPoint = lead.finalAimPoint;
                     float fovScoreDeg = 0.0f;
                     if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov, &fovScoreDeg)) {
                         const float distance = TargetingDetail::CameraPosition().DistTo(RootPos);
@@ -1412,8 +1579,8 @@ namespace OW {
                             best.entitySnapshot = entities[i];
                             best.boneId = AimBoneToSkeletonBoneId(resolvedAimBone);
                             best.rawAimPoint = RootPos;
-                            best.predictedAimPoint = PreditPos;
-                            best.aimPoint = resolvedPrediction ? PreditPos : RootPos;
+                            best.predictedAimPoint = lead.finalAimPoint;
+                            best.aimPoint = lead.finalAimPoint;
                             best.screenPoint = Vec2;
                             best.distance = distance;
                             best.fovScore = fovScoreDeg;
@@ -1457,12 +1624,15 @@ namespace OW {
                         best.rawAimPoint = RootPos;
                         best.aimPoint = RootPos;
                         if (resolvedPrediction) {
-                            float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
-                            Vel = entities[TarGetIndex].velocity;
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, predictionSpec.projectileSpeed);
-                            AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                            best.predictedAimPoint = PreditPos;
-                            best.aimPoint = PreditPos;
+                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                                entities[TarGetIndex],
+                                RootPos,
+                                projectileSpec,
+                                true,
+                                false);
+                            PreditPos = lead.finalAimPoint;
+                            best.predictedAimPoint = lead.finalAimPoint;
+                            best.aimPoint = lead.finalAimPoint;
                         }
                         best.screenPoint = CrossHair;
                         aimViewMatrix.WorldToScreen(best.aimPoint, &best.screenPoint, Vector2(OW::WX, OW::WY));
@@ -1493,12 +1663,15 @@ namespace OW {
                         best.rawAimPoint = RootPos;
                         best.aimPoint = RootPos;
                         if (resolvedPrediction) {
-                            float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
-                            Vel = entities[TarGetIndex].velocity;
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, predictionSpec.projectileSpeed);
-                            AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                            best.predictedAimPoint = PreditPos;
-                            best.aimPoint = PreditPos;
+                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                                entities[TarGetIndex],
+                                RootPos,
+                                projectileSpec,
+                                true,
+                                false);
+                            PreditPos = lead.finalAimPoint;
+                            best.predictedAimPoint = lead.finalAimPoint;
+                            best.aimPoint = lead.finalAimPoint;
                         }
                         best.screenPoint = CrossHair;
                         aimViewMatrix.WorldToScreen(best.aimPoint, &best.screenPoint, Vector2(OW::WX, OW::WY));
@@ -1614,15 +1787,19 @@ namespace OW {
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         if (local_entity.HeroID == eHero::HERO_HANJO) predit = true;
         const WeaponSpec* weaponSpec = ResolveWeaponSpec(local_entity.HeroID, Config::aimbotAttack);
-        const TargetingDetail::PredictionRuntimeSpec predictionSpec =
-            TargetingDetail::ResolvePredictionRuntimeSpec(weaponSpec, local_entity, false);
+        const bool resolvedPrediction = ResolvePredictionEnabled(
+            ClampPredictionOverride(Config::aimbotPredictionMode),
+            weaponSpec,
+            predit);
+        const ProjectileRuntimeSpec projectileSpec =
+            TargetingDetail::ResolveProjectileRuntimeSpec(weaponSpec, local_entity, false);
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
         const Matrix aimViewMatrix = OW::SnapshotViewMatrix();
         const TargetingDetail::FovRuntimeContext fovContext = TargetingDetail::SnapshotFovRuntimeContext();
         auto entities = TargetingDetail::SnapshotEntities();
         float origin = 100000.f;
         if (entities.size() > 0) {
-            Vector3 PreditPos, RootPos, Vel;
+            Vector3 PreditPos, RootPos;
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
@@ -1630,13 +1807,14 @@ namespace OW {
                     if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
                     else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
                     else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
-                    Vel = entities[i].velocity;
-                    if (predit) {
-                        float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
-                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist, predictionSpec.projectileSpeed);
-                        AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                    }
-                    const Vector3 fovPoint = predit ? PreditPos : RootPos;
+                    const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                        entities[i],
+                        RootPos,
+                        projectileSpec,
+                        resolvedPrediction,
+                        false);
+                    PreditPos = lead.finalAimPoint;
+                    const Vector3 fovPoint = lead.finalAimPoint;
                     float fovScoreDeg = 0.0f;
                     if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov, &fovScoreDeg)) {
                         float score;
@@ -1648,7 +1826,7 @@ namespace OW {
                             score = TargetingDetail::CameraPosition().DistTo(PreditPos);
                         }
                         if (score < origin) {
-                            target = predit ? PreditPos : RootPos;
+                            target = lead.finalAimPoint;
                             origin = score;
                             TarGetIndex = i;
                         }
@@ -1677,12 +1855,15 @@ namespace OW {
                         RootPos = entities[TarGetIndex].GetBonePos(index[m]);
                         PreditPos = RootPos;
                         target = RootPos;
-                        if (predit) {
-                            float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
-                            Vel = entities[TarGetIndex].velocity;
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, predictionSpec.projectileSpeed);
-                            AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                            target = PreditPos;
+                        if (resolvedPrediction) {
+                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                                entities[TarGetIndex],
+                                RootPos,
+                                projectileSpec,
+                                true,
+                                false);
+                            PreditPos = lead.finalAimPoint;
+                            target = lead.finalAimPoint;
                         }
                     } else {
                         float distbone[12] = { 0 };
@@ -1699,12 +1880,15 @@ namespace OW {
                         RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
                         PreditPos = RootPos;
                         target = RootPos;
-                        if (predit) {
-                            float dist = TargetingDetail::CameraPosition().DistTo(PreditPos);
-                            Vel = entities[TarGetIndex].velocity;
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist, predictionSpec.projectileSpeed);
-                            AimCorrection(&PreditPos, Vel, dist, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                            target = PreditPos;
+                        if (resolvedPrediction) {
+                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                                entities[TarGetIndex],
+                                RootPos,
+                                projectileSpec,
+                                true,
+                                false);
+                            PreditPos = lead.finalAimPoint;
+                            target = lead.finalAimPoint;
                         }
                     }
                 }
@@ -1787,10 +1971,14 @@ namespace OW {
         auto entities = TargetingDetail::SnapshotEntities();
         auto local_entity = TargetingDetail::SnapshotLocalEntity();
         const WeaponSpec* weaponSpec = ResolveWeaponSpec(local_entity.HeroID, Config::aimbotAttack);
-        const TargetingDetail::PredictionRuntimeSpec predictionSpec =
-            TargetingDetail::ResolvePredictionRuntimeSpec(weaponSpec, local_entity, true);
+        const bool resolvedPrediction = ResolvePredictionEnabled(
+            ClampPredictionOverride(Config::aimbotPredictionMode),
+            weaponSpec,
+            predit);
+        const ProjectileRuntimeSpec projectileSpec =
+            TargetingDetail::ResolveProjectileRuntimeSpec(weaponSpec, local_entity, true);
         float origin = 100000.f;
-        Vector3 PreditPos, RootPos, Vel;
+        Vector3 PreditPos, RootPos;
         int selectedBoneId = AimBoneToSkeletonBoneId(Config::Bone2);
         if (entities.size() > 0) {
             for (size_t i = 0; i < entities.size(); i++) {
@@ -1811,13 +1999,14 @@ namespace OW {
                         else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
                         else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
                     }
-                    Vel = entities[i].velocity;
-                    if (predit) {
-                        float dist2 = camera.DistTo(PreditPos);
-                        Vel = TargetingDetail::AccelerationAwareVelocity(entities[i], dist2, predictionSpec.projectileSpeed);
-                        AimCorrection22(&PreditPos, Vel, dist2, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                    }
-                    const Vector3 fovPoint = predit ? PreditPos : RootPos;
+                    const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                        entities[i],
+                        RootPos,
+                        projectileSpec,
+                        resolvedPrediction,
+                        true);
+                    PreditPos = lead.finalAimPoint;
+                    const Vector3 fovPoint = lead.finalAimPoint;
                     float fovScoreDeg = 0.0f;
                     if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov2, &fovScoreDeg)) {
                         const float distance = camera.DistTo(RootPos);
@@ -1832,7 +2021,7 @@ namespace OW {
                             score = distance;
                         }
                         if (score < origin) {
-                            target = predit ? PreditPos : RootPos;
+                            target = lead.finalAimPoint;
                             origin = score;
                             TarGetIndex = i;
                             selectedBoneId = AimBoneToSkeletonBoneId(entities[i].Team ? Config::Bone2 : Config::Bone);
@@ -1863,12 +2052,15 @@ namespace OW {
                         RootPos = entities[TarGetIndex].GetBonePos(index[m]);
                         PreditPos = RootPos;
                         target = RootPos;
-                        if (predit) {
-                            Vel = entities[TarGetIndex].velocity;
-                            float dist2 = camera.DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, predictionSpec.projectileSpeed);
-                            AimCorrection22(&PreditPos, Vel, dist2, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                            target = PreditPos;
+                        if (resolvedPrediction) {
+                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                                entities[TarGetIndex],
+                                RootPos,
+                                projectileSpec,
+                                true,
+                                true);
+                            PreditPos = lead.finalAimPoint;
+                            target = lead.finalAimPoint;
                         }
                     } else {
                         float distbone[10] = { 0 };
@@ -1884,12 +2076,15 @@ namespace OW {
                         RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
                         PreditPos = RootPos;
                         target = RootPos;
-                        if (predit) {
-                            Vel = entities[TarGetIndex].velocity;
-                            float dist2 = camera.DistTo(PreditPos);
-                            Vel = TargetingDetail::AccelerationAwareVelocity(entities[TarGetIndex], dist2, predictionSpec.projectileSpeed);
-                            AimCorrection22(&PreditPos, Vel, dist2, predictionSpec.projectileSpeed, predictionSpec.gravity);
-                            target = PreditPos;
+                        if (resolvedPrediction) {
+                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                                entities[TarGetIndex],
+                                RootPos,
+                                projectileSpec,
+                                true,
+                                true);
+                            PreditPos = lead.finalAimPoint;
+                            target = lead.finalAimPoint;
                         }
                     }
                 }
@@ -2183,6 +2378,12 @@ namespace OW {
         }
 
     } // namespace AimSmoothingDetail
+
+    inline void ResetAimSmoothingState() {
+        AimSmoothingDetail::ResetPIDState();
+        AimSmoothingDetail::ResetBezierState();
+        AimSmoothingDetail::ResetOvershootState();
+    }
 
     inline Vector3 SmoothPID(Vector3 current, Vector3 target, float deltaTime) {
         AimSmoothingDetail::PIDState& state = AimSmoothingDetail::GetPIDState();

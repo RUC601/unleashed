@@ -148,11 +148,8 @@ namespace OW { namespace Config {
     // ---- Prediction ----
     inline bool projectile_arc  = false; // Ballistic arc correction for projectiles
     inline bool Prediction      = false;
-    inline bool Prediction2     = false;
     inline bool Gravitypredit   = false;
-    inline bool Gravitypredit2  = false;
     inline float predit_level   = 110.f;
-    inline float predit_level2  = 110.f;
     inline bool hanzoautospeed  = false;
 
     // ---- Keys ----
@@ -230,6 +227,9 @@ namespace OW { namespace Config {
     // Legacy behavior acceleration is kept for config compatibility; method-level
     // acceleration now owns the Accel Limited controller tuning.
     inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f };
+    inline std::array<bool, kAimBehaviorCount> aimBehaviorMoveSplitEnabled = { true, false, false, true };
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4 };
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800 };
     inline std::array<float, kAimMethodCount> aimMethodAngularSpeedScale = {
         100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f
     };
@@ -314,6 +314,30 @@ namespace OW { namespace Config {
         return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 250.0f);
     }
 
+    inline float TrackingDeadzoneDampingWidthPixels(float radiusPixels)
+    {
+        const float radius = ClampTrackingDeadzonePixels(radiusPixels);
+        if (radius <= 0.0f)
+            return 0.0f;
+        return std::clamp(radius * 0.5f, 8.0f, 48.0f);
+    }
+
+    inline float TrackingDeadzoneDampingScale(float distancePixels, float radiusPixels)
+    {
+        const float radius = ClampTrackingDeadzonePixels(radiusPixels);
+        if (radius <= 0.0f)
+            return 1.0f;
+        if (!std::isfinite(distancePixels) || distancePixels <= radius)
+            return 0.0f;
+
+        const float width = TrackingDeadzoneDampingWidthPixels(radius);
+        if (width <= 0.0f)
+            return 1.0f;
+
+        const float t = std::clamp((distancePixels - radius) / width, 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
     inline float ClampFlickShotClampMs(float value)
     {
         return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 1000.0f);
@@ -360,6 +384,33 @@ namespace OW { namespace Config {
     {
         const float value = aimBehaviorBaseSpeed[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
         return std::isfinite(value) ? std::clamp(value, 0.0f, 100.0f) : 100.0f;
+    }
+
+    inline int ClampMoveSplitMaxPixels(int value)
+    {
+        return std::clamp(value, 1, 50);
+    }
+
+    inline int ClampMoveSplitDelayUs(int value)
+    {
+        return std::clamp(value, 0, 10000);
+    }
+
+    inline bool AimBehaviorMoveSplitEnabled(int behavior)
+    {
+        return aimBehaviorMoveSplitEnabled[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+    }
+
+    inline int AimBehaviorMoveSplitMaxPixels(int behavior)
+    {
+        const int value = aimBehaviorMoveSplitMaxPixels[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+        return ClampMoveSplitMaxPixels(value);
+    }
+
+    inline int AimBehaviorMoveSplitDelayUs(int behavior)
+    {
+        const int value = aimBehaviorMoveSplitDelayUs[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+        return ClampMoveSplitDelayUs(value);
     }
 
     inline float AimMethodAngularSpeedScale(int method)
