@@ -1423,6 +1423,176 @@ namespace {
         return resolvedWindow * Config::HitboxScaleMultiplier(hitboxScalePercent);
     }
 
+    float AutoMeleeBoneScore(const TargetingDetail::FovRuntimeContext& fovContext,
+                             const Vector3& source,
+                             const Vector3& point)
+    {
+        if (fovContext.valid) {
+            const float score = TargetingDetail::FovScoreDeg(fovContext, point);
+            if (std::isfinite(score))
+                return score;
+        }
+
+        return source.DistTo(point);
+    }
+
+    bool ResolveAutoMeleeBone(c_entity& entity,
+                              int boneSetting,
+                              const TargetingDetail::FovRuntimeContext& fovContext,
+                              const Vector3& source,
+                              int& outBoneId,
+                              Vector3& outPoint,
+                              float& outScore)
+    {
+        bool found = false;
+        float bestScore = (std::numeric_limits<float>::max)();
+
+        auto considerBone = [&](int boneId, const Vector3& point) {
+            if (!IsUsablePosition(point) || point == entity.pos)
+                return;
+
+            const float score = AutoMeleeBoneScore(fovContext, source, point);
+            if (!std::isfinite(score))
+                return;
+
+            if (!found || score < bestScore) {
+                found = true;
+                bestScore = score;
+                outBoneId = boneId;
+                outPoint = point;
+                outScore = score;
+            }
+        };
+
+        if (boneSetting == Config::kAimBoneClosest) {
+            const auto skeleton = entity.GetSkel();
+            for (int boneId : skeleton)
+                considerBone(boneId, entity.GetBonePos(boneId));
+            if (found)
+                return true;
+        }
+
+        const int normalizedBone = Config::NormalizeAimBone(boneSetting);
+        const int boneId = AimBoneToSkeletonBoneId(normalizedBone);
+        Vector3 point = TargetingDetail::ConfiguredBonePosition(entity, normalizedBone);
+        if (!IsUsablePosition(point))
+            point = CandidatePositionForAction(entity);
+        considerBone(boneId, point);
+        return found;
+    }
+
+    bool IsAutoMeleeHitReady(const SkillAimCandidate& candidate)
+    {
+        if (!candidate.valid || !IsUsablePosition(candidate.aimPoint) ||
+            candidate.hitWindow <= 0.0f) {
+            return false;
+        }
+
+        const AimbotDetail::AimData aim = AimbotDetail::BuildAimData(
+            candidate.aimPoint,
+            false,
+            1.0f,
+            0.0f);
+        if (!IsFiniteVector(aim.local_angle) ||
+            !IsFiniteVector(aim.target_angle) ||
+            !IsFiniteVector(aim.local_pos)) {
+            return false;
+        }
+
+        return OW::in_range(
+            aim.local_angle,
+            aim.target_angle,
+            aim.local_pos,
+            candidate.aimPoint,
+            candidate.hitWindow);
+    }
+
+    SkillAimCandidate FindBestAutoMeleeCandidate(const Config::HeroSkillSettings& settings)
+    {
+        SkillAimCandidate best{};
+        const float effectiveRange = settings.distance;
+        if (!std::isfinite(effectiveRange) || effectiveRange <= 0.0f)
+            return best;
+
+        const c_entity local = TargetingDetail::SnapshotLocalEntity();
+        const Vector3 source = SourcePositionForAction(local);
+        if (!IsUsablePosition(source))
+            return best;
+
+        const std::vector<c_entity> snapshot = TargetingDetail::SnapshotEntities();
+        const TargetingDetail::FovRuntimeContext fovContext =
+            TargetingDetail::SnapshotFovRuntimeContext();
+        const SkillProjectileRuntime meleeProjectile{};
+        const float maxHealth = std::clamp(settings.enemyHealthThreshold, 0.0f, 500.0f);
+
+        float bestScore = (std::numeric_limits<float>::max)();
+        float bestDistance = (std::numeric_limits<float>::max)();
+
+        for (size_t index = 0; index < snapshot.size(); ++index) {
+            c_entity entity = snapshot[index];
+            if (!TargetingDetail::IsSelectableCandidate(entity, 0, local))
+                continue;
+            if (Config::aimbotIgnoreInvisible && !entity.Vis)
+                continue;
+            if ((entity.imort || entity.barrprot) && !Config::switch_team)
+                continue;
+            if (entity.skill1act && entity.HeroID == eHero::HERO_VENTURE)
+                continue;
+            if (!std::isfinite(entity.PlayerHealth) ||
+                entity.PlayerHealth <= 0.0f ||
+                entity.PlayerHealth > maxHealth) {
+                continue;
+            }
+
+            int boneId = BONE_CHEST;
+            Vector3 aimPoint{};
+            float fovScore = 0.0f;
+            if (!ResolveAutoMeleeBone(
+                    entity,
+                    settings.tracking.bone,
+                    fovContext,
+                    source,
+                    boneId,
+                    aimPoint,
+                    fovScore)) {
+                continue;
+            }
+
+            const float distance = source.DistTo(aimPoint);
+            if (!std::isfinite(distance) || distance > effectiveRange)
+                continue;
+
+            SkillAimCandidate candidate{};
+            candidate.valid = true;
+            candidate.entity = entity;
+            candidate.entityIndex = static_cast<int>(index);
+            candidate.entityKey = entity.address ? entity.address : entity.LinkBase;
+            candidate.boneId = boneId;
+            candidate.distance = distance;
+            candidate.vitalityPercent = entity.PlayerHealth;
+            candidate.fovScore = fovScore;
+            candidate.hitWindow = ResolveSkillHitWindow(
+                entity,
+                boneId,
+                meleeProjectile,
+                settings.tracking.hitbox);
+            candidate.rawAimPoint = aimPoint;
+            candidate.aimPoint = aimPoint;
+
+            if (!IsAutoMeleeHitReady(candidate))
+                continue;
+
+            if (fovScore < bestScore ||
+                (std::fabs(fovScore - bestScore) <= 0.001f && distance < bestDistance)) {
+                best = candidate;
+                bestScore = fovScore;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
+
     SkillAimCandidate FindBestSkillAimCandidate(const Config::HeroSkillSettings& settings,
                                                 const SkillProjectileRuntime& projectile)
     {
@@ -1971,6 +2141,11 @@ namespace {
             skill == "pulse-bomb";
     }
 
+    bool IsAutoMeleeDefinition(const HeroSkillDefinition& definition)
+    {
+        return std::string(definition.skillId ? definition.skillId : "") == "auto-melee";
+    }
+
     bool SkillCooldownReadySentinel(float cooldown)
     {
         return std::isfinite(cooldown) && std::fabs(cooldown - 1.0f) <= 0.001f;
@@ -2458,6 +2633,31 @@ namespace {
         return true;
     }
 
+    bool EvaluateAutoMeleeAction(const std::string& runtimeKey,
+                                 const HeroSkillDefinition& definition,
+                                 const Config::HeroSkillSettings& settings)
+    {
+        const SkillAimCandidate candidate = FindBestAutoMeleeCandidate(settings);
+        if (!candidate.valid || IsActionDebounced(runtimeKey))
+            return false;
+
+        const int vk = SkillOutputVk(settings);
+        if (!StartTimedHotkey(runtimeKey, vk, kBriefPulse))
+            return false;
+
+        MarkActionExecuted(runtimeKey);
+        Diagnostics::Info("Hero skill auto melee fired. skill=%s targetIndex=%d distance=%.2f hp=%.1f fovScore=%.2f bone=%d hitWindow=%.3f vk=%d",
+            definition.skillId ? definition.skillId : "",
+            candidate.entityIndex,
+            candidate.distance,
+            candidate.vitalityPercent,
+            candidate.fovScore,
+            candidate.boneId,
+            candidate.hitWindow,
+            vk);
+        return true;
+    }
+
     bool EvaluateChargeReleaseAction(const std::string& runtimeKey,
                                      const HeroSkillDefinition& definition,
                                      const Config::HeroSkillSettings& settings)
@@ -2893,6 +3093,11 @@ void ProcessHeroSkills()
 
         if (IsAmmoGuardBlocking(skillKey, settings, localSnapshot)) {
             CancelSkill(skillKey);
+            continue;
+        }
+
+        if (IsAutoMeleeDefinition(definition)) {
+            EvaluateAutoMeleeAction(skillKey, definition, settings);
             continue;
         }
 

@@ -8,7 +8,7 @@ namespace UI {
 
     struct State {
         Tab   activeTab      = TAB_AIMING;
-        int   aimingSubTab   = 0;   // 0 = Aimbot, 1 = Trigger, 2 = Skills, 3 = Sequences
+        int   aimingSubTab   = 0;   // 0 = Aimbot, 1 = Trigger, 2 = Skills, 3 = Combo
         int   visualsSubTab  = 0;   // 0 = Players
         int   themeSubTab    = 0;   // 0 = General, 1 = Aim FOV
         int   miscSubTab     = 0;   // 0 = General, 1 = Diagnostics, 2 = Behavior, 3 = Method, 4 = KMBox, 5 = Screen

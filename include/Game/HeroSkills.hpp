@@ -24,7 +24,8 @@ enum class HeroSkillInputAction {
     Ability3,
     Ultimate,
     Jump,
-    Crouch
+    Crouch,
+    QuickMelee
 };
 
 using HeroSkillControlFlags = uint32_t;
@@ -47,6 +48,9 @@ namespace HeroSkillControls {
     inline constexpr HeroSkillControlFlags PitchControl = 1u << 14;
     inline constexpr HeroSkillControlFlags PhaseTiming = 1u << 15;
     inline constexpr HeroSkillControlFlags AmmoGuard = 1u << 16;
+    inline constexpr HeroSkillControlFlags EnemyHealthAbsolute = 1u << 17;
+    inline constexpr HeroSkillControlFlags Bone = 1u << 18;
+    inline constexpr HeroSkillControlFlags Hitbox = 1u << 19;
 }
 
 namespace HeroSkillHotkey {
@@ -100,6 +104,7 @@ inline constexpr const char* HeroSkillInputActionName(HeroSkillInputAction actio
     case HeroSkillInputAction::Ultimate: return "Ultimate";
     case HeroSkillInputAction::Jump: return "Jump";
     case HeroSkillInputAction::Crouch: return "Crouch";
+    case HeroSkillInputAction::QuickMelee: return "Quick Melee";
     default: return "Unknown";
     }
 }
@@ -305,6 +310,36 @@ inline Config::HeroSkillSettings MakeZaryaReloadAmmoProbeDefaults()
     settings.cooldownGuard = false;
     settings.cooldown = 0.0f;
     settings.prediction = false;
+    settings.ammoGuard = false;
+    settings.ammoGuardReserve = 1;
+    return settings;
+}
+
+inline Config::HeroSkillSettings MakeAutoMeleeDefaults()
+{
+    Config::HeroSkillSettings settings{};
+    settings.enabled = false;
+    settings.key = HeroSkillHotkey::VKey;
+    settings.skillKey = HeroSkillHotkey::VKey;
+    settings.healthThreshold = 50.0f;
+    settings.enemyHealthThreshold = 40.0f;
+    settings.allyHealthThreshold = 50.0f;
+    settings.distance = 3.0f;
+    settings.mode = 0;
+    settings.cooldown = 0.55f;
+    settings.cooldownGuard = false;
+    settings.prediction = false;
+    settings.minTargets = 1;
+    settings.radius = 0.0f;
+    settings.tracking = {
+        Config::kAimBehaviorTracking,
+        0,
+        0.0f,
+        100.0f,
+        Config::kDefaultFovDeg,
+        Config::kAimBoneClosest,
+        Config::kMaxHitboxScalePercent
+    };
     settings.ammoGuard = false;
     settings.ammoGuardReserve = 1;
     return settings;
@@ -583,20 +618,109 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
     }
 };
 
-inline const auto& AllHeroSkillDefinitions()
+struct HeroSkillHeroEntry {
+    uint64_t heroId;
+    const char* heroSlug;
+};
+
+inline constexpr HeroSkillHeroEntry kHeroSkillAutoMeleeHeroes[] = {
+    { OW::eHero::HERO_TRACER,       "tracer" },
+    { OW::eHero::HERO_WIDOWMAKER,   "widowmaker" },
+    { OW::eHero::HERO_SOLDIER76,    "soldier-76" },
+    { OW::eHero::HERO_GENJI,        "genji" },
+    { OW::eHero::HERO_HANJO,        "hanzo" },
+    { OW::eHero::HERO_MCCREE,       "cassidy" },
+    { OW::eHero::HERO_PHARAH,       "pharah" },
+    { OW::eHero::HERO_REAPER,       "reaper" },
+    { OW::eHero::HERO_SOMBRA,       "sombra" },
+    { OW::eHero::HERO_SYMMETRA,     "symmetra" },
+    { OW::eHero::HERO_TORBJORN,     "torbjorn" },
+    { OW::eHero::HERO_BASTION,      "bastion" },
+    { OW::eHero::HERO_JUNKRAT,      "junkrat" },
+    { OW::eHero::HERO_MEI,          "mei" },
+    { OW::eHero::HERO_ASHE,         "ashe" },
+    { OW::eHero::HERO_SOJOURN,      "sojourn" },
+    { OW::eHero::HERO_VENTURE,      "venture" },
+    { OW::eHero::HERO_ECHO,         "echo" },
+    { OW::eHero::HERO_FREJA,        "freja" },
+    { OW::eHero::HERO_VENDETTA,     "vendetta" },
+    { OW::eHero::HERO_ANRAN,        "anran" },
+    { OW::eHero::HERO_REINHARDT,    "reinhardt" },
+    { OW::eHero::HERO_WINSTON,      "winston" },
+    { OW::eHero::HERO_ZARYA,        "zarya" },
+    { OW::eHero::HERO_DVA,          "dva" },
+    { OW::eHero::HERO_ROADHOG,      "roadhog" },
+    { OW::eHero::HERO_ORISA,        "orisa" },
+    { OW::eHero::HERO_WRECKINGBALL, "wrecking-ball" },
+    { OW::eHero::HERO_SIGMA,        "sigma" },
+    { OW::eHero::HERO_DOOMFIST,     "doomfist" },
+    { OW::eHero::HERO_RAMATTRA,     "ramattra" },
+    { OW::eHero::HERO_JUNKERQUEEN,  "junker-queen" },
+    { OW::eHero::HERO_MAUGA,        "mauga" },
+    { OW::eHero::HERO_HAZARD,       "hazard" },
+    { OW::eHero::HERO_MERCY,        "mercy" },
+    { OW::eHero::HERO_LUCIO,        "lucio" },
+    { OW::eHero::HERO_ZENYATTA,     "zenyatta" },
+    { OW::eHero::HERO_ANA,          "ana" },
+    { OW::eHero::HERO_BRIGITTE,     "brigitte" },
+    { OW::eHero::HERO_MOIRA,        "moira" },
+    { OW::eHero::HERO_BAPTISTE,     "baptiste" },
+    { OW::eHero::HERO_KIRIKO,       "kiriko" },
+    { OW::eHero::HERO_LIFEWEAVER,   "lifeweaver" },
+    { OW::eHero::HERO_ILLARI,       "illari" },
+    { OW::eHero::HERO_JUNO,         "juno" },
+    { OW::eHero::HERO_WUYANG,       "wuyang" },
+    { OW::eHero::HERO_JETPACKCAT,   "jetpackcat" },
+};
+
+inline size_t AutoMeleeHeroDefinitionCount()
 {
-    return kHeroSkillDefinitions;
+    return sizeof(kHeroSkillAutoMeleeHeroes) / sizeof(kHeroSkillAutoMeleeHeroes[0]);
+}
+
+inline const std::vector<HeroSkillDefinition>& AllHeroSkillDefinitions()
+{
+    static const std::vector<HeroSkillDefinition> definitions = [] {
+        std::vector<HeroSkillDefinition> result;
+        result.reserve(
+            sizeof(kHeroSkillDefinitions) / sizeof(kHeroSkillDefinitions[0]) +
+            AutoMeleeHeroDefinitionCount());
+
+        for (const HeroSkillDefinition& definition : kHeroSkillDefinitions)
+            result.push_back(definition);
+
+        for (const HeroSkillHeroEntry& hero : kHeroSkillAutoMeleeHeroes) {
+            result.push_back({
+                hero.heroId,
+                hero.heroSlug,
+                "auto-melee",
+                "Auto Melee",
+                nullptr,
+                HeroSkillInputAction::QuickMelee,
+                HeroSkillCategory::Skill,
+                HeroSkillControls::Enabled |
+                    HeroSkillControls::EnemyHealthAbsolute |
+                    HeroSkillControls::Distance |
+                    HeroSkillControls::Bone |
+                    HeroSkillControls::Hitbox,
+                MakeAutoMeleeDefaults()
+            });
+        }
+
+        return result;
+    }();
+    return definitions;
 }
 
 inline size_t HeroSkillDefinitionCount()
 {
-    return sizeof(kHeroSkillDefinitions) / sizeof(kHeroSkillDefinitions[0]);
+    return AllHeroSkillDefinitions().size();
 }
 
 inline int CountHeroSkillDefinitions(uint64_t heroId)
 {
     int count = 0;
-    for (const HeroSkillDefinition& definition : kHeroSkillDefinitions) {
+    for (const HeroSkillDefinition& definition : AllHeroSkillDefinitions()) {
         if (definition.heroId == heroId)
             ++count;
     }

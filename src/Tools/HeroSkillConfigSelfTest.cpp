@@ -25,6 +25,8 @@ int main()
     const OW::HeroSkillDefinition* asheFirePattern = nullptr;
     const OW::HeroSkillDefinition* anaSleepDart = nullptr;
     const OW::HeroSkillDefinition* roadhogChainHook = nullptr;
+    const OW::HeroSkillDefinition* tracerAutoMelee = nullptr;
+    size_t autoMeleeDefinitions = 0;
     for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
         if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ASHE) &&
             std::string(definition.skillId ? definition.skillId : "") == "fire-pattern") {
@@ -36,11 +38,21 @@ int main()
                    std::string(definition.skillId ? definition.skillId : "") == "chain-hook") {
             roadhogChainHook = &definition;
         }
+
+        if (std::string(definition.skillId ? definition.skillId : "") == "auto-melee") {
+            ++autoMeleeDefinitions;
+            if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_TRACER))
+                tracerAutoMelee = &definition;
+        }
     }
 
     if (!asheFirePattern)
         return Fail();
     if (!anaSleepDart || !roadhogChainHook)
+        return Fail();
+    if (!tracerAutoMelee)
+        return Fail();
+    if (autoMeleeDefinitions != OW::AutoMeleeHeroDefinitionCount())
         return Fail();
     if (!OW::HasHeroSkillControl(*asheFirePattern, OW::HeroSkillControls::SequenceSteps))
         return Fail();
@@ -96,6 +108,30 @@ int main()
     if (!verifyProjectileAimSkill(*roadhogChainHook, 62.0f, 0.5f, 100.0f))
         return Fail();
     if (!NearlyEqual(roadhogChainHook->defaultSettings.enemyHealthThreshold, 100.0f))
+        return Fail();
+
+    if (!OW::HasHeroSkillControl(*tracerAutoMelee, OW::HeroSkillControls::EnemyHealthAbsolute))
+        return Fail();
+    if (!OW::HasHeroSkillControl(*tracerAutoMelee, OW::HeroSkillControls::Distance))
+        return Fail();
+    if (!OW::HasHeroSkillControl(*tracerAutoMelee, OW::HeroSkillControls::Bone))
+        return Fail();
+    if (!OW::HasHeroSkillControl(*tracerAutoMelee, OW::HeroSkillControls::Hitbox))
+        return Fail();
+    const OW::Config::HeroSkillSettings autoMelee = tracerAutoMelee->defaultSettings;
+    if (autoMelee.key != OW::HeroSkillHotkey::VKey ||
+        autoMelee.skillKey != OW::HeroSkillHotkey::VKey) {
+        return Fail();
+    }
+    if (!NearlyEqual(autoMelee.enemyHealthThreshold, 40.0f))
+        return Fail();
+    if (!NearlyEqual(autoMelee.distance, 3.0f))
+        return Fail();
+    if (!NearlyEqual(autoMelee.cooldown, 0.55f))
+        return Fail();
+    if (autoMelee.tracking.bone != OW::Config::kAimBoneClosest)
+        return Fail();
+    if (!NearlyEqual(autoMelee.tracking.hitbox, OW::Config::kMaxHitboxScalePercent))
         return Fail();
 
     return EXIT_SUCCESS;

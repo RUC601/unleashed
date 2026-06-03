@@ -1308,7 +1308,9 @@ namespace OW { namespace Config {
             settings.tracking.smooth = std::clamp(settings.tracking.smooth, 0.0f, 100.0f);
             settings.tracking.speedScale = std::clamp(settings.tracking.speedScale, 0.0f, 100.0f);
             settings.tracking.fov = ClampFovDeg(settings.tracking.fov);
-            settings.tracking.bone = NormalizeAimBone(settings.tracking.bone);
+            settings.tracking.bone = settings.tracking.bone == kAimBoneClosest
+                ? kAimBoneClosest
+                : NormalizeAimBone(settings.tracking.bone);
             settings.tracking.hitbox = ClampHitboxScalePercent(settings.tracking.hitbox);
             settings.pitchDownDurationMs = std::clamp(settings.pitchDownDurationMs, 20, 100);
             settings.pitchDownDurationJitter = std::clamp(settings.pitchDownDurationJitter, 0.0f, 50.0f);

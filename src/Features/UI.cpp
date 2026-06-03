@@ -851,6 +851,9 @@ static const char* kHeroSkillModes[] = {
 static const char* kHeroSkillTrackingBones[] = {
     "Chest", "Head", "Neck"
 };
+static const char* kHeroSkillTargetBones[] = {
+    "Chest", "Head", "Neck", "Closest"
+};
 static constexpr int kInputSourceConfigOrder[] = { 1, 0, 3, 2 };
 static const char* kBonePreference[] = { "Head", "Neck", "Chest", "Closest" };
 static constexpr int kBonePreferenceAimBones[] = {
@@ -3443,6 +3446,7 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     const bool hasTrackingOverlay = hasControl(OW::HeroSkillControls::TrackingOverlay);
     const bool hasPitchControls = hasControl(OW::HeroSkillControls::PitchControl);
     const bool hasPhaseTiming = hasControl(OW::HeroSkillControls::PhaseTiming);
+    const bool hasAbsoluteEnemyHealth = hasControl(OW::HeroSkillControls::EnemyHealthAbsolute);
     const bool hasSkillOutputKey = !hasSequenceControls &&
         (hasControl(OW::HeroSkillControls::Key) || hasPitchControls || hasPhaseTiming);
 
@@ -3488,6 +3492,13 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         ImGui::PopItemWidth();
     }
 
+    if (hasAbsoluteEnemyHealth) {
+        SettingRow("Max Health", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillEnemyMaxHealth", &settings.enemyHealthThreshold, 0.0f, 300.0f, "40 HP");
+        ImGui::PopItemWidth();
+    }
+
     if (hasControl(OW::HeroSkillControls::EnemyHealthThreshold)) {
         SettingRow("Enemy HP Threshold", kAimbotRightLabelWidth);
         PushControlWidth();
@@ -3503,9 +3514,10 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     }
 
     if (hasControl(OW::HeroSkillControls::Distance)) {
-        SettingRow("Distance", kAimbotRightLabelWidth);
+        SettingRow(hasAbsoluteEnemyHealth ? "Max Distance" : "Distance", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISlider("##skillDistance", &settings.distance, 0.0f, 100.0f, "5.0 m");
+        changed |= UISlider("##skillDistance", &settings.distance, 0.0f, 100.0f,
+                            hasAbsoluteEnemyHealth ? "3.0 m" : "5.0 m");
         ImGui::PopItemWidth();
     }
 
@@ -3549,6 +3561,24 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         SettingRow("Min Targets", kAimbotRightLabelWidth);
         PushControlWidth();
         changed |= UISlider("##skillMinTargets", &settings.minTargets, 1.0f, 8.0f, "2");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::Bone)) {
+        SettingRow("Bone", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISelect("##skillTargetBone", &settings.tracking.bone,
+                            kHeroSkillTargetBones, IM_ARRAYSIZE(kHeroSkillTargetBones));
+        ImGui::PopItemWidth();
+    }
+
+    if (hasControl(OW::HeroSkillControls::Hitbox)) {
+        SettingRow("Hitbox Scale", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillTargetHitbox", &settings.tracking.hitbox,
+                            OW::Config::kMinHitboxScalePercent,
+                            OW::Config::kMaxHitboxScalePercent,
+                            "150 %");
         ImGui::PopItemWidth();
     }
 
@@ -3697,23 +3727,6 @@ static bool DrawHeroSkillSequenceDefinition(const OW::HeroSkillDefinition& defin
 void UI::SkillsPage() {
     ImGui::PushID("SkillsPage");
 
-    UIGroupBox("Auto Melee");
-    {
-        SettingRow("Enabled", kDefaultLabelWidth);
-        UICheckbox("##autoMeleeEnable", &OW::Config::AutoMelee);
-
-        SettingRow("Health Threshold", kDefaultLabelWidth);
-        PushControlWidth();
-        UISlider("##meleeHealth", &OW::Config::meleehealth, 0.0f, 300.0f, "50 HP");
-        ImGui::PopItemWidth();
-
-        SettingRow("Distance", kDefaultLabelWidth);
-        PushControlWidth();
-        UISlider("##meleeDistance", &OW::Config::meleedistance, 0.0f, 15.0f, "5.0 m");
-        ImGui::PopItemWidth();
-    }
-    CloseGroupBox();
-
     UIGroupBox("Auto Alt-Fire");
     {
         SettingRow("Enabled", kDefaultLabelWidth);
@@ -3790,7 +3803,7 @@ void UI::SkillsPage() {
 }
 
 // =====================================================================
-// UI::SequencesPage
+// UI::Combo page
 // =====================================================================
 void UI::SequencesPage() {
     ImGui::PushID("SequencesPage");
@@ -3816,7 +3829,7 @@ void UI::SequencesPage() {
     }
 
     if (renderedSequenceCount == 0) {
-        UIGroupBox("Sequences");
+        UIGroupBox("Combo");
         {
             SettingRow("Selected Hero", kDefaultLabelWidth);
             ImGui::AlignTextToFramePadding();
@@ -4993,7 +5006,7 @@ void UI::Render() {
             subTabNames[0] = "Aim";
             subTabNames[1] = "Trigger";
             subTabNames[2] = "Skills";
-            subTabNames[3] = "Sequences";
+            subTabNames[3] = "Combo";
             subTabCount = kAimingSubTabCount;
             state.aimingSubTab = ImClamp(state.aimingSubTab, 0, subTabCount - 1);
             activeSub   = &state.aimingSubTab;

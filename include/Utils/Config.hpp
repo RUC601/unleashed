@@ -22,6 +22,7 @@ namespace OW { namespace Config {
     inline constexpr int kAimBoneChest = 0;
     inline constexpr int kAimBoneHead  = 1;
     inline constexpr int kAimBoneNeck  = 2;
+    inline constexpr int kAimBoneClosest = 3; // Skill-only: choose the closest valid skeleton bone.
     inline constexpr int kMaxHeroPresetSlots = 12;
     inline constexpr float kMinFovDeg = 0.0f;
     inline constexpr float kMaxFovDeg = 180.0f;
