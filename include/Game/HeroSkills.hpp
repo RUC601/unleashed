@@ -353,7 +353,10 @@ inline Config::HeroSkillSettings MakeAnaSleepDartDefaults()
 
 inline Config::HeroSkillSettings MakeRoadhogChainHookDefaults()
 {
-    return MakeProjectileAimSkillDefaults(20.0f, 7.0f, 62.0f, 0.5f, 100.0f);
+    Config::HeroSkillSettings settings =
+        MakeProjectileAimSkillDefaults(20.0f, 7.0f, 62.0f, 0.5f, 100.0f);
+    settings.enemyHealthThreshold = 100.0f;
+    return settings;
 }
 
 inline const HeroSkillDefinition kHeroSkillDefinitions[] = {

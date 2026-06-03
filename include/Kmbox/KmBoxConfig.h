@@ -49,6 +49,8 @@ enum class KmBoxCommandType {
     MouseMove,
     MouseAutoMove,
     MouseButton,
+    MouseMask,
+    MouseUnmask,
     Keyboard,
     Monitor,
     Reboot,
@@ -73,6 +75,8 @@ inline const char* ToString(KmBoxCommandType type) {
     case KmBoxCommandType::MouseMove:     return "mouse_move";
     case KmBoxCommandType::MouseAutoMove: return "mouse_auto_move";
     case KmBoxCommandType::MouseButton:   return "mouse_button";
+    case KmBoxCommandType::MouseMask:     return "mouse_mask";
+    case KmBoxCommandType::MouseUnmask:   return "mouse_unmask";
     case KmBoxCommandType::Keyboard:      return "keyboard";
     case KmBoxCommandType::Monitor:       return "monitor";
     case KmBoxCommandType::Reboot:        return "reboot";

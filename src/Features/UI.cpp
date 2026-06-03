@@ -3484,21 +3484,21 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     if (hasControl(OW::HeroSkillControls::HealthThreshold)) {
         SettingRow("Health Threshold", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISlider("##skillHealth", &settings.healthThreshold, 0.0f, 500.0f, "50 HP");
+        changed |= UISlider("##skillHealth", &settings.healthThreshold, 0.0f, 100.0f, "50%");
         ImGui::PopItemWidth();
     }
 
     if (hasControl(OW::HeroSkillControls::EnemyHealthThreshold)) {
         SettingRow("Enemy HP Threshold", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISlider("##skillEnemyHealth", &settings.enemyHealthThreshold, 0.0f, 500.0f, "50 HP");
+        changed |= UISlider("##skillEnemyHealth", &settings.enemyHealthThreshold, 0.0f, 100.0f, "50%");
         ImGui::PopItemWidth();
     }
 
     if (hasControl(OW::HeroSkillControls::AllyHealthThreshold)) {
         SettingRow("Ally HP Threshold", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISlider("##skillAllyHealth", &settings.allyHealthThreshold, 0.0f, 500.0f, "50 HP");
+        changed |= UISlider("##skillAllyHealth", &settings.allyHealthThreshold, 0.0f, 100.0f, "50%");
         ImGui::PopItemWidth();
     }
 

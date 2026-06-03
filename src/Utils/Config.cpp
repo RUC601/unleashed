@@ -282,9 +282,10 @@ namespace OW { namespace Config {
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
-        constexpr int kCurrentHeroConfigVersion = 4;
+        constexpr int kCurrentHeroConfigVersion = 5;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
+        constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -2978,6 +2979,18 @@ namespace OW { namespace Config {
             return HeroSkillSettings{};
         }
 
+        bool ShouldMigrateRoadhogChainHookHealthThreshold(int heroConfigVersion,
+                                                          uint64_t heroId,
+                                                          const std::string& skillId,
+                                                          const HeroSkillSettings& settings)
+        {
+            if (heroConfigVersion >= kRoadhogChainHookFullHealthDefaultVersion)
+                return false;
+            if (heroId != static_cast<uint64_t>(OW::eHero::HERO_ROADHOG) || skillId != "chain-hook")
+                return false;
+            return std::fabs(settings.enemyHealthThreshold - 50.0f) <= 0.001f;
+        }
+
         bool ShouldRestoreProjectileAimDefaults(uint64_t heroId,
                                                 const std::string& skillId,
                                                 const rapidjson::Value& value)
@@ -3149,6 +3162,7 @@ namespace OW { namespace Config {
         }
 
         void LoadHeroSkillPresetStoreJson(const rapidjson::Value& storeObject,
+                                          int heroConfigVersion,
                                           bool legacyFovApertureValues)
         {
             if (!storeObject.IsObject())
@@ -3196,6 +3210,13 @@ namespace OW { namespace Config {
                             settings.projectileRadius = defaults.projectileRadius;
                             settings.projectileGravity = defaults.projectileGravity;
                             settings.preFireDelayMs = defaults.preFireDelayMs;
+                        }
+                        if (ShouldMigrateRoadhogChainHookHealthThreshold(
+                                heroConfigVersion,
+                                heroId,
+                                skillId,
+                                settings)) {
+                            settings.enemyHealthThreshold = defaults.enemyHealthThreshold;
                         }
                         settings = ValidateHeroSkillSettingsValue(settings);
                     }
@@ -3272,7 +3293,10 @@ namespace OW { namespace Config {
 
             const auto skillStore = document.FindMember("heroSkillPresets");
             if (skillStore != document.MemberEnd())
-                LoadHeroSkillPresetStoreJson(skillStore->value, legacyFovApertureValues);
+                LoadHeroSkillPresetStoreJson(
+                    skillStore->value,
+                    heroConfigVersion,
+                    legacyFovApertureValues);
 
             ValidateHeroPresetsUnlocked();
             ValidateHeroSkillPresetsUnlocked();
@@ -3293,7 +3317,10 @@ namespace OW { namespace Config {
             heroSkillPresets.clear();
             const auto skillStore = document.FindMember("heroSkillPresets");
             if (skillStore != document.MemberEnd())
-                LoadHeroSkillPresetStoreJson(skillStore->value, legacyFovApertureValues);
+                LoadHeroSkillPresetStoreJson(
+                    skillStore->value,
+                    heroConfigVersion,
+                    legacyFovApertureValues);
 
             ValidateHeroSkillPresetsUnlocked();
             LogConfig(Diagnostics::LogLevel::Info,

@@ -4122,6 +4122,24 @@ namespace AimbotDetail {
         }
     }
 
+    inline constexpr uint32_t PhysicalMouseMaskForButton(int button) {
+        switch (button) {
+        case 0: return 0x01u;
+        case 1: return 0x02u;
+        case 2: return 0x04u;
+        default: return 0u;
+        }
+    }
+
+    inline constexpr int VkForMouseButton(int button) {
+        switch (button) {
+        case 0: return VK_LBUTTON;
+        case 1: return VK_RBUTTON;
+        case 2: return VK_MBUTTON;
+        default: return 0;
+        }
+    }
+
     inline constexpr uint32_t FireKeyMaskForAttackAction(int action) {
         switch (action) {
         case 1: // Secondary Fire
@@ -4157,8 +4175,22 @@ namespace AimbotDetail {
     inline void ReleaseDmaMouseKey(uint32_t key, DWORD sleep_ms = 10) {
         int button = -1;
         if (OW::DmaKeyToMouseButton(key, button)) {
+            const uint32_t physicalMask = PhysicalMouseMaskForButton(button);
+            const int vk = VkForMouseButton(button);
+            const bool physicalDown = vk != 0 && IsInputVkDownQuiet(vk);
+            const bool masked = physicalMask != 0 && OW::MaskPhysicalMouseButtons(physicalMask);
+            Diagnostics::Aim("fire.release_mouse keyMask=0x%X button=%d physicalMask=0x%02X physicalDown=%d masked=%d",
+                key,
+                button,
+                physicalMask,
+                physicalDown ? 1 : 0,
+                masked ? 1 : 0);
+            if (masked)
+                Sleep(1);
             OW::ForceReleaseMouseButton(button);
             Sleep(sleep_ms);
+            if (masked)
+                OW::UnmaskPhysicalMouseButtons();
         } else {
             OW::SetKey(key);
             Sleep(sleep_ms);

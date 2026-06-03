@@ -487,6 +487,20 @@ namespace OW {
         return kmbox::KmBoxMgr.SetMouseButtonStateMask(stateMask & 0x7u, force) == success;
     }
 
+    inline bool MaskPhysicalMouseButtons(uint32_t mask) {
+        if (!Config::kmboxEnabled || Config::kmboxDeviceType != 0)
+            return false;
+
+        return kmbox::KmBoxMgr.MaskMouse(mask & 0x7Fu) == success;
+    }
+
+    inline bool UnmaskPhysicalMouseButtons() {
+        if (!Config::kmboxEnabled || Config::kmboxDeviceType != 0)
+            return false;
+
+        return kmbox::KmBoxMgr.UnmaskAll() == success;
+    }
+
     inline bool SendMouseButtonMask(uint32_t keyMask, bool down) {
         if (!Config::kmboxEnabled || keyMask == 0 || (keyMask & ~0x7u) != 0)
             return false;

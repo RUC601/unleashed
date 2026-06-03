@@ -113,6 +113,8 @@ public:
     int ForceReleaseMouseButton(int button);
     int ForceReleaseMouseButtons();
     int SetMouseButtonStateMask(unsigned int StateMask, bool Force = false);
+    int MaskMouse(unsigned int Mask);
+    int UnmaskAll();
     int SendKeyboardKey(unsigned char hidCode, bool down);
     KmBoxConnectionState GetConnectionState() const;
     bool IsConnected() const;

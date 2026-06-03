@@ -27,6 +27,8 @@ namespace
         case cmd_mouse_left:
         case cmd_mouse_right:
         case cmd_mouse_middle:   return KmBoxCommandType::MouseButton;
+        case cmd_mask_mouse:     return KmBoxCommandType::MouseMask;
+        case cmd_unmask_all:     return KmBoxCommandType::MouseUnmask;
         case cmd_monitor:        return KmBoxCommandType::Monitor;
         case cmd_reboot:         return KmBoxCommandType::Reboot;
         case cmd_setconfig:      return KmBoxCommandType::SetConfig;
@@ -144,7 +146,9 @@ namespace
     {
         return type == KmBoxCommandType::MouseMove ||
             type == KmBoxCommandType::MouseAutoMove ||
-            type == KmBoxCommandType::MouseButton;
+            type == KmBoxCommandType::MouseButton ||
+            type == KmBoxCommandType::MouseMask ||
+            type == KmBoxCommandType::MouseUnmask;
     }
 
     bool IsMouseMoveCommand(KmBoxCommandType type)
@@ -184,7 +188,12 @@ namespace
 
     int FlushIntervalForCommand(KmBoxCommandType type)
     {
-        return type == KmBoxCommandType::MouseButton
+        const bool latencySensitive =
+            type == KmBoxCommandType::MouseButton ||
+            type == KmBoxCommandType::MouseMask ||
+            type == KmBoxCommandType::MouseUnmask;
+
+        return latencySensitive
             ? KmBoxRuntimeConfig::MouseButtonFlushIntervalMs
             : KmBoxRuntimeConfig::CommandFlushIntervalMs;
     }
@@ -1023,6 +1032,38 @@ int KmBoxNetManager::SetMouseButtonStateMask(unsigned int StateMask, bool Force)
     command.length = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
     command.type = KmBoxCommandType::MouseButton;
     command.mouseButtonStateMask = next;
+    command.enqueuedAt = std::chrono::steady_clock::now();
+    return EnqueueCommand(command);
+}
+
+int KmBoxNetManager::MaskMouse(unsigned int Mask)
+{
+    const unsigned int effectiveMask = Mask & 0x7Fu;
+    if (effectiveMask == 0)
+        return success;
+
+    client_data packet = BuildPacket(cmd_mask_mouse, effectiveMask);
+
+    Diagnostics::Aim("udp.mouse.mask build mask=0x%02X", effectiveMask);
+
+    KmBoxQueuedNetCommand command{};
+    command.data = packet;
+    command.length = sizeof(cmd_head_t);
+    command.type = KmBoxCommandType::MouseMask;
+    command.enqueuedAt = std::chrono::steady_clock::now();
+    return EnqueueCommand(command);
+}
+
+int KmBoxNetManager::UnmaskAll()
+{
+    client_data packet = BuildPacket(cmd_unmask_all, NextRandom());
+
+    Diagnostics::Aim("udp.mouse.unmask_all build");
+
+    KmBoxQueuedNetCommand command{};
+    command.data = packet;
+    command.length = sizeof(cmd_head_t);
+    command.type = KmBoxCommandType::MouseUnmask;
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
 }

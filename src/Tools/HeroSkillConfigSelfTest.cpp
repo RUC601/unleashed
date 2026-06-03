@@ -95,6 +95,8 @@ int main()
         return Fail();
     if (!verifyProjectileAimSkill(*roadhogChainHook, 62.0f, 0.5f, 100.0f))
         return Fail();
+    if (!NearlyEqual(roadhogChainHook->defaultSettings.enemyHealthThreshold, 100.0f))
+        return Fail();
 
     return EXIT_SUCCESS;
 }
