@@ -1971,9 +1971,15 @@ namespace {
             skill == "pulse-bomb";
     }
 
-    bool SkillCooldownActive(float cooldown)
+    bool SkillCooldownReadySentinel(float cooldown)
     {
-        return std::isfinite(cooldown) && cooldown > 0.001f;
+        return std::isfinite(cooldown) && std::fabs(cooldown - 1.0f) <= 0.001f;
+    }
+
+    bool SkillCooldownActive(bool active, float cooldown)
+    {
+        return !active && std::isfinite(cooldown) && cooldown > 0.05f &&
+            !SkillCooldownReadySentinel(cooldown);
     }
 
     bool IsInRechargeInterval(const HeroSkillDefinition& definition,
@@ -1987,10 +1993,10 @@ namespace {
         case HeroSkillInputAction::PrimaryFire:
             return Config::reloading;
         case HeroSkillInputAction::Ability1:
-            return SkillCooldownActive(local.skillcd1);
+            return SkillCooldownActive(local.skill1act, local.skillcd1);
         case HeroSkillInputAction::Ability2:
         case HeroSkillInputAction::SecondaryFire:
-            return SkillCooldownActive(local.skillcd2);
+            return SkillCooldownActive(local.skill2act, local.skillcd2);
         case HeroSkillInputAction::Ultimate:
             return !std::isfinite(local.ultimate) || local.ultimate < 100.0f;
         default:

@@ -958,28 +958,32 @@ int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int C
 
 int KmBoxNetManager::ForceReleaseMouseButtons()
 {
-    int status = SetMouseButton(0x01, false, cmd_mouse_left, true);
-    const int rightStatus = SetMouseButton(0x02, false, cmd_mouse_right, true);
-    const int middleStatus = SetMouseButton(0x04, false, cmd_mouse_middle, true);
-    if (status == success && rightStatus != success)
-        status = rightStatus;
-    if (status == success && middleStatus != success)
-        status = middleStatus;
-    return status;
+    return SetMouseButtonStateMask(0x00, true);
 }
 
 int KmBoxNetManager::ForceReleaseMouseButton(int button)
 {
+    unsigned int releaseMask = 0;
     switch (button) {
     case 0:
-        return SetMouseButton(0x01, false, cmd_mouse_left, true);
+        releaseMask = 0x01;
+        break;
     case 1:
-        return SetMouseButton(0x02, false, cmd_mouse_right, true);
+        releaseMask = 0x02;
+        break;
     case 2:
-        return SetMouseButton(0x04, false, cmd_mouse_middle, true);
+        releaseMask = 0x04;
+        break;
     default:
         return err_net_cmd;
     }
+
+    unsigned int nextState = 0;
+    {
+        std::lock_guard<std::mutex> lock(mouseStateMutex);
+        nextState = static_cast<unsigned int>(Mouse.MouseData.button) & ~releaseMask;
+    }
+    return SetMouseButtonStateMask(nextState, true);
 }
 
 int KmBoxNetManager::SetMouseButtonStateMask(unsigned int StateMask, bool Force)

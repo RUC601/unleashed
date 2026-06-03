@@ -3428,6 +3428,95 @@ namespace AimbotDetail {
         bool matchedInput = false;
     };
 
+    inline bool DistancePassesAimPresetRange(float distance, const OW::Config::HeroPreset& preset) {
+        if (!std::isfinite(distance))
+            return false;
+
+        const float minDistance = std::clamp(preset.minDistance, 0.0f, 500.0f);
+        const float maxDistance = std::clamp(preset.maxDistance, 0.0f, 500.0f);
+        if (minDistance > 0.0f && distance < minDistance)
+            return false;
+        if (maxDistance > 0.0f && distance > maxDistance)
+            return false;
+        return true;
+    }
+
+    inline int ResolvePresetAimBoneForDistance(const OW::Config::HeroPreset& preset, float distance) {
+        const int normalized = OW::Config::NormalizeAimBone(preset.bone);
+        const bool headRequested = normalized == OW::Config::kAimBoneHead;
+        const float headGate = std::clamp(preset.maxHeadDistance, 0.0f, 500.0f);
+        if (headRequested && headGate > 0.0f && distance > headGate)
+            return OW::Config::kAimBoneNeck;
+        return normalized;
+    }
+
+    inline bool AimPresetHasSelectableEntityInDistanceRange(const OW::Config::HeroPreset& preset) {
+        const std::vector<OW::c_entity> entities = OW::TargetingDetail::SnapshotEntities();
+        if (entities.empty())
+            return false;
+
+        const OW::c_entity local = OW::TargetingDetail::SnapshotLocalEntity();
+        const Vector3 camera = OW::TargetingDetail::CameraPosition();
+        if (!OW::TargetingDetail::IsFiniteVector(camera) ||
+            OW::TargetingDetail::IsZeroVector(camera))
+            return false;
+
+        const OW::TargetingDetail::FovRuntimeContext fovContext =
+            OW::TargetingDetail::SnapshotFovRuntimeContext();
+        if (!fovContext.valid)
+            return false;
+
+        for (OW::c_entity entity : entities) {
+            if (!OW::TargetingDetail::IsRuntimeTargetValid(entity, false))
+                continue;
+            if (!OW::TargetingDetail::TargetTeamMatches(entity, preset.targetTeam, local))
+                continue;
+            if (preset.ignoreInvisible && !entity.Vis)
+                continue;
+
+            const float chestDistance = camera.DistTo(entity.chest_pos);
+            if (!DistancePassesAimPresetRange(chestDistance, preset))
+                continue;
+
+            const int aimBone = ResolvePresetAimBoneForDistance(preset, chestDistance);
+            const Vector3 aimPoint = OW::TargetingDetail::ConfiguredBonePosition(entity, aimBone);
+            if (!OW::TargetingDetail::IsFiniteVector(aimPoint) ||
+                OW::TargetingDetail::IsZeroVector(aimPoint))
+                continue;
+
+            const float aimDistance = camera.DistTo(aimPoint);
+            if (!DistancePassesAimPresetRange(aimDistance, preset))
+                continue;
+
+            if (OW::TargetingDetail::IsWithinFovDeg(fovContext, aimPoint, preset.fov))
+                return true;
+        }
+
+        return false;
+    }
+
+    inline bool AimPresetHasEntityInDistanceRange(const OW::Config::HeroPreset& preset) {
+        const std::vector<OW::c_entity> entities = OW::TargetingDetail::SnapshotEntities();
+        if (entities.empty())
+            return false;
+
+        const Vector3 camera = OW::TargetingDetail::CameraPosition();
+        if (!OW::TargetingDetail::IsFiniteVector(camera) ||
+            OW::TargetingDetail::IsZeroVector(camera))
+            return false;
+
+        for (const OW::c_entity& entity : entities) {
+            if (!OW::TargetingDetail::IsRuntimeTargetValid(entity, false))
+                continue;
+
+            const float chestDistance = camera.DistTo(entity.chest_pos);
+            if (DistancePassesAimPresetRange(chestDistance, preset))
+                return true;
+        }
+
+        return false;
+    }
+
     inline void LogRuntimePresetSelection(const char* kind,
                                           uint64_t heroId,
                                           const RuntimePresetSelection& selection) {
@@ -3508,7 +3597,11 @@ namespace AimbotDetail {
 
     inline bool TrySelectRuntimeAimPreset(uint64_t heroId, RuntimePresetSelection& selection) {
         RuntimePresetSelection fallback{};
+        RuntimePresetSelection inputFallback{};
+        RuntimePresetSelection distanceFallback{};
         bool hasFallback = false;
+        bool hasInputFallback = false;
+        bool hasDistanceFallback = false;
 
         for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
             OW::Config::HeroSlotPreset slot{};
@@ -3523,11 +3616,36 @@ namespace AimbotDetail {
             }
 
             if (IsConfiguredActivationKeyPressedForSelection(slot.preset.key)) {
-                selection.preset = slot.preset;
-                selection.slotIndex = slotIndex;
-                selection.matchedInput = true;
-                return true;
+                RuntimePresetSelection keyedSelection{};
+                keyedSelection.preset = slot.preset;
+                keyedSelection.slotIndex = slotIndex;
+                keyedSelection.matchedInput = true;
+
+                if (!hasInputFallback) {
+                    inputFallback = keyedSelection;
+                    hasInputFallback = true;
+                }
+
+                if (AimPresetHasSelectableEntityInDistanceRange(slot.preset)) {
+                    selection = keyedSelection;
+                    return true;
+                }
+
+                if (!hasDistanceFallback && AimPresetHasEntityInDistanceRange(slot.preset)) {
+                    distanceFallback = keyedSelection;
+                    hasDistanceFallback = true;
+                }
             }
+        }
+
+        if (hasDistanceFallback) {
+            selection = distanceFallback;
+            return true;
+        }
+
+        if (hasInputFallback) {
+            selection = inputFallback;
+            return true;
         }
 
         if (!hasFallback)
@@ -4036,6 +4154,40 @@ namespace AimbotDetail {
         }
     }
 
+    inline void ReleaseDmaMouseKey(uint32_t key, DWORD sleep_ms = 10) {
+        int button = -1;
+        if (OW::DmaKeyToMouseButton(key, button)) {
+            OW::ForceReleaseMouseButton(button);
+            Sleep(sleep_ms);
+        } else {
+            OW::SetKey(key);
+            Sleep(sleep_ms);
+        }
+    }
+
+    inline bool ShouldReleaseChargedFire(const OW::c_entity& local, const OW::WeaponSpec* weapon) {
+        if (!weapon || weapon->firePolicy.type != OW::FirePolicyType::ChargeRelease)
+            return false;
+
+        return !(local.HeroID == OW::eHero::HERO_HANJO && local.skill2act);
+    }
+
+    inline void FireConfiguredAction(const OW::c_entity& local, DWORD sleep_ms = 10) {
+        const uint32_t fireKey = FireKeyMaskForAttackAction(OW::Config::aimbotAttack);
+        const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
+        if (ShouldReleaseChargedFire(local, weapon)) {
+            Diagnostics::Aim("fire.configured mode=charge_release hero=0x%llX action=%d weapon=%s keyMask=0x%X",
+                static_cast<unsigned long long>(local.HeroID),
+                OW::Config::aimbotAttack,
+                weapon ? weapon->weaponId.data() : "none",
+                fireKey);
+            ReleaseDmaMouseKey(fireKey, sleep_ms);
+            return;
+        }
+
+        ClickDmaMouseKey(fireKey, sleep_ms);
+    }
+
     inline void PressWithSensitivity(uint32_t key, float origin_sens, DWORD sleep_ms = 1) {
         SetSensitivityLocked(true, origin_sens);
         ClickDmaMouseKey(key, sleep_ms);
@@ -4043,7 +4195,7 @@ namespace AimbotDetail {
     }
 
     inline void ClickConfiguredFire(DWORD sleep_ms = 10) {
-        ClickDmaMouseKey(FireKeyMaskForAttackAction(OW::Config::aimbotAttack), sleep_ms);
+        FireConfiguredAction(LocalEntity(), sleep_ms);
     }
 
     inline bool CurrentTarget(c_entity& target, bool requireVisible = false) {
@@ -4726,6 +4878,17 @@ namespace AimbotDetail {
         }
 
         const uint32_t fireKey = FireKeyMaskForAttackAction(OW::Config::aimbotAttack);
+        const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
+        if (ShouldReleaseChargedFire(local, weapon)) {
+            Diagnostics::Aim("fire.primary mode=charge_release hero=0x%llX action=%d weapon=%s keyMask=0x%X",
+                static_cast<unsigned long long>(local.HeroID),
+                OW::Config::aimbotAttack,
+                weapon ? weapon->weaponId.data() : "none",
+                fireKey);
+            ReleaseDmaMouseKey(fireKey);
+            return;
+        }
+
         if (fireKey == 0x1u &&
             (local.HeroID == OW::eHero::HERO_ANA ||
              local.HeroID == OW::eHero::HERO_WIDOWMAKER ||
@@ -4744,15 +4907,8 @@ namespace AimbotDetail {
             return;
         }
 
-        if (IsInputVkDownQuiet(VK_LBUTTON)) {
-            Diagnostics::Aim("hanzo.fire mode=charge_release");
-            OW::ForceReleaseMouseButton(0);
-            Sleep(10);
-            return;
-        }
-
-        Diagnostics::Aim("hanzo.fire mode=tap_fallback");
-        ClickMouseButton(0);
+        Diagnostics::Aim("hanzo.fire mode=charge_release keyMask=0x1");
+        ReleaseDmaMouseKey(0x1);
     }
 
     inline void RunAutoScaleFov() {

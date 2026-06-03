@@ -4,7 +4,7 @@
 build, and run the live offset validator from `D:\Desktop\downp\vertifytool`;
 `Unleashed` keeps only runtime-required offset profile behavior.
 
-版本：2026-06-01
+版本：2026-06-03
 覆盖范围：当前工作树 `D:\Desktop\ClaudeCodexCoding\Unleashed`  
 面向读者：从未打开过 IDE、没有读过本项目代码，但准备参与需求、调试、验收和后续开发沟通的人。
 
@@ -31,7 +31,7 @@ build, and run the live offset validator from `D:\Desktop\downp\vertifytool`;
 当前 Git 基线：
 
 ```text
-2497d54 Add motion estimator fallback and Hanzo release handling
+697f6c7 Add projectile skill aim settings
 ```
 
 当前工作树已有未提交修改：
@@ -39,24 +39,15 @@ build, and run the live offset validator from `D:\Desktop\downp\vertifytool`;
 ```text
 告警：下面这些是当前工作树里的代码变更，本文档会按这些源码事实更新说明，但不会回退或改动它们。
 
-CMakeLists.txt
-include/Features/UI.hpp
-include/Game/HeroSkills.hpp
 include/Game/Overwatch.hpp
-include/Game/Target.hpp
-include/Utils/Config.hpp
-src/Features/UI.cpp
-src/Game/HeroSkills.cpp
-src/Utils/Config.cpp
-src/main.cpp
-src/Tools/FovConfigSelfTest.cpp
+src/Kmbox/KmBoxNetManager.cpp
 ```
 
 这份文档内容基于当前工作树读取到的代码，而不只基于最后一次提交。也就是说，如果你打开 IDE 看到未提交 diff，不要惊讶：本文会把它们当成“当前真实工程状态”解释。
 
 ### 最近改动速览
 
-从 `7fdccf7` 到当前 HEAD，以及当前未提交 diff，最值得你先知道的变化是：
+从上次文档基线 `2497d54` 到当前 HEAD，以及当前未提交 diff，最值得你先知道的变化是：
 
 ```text
 进程连接：
@@ -101,15 +92,31 @@ Motion estimate：
   如果 reported velocity 为 0 但 render sample 的世界坐标有合理位移，会用 world-delta fallback。
   MotionEstimatorSelfTest 覆盖这个 fallback。
 
+Lead prediction：
+  include/Game/LeadPrediction.hpp 新增瞄准 settle time、输入延迟和 pre-fire 位移估算。
+  Target.hpp 现在通过 ResolveProjectileRuntimeSpec(...) 与 ResolveLeadPrediction(...) 统一处理 projectile speed/gravity、motion fallback 和提前量。
+  LeadPredictionSelfTest 覆盖 prediction override、settle time、pre-fire delay clamp 和目标速度位移。
+
+Tracking deadzone：
+  Aim slot 的 trackingDeadzone 不再只是硬停止；离开 deadzone 后会经过 TrackingDeadzoneDampingScale(...) 平滑爬升。
+  半径内会 ResetAimSmoothingState() 并停止输出，边界带宽由 TrackingDeadzoneDampingWidthPixels(...) 计算。
+  TrackingDeadzoneDampingSelfTest 覆盖这个边界曲线。
+
 HeroSkills：
-  HeroSkillSettings 新增 skillKey。
+  HeroSkillSettings 新增 skillKey、tracking 参数和 projectile 参数。
   Activation Key 表示触发这个技能逻辑的按键，Skill Key 表示技能真正输出的按键。
   Zarya propel-jump 默认 Activation Key=Mouse4，Skill Key=RightMouse。
+  带 TrackingOverlay 的技能现在可以在 Skills UI 里配置 Skill Aim：Aim Behavior、Speed Scale、FOV、Bone、Hitbox Scale，以及 projectileSpeed/projectileRadius/projectileGravity/preFireDelayMs。
+  Ana sleep-dart 与 Roadhog chain-hook 当前默认走 aimed trajectory：先找目标并移动到技能瞄准点，命中窗口 ready 后才输出 Skill Key。
+
+当前未提交源码状态：
+  Aim preset 按键匹配会优先选择距离范围内有实体的 slot；没有命中距离条件时才回退到第一个按键匹配 slot。
+  Hanzo charge release 改为释放所有鼠标按钮；KMBox 网络按钮释放改走完整 state mask，避免左/右/中键状态不同步。
 
 工具目标：
-  CMake 除 Unleashed 外还有 MotionEstimatorSelfTest、FovConfigSelfTest。
+  CMake 除 Unleashed 外还有 MotionEstimatorSelfTest、FovConfigSelfTest、TrackingDeadzoneDampingSelfTest、LeadPredictionSelfTest、HeroSkillConfigSelfTest。
   CnOffsetProbe 已迁到 D:\Desktop\downp\vertifytool。
-  MotionEstimatorSelfTest 和 FovConfigSelfTest 已接入 ctest。
+  这 5 个轻量自检都已接入 ctest。
 ```
 
 ## 你应该如何读这份文档
@@ -185,13 +192,20 @@ CMakePresets.json
 Unleashed                主 DX11/ImGui Overlay 程序
 MotionEstimatorSelfTest  运动估计 fallback 自检
 FovConfigSelfTest        FOV 配置语义/迁移自检
+TrackingDeadzoneDampingSelfTest
+                         Tracking deadzone 边界阻尼曲线自检
+LeadPredictionSelfTest   lead prediction、settle/pre-fire timing 自检
+HeroSkillConfigSelfTest  Hero skill 默认值、Skill Aim/projectile 配置自检
 ```
 
-其中两个轻量自检已经接入 CTest：
+其中 5 个轻量自检已经接入 CTest：
 
 ```text
 MotionEstimatorSelfTest
 FovConfigSelfTest
+TrackingDeadzoneDampingSelfTest
+LeadPredictionSelfTest
+HeroSkillConfigSelfTest
 ```
 
 构建脚本会编译这些目标。需要只跑自检时，可以在构建完成后运行：
@@ -351,7 +365,8 @@ TargetingDetail::SnapshotLocalEntity()
 TargetingDetail::IsRuntimeTargetValid()
 TargetingDetail::SnapshotFovRuntimeContext()
 TargetingDetail::FovScoreDeg()
-TargetingDetail::ResolvePredictionRuntimeSpec()
+TargetingDetail::ResolveProjectileRuntimeSpec()
+TargetingDetail::ResolveLeadPrediction()
 TargetingDetail::EstimateMotionState()
 AcquireTarget()
 GetVector3()
@@ -373,6 +388,7 @@ src/Game/WeaponSpec.cpp            71 条 hero/action 武器规格
 include/Game/HeroGeometrySpec.hpp  bone radius / hit window 查询接口
 src/Game/HeroGeometrySpec.cpp      fallback bone radius 与 ResolveEffectiveHitWindow()
 include/Game/Motion.hpp            reported velocity 与 world-delta fallback 的运动估计
+include/Game/LeadPrediction.hpp    settle time、input delay、pre-fire 位移与 lead timing
 ```
 
 ### include/Game/Entity.hpp
@@ -507,8 +523,8 @@ UI::Render()
 OW::Config::ConfigDirectoryPath() -> EXE 相对 config\\，并迁移旧配置文件
 OW::Config::ConfigPath()          -> ConfigDirectoryPath() + "\\" + configFileName
 OW::Config::HeroConfigPath()      -> config.ini 对应 config.heroes.json
-config_version                    -> 当前为 5
-hero config version               -> 当前为 2
+config_version                    -> 当前为 6
+hero config version               -> 当前为 4
 SaveConfig()
 LoadConfig()
 SaveHeroConfig()
@@ -518,11 +534,22 @@ LoadConfigForHero()
 NormalizeHeroPresets()
 ```
 
-当前配置迁移里最重要的是 FOV：老版本把 FOV 当 aperture 存，`config_version < 5` 或 hero JSON `version < 2` 时会用 `LegacyFovApertureToAngleDeg()` 把 200 迁移为 100、360 迁移为 180。
+当前配置迁移里最重要的是这几层：
+
+```text
+config_version < 5 或 hero JSON version < 2:
+  老版本把 FOV 当 aperture 存，会用 LegacyFovApertureToAngleDeg() 把 200 迁移为 100、360 迁移为 180。
+
+config_version < 6 或 hero JSON version < 3:
+  老 aim behavior 语义会通过 NormalizeAimBehaviorForLoad(...) 迁移到当前 Tracking/Flick/Flick2nd/Reacquire 模型。
+
+hero JSON version < 4 或缺少新字段:
+  projectile aim 技能会恢复 Skill Aim/projectile 默认值；Ana sleep-dart、Roadhog chain-hook 会补 trackingAimBehavior、projectileSpeed、preFireDelayMs 等字段。
+```
 
 ### src/Game/HeroSkills.cpp 与 include/Game/HeroSkills.hpp
 
-职责：英雄技能定义、运行时技能动作、输入序列、视角控制、弹药保护、冷却保护、技能触发键和实际输出键的分离。
+职责：英雄技能定义、运行时技能动作、输入序列、视角控制、Skill Aim、projectile trajectory、弹药保护、冷却保护、技能触发键和实际输出键的分离。
 
 核心入口：
 
@@ -530,13 +557,26 @@ NormalizeHeroPresets()
 OW::ProcessHeroSkills()
 OW::RunInputSequence()
 OW::RunViewpointController()
+FindBestSkillAimCandidate()
+MoveSkillAimAndCheckReady()
 OW::CancelActiveSkill()
 OW::ShouldBlockForActiveSequence()
 ```
 
 `ProcessHeroSkills()` 在每帧 `RenderCallback()` 一开始被调用，所以它不是独立线程，而是跟渲染帧一起 tick。
 
-近期要特别注意 `Config::HeroSkillSettings::skillKey`：`key` 是 Activation Key，用于触发技能逻辑；`skillKey` 是真正按下/释放的输出键。旧配置没有 `skillKey` 时会默认继承 `key`，但 Zarya `propel-jump` 会迁移为右键输出。
+近期要特别注意两组字段：
+
+```text
+Config::HeroSkillSettings::key       Activation Key，触发技能逻辑
+Config::HeroSkillSettings::skillKey  Skill Key，真正按下/释放的输出键
+
+Config::HeroSkillSettings::tracking  Skill Aim 的 behavior / speedScale / FOV / bone / hitbox
+projectileSpeed / projectileRadius / projectileGravity / preFireDelayMs
+                                     技能 projectile 预测和发射前延迟
+```
+
+旧配置没有 `skillKey` 时会默认继承 `key`，但 Zarya `propel-jump` 会迁移为右键输出。Ana `sleep-dart` 和 Roadhog `chain-hook` 如果缺少新的 Skill Aim/projectile 字段，会恢复当前默认值。
 
 ### include/Utils/ProcessConnection.hpp
 
@@ -1426,6 +1466,44 @@ secondaryFlickMethod
 
 值为 `-1` 表示继承对应 behavior profile；非 `-1` 表示 secondary Tracking/Flick 单独指定 method。
 
+### Tracking deadzone damping
+
+Tracking deadzone 当前有两层语义：
+
+```text
+distancePx <= trackingDeadzone:
+  停止输出，并 ResetAimSmoothingState()
+
+trackingDeadzone < distancePx < trackingDeadzone + dampingWidth:
+  按 smoothstep 曲线从 0 慢慢升到 1
+
+超过边界带：
+  使用完整 smooth input
+```
+
+关键入口：
+
+```cpp
+Config::ClampTrackingDeadzonePixels()
+Config::TrackingDeadzoneDampingWidthPixels()
+Config::TrackingDeadzoneDampingScale()
+AimbotDetail::TrackingDeadzoneDampingScale()
+```
+
+`TrackingDeadzoneDampingWidthPixels(radius)` 会取 `radius * 0.5`，并 clamp 到 `8..48px`。例如 radius=20px 时，20px 内完全停，25px 处 scale 约 0.5，30px 以后恢复 1.0。
+
+排查 tracking 速度“刚出 deadzone 就突然跳”的第一顺位日志是：
+
+```text
+tracking.deadzone_damping distancePx=... radiusPx=... scale=... smoothInput=...
+```
+
+对应自检：
+
+```text
+src/Tools/TrackingDeadzoneDampingSelfTest.cpp
+```
+
 ### FOV 和 hitbox 配置语义
 
 当前 FOV 是角度上限，不是完整锥体 aperture：
@@ -1586,8 +1664,11 @@ sourceUrl / sourceNote / confidence
 预测解析入口：
 
 ```cpp
-TargetingDetail::ResolvePredictionRuntimeSpec()
-TargetingDetail::ApplyPrediction()
+TargetingDetail::ResolveProjectileRuntimeSpec()
+TargetingDetail::ResolveLeadPrediction()
+EstimateAimSettleTimeMs()
+BuildLeadTiming()
+ApplyTargetMotionPreFireDelay()
 ```
 
 优先级大致是：
@@ -1596,6 +1677,23 @@ TargetingDetail::ApplyPrediction()
 Hanzo auto speed 特例可覆盖 fallback speed
 WeaponSpec 有 projectileSpeed -> 使用 spec speed/gravity
 没有 spec 或 spec 不完整 -> 回退到 predit_level / Gravitypredit / projectile_arc
+```
+
+`ResolveLeadPrediction(...)` 不只算 projectile travel time。当前它还会合并：
+
+```text
+motion fallback 后的目标速度
+当前瞄准 controller 的 settle time 估算
+kmboxInputDelayMs
+技能或武器路径传入的 extra pre-fire delay
+```
+
+这些字段会写进 `lead.solve` 诊断日志。排查“预判过头/不足”时，先看 `projectile(source=...)`、`motion(source=...)`、`timing(settleMs/inputMs/extraPreFireMs/preFireMs)`，不要只盯 `predit_level`。
+
+对应自检：
+
+```text
+src/Tools/LeadPredictionSelfTest.cpp
 ```
 
 ### Motion fallback
@@ -1778,6 +1876,7 @@ OW::ProcessHeroSkills()
   -> 冷却/弹药/手动 cooldown 检查
   -> sequence skill 走 RunInputSequence
   -> pitch/phase skill 走 RunViewpointController
+  -> TrackingOverlay trajectory skill 走 FindBestSkillAimCandidate / MoveSkillAimAndCheckReady
   -> runtime action 走 Evaluate...Action
 ```
 
@@ -1873,6 +1972,85 @@ SetHotkeyState(...)
 ```
 
 所以以后排查“技能触发了但按错键”，先看 `skillKey`，不要只看 `key`。
+
+### Skill Aim 与 projectile 技能
+
+带 `HeroSkillControls::TrackingOverlay` 的技能会出现 Skills 页里的 `Skill Aim` 控制组：
+
+```text
+Aim Behavior
+Speed Scale
+FOV (deg)
+Bone
+Hitbox Scale
+Projectile Speed
+Projectile Radius
+Projectile Gravity
+Pre-fire Delay
+```
+
+这些字段存在：
+
+```cpp
+Config::HeroSkillTrackingParams
+Config::HeroSkillSettings::tracking
+Config::HeroSkillSettings::projectileSpeed
+Config::HeroSkillSettings::projectileRadius
+Config::HeroSkillSettings::projectileGravity
+Config::HeroSkillSettings::preFireDelayMs
+```
+
+当前运行时链路：
+
+```text
+EvaluateTrajectoryAction()
+  -> ResolveSkillProjectileRuntime()
+  -> ScopedTrackingConfig(settings.tracking)
+  -> FindBestSkillAimCandidate()
+       -> SnapshotEntities / SnapshotLocalEntity
+       -> FOV / distance / hp / visibility / minTargets
+       -> ResolveLeadPrediction(...) 可选预测
+       -> ResolveSkillHitWindow(...)
+  -> MoveSkillAimAndCheckReady()
+       -> BuildAimData()
+       -> MoveAimDelta()
+       -> in_range(before/after)
+  -> StartTimedHotkey(skillKey)
+```
+
+也就是说，某个 projectile 技能“按了但不出手”时，不一定是热键问题。它可能卡在目标筛选、FOV、预测后距离、hit window ready、debounce 或 Skill Key 输出任一层。
+
+当前默认值由 `HeroSkillConfigSelfTest` 固化的两个典型 aimed trajectory 技能：
+
+```text
+Ana sleep-dart:
+  Activation Key = Mouse4
+  Skill Key      = LeftShift
+  Aim Behavior   = Flick
+  Bone           = Chest
+  projectileSpeed= 60.0
+  projectileRadius=0.2
+  preFireDelayMs = 320.0
+
+Roadhog chain-hook:
+  Activation Key = Mouse4
+  Skill Key      = LeftShift
+  Aim Behavior   = Flick
+  Bone           = Chest
+  projectileSpeed= 62.0
+  projectileRadius=0.5
+  preFireDelayMs = 100.0
+```
+
+关键诊断：
+
+```text
+skill.aim_tick ...
+Hero skill aimed trajectory fired ...
+lead.solve ...
+```
+
+旧 hero JSON 如果缺少 `trackingAimBehavior`、`projectileSpeed` 或 `preFireDelayMs`，加载时会用当前默认值恢复这些字段。这个迁移逻辑在 `src/Utils/Config.cpp` 的 `ShouldRestoreProjectileAimDefaults(...)` 和 `LoadHeroSkillPresetStoreJson(...)`。
 
 ### 执行优先级
 
@@ -1993,6 +2171,15 @@ MotionEstimatorSelfTest
 
 FovConfigSelfTest
   纯本地自检，不需要 DMA/Overlay。验证 kMaxFovDeg=180、kDefaultFovDeg=100、旧 aperture 迁移。
+
+TrackingDeadzoneDampingSelfTest
+  纯本地自检，不需要 DMA/Overlay。验证 deadzone 内停止、边界 smoothstep 阻尼和 clamp 行为。
+
+LeadPredictionSelfTest
+  纯本地自检，不需要 DMA/Overlay。验证 prediction override、aim settle time、input delay 和 pre-fire 位移。
+
+HeroSkillConfigSelfTest
+  纯本地自检，不需要 DMA/Overlay。验证 hero skill 默认配置、Skill Aim、projectile 参数和 control flags。
 ```
 
 常用命令：
@@ -2021,8 +2208,9 @@ KMBox counts-per-radian 需要重标定：
 CN/NE 或 world/BZ offset 语义变化：
   到 D:\Desktop\downp\vertifytool 用 CnOffsetProbe 做现场读数，再把 VERIFIED/CANDIDATE/UNRESOLVED 写清楚。
 
-只改 Motion.hpp 或 FOV 配置语义：
-  跑 ctest，至少让 MotionEstimatorSelfTest 和 FovConfigSelfTest 过。
+只改 Motion.hpp、FOV、tracking deadzone、lead prediction 或 hero skill 默认配置：
+  跑 ctest，至少让对应的 MotionEstimatorSelfTest / FovConfigSelfTest /
+  TrackingDeadzoneDampingSelfTest / LeadPredictionSelfTest / HeroSkillConfigSelfTest 过。
 ```
 
 ## 资源系统
@@ -2115,10 +2303,11 @@ UI/渲染处是否请求了正确 key
 ```text
 1. include/Game/HeroSkills.hpp 定义默认 Config::HeroSkillSettings
 2. src/Game/HeroSkills.cpp 的 AllHeroSkillDefinitions 加定义
-3. 确定 controls flag：Enabled/Key/SequenceSteps/PitchControl/AmmoGuard 等
+3. 确定 controls flag：Enabled/Key/SequenceSteps/TrackingOverlay/PitchControl/AmmoGuard/Prediction 等
 4. UI::SkillsPage 或 UI::SequencesPage 自动按 definition 渲染
 5. ProcessHeroSkills 中确认该 definition 走到预期执行分支
 6. 增加 Diagnostics::Aim 日志
+7. 如果新增或改变默认值，更新 HeroSkillConfigSelfTest
 ```
 
 如果是序列型技能，要重点检查：
@@ -2133,6 +2322,16 @@ ShouldBlockForActiveSequence
 CancelActiveSkill on hero change
 ```
 
+如果是带 `TrackingOverlay` 的 projectile 技能，还要重点检查：
+
+```text
+settings.tracking.fov / bone / hitbox / speedScale
+projectileSpeed / projectileRadius / projectileGravity / preFireDelayMs
+FindBestSkillAimCandidate 的筛选条件
+MoveSkillAimAndCheckReady 的 in_range before/after
+skill.aim_tick 与 lead.solve 日志
+```
+
 ### 新增或调整武器 spec
 
 标准链路：
@@ -2144,6 +2343,7 @@ CancelActiveSkill on hero change
 4. 如果改 projectileRadius，确认 hitbox 语义会受影响
 5. 如果是公开资料/临时估算，在 sourceNote 里写清楚来源和 confidence
 6. 构建后看 target.primary start 日志里的 weapon=... 是否是预期 spec
+7. 如果改变 prediction override、lead timing 或 projectile fallback，更新 LeadPredictionSelfTest
 ```
 
 不要把某个英雄的弹速硬编码进 `Target.hpp`，除非它是明确的 runtime 特例。常规数据应进入 `WeaponSpec.cpp`。
@@ -2197,7 +2397,7 @@ UNRESOLVED   当前不能当作 runtime source of truth
 6. build-release.ps1 后用 ctest --test-dir .\build -C Release --output-on-failure 验证
 ```
 
-像 FOV 迁移、motion fallback、序列默认值这类“容易以后被无意改坏”的逻辑，很适合做成 self-test。
+像 FOV 迁移、motion fallback、tracking deadzone 曲线、lead timing、hero skill 默认值这类“容易以后被无意改坏”的逻辑，很适合做成 self-test。
 
 ### 调一个运行时参数为什么不生效
 
@@ -2496,7 +2696,30 @@ FovConfigSelfTest
 
 改其中一个地方时，不要只改 UI。尤其是 FOV，旧 aperture 与当前 angle limit 很容易差一倍。
 
-### 9. Offset profile 不要混用
+### 9. Lead/deadzone/Skill Aim 语义变更必须带自检
+
+这些逻辑虽然入口常常在 UI slider 或 hero 默认值，但实际会穿过多层运行时：
+
+```text
+Lead prediction:
+  LeadPrediction.hpp -> Target.hpp -> WeaponSpec / Motion -> lead.solve 日志
+
+Tracking deadzone:
+  Config.hpp -> Overwatch.hpp -> ResetAimSmoothingState -> tracking.deadzone_damping 日志
+
+Skill Aim:
+  HeroSkills.hpp -> UI.cpp -> Config.cpp -> HeroSkills.cpp -> skill.aim_tick / aimed trajectory fired 日志
+```
+
+改这些语义时，至少要更新对应自检：
+
+```text
+LeadPredictionSelfTest
+TrackingDeadzoneDampingSelfTest
+HeroSkillConfigSelfTest
+```
+
+### 10. Offset profile 不要混用
 
 `world/bz` 和 `cn/ne` 现在是运行时 profile，不是两组随手可替换的常量。改 offset 前要先回答：
 
@@ -2601,6 +2824,7 @@ include/Utils/Config.hpp
 ```text
 include/Game/Entity.hpp
 include/Game/Target.hpp 的 TargetingDetail
+include/Game/LeadPrediction.hpp
 include/Game/Overwatch.hpp 的 entity_scan_thread / entity_thread
 src/Utils/Diagnostics.cpp 的 Snapshot / DumpStatus
 ```
@@ -2636,6 +2860,9 @@ rg -n "ProcessConnection|TryConnectTargetProcess|Offset profile selected" includ
 rg -n "FovScoreDeg|LegacyFovApertureToAngleDeg|FovRadiusForViewport" include src
 rg -n "WeaponSpec|ResolveEffectiveHitWindow|EstimateEntityMotion" include src
 rg -n "skillKey|Activation Key|Skill Key" include src
+rg -n "LeadPrediction|ResolveLeadPrediction|lead.solve" include src
+rg -n "TrackingDeadzoneDampingScale|tracking.deadzone_damping|ResetAimSmoothingState" include src
+rg -n "HeroSkillConfigSelfTest|TrackingOverlay|skill.aim_tick|aimed trajectory fired" include src
 ```
 
 看当前未提交文件：
