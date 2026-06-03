@@ -282,12 +282,13 @@ namespace OW { namespace Config {
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
-        constexpr int kCurrentHeroConfigVersion = 8;
+        constexpr int kCurrentHeroConfigVersion = 9;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
         constexpr int kBadAnaAbilityKeyLayoutVersion = 7;
         constexpr int kAnaSleepDartFullHealthDefaultVersion = 8;
+        constexpr int kDocumentedHeroSlotDefaultsVersion = 9;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -382,8 +383,12 @@ namespace OW { namespace Config {
         int CurrentAimMode();
         HeroPreset MakeHeroAimPresetFromCurrentUnlocked();
         HeroPreset MakeHeroTriggerPresetFromCurrentUnlocked();
+        TriggerPreset ValidateTriggerPresetValue(TriggerPreset preset);
+        HeroPreset ValidateHeroPresetValue(HeroPreset preset);
+        HeroPreset ValidateHeroPresetValueForHero(uint64_t heroId, HeroPreset preset);
         bool gLastHeroConfigHadAimOrTriggerPresets = false;
         bool gLastHeroConfigNeedsSave = false;
+        int gLoadedHeroConfigVersion = kCurrentHeroConfigVersion;
 
         struct IniFile {
             std::unordered_map<std::string, SectionValues> sections;
@@ -1161,6 +1166,306 @@ namespace OW { namespace Config {
             return DefaultHeroSlotName(slotIndex);
         }
 
+        enum : int {
+            kActionPrimary = 0,
+            kActionSecondary = 1,
+            kActionScoped = 2,
+        };
+
+        enum : int {
+            kKeyRightMouse = 0,
+            kKeyLeftMouse = 1,
+            kKeyMouse4 = 2,
+            kKeyMouse5 = 3,
+        };
+
+        enum : int {
+            kTargetEnemies = 0,
+            kTargetAllies = 1,
+        };
+
+        constexpr int kFirePolicyAuto = -1;
+        constexpr float kDocumentedUnsetFloat = -1.0f;
+        constexpr float kTrackingDefaultDeadzonePx = 7.0f;
+
+        struct DocumentedAimSlotSpec {
+            const char* name = "Primary";
+            int action = kActionPrimary;
+            int aimBehavior = kAimBehaviorTracking;
+            int key = kKeyLeftMouse;
+            bool enabled = true;
+            int firePolicy = kFirePolicyAuto;
+            int targetTeam = kTargetEnemies;
+            float minDistance = kDocumentedUnsetFloat;
+            float maxDistance = kDocumentedUnsetFloat;
+            float maxAimTime = kDocumentedUnsetFloat;
+            float smooth = kDocumentedUnsetFloat;
+        };
+
+        struct DocumentedTriggerSlotSpec {
+            const char* name = "Primary Trigger";
+            int action = kActionPrimary;
+            int key = kKeyMouse4;
+            bool enabled = true;
+            int targetTeam = kTargetEnemies;
+            bool chargeAware = false;
+            float minCharge = 30.0f;
+        };
+
+        DocumentedAimSlotSpec AimSlot(const char* name,
+                                      int action,
+                                      int behavior,
+                                      int key,
+                                      bool enabled = true)
+        {
+            DocumentedAimSlotSpec spec{};
+            spec.name = name;
+            spec.action = action;
+            spec.aimBehavior = behavior;
+            spec.key = key;
+            spec.enabled = enabled;
+            return spec;
+        }
+
+        DocumentedAimSlotSpec DisabledAimSlot(const char* name = "No Aim")
+        {
+            DocumentedAimSlotSpec spec = AimSlot(name, kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse, false);
+            spec.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
+            return spec;
+        }
+
+        DocumentedTriggerSlotSpec TriggerSlot(const char* name,
+                                              int action,
+                                              int key,
+                                              bool enabled = true)
+        {
+            DocumentedTriggerSlotSpec spec{};
+            spec.name = name;
+            spec.action = action;
+            spec.key = key;
+            spec.enabled = enabled;
+            return spec;
+        }
+
+        DocumentedTriggerSlotSpec DisabledTriggerSlot(const char* name = "No Trigger")
+        {
+            return TriggerSlot(name, kActionPrimary, kKeyMouse4, false);
+        }
+
+        std::vector<DocumentedAimSlotSpec> DocumentedAimSlotSpecs(uint64_t heroId)
+        {
+            switch (heroId) {
+            case static_cast<uint64_t>(OW::eHero::HERO_REAPER):
+                return { AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_TRACER): {
+                auto primary = AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse);
+                primary.maxDistance = 25.0f;
+                return { primary };
+            }
+            case static_cast<uint64_t>(OW::eHero::HERO_MERCY):
+            case static_cast<uint64_t>(OW::eHero::HERO_REINHARDT):
+            case static_cast<uint64_t>(OW::eHero::HERO_MOIRA):
+            case static_cast<uint64_t>(OW::eHero::HERO_WUYANG):
+            case static_cast<uint64_t>(OW::eHero::HERO_JETPACKCAT):
+                return { DisabledAimSlot() };
+            case static_cast<uint64_t>(OW::eHero::HERO_HANJO):
+                return { AimSlot("Primary Hanzo Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+            case static_cast<uint64_t>(OW::eHero::HERO_TORBJORN):
+                return {
+                    AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyLeftMouse),
+                    AimSlot("Secondary Tracking", kActionSecondary, kAimBehaviorTracking, kKeyRightMouse),
+                    AimSlot("Turret Primary", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse, false),
+                    AimSlot("Turret Secondary", kActionSecondary, kAimBehaviorTracking, kKeyRightMouse, false),
+                };
+            case static_cast<uint64_t>(OW::eHero::HERO_PHARAH):
+                return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyLeftMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_WINSTON):
+                return { AimSlot("Secondary Flick", kActionSecondary, kAimBehaviorFlick, kKeyRightMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_WIDOWMAKER): {
+                auto scopedTrack = AimSlot("Scoped Tracking", kActionScoped, kAimBehaviorTracking, kKeyRightMouse);
+                scopedTrack.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
+                scopedTrack.maxAimTime = 30.0f;
+                auto fastFlick = AimSlot("Scoped Fast Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse4);
+                fastFlick.smooth = 100.0f;
+                return {
+                    AimSlot("Hip Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    scopedTrack,
+                    AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
+                    fastFlick,
+                };
+            }
+            case static_cast<uint64_t>(OW::eHero::HERO_BASTION):
+                return { AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_SYMMETRA):
+                return {
+                    AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    AimSlot("Secondary Flick", kActionSecondary, kAimBehaviorFlick, kKeyRightMouse),
+                };
+            case static_cast<uint64_t>(OW::eHero::HERO_ZENYATTA):
+                return {
+                    AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyLeftMouse),
+                    AimSlot("Secondary Flick", kActionSecondary, kAimBehaviorFlick, kKeyRightMouse),
+                };
+            case static_cast<uint64_t>(OW::eHero::HERO_GENJI):
+                return { AimSlot("Secondary Tracking", kActionSecondary, kAimBehaviorTracking, kKeyRightMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_ROADHOG): {
+                auto primary = AimSlot("Primary Close Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5);
+                primary.maxDistance = 15.0f;
+                auto secondary = AimSlot("Secondary Far Flick", kActionSecondary, kAimBehaviorFlick, kKeyMouse5);
+                secondary.minDistance = 15.0f;
+                return { primary, secondary };
+            }
+            case static_cast<uint64_t>(OW::eHero::HERO_MCCREE):
+                return {
+                    AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
+                    AimSlot("Secondary Tracking", kActionSecondary, kAimBehaviorTracking, kKeyRightMouse),
+                };
+            case static_cast<uint64_t>(OW::eHero::HERO_JUNKRAT):
+                return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+            case static_cast<uint64_t>(OW::eHero::HERO_ZARYA):
+            case static_cast<uint64_t>(OW::eHero::HERO_SOLDIER76):
+            case static_cast<uint64_t>(OW::eHero::HERO_LUCIO):
+            case static_cast<uint64_t>(OW::eHero::HERO_DVA):
+            case static_cast<uint64_t>(OW::eHero::HERO_SOMBRA):
+            case static_cast<uint64_t>(OW::eHero::HERO_DOOMFIST):
+            case static_cast<uint64_t>(OW::eHero::HERO_ORISA):
+            case static_cast<uint64_t>(OW::eHero::HERO_WRECKINGBALL):
+            case static_cast<uint64_t>(OW::eHero::HERO_SOJOURN):
+            case static_cast<uint64_t>(OW::eHero::HERO_BAPTISTE):
+            case static_cast<uint64_t>(OW::eHero::HERO_RAMATTRA):
+            case static_cast<uint64_t>(OW::eHero::HERO_LIFEWEAVER):
+            case static_cast<uint64_t>(OW::eHero::HERO_HAZARD):
+            case static_cast<uint64_t>(OW::eHero::HERO_JUNO):
+                return { AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_MEI):
+                return { AimSlot("Secondary Flick", kActionSecondary, kAimBehaviorFlick, kKeyMouse5) };
+            case static_cast<uint64_t>(OW::eHero::HERO_ANA): {
+                auto scopedTrack = AimSlot("Scoped Tracking", kActionScoped, kAimBehaviorTracking, kKeyRightMouse);
+                scopedTrack.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
+                scopedTrack.maxAimTime = 30.0f;
+                return {
+                    AimSlot("Hip Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
+                    AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
+                    scopedTrack,
+                };
+            }
+            case static_cast<uint64_t>(OW::eHero::HERO_BRIGITTE):
+                return { DisabledAimSlot() };
+            case static_cast<uint64_t>(OW::eHero::HERO_ASHE):
+                return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+            case static_cast<uint64_t>(OW::eHero::HERO_ECHO):
+                return {
+                    AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
+                };
+            case static_cast<uint64_t>(OW::eHero::HERO_JUNKERQUEEN):
+            case static_cast<uint64_t>(OW::eHero::HERO_ILLARI):
+                return { DisabledAimSlot() };
+            case static_cast<uint64_t>(OW::eHero::HERO_SIGMA):
+                return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyLeftMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_MAUGA):
+                return { AimSlot("Secondary Tracking", kActionSecondary, kAimBehaviorTracking, kKeyRightMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_FREJA):
+                return {
+                    AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
+                };
+            case static_cast<uint64_t>(OW::eHero::HERO_VENTURE):
+                return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+            default:
+                return {};
+            }
+        }
+
+        std::vector<DocumentedTriggerSlotSpec> DocumentedTriggerSlotSpecs(uint64_t heroId)
+        {
+            switch (heroId) {
+            case static_cast<uint64_t>(OW::eHero::HERO_KIRIKO):
+                return {};
+            case static_cast<uint64_t>(OW::eHero::HERO_REAPER):
+                return { TriggerSlot("Primary Trigger", kActionPrimary, kKeyMouse4) };
+            case static_cast<uint64_t>(OW::eHero::HERO_HANJO): {
+                auto trigger = TriggerSlot("Primary Trigger", kActionPrimary, kKeyMouse4);
+                trigger.chargeAware = true;
+                trigger.minCharge = 65.0f;
+                return { trigger };
+            }
+            case static_cast<uint64_t>(OW::eHero::HERO_WIDOWMAKER):
+                return { TriggerSlot("Scoped Trigger", kActionScoped, kKeyMouse5) };
+            case static_cast<uint64_t>(OW::eHero::HERO_ANA): {
+                auto trigger = TriggerSlot("Allies Trigger", kActionPrimary, kKeyMouse4);
+                trigger.targetTeam = kTargetAllies;
+                return { trigger };
+            }
+            case static_cast<uint64_t>(OW::eHero::HERO_JUNKERQUEEN):
+                return { TriggerSlot("Primary Trigger", kActionPrimary, kKeyMouse4) };
+            case static_cast<uint64_t>(OW::eHero::HERO_ILLARI):
+                return { TriggerSlot("Primary Trigger", kActionPrimary, kKeyMouse4) };
+            default: {
+                const std::vector<DocumentedAimSlotSpec> aimSpecs = DocumentedAimSlotSpecs(heroId);
+                return aimSpecs.empty() ? std::vector<DocumentedTriggerSlotSpec>{}
+                    : std::vector<DocumentedTriggerSlotSpec>{ DisabledTriggerSlot() };
+            }
+            }
+        }
+
+        int DefaultDocumentedFirePolicy(uint64_t heroId, int action, int behavior)
+        {
+            if (IsTrackingBehavior(behavior))
+                return static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
+
+            const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(heroId, action);
+            if (weapon)
+                return static_cast<int>(weapon->firePolicy.type);
+            return static_cast<int>(OW::FirePolicyType::TapOnHitWindow);
+        }
+
+        HeroPreset MakeDocumentedAimPreset(uint64_t heroId,
+                                           const HeroPreset& basePreset,
+                                           const DocumentedAimSlotSpec& spec)
+        {
+            HeroPreset preset = basePreset;
+            preset.trigger.action = NormalizeHeroWeaponAction(heroId, spec.action);
+            preset.key = std::clamp(spec.key, 0, MaxActivationKeyIndex());
+            preset.aimBehavior = ClampAimBehaviorIndex(spec.aimBehavior);
+            preset.aimMode = IsTrackingBehavior(preset.aimBehavior) ? 0 : 1;
+            preset.firePolicy = spec.firePolicy >= 0
+                ? spec.firePolicy
+                : DefaultDocumentedFirePolicy(heroId, preset.trigger.action, preset.aimBehavior);
+            preset.keepFiring = preset.firePolicy == static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
+            preset.autoshot = preset.firePolicy != static_cast<int>(OW::FirePolicyType::ManualOnly) &&
+                preset.firePolicy != static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
+            preset.targetTeam = spec.targetTeam;
+            preset.trackingDeadzone = IsTrackingBehavior(preset.aimBehavior)
+                ? kTrackingDefaultDeadzonePx
+                : basePreset.trackingDeadzone;
+            if (spec.minDistance >= 0.0f)
+                preset.minDistance = spec.minDistance;
+            if (spec.maxDistance >= 0.0f)
+                preset.maxDistance = spec.maxDistance;
+            if (spec.maxAimTime >= 0.0f)
+                preset.maxAimTime = spec.maxAimTime;
+            if (spec.smooth >= 0.0f)
+                preset.smooth = spec.smooth;
+            return ValidateHeroPresetValueForHero(heroId, preset);
+        }
+
+        HeroPreset MakeDocumentedTriggerPreset(uint64_t heroId,
+                                               const HeroPreset& basePreset,
+                                               const DocumentedTriggerSlotSpec& spec)
+        {
+            HeroPreset preset = basePreset;
+            preset.targetTeam = spec.targetTeam;
+            preset.trigger.enabled = spec.enabled;
+            preset.trigger.action = NormalizeHeroWeaponAction(heroId, spec.action);
+            preset.trigger.key = std::clamp(spec.key, 0, MaxActivationKeyIndex());
+            preset.trigger.mode = 0;
+            preset.trigger.chargeAware = spec.chargeAware;
+            preset.trigger.minCharge = spec.minCharge;
+            return ValidateHeroPresetValueForHero(heroId, preset);
+        }
+
         TriggerPreset ValidateTriggerPresetValue(TriggerPreset preset)
         {
             if (!std::isfinite(preset.shotInterval)) preset.shotInterval = 0.0f;
@@ -1353,9 +1658,9 @@ namespace OW { namespace Config {
             }
         }
 
-        void InitializeBasicHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
-                                            uint64_t heroId,
-                                            HeroPresetSlotKind kind)
+        void InitializeWeaponGeneratedHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                                      uint64_t heroId,
+                                                      HeroPresetSlotKind kind)
         {
             InitializeHeroPresetSlots(slots, 0, false);
 
@@ -1385,6 +1690,64 @@ namespace OW { namespace Config {
             }
         }
 
+        bool InitializeDocumentedHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                                 uint64_t heroId,
+                                                 HeroPresetSlotKind kind)
+        {
+            const HeroPreset basePreset = kind == HeroPresetSlotKind::Aim
+                ? MakeHeroAimPresetFromCurrentUnlocked()
+                : MakeHeroTriggerPresetFromCurrentUnlocked();
+
+            InitializeHeroPresetSlots(slots, 0, false);
+
+            if (kind == HeroPresetSlotKind::Aim) {
+                const std::vector<DocumentedAimSlotSpec> specs = DocumentedAimSlotSpecs(heroId);
+                if (specs.empty())
+                    return false;
+
+                const int presentCount = (std::min)(
+                    static_cast<int>(specs.size()),
+                    kHeroPresetSlotCount);
+                for (int slotIndex = 0; slotIndex < presentCount; ++slotIndex) {
+                    const DocumentedAimSlotSpec& spec = specs[static_cast<size_t>(slotIndex)];
+                    HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
+                    ResetHeroPresetSlot(slot, slotIndex);
+                    slot.name = spec.name ? spec.name : BasicHeroSlotName(spec.action, slotIndex);
+                    slot.present = true;
+                    slot.enabled = spec.enabled;
+                    slot.preset = MakeDocumentedAimPreset(heroId, basePreset, spec);
+                }
+                return true;
+            }
+
+            const std::vector<DocumentedTriggerSlotSpec> specs = DocumentedTriggerSlotSpecs(heroId);
+            if (specs.empty())
+                return false;
+
+            const int presentCount = (std::min)(
+                static_cast<int>(specs.size()),
+                kHeroPresetSlotCount);
+            for (int slotIndex = 0; slotIndex < presentCount; ++slotIndex) {
+                const DocumentedTriggerSlotSpec& spec = specs[static_cast<size_t>(slotIndex)];
+                HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
+                ResetHeroPresetSlot(slot, slotIndex);
+                slot.name = spec.name ? spec.name : BasicHeroSlotName(spec.action, slotIndex);
+                slot.present = true;
+                slot.enabled = spec.enabled;
+                slot.preset = MakeDocumentedTriggerPreset(heroId, basePreset, spec);
+            }
+            return true;
+        }
+
+        void InitializeBasicHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                            uint64_t heroId,
+                                            HeroPresetSlotKind kind)
+        {
+            if (InitializeDocumentedHeroPresetSlots(slots, heroId, kind))
+                return;
+            InitializeWeaponGeneratedHeroPresetSlots(slots, heroId, kind);
+        }
+
         int CountHeroPresetSlots(const std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots)
         {
             int count = 0;
@@ -1393,6 +1756,121 @@ namespace OW { namespace Config {
                     ++count;
             }
             return count;
+        }
+
+        bool SameFloatForDefaultMigration(float lhs, float rhs)
+        {
+            return std::fabs(lhs - rhs) <= 0.001f;
+        }
+
+        bool SameTriggerPresetForDefaultMigration(const TriggerPreset& lhs,
+                                                  const TriggerPreset& rhs)
+        {
+            return lhs.enabled == rhs.enabled &&
+                lhs.action == rhs.action &&
+                lhs.mode == rhs.mode &&
+                lhs.key == rhs.key &&
+                SameFloatForDefaultMigration(lhs.shotInterval, rhs.shotInterval) &&
+                lhs.chargeAware == rhs.chargeAware &&
+                SameFloatForDefaultMigration(lhs.minCharge, rhs.minCharge) &&
+                lhs.ignoreInvisible == rhs.ignoreInvisible &&
+                lhs.drawHitbox == rhs.drawHitbox;
+        }
+
+        bool SameHeroPresetForDefaultMigration(const HeroPreset& lhs,
+                                               const HeroPreset& rhs)
+        {
+            return SameFloatForDefaultMigration(lhs.fov, rhs.fov) &&
+                SameFloatForDefaultMigration(lhs.smooth, rhs.smooth) &&
+                lhs.bone == rhs.bone &&
+                lhs.autoBone == rhs.autoBone &&
+                SameFloatForDefaultMigration(lhs.hitbox, rhs.hitbox) &&
+                lhs.aimMode == rhs.aimMode &&
+                lhs.aimBehavior == rhs.aimBehavior &&
+                lhs.aimMethod == rhs.aimMethod &&
+                lhs.smoothType == rhs.smoothType &&
+                lhs.key == rhs.key &&
+                lhs.autoshot == rhs.autoshot &&
+                lhs.keepFiring == rhs.keepFiring &&
+                lhs.prediction == rhs.prediction &&
+                lhs.predictionMode == rhs.predictionMode &&
+                lhs.firePolicy == rhs.firePolicy &&
+                SameFloatForDefaultMigration(lhs.maxHeadDistance, rhs.maxHeadDistance) &&
+                SameFloatForDefaultMigration(lhs.stickiness, rhs.stickiness) &&
+                SameFloatForDefaultMigration(lhs.pitchScale, rhs.pitchScale) &&
+                lhs.priority == rhs.priority &&
+                lhs.targetTeam == rhs.targetTeam &&
+                SameFloatForDefaultMigration(lhs.maxAimTime, rhs.maxAimTime) &&
+                SameFloatForDefaultMigration(lhs.minCharge, rhs.minCharge) &&
+                SameFloatForDefaultMigration(lhs.maxCharge, rhs.maxCharge) &&
+                lhs.ignoreInvisible == rhs.ignoreInvisible &&
+                lhs.traceCondition == rhs.traceCondition &&
+                lhs.unlockCondition == rhs.unlockCondition &&
+                SameFloatForDefaultMigration(lhs.lockTime, rhs.lockTime) &&
+                SameFloatForDefaultMigration(lhs.maxDistance, rhs.maxDistance) &&
+                SameFloatForDefaultMigration(lhs.minDistance, rhs.minDistance) &&
+                SameFloatForDefaultMigration(lhs.trackingDeadzone, rhs.trackingDeadzone) &&
+                SameFloatForDefaultMigration(lhs.flickShotClampMs, rhs.flickShotClampMs) &&
+                SameFloatForDefaultMigration(lhs.flickPostFireDelayMs, rhs.flickPostFireDelayMs) &&
+                lhs.flickTrajectoryWait == rhs.flickTrajectoryWait &&
+                SameFloatForDefaultMigration(lhs.flickTrajectoryWaitMs, rhs.flickTrajectoryWaitMs) &&
+                SameFloatForDefaultMigration(lhs.flickTrajectoryApexWindowMs, rhs.flickTrajectoryApexWindowMs) &&
+                lhs.flick2ndTriggerGate == rhs.flick2ndTriggerGate &&
+                SameFloatForDefaultMigration(lhs.flick2ndBoxPadding, rhs.flick2ndBoxPadding) &&
+                SameFloatForDefaultMigration(lhs.flick2ndInnerRadius, rhs.flick2ndInnerRadius) &&
+                SameFloatForDefaultMigration(lhs.flick2ndInnerSmoothScale, rhs.flick2ndInnerSmoothScale) &&
+                lhs.flick2ndInnerMethod == rhs.flick2ndInnerMethod &&
+                SameTriggerPresetForDefaultMigration(lhs.trigger, rhs.trigger);
+        }
+
+        bool SameHeroSlotForDefaultMigration(const HeroSlotPreset& lhs,
+                                             const HeroSlotPreset& rhs)
+        {
+            if (lhs.present != rhs.present)
+                return false;
+            if (!lhs.present)
+                return true;
+            return lhs.enabled == rhs.enabled &&
+                lhs.name == rhs.name &&
+                SameHeroPresetForDefaultMigration(
+                    ValidateHeroPresetValue(lhs.preset),
+                    ValidateHeroPresetValue(rhs.preset));
+        }
+
+        bool SlotsStillMatchLegacyGeneratedDefaults(
+            const std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+            uint64_t heroId,
+            HeroPresetSlotKind kind)
+        {
+            std::array<HeroSlotPreset, kHeroPresetSlotCount> expected{};
+            InitializeWeaponGeneratedHeroPresetSlots(expected, heroId, kind);
+            for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                if (!SameHeroSlotForDefaultMigration(
+                        slots[static_cast<size_t>(slotIndex)],
+                        expected[static_cast<size_t>(slotIndex)])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool MigrateDocumentedHeroSlotsIfLegacyDefault(
+            std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+            uint64_t heroId,
+            HeroPresetSlotKind kind)
+        {
+            if (gLoadedHeroConfigVersion >= kDocumentedHeroSlotDefaultsVersion)
+                return false;
+            if ((kind == HeroPresetSlotKind::Aim && DocumentedAimSlotSpecs(heroId).empty()) ||
+                (kind == HeroPresetSlotKind::Trigger && DocumentedTriggerSlotSpecs(heroId).empty())) {
+                return false;
+            }
+            if (!SlotsStillMatchLegacyGeneratedDefaults(slots, heroId, kind))
+                return false;
+
+            InitializeBasicHeroPresetSlots(slots, heroId, kind);
+            gLastHeroConfigNeedsSave = true;
+            return true;
         }
 
         void NormalizeHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
@@ -1432,7 +1910,8 @@ namespace OW { namespace Config {
         {
             auto validateStore = [](HeroPresetStore& store, HeroPresetSlotKind kind) {
                 for (auto& item : store) {
-                    NormalizeHeroPresetSlots(item.second, item.first, kind);
+                    if (!MigrateDocumentedHeroSlotsIfLegacyDefault(item.second, item.first, kind))
+                        NormalizeHeroPresetSlots(item.second, item.first, kind);
                 }
             };
             validateStore(heroAimPresets, HeroPresetSlotKind::Aim);
@@ -1443,7 +1922,7 @@ namespace OW { namespace Config {
                     auto [item, inserted] = store.try_emplace(def.heroId);
                     if (inserted)
                         InitializeBasicHeroPresetSlots(item->second, def.heroId, kind);
-                    else
+                    else if (!MigrateDocumentedHeroSlotsIfLegacyDefault(item->second, def.heroId, kind))
                         NormalizeHeroPresetSlots(item->second, def.heroId, kind);
                 }
             };
@@ -3323,6 +3802,7 @@ namespace OW { namespace Config {
             if (!LoadJsonDocument(heroConfigPath, document))
                 return false;
             const int heroConfigVersion = ReadJsonInt(document, "version", 1);
+            gLoadedHeroConfigVersion = heroConfigVersion;
             const bool legacyFovApertureValues =
                 heroConfigVersion < kHeroFovAnglesStoredAsHalfAnglesVersion;
             const bool legacyAimBehaviorValues =
@@ -3403,6 +3883,7 @@ namespace OW { namespace Config {
             heroAimPresets.clear();
             heroTriggerPresets.clear();
             heroSkillPresets.clear();
+            gLoadedHeroConfigVersion = 0;
             const HeroPreset presetDefaults = MakeHeroPresetFromCurrentUnlocked();
             const int fileVersion = ReadInt(ini, kMetaSection, kVersionKey, 0);
             const bool storedBoneUsesLegacyPresetIndex =
