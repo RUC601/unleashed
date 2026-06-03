@@ -1307,6 +1307,14 @@ namespace {
             return { 62.0f, 20.0f, 0.0f, 0.5f, 100.0f };
         if (skill == "pulse-bomb")
             return { 15.0f, 5.0f, 20.0f, 0.0f, 0.0f };
+        if (skill == "helix-rockets")
+            return { 50.0f, 40.0f, 0.0f, 0.32f, 0.0f };
+        if (skill == "sticky-bombs")
+            return { 50.0f, 35.0f, 0.0f, 0.2f, 0.0f };
+        if (skill == "whip-shot")
+            return { 80.0f, 20.0f, 0.0f, 0.3f, 0.0f };
+        if (skill == "accretion")
+            return { 37.5f, 35.0f, 20.0f, 0.5f, 0.0f };
         return { 60.0f, 40.0f, 0.0f, 0.0f, 0.0f };
     }
 
@@ -2138,12 +2146,27 @@ namespace {
         return skill == "sleep-dart" ||
             skill == "chain-hook" ||
             skill == "rocket-punch" ||
-            skill == "pulse-bomb";
+            skill == "pulse-bomb" ||
+            skill == "recall" ||
+            skill == "wraith-form" ||
+            skill == "transcendence" ||
+            skill == "helix-rockets" ||
+            skill == "sticky-bombs" ||
+            skill == "whip-shot" ||
+            skill == "accretion";
     }
 
     bool IsAutoMeleeDefinition(const HeroSkillDefinition& definition)
     {
         return std::string(definition.skillId ? definition.skillId : "") == "auto-melee";
+    }
+
+    bool IsDefensiveResponseDefinition(const HeroSkillDefinition& definition)
+    {
+        const std::string skill = definition.skillId ? definition.skillId : "";
+        return skill == "wraith-form" ||
+            skill == "recall" ||
+            skill == "transcendence";
     }
 
     bool SkillCooldownReadySentinel(float cooldown)
@@ -2687,6 +2710,175 @@ namespace {
         return true;
     }
 
+    bool EvaluateHealthThresholdAction(const std::string& runtimeKey,
+                                       const HeroSkillDefinition& definition,
+                                       const Config::HeroSkillSettings& settings,
+                                       const c_entity& local)
+    {
+        if (!std::isfinite(local.PlayerHealth) || local.PlayerHealth <= 0.0f)
+            return false;
+
+        const bool absolute = SkillControls(definition, HeroSkillControls::HealthAbsolute);
+        const float currentHealth = absolute ? local.PlayerHealth : VitalityPercent(local);
+        if (currentHealth > settings.healthThreshold || IsActionDebounced(runtimeKey))
+            return false;
+
+        const int vk = SkillOutputVk(settings);
+        if (!StartTimedHotkey(runtimeKey, vk, kBriefPulse))
+            return false;
+
+        MarkActionExecuted(runtimeKey);
+        Diagnostics::Info("Hero skill health-threshold action fired. skill=%s health=%.1f threshold=%.1f absolute=%d vk=%d",
+            definition.skillId ? definition.skillId : "",
+            currentHealth,
+            settings.healthThreshold,
+            absolute ? 1 : 0,
+            vk);
+        return true;
+    }
+
+    bool IsThreatSkillActiveForDefensiveResponse(const std::string& skillId, const c_entity& entity)
+    {
+        if (skillId == "wraith-form" || skillId == "recall") {
+            return (entity.HeroID == eHero::HERO_ANA && entity.skill1act) ||
+                (entity.HeroID == eHero::HERO_ROADHOG && entity.skill1act) ||
+                (entity.HeroID == eHero::HERO_SIGMA && entity.skill2act) ||
+                (entity.HeroID == eHero::HERO_BRIGITTE && entity.skill1act);
+        }
+
+        if (skillId == "transcendence") {
+            const bool threatHero =
+                entity.HeroID == eHero::HERO_SOMBRA ||
+                entity.HeroID == eHero::HERO_REINHARDT;
+            return threatHero && std::isfinite(entity.ultimate) && entity.ultimate >= 99.0f;
+        }
+
+        return false;
+    }
+
+    bool IsEnemyFacingLocalHorizontal(const c_entity& enemy,
+                                      const c_entity& local,
+                                      float coneAngleDeg = 25.0f)
+    {
+        const Vector3 enemyPoint = CandidatePositionForAction(enemy);
+        Vector3 localPoint = CandidatePositionForAction(local);
+        if (!IsUsablePosition(localPoint))
+            localPoint = SourcePositionForAction(local);
+        if (!IsUsablePosition(enemyPoint) || !IsUsablePosition(localPoint))
+            return false;
+
+        Vector3 toLocal = localPoint - enemyPoint;
+        toLocal.Y = 0.0f;
+        const float toLocalLength = toLocal.Size();
+        if (!std::isfinite(toLocalLength) || toLocalLength <= 0.0001f)
+            return false;
+        toLocal = toLocal / toLocalLength;
+
+        Vector3 enemyForward(std::sin(enemy.Rot.X), 0.0f, std::cos(enemy.Rot.X));
+        const float forwardLength = enemyForward.Size();
+        if (!std::isfinite(forwardLength) || forwardLength <= 0.0001f)
+            return false;
+        enemyForward = enemyForward / forwardLength;
+
+        const float dot = std::clamp(enemyForward | toLocal, -1.0f, 1.0f);
+        const float threshold = std::cos(std::clamp(coneAngleDeg, 1.0f, 90.0f) * kDegToRad);
+        return dot >= threshold;
+    }
+
+    bool FindDefensiveThreatCandidate(const std::string& skillId,
+                                      const Config::HeroSkillSettings& settings,
+                                      const c_entity& local,
+                                      SkillAimCandidate& outCandidate)
+    {
+        const float effectiveRange = settings.distance;
+        if (!std::isfinite(effectiveRange) || effectiveRange <= 0.0f)
+            return false;
+
+        const Vector3 source = SourcePositionForAction(local);
+        if (!IsUsablePosition(source))
+            return false;
+
+        const std::vector<c_entity> snapshot = TargetingDetail::SnapshotEntities();
+        float bestDistance = (std::numeric_limits<float>::max)();
+        for (size_t index = 0; index < snapshot.size(); ++index) {
+            c_entity entity = snapshot[index];
+            if (!TargetingDetail::IsSelectableCandidate(entity, 0, local))
+                continue;
+            if (!entity.Vis)
+                continue;
+            if (!IsThreatSkillActiveForDefensiveResponse(skillId, entity))
+                continue;
+            if ((skillId == "wraith-form" || skillId == "recall") &&
+                !IsEnemyFacingLocalHorizontal(entity, local)) {
+                continue;
+            }
+
+            const Vector3 position = CandidatePositionForAction(entity);
+            if (!IsUsablePosition(position))
+                continue;
+
+            const float distance = source.DistTo(position);
+            if (!std::isfinite(distance) || distance > effectiveRange)
+                continue;
+
+            if (distance < bestDistance) {
+                outCandidate = {};
+                outCandidate.valid = true;
+                outCandidate.entity = entity;
+                outCandidate.entityIndex = static_cast<int>(index);
+                outCandidate.entityKey = entity.address ? entity.address : entity.LinkBase;
+                outCandidate.distance = distance;
+                outCandidate.vitalityPercent = VitalityPercent(entity);
+                outCandidate.rawAimPoint = position;
+                outCandidate.aimPoint = position;
+                bestDistance = distance;
+            }
+        }
+
+        return outCandidate.valid;
+    }
+
+    bool EvaluateDefensiveResponseAction(const std::string& runtimeKey,
+                                         const HeroSkillDefinition& definition,
+                                         const Config::HeroSkillSettings& settings,
+                                         const c_entity& local)
+    {
+        if (IsActionDebounced(runtimeKey))
+            return false;
+
+        const std::string skillId = definition.skillId ? definition.skillId : "";
+        bool healthTrigger = false;
+        if (SkillControls(definition, HeroSkillControls::HealthAbsolute) ||
+            SkillControls(definition, HeroSkillControls::HealthThreshold)) {
+            if (std::isfinite(local.PlayerHealth) && local.PlayerHealth > 0.0f) {
+                const bool absolute = SkillControls(definition, HeroSkillControls::HealthAbsolute);
+                const float currentHealth = absolute ? local.PlayerHealth : VitalityPercent(local);
+                healthTrigger = currentHealth <= settings.healthThreshold;
+            }
+        }
+
+        SkillAimCandidate threat{};
+        const bool threatTrigger = FindDefensiveThreatCandidate(skillId, settings, local, threat);
+        if (!healthTrigger && !threatTrigger)
+            return false;
+
+        const int vk = SkillOutputVk(settings);
+        if (!StartTimedHotkey(runtimeKey, vk, kBriefPulse))
+            return false;
+
+        MarkActionExecuted(runtimeKey);
+        Diagnostics::Info("Hero skill defensive response fired. skill=%s reason=%s targetIndex=%d hero=0x%llX distance=%.2f localHp=%.1f threshold=%.1f vk=%d",
+            skillId.c_str(),
+            healthTrigger ? "health" : "threat",
+            threat.valid ? threat.entityIndex : -1,
+            threat.valid ? static_cast<unsigned long long>(threat.entity.HeroID) : 0ull,
+            threat.valid ? threat.distance : 0.0f,
+            local.PlayerHealth,
+            settings.healthThreshold,
+            vk);
+        return true;
+    }
+
     bool EvaluateChargedConditionAction(const std::string& runtimeKey,
                                         const HeroSkillDefinition& definition,
                                         const Config::HeroSkillSettings& settings)
@@ -3119,7 +3311,13 @@ void ProcessHeroSkills()
         if (!IsRuntimeActionDefinition(definition))
             continue;
 
-        if (definition.category == HeroSkillCategory::Ultimate) {
+        if (IsDefensiveResponseDefinition(definition)) {
+            EvaluateDefensiveResponseAction(skillKey, definition, settings, localSnapshot);
+        } else if (SkillControls(definition, HeroSkillControls::HealthThreshold) ||
+                   SkillControls(definition, HeroSkillControls::HealthAbsolute)) {
+            EvaluateHealthThresholdAction(skillKey, definition, settings, localSnapshot);
+        } else if (definition.category == HeroSkillCategory::Ultimate &&
+                   !SkillControls(definition, HeroSkillControls::TrackingOverlay)) {
             EvaluateChargedConditionAction(skillKey, definition, settings);
         } else if (definition.inputAction == HeroSkillInputAction::SecondaryFire &&
                    std::string(definition.skillId ? definition.skillId : "") == "rocket-punch") {

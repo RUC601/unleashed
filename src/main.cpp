@@ -421,10 +421,164 @@ namespace {
         ImGui::End();
     }
 
-    static float FovRadiusForViewport(float width, float height, float fovDeg)
+    static DirectX::XMMATRIX ToDirectXMatrix(const OW::Matrix& matrix)
+    {
+        return DirectX::XMMATRIX(
+            matrix.m11, matrix.m12, matrix.m13, matrix.m14,
+            matrix.m21, matrix.m22, matrix.m23, matrix.m24,
+            matrix.m31, matrix.m32, matrix.m33, matrix.m34,
+            matrix.m41, matrix.m42, matrix.m43, matrix.m44);
+    }
+
+    static OW::TargetingDetail::FovRuntimeContext BuildFovRuntimeContext(const OW::Matrix& viewMatrixXor)
+    {
+        const DirectX::XMFLOAT3 camera = viewMatrixXor.get_location();
+        const DirectX::XMFLOAT3 forward = viewMatrixXor.get_rotation();
+
+        OW::TargetingDetail::FovRuntimeContext context{};
+        context.camera = OW::Vector3(camera.x, camera.y, camera.z);
+        context.forward = OW::TargetingDetail::NormalizeVector(
+            OW::Vector3(forward.x, forward.y, forward.z));
+        context.valid = OW::TargetingDetail::IsFiniteVector(context.camera) &&
+                        !OW::TargetingDetail::IsZeroVector(context.camera) &&
+                        !OW::TargetingDetail::IsZeroVector(context.forward);
+        return context;
+    }
+
+    struct FovProjectionContext {
+        DirectX::XMMATRIX inverseViewProjection{};
+        bool valid = false;
+    };
+
+    static FovProjectionContext BuildFovProjectionContext(const OW::Matrix& viewProjection)
+    {
+        DirectX::XMVECTOR determinant{};
+        const DirectX::XMMATRIX inverse = DirectX::XMMatrixInverse(
+            &determinant,
+            ToDirectXMatrix(viewProjection));
+        const float det = DirectX::XMVectorGetX(determinant);
+
+        FovProjectionContext context{};
+        context.inverseViewProjection = inverse;
+        context.valid = std::isfinite(det) && std::fabs(det) > 0.000001f;
+        return context;
+    }
+
+    static bool ScreenRayDirection(const FovProjectionContext& projection,
+                                   const OW::Vector2& screen,
+                                   float width,
+                                   float height,
+                                   OW::Vector3& outDirection)
+    {
+        if (!projection.valid || width <= 0.0f || height <= 0.0f)
+            return false;
+
+        const float ndcX = (screen.X / width) * 2.0f - 1.0f;
+        const float ndcY = 1.0f - (screen.Y / height) * 2.0f;
+
+        const DirectX::XMVECTOR nearClip = DirectX::XMVectorSet(ndcX, ndcY, 0.0f, 1.0f);
+        const DirectX::XMVECTOR farClip = DirectX::XMVectorSet(ndcX, ndcY, 1.0f, 1.0f);
+        const DirectX::XMVECTOR nearWorld = DirectX::XMVector3TransformCoord(
+            nearClip,
+            projection.inverseViewProjection);
+        const DirectX::XMVECTOR farWorld = DirectX::XMVector3TransformCoord(
+            farClip,
+            projection.inverseViewProjection);
+
+        DirectX::XMFLOAT3 nearPoint{};
+        DirectX::XMFLOAT3 farPoint{};
+        DirectX::XMStoreFloat3(&nearPoint, nearWorld);
+        DirectX::XMStoreFloat3(&farPoint, farWorld);
+
+        const OW::Vector3 direction = OW::TargetingDetail::NormalizeVector(
+            OW::Vector3(farPoint.x - nearPoint.x,
+                        farPoint.y - nearPoint.y,
+                        farPoint.z - nearPoint.z));
+        if (OW::TargetingDetail::IsZeroVector(direction) ||
+            !OW::TargetingDetail::IsFiniteVector(direction)) {
+            return false;
+        }
+
+        outDirection = direction;
+        return true;
+    }
+
+    static bool ScreenRayAngleDeg(const FovProjectionContext& projection,
+                                  const OW::TargetingDetail::FovRuntimeContext& context,
+                                  const OW::Vector2& screen,
+                                  float width,
+                                  float height,
+                                  float& outAngleDeg)
+    {
+        if (!context.valid)
+            return false;
+
+        OW::Vector3 direction{};
+        if (!ScreenRayDirection(projection, screen, width, height, direction))
+            return false;
+
+        const float dot = std::clamp(context.forward | direction, -1.0f, 1.0f);
+        outAngleDeg = RAD2DEG(std::acos(dot));
+        return std::isfinite(outAngleDeg);
+    }
+
+    static float FovRadiusLinearFallback(float width, float height, float fovDeg)
     {
         const float fullViewportRadius = std::sqrt(width * width + height * height) * 0.5f;
         return fullViewportRadius * (OW::Config::ClampFovDeg(fovDeg) / OW::Config::kMaxFovDeg);
+    }
+
+    static float FovRadiusForViewport(float width,
+                                      float height,
+                                      float fovDeg,
+                                      const FovProjectionContext& projection,
+                                      const OW::TargetingDetail::FovRuntimeContext& fovContext)
+    {
+        const float targetAngleDeg = OW::Config::ClampFovDeg(fovDeg);
+        if (targetAngleDeg <= 0.0f)
+            return 0.0f;
+
+        const float maxRadius = std::sqrt(width * width + height * height) * 0.5f;
+        const OW::Vector2 center(width * 0.5f, height * 0.5f);
+
+        float centerAngleDeg = 0.0f;
+        float maxAngleDeg = 0.0f;
+        if (!ScreenRayAngleDeg(projection, fovContext, center, width, height, centerAngleDeg) ||
+            !ScreenRayAngleDeg(projection,
+                               fovContext,
+                               OW::Vector2(center.X + maxRadius, center.Y),
+                               width,
+                               height,
+                               maxAngleDeg)) {
+            return FovRadiusLinearFallback(width, height, targetAngleDeg);
+        }
+
+        if (targetAngleDeg <= centerAngleDeg)
+            return 0.0f;
+        if (targetAngleDeg >= maxAngleDeg)
+            return maxRadius;
+
+        float low = 0.0f;
+        float high = maxRadius;
+        for (int iteration = 0; iteration < 24; ++iteration) {
+            const float mid = (low + high) * 0.5f;
+            float angleDeg = 0.0f;
+            if (!ScreenRayAngleDeg(projection,
+                                   fovContext,
+                                   OW::Vector2(center.X + mid, center.Y),
+                                   width,
+                                   height,
+                                   angleDeg)) {
+                return FovRadiusLinearFallback(width, height, targetAngleDeg);
+            }
+
+            if (angleDeg < targetAngleDeg)
+                low = mid;
+            else
+                high = mid;
+        }
+
+        return high;
     }
 
     static void DrawDashedCircle(const OW::Vector2& center,
@@ -455,6 +609,8 @@ namespace {
                                   float width,
                                   float height,
                                   float fovDeg,
+                                  const FovProjectionContext& projection,
+                                  const OW::TargetingDetail::FovRuntimeContext& fovContext,
                                   const OW::Config::FovRingSlotStyle& rawStyle,
                                   bool active,
                                   const char* label)
@@ -463,7 +619,7 @@ namespace {
         if (!style.visible)
             return;
 
-        const float radius = FovRadiusForViewport(width, height, fovDeg);
+        const float radius = FovRadiusForViewport(width, height, fovDeg, projection, fovContext);
         if (radius <= 0.0f)
             return;
 
@@ -493,6 +649,8 @@ namespace {
                                     const OW::Vector2& center,
                                     float width,
                                     float height,
+                                    const FovProjectionContext& projection,
+                                    const OW::TargetingDetail::FovRuntimeContext& fovContext,
                                     const OW::Config::RuntimeDrawFovState& activeState)
     {
         bool drewAny = false;
@@ -516,7 +674,15 @@ namespace {
                           "A%d %.0f deg",
                           slotIndex + 1,
                           OW::Config::ClampFovDeg(slot.preset.fov));
-            DrawStyledFovRing(center, width, height, slot.preset.fov, style, active, label);
+            DrawStyledFovRing(center,
+                              width,
+                              height,
+                              slot.preset.fov,
+                              projection,
+                              fovContext,
+                              style,
+                              active,
+                              label);
             drewAny = true;
         }
         return drewAny;
@@ -562,6 +728,12 @@ namespace {
             return;
 
         const OW::Vector2 center(width * 0.5f, height * 0.5f);
+        OW::Matrix renderViewMatrix{}, renderViewMatrixXor{};
+        OW::GetViewMatricesSnapshot(renderViewMatrix, renderViewMatrixXor);
+        const FovProjectionContext projection = BuildFovProjectionContext(renderViewMatrix);
+        const OW::TargetingDetail::FovRuntimeContext fovContext =
+            BuildFovRuntimeContext(renderViewMatrixXor);
+
         const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
         const OW::Config::RuntimeDrawFovState activeState = OW::Config::SnapshotRuntimeDrawFov();
         bool drewAny = false;
@@ -570,6 +742,8 @@ namespace {
                                            center,
                                            width,
                                            height,
+                                           projection,
+                                           fovContext,
                                            activeState);
         }
         if (drewAny)
@@ -585,6 +759,8 @@ namespace {
                           width,
                           height,
                           OW::Config::RuntimeDrawFovOrDefault(OW::Config::Fov),
+                          projection,
+                          fovContext,
                           fallbackStyle,
                           false,
                           nullptr);

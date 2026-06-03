@@ -51,6 +51,7 @@ namespace HeroSkillControls {
     inline constexpr HeroSkillControlFlags EnemyHealthAbsolute = 1u << 17;
     inline constexpr HeroSkillControlFlags Bone = 1u << 18;
     inline constexpr HeroSkillControlFlags Hitbox = 1u << 19;
+    inline constexpr HeroSkillControlFlags HealthAbsolute = 1u << 20;
 }
 
 namespace HeroSkillHotkey {
@@ -349,12 +350,14 @@ inline Config::HeroSkillSettings MakeProjectileAimSkillDefaults(float distance,
                                                                 float cooldown,
                                                                 float projectileSpeed,
                                                                 float projectileRadius,
-                                                                float preFireDelayMs)
+                                                                float preFireDelayMs,
+                                                                int skillKey = HeroSkillHotkey::LeftShift,
+                                                                bool projectileGravity = false)
 {
     Config::HeroSkillSettings settings{};
     settings.enabled = false;
     settings.key = HeroSkillHotkey::Mouse4;
-    settings.skillKey = HeroSkillHotkey::LeftShift;
+    settings.skillKey = skillKey;
     settings.healthThreshold = 50.0f;
     settings.enemyHealthThreshold = 50.0f;
     settings.allyHealthThreshold = 50.0f;
@@ -376,14 +379,17 @@ inline Config::HeroSkillSettings MakeProjectileAimSkillDefaults(float distance,
     };
     settings.projectileSpeed = projectileSpeed;
     settings.projectileRadius = projectileRadius;
-    settings.projectileGravity = false;
+    settings.projectileGravity = projectileGravity;
     settings.preFireDelayMs = preFireDelayMs;
     return settings;
 }
 
 inline Config::HeroSkillSettings MakeAnaSleepDartDefaults()
 {
-    return MakeProjectileAimSkillDefaults(45.0f, 14.0f, 60.0f, 0.2f, 320.0f);
+    Config::HeroSkillSettings settings =
+        MakeProjectileAimSkillDefaults(45.0f, 14.0f, 60.0f, 0.2f, 320.0f);
+    settings.enemyHealthThreshold = 100.0f;
+    return settings;
 }
 
 inline Config::HeroSkillSettings MakeRoadhogChainHookDefaults()
@@ -392,6 +398,77 @@ inline Config::HeroSkillSettings MakeRoadhogChainHookDefaults()
         MakeProjectileAimSkillDefaults(20.0f, 7.0f, 62.0f, 0.5f, 100.0f);
     settings.enemyHealthThreshold = 100.0f;
     return settings;
+}
+
+inline Config::HeroSkillSettings MakeTracerPulseBombDefaults()
+{
+    Config::HeroSkillSettings settings =
+        MakeProjectileAimSkillDefaults(5.0f, 0.0f, 15.0f, 0.0f, 0.0f,
+                                       HeroSkillHotkey::QKey, true);
+    settings.enemyHealthThreshold = 100.0f;
+    settings.radius = 3.0f;
+    return settings;
+}
+
+inline Config::HeroSkillSettings MakeTracerRecallDefaults()
+{
+    Config::HeroSkillSettings settings{};
+    settings.enabled = false;
+    settings.key = HeroSkillHotkey::EKey;
+    settings.skillKey = HeroSkillHotkey::EKey;
+    settings.healthThreshold = 30.0f;
+    settings.cooldown = 12.0f;
+    settings.cooldownGuard = true;
+    return settings;
+}
+
+inline Config::HeroSkillSettings MakeReaperWraithFormDefaults()
+{
+    Config::HeroSkillSettings settings{};
+    settings.enabled = false;
+    settings.key = HeroSkillHotkey::LeftShift;
+    settings.skillKey = HeroSkillHotkey::LeftShift;
+    settings.healthThreshold = 30.0f;
+    settings.distance = 30.0f;
+    settings.cooldown = 8.0f;
+    settings.cooldownGuard = true;
+    return settings;
+}
+
+inline Config::HeroSkillSettings MakeZenyattaTranscendenceDefaults()
+{
+    Config::HeroSkillSettings settings{};
+    settings.enabled = false;
+    settings.key = HeroSkillHotkey::QKey;
+    settings.skillKey = HeroSkillHotkey::QKey;
+    settings.distance = 15.0f;
+    settings.cooldown = 0.0f;
+    settings.cooldownGuard = true;
+    return settings;
+}
+
+inline Config::HeroSkillSettings MakeSoldierHelixRocketsDefaults()
+{
+    return MakeProjectileAimSkillDefaults(40.0f, 6.0f, 50.0f, 0.32f, 0.0f,
+                                          HeroSkillHotkey::RightMouse);
+}
+
+inline Config::HeroSkillSettings MakeEchoStickyBombsDefaults()
+{
+    return MakeProjectileAimSkillDefaults(35.0f, 6.0f, 50.0f, 0.2f, 0.0f,
+                                          HeroSkillHotkey::EKey);
+}
+
+inline Config::HeroSkillSettings MakeBrigitteWhipShotDefaults()
+{
+    return MakeProjectileAimSkillDefaults(20.0f, 4.0f, 80.0f, 0.3f, 0.0f,
+                                          HeroSkillHotkey::LeftShift);
+}
+
+inline Config::HeroSkillSettings MakeSigmaAccretionDefaults()
+{
+    return MakeProjectileAimSkillDefaults(35.0f, 10.0f, 37.5f, 0.5f, 0.0f,
+                                          HeroSkillHotkey::EKey, true);
 }
 
 inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
@@ -536,6 +613,20 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         MakeAnaSleepDartDefaults()
     },
     {
+        OW::eHero::HERO_SOLDIER76,
+        "soldier-76",
+        "helix-rockets",
+        "Helix Rockets",
+        "helix-rockets",
+        HeroSkillInputAction::SecondaryFire,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled | HeroSkillControls::Key |
+            HeroSkillControls::EnemyHealthThreshold | HeroSkillControls::Distance |
+            HeroSkillControls::CooldownGuard | HeroSkillControls::Prediction |
+            HeroSkillControls::Cooldown | HeroSkillControls::TrackingOverlay,
+        MakeSoldierHelixRocketsDefaults()
+    },
+    {
         OW::eHero::HERO_ANA,
         "ana",
         "biotic-grenade",
@@ -575,6 +666,20 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         MakeZaryaReloadAmmoProbeDefaults()
     },
     {
+        OW::eHero::HERO_ECHO,
+        "echo",
+        "sticky-bombs",
+        "Sticky Bombs",
+        "sticky-bombs",
+        HeroSkillInputAction::Ability2,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled | HeroSkillControls::Key |
+            HeroSkillControls::EnemyHealthThreshold | HeroSkillControls::Distance |
+            HeroSkillControls::CooldownGuard | HeroSkillControls::Prediction |
+            HeroSkillControls::Cooldown | HeroSkillControls::TrackingOverlay,
+        MakeEchoStickyBombsDefaults()
+    },
+    {
         OW::eHero::HERO_ROADHOG,
         "roadhog",
         "chain-hook",
@@ -603,6 +708,77 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         { false, HeroSkillHotkey::RightMouse, 50.0f, 65.0f, 50.0f, 20.0f, 0, 4.0f, true, true, 1, 0.0f }
     },
     {
+        OW::eHero::HERO_REAPER,
+        "reaper",
+        "wraith-form",
+        "Wraith Form",
+        "wraith-form",
+        HeroSkillInputAction::Ability1,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled |
+            HeroSkillControls::HealthAbsolute |
+            HeroSkillControls::Distance |
+            HeroSkillControls::CooldownGuard |
+            HeroSkillControls::Cooldown,
+        MakeReaperWraithFormDefaults()
+    },
+    {
+        OW::eHero::HERO_BRIGITTE,
+        "brigitte",
+        "whip-shot",
+        "Whip Shot",
+        "whip-shot",
+        HeroSkillInputAction::Ability1,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled | HeroSkillControls::Key |
+            HeroSkillControls::EnemyHealthThreshold | HeroSkillControls::Distance |
+            HeroSkillControls::CooldownGuard | HeroSkillControls::Prediction |
+            HeroSkillControls::Cooldown | HeroSkillControls::TrackingOverlay,
+        MakeBrigitteWhipShotDefaults()
+    },
+    {
+        OW::eHero::HERO_SIGMA,
+        "sigma",
+        "accretion",
+        "Accretion",
+        "accretion",
+        HeroSkillInputAction::Ability2,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled | HeroSkillControls::Key |
+            HeroSkillControls::EnemyHealthThreshold | HeroSkillControls::Distance |
+            HeroSkillControls::CooldownGuard | HeroSkillControls::Prediction |
+            HeroSkillControls::Cooldown | HeroSkillControls::TrackingOverlay,
+        MakeSigmaAccretionDefaults()
+    },
+    {
+        OW::eHero::HERO_TRACER,
+        "tracer",
+        "recall",
+        "Recall",
+        "recall",
+        HeroSkillInputAction::Ability2,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled |
+            HeroSkillControls::HealthAbsolute | HeroSkillControls::Distance |
+            HeroSkillControls::CooldownGuard |
+            HeroSkillControls::Cooldown,
+        MakeTracerRecallDefaults()
+    },
+    {
+        OW::eHero::HERO_ZENYATTA,
+        "zenyatta",
+        "transcendence",
+        "Transcendence",
+        "transcendence",
+        HeroSkillInputAction::Ultimate,
+        HeroSkillCategory::Ultimate,
+        HeroSkillControls::Enabled |
+            HeroSkillControls::Distance |
+            HeroSkillControls::CooldownGuard |
+            HeroSkillControls::Cooldown,
+        MakeZenyattaTranscendenceDefaults()
+    },
+    {
         OW::eHero::HERO_TRACER,
         "tracer",
         "pulse-bomb",
@@ -613,8 +789,8 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
         HeroSkillControls::Enabled | HeroSkillControls::Key |
             HeroSkillControls::EnemyHealthThreshold | HeroSkillControls::Distance |
             HeroSkillControls::CooldownGuard | HeroSkillControls::Prediction |
-            HeroSkillControls::Radius,
-        { false, HeroSkillHotkey::QKey, 50.0f, 100.0f, 50.0f, 5.0f, 0, 0.0f, false, true, 1, 3.0f }
+            HeroSkillControls::Radius | HeroSkillControls::TrackingOverlay,
+        MakeTracerPulseBombDefaults()
     }
 };
 

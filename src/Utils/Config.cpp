@@ -282,10 +282,12 @@ namespace OW { namespace Config {
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
-        constexpr int kCurrentHeroConfigVersion = 5;
+        constexpr int kCurrentHeroConfigVersion = 8;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
+        constexpr int kBadAnaAbilityKeyLayoutVersion = 7;
+        constexpr int kAnaSleepDartFullHealthDefaultVersion = 8;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -2969,7 +2971,12 @@ namespace OW { namespace Config {
         bool IsProjectileAimSkill(uint64_t heroId, const std::string& skillId)
         {
             return (heroId == static_cast<uint64_t>(OW::eHero::HERO_ANA) && skillId == "sleep-dart") ||
-                (heroId == static_cast<uint64_t>(OW::eHero::HERO_ROADHOG) && skillId == "chain-hook");
+                (heroId == static_cast<uint64_t>(OW::eHero::HERO_ROADHOG) && skillId == "chain-hook") ||
+                (heroId == static_cast<uint64_t>(OW::eHero::HERO_TRACER) && skillId == "pulse-bomb") ||
+                (heroId == static_cast<uint64_t>(OW::eHero::HERO_SOLDIER76) && skillId == "helix-rockets") ||
+                (heroId == static_cast<uint64_t>(OW::eHero::HERO_ECHO) && skillId == "sticky-bombs") ||
+                (heroId == static_cast<uint64_t>(OW::eHero::HERO_BRIGITTE) && skillId == "whip-shot") ||
+                (heroId == static_cast<uint64_t>(OW::eHero::HERO_SIGMA) && skillId == "accretion");
         }
 
         HeroSkillSettings ProjectileAimSkillDefaults(uint64_t heroId, const std::string& skillId)
@@ -2978,6 +2985,16 @@ namespace OW { namespace Config {
                 return OW::MakeAnaSleepDartDefaults();
             if (heroId == static_cast<uint64_t>(OW::eHero::HERO_ROADHOG) && skillId == "chain-hook")
                 return OW::MakeRoadhogChainHookDefaults();
+            if (heroId == static_cast<uint64_t>(OW::eHero::HERO_TRACER) && skillId == "pulse-bomb")
+                return OW::MakeTracerPulseBombDefaults();
+            if (heroId == static_cast<uint64_t>(OW::eHero::HERO_SOLDIER76) && skillId == "helix-rockets")
+                return OW::MakeSoldierHelixRocketsDefaults();
+            if (heroId == static_cast<uint64_t>(OW::eHero::HERO_ECHO) && skillId == "sticky-bombs")
+                return OW::MakeEchoStickyBombsDefaults();
+            if (heroId == static_cast<uint64_t>(OW::eHero::HERO_BRIGITTE) && skillId == "whip-shot")
+                return OW::MakeBrigitteWhipShotDefaults();
+            if (heroId == static_cast<uint64_t>(OW::eHero::HERO_SIGMA) && skillId == "accretion")
+                return OW::MakeSigmaAccretionDefaults();
             return HeroSkillSettings{};
         }
 
@@ -2991,6 +3008,48 @@ namespace OW { namespace Config {
             if (heroId != static_cast<uint64_t>(OW::eHero::HERO_ROADHOG) || skillId != "chain-hook")
                 return false;
             return std::fabs(settings.enemyHealthThreshold - 50.0f) <= 0.001f;
+        }
+
+        bool ShouldMigrateAnaSleepDartHealthThreshold(int heroConfigVersion,
+                                                      uint64_t heroId,
+                                                      const std::string& skillId,
+                                                      const HeroSkillSettings& settings)
+        {
+            if (heroConfigVersion >= kAnaSleepDartFullHealthDefaultVersion)
+                return false;
+            if (heroId != static_cast<uint64_t>(OW::eHero::HERO_ANA) || skillId != "sleep-dart")
+                return false;
+            return std::fabs(settings.enemyHealthThreshold - 50.0f) <= 0.001f;
+        }
+
+        bool RepairBadAnaAbilityKeyLayout(int heroConfigVersion,
+                                          uint64_t heroId,
+                                          const std::string& skillId,
+                                          HeroSkillSettings& settings)
+        {
+            if (heroConfigVersion != kBadAnaAbilityKeyLayoutVersion)
+                return false;
+            if (heroId != static_cast<uint64_t>(OW::eHero::HERO_ANA))
+                return false;
+
+            bool migrated = false;
+            if (skillId == "sleep-dart") {
+                if (settings.skillKey == OW::HeroSkillHotkey::EKey) {
+                    settings.skillKey = OW::HeroSkillHotkey::LeftShift;
+                    migrated = true;
+                }
+            } else if (skillId == "biotic-grenade") {
+                if (settings.key == OW::HeroSkillHotkey::LeftShift) {
+                    settings.key = OW::HeroSkillHotkey::EKey;
+                    migrated = true;
+                }
+                if (settings.skillKey == OW::HeroSkillHotkey::LeftShift) {
+                    settings.skillKey = OW::HeroSkillHotkey::EKey;
+                    migrated = true;
+                }
+            }
+
+            return migrated;
         }
 
         bool ShouldRestoreProjectileAimDefaults(uint64_t heroId,
@@ -3220,8 +3279,17 @@ namespace OW { namespace Config {
                                 settings)) {
                             settings.enemyHealthThreshold = defaults.enemyHealthThreshold;
                         }
+                        if (ShouldMigrateAnaSleepDartHealthThreshold(
+                                heroConfigVersion,
+                                heroId,
+                                skillId,
+                                settings)) {
+                            settings.enemyHealthThreshold = defaults.enemyHealthThreshold;
+                        }
                         settings = ValidateHeroSkillSettingsValue(settings);
                     }
+                    if (RepairBadAnaAbilityKeyLayout(heroConfigVersion, heroId, skillId, settings))
+                        settings = ValidateHeroSkillSettingsValue(settings);
                     if (ShouldMigrateAsheFirePatternSequence(heroId, skillId, skill->value, settings)) {
                         settings.sequenceSteps = MakeMeasuredAsheFirePatternSteps();
                         settings.cooldownGuard = true;

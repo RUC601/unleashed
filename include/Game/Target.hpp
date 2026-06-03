@@ -953,7 +953,7 @@ namespace OW {
             const float value = std::clamp(Config::aimbotMaxAim, 0.0f, 100.0f);
             if (value <= 0.0f || value >= 100.0f)
                 return 0;
-            return static_cast<DWORD>(value * 10.0f);
+            return static_cast<DWORD>(value * 20.0f);
         }
 
         inline TargetLockPolicy ResolveTargetLockPolicy() {

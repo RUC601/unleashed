@@ -24,22 +24,67 @@ int main()
 {
     const OW::HeroSkillDefinition* asheFirePattern = nullptr;
     const OW::HeroSkillDefinition* anaSleepDart = nullptr;
+    const OW::HeroSkillDefinition* anaBioticGrenade = nullptr;
     const OW::HeroSkillDefinition* roadhogChainHook = nullptr;
+    const OW::HeroSkillDefinition* tracerPulseBomb = nullptr;
+    const OW::HeroSkillDefinition* tracerRecall = nullptr;
+    const OW::HeroSkillDefinition* reaperWraithForm = nullptr;
+    const OW::HeroSkillDefinition* zenyattaTranscendence = nullptr;
+    const OW::HeroSkillDefinition* soldierHelixRockets = nullptr;
+    const OW::HeroSkillDefinition* echoStickyBombs = nullptr;
+    const OW::HeroSkillDefinition* brigitteWhipShot = nullptr;
+    const OW::HeroSkillDefinition* sigmaAccretion = nullptr;
+    const OW::HeroSkillDefinition* zaryaPropelJump = nullptr;
+    const OW::HeroSkillDefinition* zaryaLowAmmoRightClick = nullptr;
     const OW::HeroSkillDefinition* tracerAutoMelee = nullptr;
     size_t autoMeleeDefinitions = 0;
     for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
+        const std::string skillId(definition.skillId ? definition.skillId : "");
         if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ASHE) &&
-            std::string(definition.skillId ? definition.skillId : "") == "fire-pattern") {
+            skillId == "fire-pattern") {
             asheFirePattern = &definition;
         } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ANA) &&
-                   std::string(definition.skillId ? definition.skillId : "") == "sleep-dart") {
+                   skillId == "sleep-dart") {
             anaSleepDart = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ANA) &&
+                   skillId == "biotic-grenade") {
+            anaBioticGrenade = &definition;
         } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ROADHOG) &&
-                   std::string(definition.skillId ? definition.skillId : "") == "chain-hook") {
+                   skillId == "chain-hook") {
             roadhogChainHook = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_TRACER) &&
+                   skillId == "pulse-bomb") {
+            tracerPulseBomb = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_TRACER) &&
+                   skillId == "recall") {
+            tracerRecall = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_REAPER) &&
+                   skillId == "wraith-form") {
+            reaperWraithForm = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ZENYATTA) &&
+                   skillId == "transcendence") {
+            zenyattaTranscendence = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_SOLDIER76) &&
+                   skillId == "helix-rockets") {
+            soldierHelixRockets = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ECHO) &&
+                   skillId == "sticky-bombs") {
+            echoStickyBombs = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_BRIGITTE) &&
+                   skillId == "whip-shot") {
+            brigitteWhipShot = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_SIGMA) &&
+                   skillId == "accretion") {
+            sigmaAccretion = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ZARYA) &&
+                   skillId == "propel-jump") {
+            zaryaPropelJump = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ZARYA) &&
+                   skillId == "reload-ammo-probe") {
+            zaryaLowAmmoRightClick = &definition;
         }
 
-        if (std::string(definition.skillId ? definition.skillId : "") == "auto-melee") {
+        if (skillId == "auto-melee") {
             ++autoMeleeDefinitions;
             if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_TRACER))
                 tracerAutoMelee = &definition;
@@ -48,7 +93,12 @@ int main()
 
     if (!asheFirePattern)
         return Fail();
-    if (!anaSleepDart || !roadhogChainHook)
+    if (!anaSleepDart || !anaBioticGrenade || !roadhogChainHook || !tracerPulseBomb ||
+        !soldierHelixRockets || !echoStickyBombs ||
+        !brigitteWhipShot || !sigmaAccretion)
+        return Fail();
+    if (!tracerRecall || !reaperWraithForm || !zenyattaTranscendence ||
+        !zaryaPropelJump || !zaryaLowAmmoRightClick)
         return Fail();
     if (!tracerAutoMelee)
         return Fail();
@@ -75,7 +125,9 @@ int main()
         [](const OW::HeroSkillDefinition& definition,
            float projectileSpeed,
            float projectileRadius,
-           float preFireDelayMs) {
+           float preFireDelayMs,
+           int skillKey,
+           bool projectileGravity = false) {
             if (!OW::HasHeroSkillControl(definition, OW::HeroSkillControls::TrackingOverlay))
                 return false;
             if (!OW::HasHeroSkillControl(definition, OW::HeroSkillControls::Prediction))
@@ -84,7 +136,7 @@ int main()
             const OW::Config::HeroSkillSettings skillSettings = definition.defaultSettings;
             if (skillSettings.key != OW::HeroSkillHotkey::Mouse4)
                 return false;
-            if (skillSettings.skillKey != OW::HeroSkillHotkey::LeftShift)
+            if (skillSettings.skillKey != skillKey)
                 return false;
             if (skillSettings.tracking.aimBehavior != OW::Config::kAimBehaviorFlick)
                 return false;
@@ -98,16 +150,76 @@ int main()
                 return false;
             if (!NearlyEqual(skillSettings.projectileRadius, projectileRadius))
                 return false;
+            if (skillSettings.projectileGravity != projectileGravity)
+                return false;
             if (!NearlyEqual(skillSettings.preFireDelayMs, preFireDelayMs))
                 return false;
             return true;
         };
 
-    if (!verifyProjectileAimSkill(*anaSleepDart, 60.0f, 0.2f, 320.0f))
+    if (anaSleepDart->inputAction != OW::HeroSkillInputAction::Ability1)
         return Fail();
-    if (!verifyProjectileAimSkill(*roadhogChainHook, 62.0f, 0.5f, 100.0f))
+    if (!verifyProjectileAimSkill(*anaSleepDart, 60.0f, 0.2f, 320.0f, OW::HeroSkillHotkey::LeftShift))
+        return Fail();
+    if (!NearlyEqual(anaSleepDart->defaultSettings.enemyHealthThreshold, 100.0f))
+        return Fail();
+    if (anaBioticGrenade->inputAction != OW::HeroSkillInputAction::Ability2)
+        return Fail();
+    if (anaBioticGrenade->defaultSettings.key != OW::HeroSkillHotkey::EKey)
+        return Fail();
+    if (!verifyProjectileAimSkill(*roadhogChainHook, 62.0f, 0.5f, 100.0f, OW::HeroSkillHotkey::LeftShift))
         return Fail();
     if (!NearlyEqual(roadhogChainHook->defaultSettings.enemyHealthThreshold, 100.0f))
+        return Fail();
+    if (!verifyProjectileAimSkill(*tracerPulseBomb, 15.0f, 0.0f, 0.0f, OW::HeroSkillHotkey::QKey, true))
+        return Fail();
+    if (!OW::HasHeroSkillControl(*tracerPulseBomb, OW::HeroSkillControls::Radius))
+        return Fail();
+    if (!NearlyEqual(tracerPulseBomb->defaultSettings.radius, 3.0f))
+        return Fail();
+    if (!verifyProjectileAimSkill(*soldierHelixRockets, 50.0f, 0.32f, 0.0f, OW::HeroSkillHotkey::RightMouse))
+        return Fail();
+    if (!verifyProjectileAimSkill(*echoStickyBombs, 50.0f, 0.2f, 0.0f, OW::HeroSkillHotkey::EKey))
+        return Fail();
+    if (!verifyProjectileAimSkill(*brigitteWhipShot, 80.0f, 0.3f, 0.0f, OW::HeroSkillHotkey::LeftShift))
+        return Fail();
+    if (!verifyProjectileAimSkill(*sigmaAccretion, 37.5f, 0.5f, 0.0f, OW::HeroSkillHotkey::EKey, true))
+        return Fail();
+
+    if (!OW::HasHeroSkillControl(*tracerRecall, OW::HeroSkillControls::HealthAbsolute))
+        return Fail();
+    if (tracerRecall->defaultSettings.key != OW::HeroSkillHotkey::EKey ||
+        tracerRecall->defaultSettings.skillKey != OW::HeroSkillHotkey::EKey) {
+        return Fail();
+    }
+    if (!NearlyEqual(tracerRecall->defaultSettings.healthThreshold, 30.0f))
+        return Fail();
+    if (!NearlyEqual(tracerRecall->defaultSettings.cooldown, 12.0f))
+        return Fail();
+
+    if (!OW::HasHeroSkillControl(*reaperWraithForm, OW::HeroSkillControls::HealthAbsolute))
+        return Fail();
+    if (!OW::HasHeroSkillControl(*reaperWraithForm, OW::HeroSkillControls::Distance))
+        return Fail();
+    if (reaperWraithForm->defaultSettings.skillKey != OW::HeroSkillHotkey::LeftShift)
+        return Fail();
+    if (!NearlyEqual(reaperWraithForm->defaultSettings.healthThreshold, 30.0f))
+        return Fail();
+    if (!NearlyEqual(reaperWraithForm->defaultSettings.distance, 30.0f))
+        return Fail();
+
+    if (!OW::HasHeroSkillControl(*zenyattaTranscendence, OW::HeroSkillControls::Distance))
+        return Fail();
+    if (zenyattaTranscendence->defaultSettings.skillKey != OW::HeroSkillHotkey::QKey)
+        return Fail();
+    if (!NearlyEqual(zenyattaTranscendence->defaultSettings.distance, 15.0f))
+        return Fail();
+
+    if (zaryaPropelJump->defaultSettings.key != OW::HeroSkillHotkey::Mouse4 ||
+        zaryaPropelJump->defaultSettings.skillKey != OW::HeroSkillHotkey::RightMouse) {
+        return Fail();
+    }
+    if (zaryaLowAmmoRightClick->defaultSettings.key != OW::HeroSkillHotkey::RightMouse)
         return Fail();
 
     if (!OW::HasHeroSkillControl(*tracerAutoMelee, OW::HeroSkillControls::EnemyHealthAbsolute))

@@ -2512,7 +2512,9 @@ static bool UIActionSlotSelector(ActionSlotKind kind, uint64_t heroId) {
     const float addGap = canAdd ? 6.0f : 0.0f;
     const float deleteGap = canDelete ? 6.0f : 0.0f;
     const float height = (slotIndices.size() <= 5) ? 21.0f : 17.0f;
-    const float availW = ImGui::GetContentRegionAvail().x;
+    // Match the right edge of the framed group boxes (which inset their border
+    // by kGroupBorderClipInset) so this selector lines up with every other box.
+    const float availW = MaxFloat(1.0f, ImGui::GetContentRegionAvail().x - kGroupBorderClipInset);
     const float width = MaxFloat(1.0f, availW - addW - addGap - deleteW - deleteGap);
     const ImVec2 pos = window->DC.CursorPos;
 
@@ -3446,9 +3448,12 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     const bool hasTrackingOverlay = hasControl(OW::HeroSkillControls::TrackingOverlay);
     const bool hasPitchControls = hasControl(OW::HeroSkillControls::PitchControl);
     const bool hasPhaseTiming = hasControl(OW::HeroSkillControls::PhaseTiming);
+    const bool hasHealthThreshold = hasControl(OW::HeroSkillControls::HealthThreshold);
+    const bool hasAbsoluteHealth = hasControl(OW::HeroSkillControls::HealthAbsolute);
     const bool hasAbsoluteEnemyHealth = hasControl(OW::HeroSkillControls::EnemyHealthAbsolute);
     const bool hasSkillOutputKey = !hasSequenceControls &&
-        (hasControl(OW::HeroSkillControls::Key) || hasPitchControls || hasPhaseTiming);
+        (hasControl(OW::HeroSkillControls::Key) || hasPitchControls ||
+         hasPhaseTiming || hasHealthThreshold || hasAbsoluteHealth);
 
     if (hasControl(OW::HeroSkillControls::Key)) {
         SettingRow("Activation Key", kAimbotRightLabelWidth);
@@ -3485,10 +3490,17 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
         ImGui::PopItemWidth();
     }
 
-    if (hasControl(OW::HeroSkillControls::HealthThreshold)) {
+    if (hasHealthThreshold) {
         SettingRow("Health Threshold", kAimbotRightLabelWidth);
         PushControlWidth();
         changed |= UISlider("##skillHealth", &settings.healthThreshold, 0.0f, 100.0f, "50%");
+        ImGui::PopItemWidth();
+    }
+
+    if (hasAbsoluteHealth) {
+        SettingRow("Max Health", kAimbotRightLabelWidth);
+        PushControlWidth();
+        changed |= UISlider("##skillSelfMaxHealth", &settings.healthThreshold, 0.0f, 500.0f, "30 HP");
         ImGui::PopItemWidth();
     }
 
@@ -4889,10 +4901,6 @@ void UI::Render() {
                          ImVec2(brandPos.x + kBrandLogoDrawSize, brandPos.y + kBrandLogoDrawSize));
         }
 
-        const float selectorW = 172.0f;
-        const float configButtonW = 96.0f;
-        const float actionGap = 6.0f;
-
         const char* title = "UNLEASHED";
         ImFont* titleFont = s_titleFont ? s_titleFont : s_boldFont;
         if (titleFont)
@@ -4906,18 +4914,70 @@ void UI::Render() {
                  ImVec2(titleX, titleY),
                  kColText, title);
 
-        const float selectorStartX = titleX + titleSize.x + 24.0f;
-        const float configButtonX = headerRect.Max.x - configButtonW - 12.0f;
-        const float selectorX = MinFloat(selectorStartX, configButtonX - selectorW - actionGap);
+        // ---- Right-aligned hero cluster: detected hero | config hero | save ----
+        const float configButtonW = 96.0f;
+        const float selectorW     = 156.0f;
+        const float controlH      = 26.0f;
+        const float rightPad      = 12.0f;
+        const float clusterGap    = 16.0f;
+        const float captionGap    = 6.0f;
+        const float rowY          = headerRect.Min.y + 11.0f;
+        const float rowMidY       = rowY + controlH * 0.5f;
+
         const HeroOption& selectedHero = CurrentHeroOption();
         const bool savesSelectedHero = IsConcreteHeroSelection(selectedHero);
-        ImGui::SetCursorScreenPos(ImVec2(selectorX, headerRect.Min.y + 11.0f));
-        if (TypeSelectorButton(selectedHero, ImVec2(selectorW, 26.0f)))
+
+        // Avatar 1 data: the currently selected (detected) hero.
+        const uint64_t detectedHeroId = DetectedLocalHeroId();
+        const std::string detectedName = HeroDisplayNameForId(detectedHeroId);
+        const HeroOption* detectedOpt = detectedHeroId ? FindHeroOptionById(detectedHeroId) : nullptr;
+        ID3D11ShaderResourceView* detectedAvatar =
+            detectedOpt ? HeroAvatarForOption(*detectedOpt)
+                        : HeroAvatarForName(detectedName.c_str());
+
+        // Save Config button anchors the far right.
+        const float saveX = headerRect.Max.x - rightPad - configButtonW;
+
+        // Avatar 2: the config-editing hero selector, just left of Save.
+        const float selectorX = saveX - clusterGap - selectorW;
+        const char* cfgCaption = "Config";
+        const ImVec2 cfgCapSize = ImGui::CalcTextSize(cfgCaption);
+        const float cfgCapX = selectorX - captionGap - cfgCapSize.x;
+
+        // Avatar 1 chip: [avatar][name], read-only readout of the detected hero.
+        const float avatarSize = 22.0f;
+        const float avatarTextGap = 7.0f;
+        const ImVec2 detNameSize = ImGui::CalcTextSize(detectedName.c_str());
+        const float detChipW = avatarSize + avatarTextGap + detNameSize.x;
+        const float detChipX = (cfgCapX - clusterGap) - detChipW;
+        const char* curCaption = "Current";
+        const ImVec2 curCapSize = ImGui::CalcTextSize(curCaption);
+        const float curCapX = detChipX - captionGap - curCapSize.x;
+
+        // Draw avatar 1 (detected hero) + its caption.
+        DrawText(dl, nullptr, ImVec2(curCapX, rowMidY - curCapSize.y * 0.5f),
+                 kColTextDim, curCaption);
+        const ImVec2 avMin(detChipX, rowMidY - avatarSize * 0.5f);
+        const ImVec2 avMax(avMin.x + avatarSize, avMin.y + avatarSize);
+        if (detectedAvatar) {
+            dl->AddImage(reinterpret_cast<ImTextureID>(detectedAvatar), avMin, avMax);
+        } else {
+            dl->AddRectFilled(avMin, avMax, kColPanelSoft, 0.0f);
+            dl->AddRect(avMin, avMax, kColStroke, 0.0f);
+        }
+        DrawText(dl, nullptr, ImVec2(avMax.x + avatarTextGap, rowMidY - detNameSize.y * 0.5f),
+                 detectedHeroId ? kColText : kColTextDim, detectedName.c_str());
+
+        // Draw avatar 2 (config-editing hero) caption + selector.
+        DrawText(dl, nullptr, ImVec2(cfgCapX, rowMidY - cfgCapSize.y * 0.5f),
+                 kColTextDim, cfgCaption);
+        ImGui::SetCursorScreenPos(ImVec2(selectorX, rowY));
+        if (TypeSelectorButton(selectedHero, ImVec2(selectorW, controlH)))
             ImGui::OpenPopup("TypePickerPopup");
         ShowAimSlotSummaryTooltip(selectedHero.heroId != 0);
 
-        ImGui::SetCursorScreenPos(ImVec2(configButtonX, headerRect.Min.y + 11.0f));
-        if (ImGui::Button("Save Config", ImVec2(configButtonW, 26.0f))) {
+        ImGui::SetCursorScreenPos(ImVec2(saveX, rowY));
+        if (ImGui::Button("Save Config", ImVec2(configButtonW, controlH))) {
             s_configSaveStatus = SaveSelectedConfig();
             s_configSaveStatusUntil = ImGui::GetTime() + 3.0;
         }
@@ -4928,12 +4988,11 @@ void UI::Render() {
             s_configSaveStatus.clear();
         if (!s_configSaveStatus.empty()) {
             const ImVec2 statusSize = ImGui::CalcTextSize(s_configSaveStatus.c_str());
-            const float statusMinX = selectorX + selectorW + 14.0f;
-            const float statusMaxX = configButtonX - 10.0f;
+            const float statusMaxX = curCapX - 12.0f;
+            const float statusMinX = titleX + titleSize.x + 24.0f;
             if (statusMinX < statusMaxX) {
                 const float statusX = MaxFloat(statusMinX, statusMaxX - statusSize.x);
-                const float statusY = titleY + (titleSize.y - statusSize.y) * 0.5f;
-                DrawText(dl, nullptr, ImVec2(statusX, statusY),
+                DrawText(dl, nullptr, ImVec2(statusX, rowMidY - statusSize.y * 0.5f),
                          kColTextMuted, s_configSaveStatus.c_str());
             }
         }
@@ -5086,21 +5145,24 @@ void UI::Render() {
     float bodyTopPad = CurrentBodyTopPad();
     float bodyY = contentBandY + subBarHeight + bodyTopPad;
     float bodyH = MaxFloat(0.0f, contentMax.y - bodyY);
-    const bool pageBodyNeedsVerticalScroll =
-        s_measuredBodyHeightByPage[CurrentPageKey()] > bodyH + 1.0f;
-    ImGuiWindowFlags pageBodyFlags =
+    // Hide the vertical scrollbar so it never eats into the right-hand margin;
+    // overflowing content still scrolls with the mouse wheel. Keeping the body
+    // width constant (no reserved scrollbar strip) makes every panel align to
+    // the same left/right margins regardless of content height.
+    const ImGuiWindowFlags pageBodyFlags =
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDecoration;
-    if (pageBodyNeedsVerticalScroll)
-        pageBodyFlags |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
 
-    // Begin a child region for scrollable content.
-    ImGui::SetCursorScreenPos(ImVec2(winPos.x, bodyY));
-    ImGui::BeginChild("PageBody", ImVec2(winW, bodyH), false, pageBodyFlags);
+    // Begin a child region for scrollable content. The child is inset by an
+    // equal margin on both sides so panels share consistent left/right gaps.
+    const float bodySideMargin = 11.0f;
+    const float bodyChildW =
+        MaxFloat(0.0f, winW - 2.0f * bodySideMargin + kGroupBorderClipInset);
+    ImGui::SetCursorScreenPos(ImVec2(winPos.x + bodySideMargin, bodyY));
+    ImGui::BeginChild("PageBody", ImVec2(bodyChildW, bodyH), false, pageBodyFlags);
     const float bodyCursorStartY = ImGui::GetCursorPosY();
 
-    // Apply page-body padding.
+    // Apply page-body top padding (horizontal margins come from the child inset).
     ImGui::Dummy(ImVec2(0.0f, 0.0f));
-    ImGui::Indent(11.0f);
 
     // Render the active page
     if (state.activeTab == TAB_AIMING) {
@@ -5123,7 +5185,6 @@ void UI::Render() {
     // Close any remaining open group box
     CloseGroupBox();
 
-    ImGui::Unindent(11.0f);
     const float measuredBodyHeight =
         ImGui::GetCursorPosY() - bodyCursorStartY + kBodyBottomPadding;
     UpdateDesiredMenuClientSize(measuredBodyHeight);

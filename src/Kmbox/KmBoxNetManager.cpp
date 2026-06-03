@@ -148,13 +148,29 @@ namespace
             type == KmBoxCommandType::MouseAutoMove ||
             type == KmBoxCommandType::MouseButton ||
             type == KmBoxCommandType::MouseMask ||
-            type == KmBoxCommandType::MouseUnmask;
+            type == KmBoxCommandType::MouseUnmask ||
+            type == KmBoxCommandType::Keyboard;
     }
 
     bool IsMouseMoveCommand(KmBoxCommandType type)
     {
         return type == KmBoxCommandType::MouseMove ||
             type == KmBoxCommandType::MouseAutoMove;
+    }
+
+    bool ShouldDropMouseMoveFirst(KmBoxCommandType type)
+    {
+        return type == KmBoxCommandType::MouseButton ||
+            type == KmBoxCommandType::MouseMask ||
+            type == KmBoxCommandType::MouseUnmask ||
+            type == KmBoxCommandType::Keyboard;
+    }
+
+    bool ShouldPrioritizeAheadOfQueuedMoves(KmBoxCommandType type)
+    {
+        return type == KmBoxCommandType::MouseButton ||
+            type == KmBoxCommandType::MouseUnmask ||
+            type == KmBoxCommandType::Keyboard;
     }
 
     int UpdateQueuedMouseMoveButtonState(std::deque<KmBoxQueuedNetCommand>& queue,
@@ -191,7 +207,8 @@ namespace
         const bool latencySensitive =
             type == KmBoxCommandType::MouseButton ||
             type == KmBoxCommandType::MouseMask ||
-            type == KmBoxCommandType::MouseUnmask;
+            type == KmBoxCommandType::MouseUnmask ||
+            type == KmBoxCommandType::Keyboard;
 
         return latencySensitive
             ? KmBoxRuntimeConfig::MouseButtonFlushIntervalMs
@@ -591,14 +608,14 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
             Diagnostics::Error("[KMBOX-NET] Command queue full; dropping oldest command.");
             KmBoxQueuedNetCommand dropped{};
             bool droppedMove = false;
-            if (Command.type == KmBoxCommandType::MouseButton)
+            if (ShouldDropMouseMoveFirst(Command.type))
                 droppedMove = DropOldestMouseMove(commandQueue, dropped);
             if (!droppedMove && !commandQueue.empty()) {
                 dropped = commandQueue.front();
                 commandQueue.pop_front();
             }
             Diagnostics::Aim("udp.enqueue drop_oldest reason=queue_full prefer_move=%d dropped_type=%s dropped_x=%d dropped_y=%d dropped_button=%d queue_size=%zu",
-                Command.type == KmBoxCommandType::MouseButton ? 1 : 0,
+                ShouldDropMouseMoveFirst(Command.type) ? 1 : 0,
                 ToString(dropped.type),
                 dropped.data.cmd_mouse.x,
                 dropped.data.cmd_mouse.y,
@@ -606,7 +623,7 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
                 commandQueue.size());
         }
 
-        if (Command.type == KmBoxCommandType::MouseButton) {
+        if (ShouldPrioritizeAheadOfQueuedMoves(Command.type)) {
             auto insertAt = commandQueue.end();
             while (insertAt != commandQueue.begin()) {
                 auto previous = insertAt;
@@ -617,12 +634,17 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
             }
 
             const auto inserted = commandQueue.insert(insertAt, Command);
-            const int currentButtonState = Command.mouseButtonStateMask >= 0
-                ? Command.mouseButtonStateMask
-                : Command.data.cmd_mouse.button;
-            const int updatedMoves = UpdateQueuedMouseMoveButtonState(
-                commandQueue, std::next(inserted), currentButtonState);
-            Diagnostics::Aim("udp.enqueue prioritized_button queue_size_after=%zu currentButtonState=0x%02X updatedTrailingMoves=%d",
+            int updatedMoves = 0;
+            int currentButtonState = Command.data.cmd_mouse.button;
+            if (Command.type == KmBoxCommandType::MouseButton) {
+                currentButtonState = Command.mouseButtonStateMask >= 0
+                    ? Command.mouseButtonStateMask
+                    : Command.data.cmd_mouse.button;
+                updatedMoves = UpdateQueuedMouseMoveButtonState(
+                    commandQueue, std::next(inserted), currentButtonState);
+            }
+            Diagnostics::Aim("udp.enqueue prioritized_state type=%s queue_size_after=%zu currentButtonState=0x%02X updatedTrailingMoves=%d",
+                ToString(Command.type),
                 commandQueue.size(),
                 currentButtonState,
                 updatedMoves);
