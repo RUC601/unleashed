@@ -223,7 +223,9 @@ namespace OW { namespace Config {
     inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited, 5=Constant
     inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
     inline constexpr int kAimMethodCount = 6;
+    inline constexpr float kAimConstantAngularSpeedMaxDeg = 3600.0f;
     inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0 };
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMethodPreset = { -1, -1, -1, -1 };
     inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
     // Legacy behavior acceleration is kept for config compatibility; method-level
     // acceleration now owns the Accel Limited controller tuning.
@@ -251,6 +253,45 @@ namespace OW { namespace Config {
     inline float aimPiecewiseFarScale = 0.75f;
     inline float aimAccelLimitedAcceleration = 0.1f;
     inline float aimConstantAngularSpeedDeg = 30.0f;
+    inline int aimBehaviorPresetId = -1;
+
+    struct AimMethodPreset {
+        int id = -1;
+        std::string name = "Method Preset";
+        int method = 0;
+        float angularSpeedScale = 100.0f;
+        float pidP = 0.5f;
+        float pidI = 0.01f;
+        float pidD = 0.1f;
+        float pidMaxIntegral = 10.0f;
+        float pidDeadzone = 1.0f;
+        int bezierControlPoints = 2;
+        float bezierCurvature = 0.5f;
+        float bezierSpeed = 50.0f;
+        float piecewiseNearDegrees = 2.0f;
+        float piecewiseMidDegrees = 6.0f;
+        float piecewiseFarDegrees = 12.0f;
+        float piecewiseNearScale = 0.20f;
+        float piecewiseMidScale = 0.45f;
+        float piecewiseFarScale = 0.75f;
+        float accelLimitedAcceleration = 0.1f;
+        float constantAngularSpeedDeg = 30.0f;
+    };
+
+    struct AimBehaviorPreset {
+        int id = -1;
+        std::string name = "Behavior Preset";
+        int behavior = kAimBehaviorTracking;
+        int method = 0;
+        int methodPresetId = -1;
+        float baseSpeed = 100.0f;
+        bool moveSplitEnabled = true;
+        int moveSplitMaxPixels = 4;
+        int moveSplitDelayUs = 800;
+    };
+
+    inline std::vector<AimMethodPreset> aimMethodPresets{};
+    inline std::vector<AimBehaviorPreset> aimBehaviorPresets{};
     inline float aimbotStickiness = 100.0f;
     inline float aimbotSmoothY = 50.0f;
     inline float aimbotPitchScale = 1.0f;
@@ -369,9 +410,84 @@ namespace OW { namespace Config {
         return std::clamp(value, -1, kAimMethodCount - 1);
     }
 
+    inline float ClampAimMethodAngularSpeedScalePercent(float value)
+    {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 200.0f) : 100.0f;
+    }
+
+    inline float ClampAimConstantAngularSpeedDeg(float value)
+    {
+        return std::isfinite(value)
+            ? std::clamp(value, 0.0f, kAimConstantAngularSpeedMaxDeg)
+            : 30.0f;
+    }
+
+    inline AimMethodPreset* FindMutableAimMethodPreset(int presetId)
+    {
+        if (presetId < 0)
+            return nullptr;
+        auto item = std::find_if(aimMethodPresets.begin(), aimMethodPresets.end(),
+            [presetId](const AimMethodPreset& preset) { return preset.id == presetId; });
+        return item != aimMethodPresets.end() ? &(*item) : nullptr;
+    }
+
+    inline const AimMethodPreset* FindAimMethodPreset(int presetId)
+    {
+        return FindMutableAimMethodPreset(presetId);
+    }
+
+    inline AimBehaviorPreset* FindMutableAimBehaviorPreset(int presetId)
+    {
+        if (presetId < 0)
+            return nullptr;
+        auto item = std::find_if(aimBehaviorPresets.begin(), aimBehaviorPresets.end(),
+            [presetId](const AimBehaviorPreset& preset) { return preset.id == presetId; });
+        return item != aimBehaviorPresets.end() ? &(*item) : nullptr;
+    }
+
+    inline const AimBehaviorPreset* FindAimBehaviorPreset(int presetId)
+    {
+        return FindMutableAimBehaviorPreset(presetId);
+    }
+
+    inline int ClampAimMethodPresetId(int presetId)
+    {
+        return FindAimMethodPreset(presetId) ? presetId : -1;
+    }
+
+    inline int ClampAimBehaviorPresetId(int presetId)
+    {
+        return FindAimBehaviorPreset(presetId) ? presetId : -1;
+    }
+
+    inline const AimBehaviorPreset* ActiveAimBehaviorPreset(int behavior)
+    {
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        const AimBehaviorPreset* preset = FindAimBehaviorPreset(aimBehaviorPresetId);
+        if (!preset || ClampAimBehaviorIndex(preset->behavior) != normalized)
+            return nullptr;
+        return preset;
+    }
+
+    inline const AimMethodPreset* AimMethodPresetForBehavior(int behavior)
+    {
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        if (const AimBehaviorPreset* behaviorPreset = ActiveAimBehaviorPreset(normalized)) {
+            return FindAimMethodPreset(behaviorPreset->methodPresetId);
+        }
+
+        return FindAimMethodPreset(
+            aimBehaviorMethodPreset[static_cast<size_t>(normalized)]);
+    }
+
     inline int AimBehaviorMethod(int behavior)
     {
-        return ClampAimMethodIndex(aimBehaviorMethod[static_cast<size_t>(ClampAimBehaviorIndex(behavior))]);
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        if (const AimMethodPreset* methodPreset = AimMethodPresetForBehavior(normalized))
+            return ClampAimMethodIndex(methodPreset->method);
+        if (const AimBehaviorPreset* behaviorPreset = ActiveAimBehaviorPreset(normalized))
+            return ClampAimMethodIndex(behaviorPreset->method);
+        return ClampAimMethodIndex(aimBehaviorMethod[static_cast<size_t>(normalized)]);
     }
 
     inline int SecondaryAimMethod(int aimMode)
@@ -383,7 +499,12 @@ namespace OW { namespace Config {
 
     inline float AimBehaviorBaseSpeed(int behavior)
     {
-        const float value = aimBehaviorBaseSpeed[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        if (const AimBehaviorPreset* preset = ActiveAimBehaviorPreset(normalized)) {
+            const float value = preset->baseSpeed;
+            return std::isfinite(value) ? std::clamp(value, 0.0f, 100.0f) : 100.0f;
+        }
+        const float value = aimBehaviorBaseSpeed[static_cast<size_t>(normalized)];
         return std::isfinite(value) ? std::clamp(value, 0.0f, 100.0f) : 100.0f;
     }
 
@@ -399,25 +520,51 @@ namespace OW { namespace Config {
 
     inline bool AimBehaviorMoveSplitEnabled(int behavior)
     {
-        return aimBehaviorMoveSplitEnabled[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        if (const AimBehaviorPreset* preset = ActiveAimBehaviorPreset(normalized))
+            return preset->moveSplitEnabled;
+        return aimBehaviorMoveSplitEnabled[static_cast<size_t>(normalized)];
     }
 
     inline int AimBehaviorMoveSplitMaxPixels(int behavior)
     {
-        const int value = aimBehaviorMoveSplitMaxPixels[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        if (const AimBehaviorPreset* preset = ActiveAimBehaviorPreset(normalized))
+            return ClampMoveSplitMaxPixels(preset->moveSplitMaxPixels);
+        const int value = aimBehaviorMoveSplitMaxPixels[static_cast<size_t>(normalized)];
         return ClampMoveSplitMaxPixels(value);
     }
 
     inline int AimBehaviorMoveSplitDelayUs(int behavior)
     {
-        const int value = aimBehaviorMoveSplitDelayUs[static_cast<size_t>(ClampAimBehaviorIndex(behavior))];
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        if (const AimBehaviorPreset* preset = ActiveAimBehaviorPreset(normalized))
+            return ClampMoveSplitDelayUs(preset->moveSplitDelayUs);
+        const int value = aimBehaviorMoveSplitDelayUs[static_cast<size_t>(normalized)];
         return ClampMoveSplitDelayUs(value);
     }
 
     inline float AimMethodAngularSpeedScale(int method)
     {
         const float value = aimMethodAngularSpeedScale[static_cast<size_t>(ClampAimMethodIndex(method))];
-        return (std::isfinite(value) ? std::clamp(value, 0.0f, 200.0f) : 100.0f) / 100.0f;
+        return ClampAimMethodAngularSpeedScalePercent(value) / 100.0f;
+    }
+
+    inline const AimMethodPreset* ActiveAimMethodPreset(int method)
+    {
+        const int normalizedMethod = ClampAimMethodIndex(method);
+        const int normalizedBehavior = ClampAimBehaviorIndex(aimBehavior);
+        const AimMethodPreset* preset = AimMethodPresetForBehavior(normalizedBehavior);
+        if (!preset || ClampAimMethodIndex(preset->method) != normalizedMethod)
+            return nullptr;
+        return preset;
+    }
+
+    inline float RuntimeAimMethodAngularSpeedScale(int method)
+    {
+        if (const AimMethodPreset* preset = ActiveAimMethodPreset(method))
+            return ClampAimMethodAngularSpeedScalePercent(preset->angularSpeedScale) / 100.0f;
+        return AimMethodAngularSpeedScale(method);
     }
 
     inline float AimMethodAcceleration(int method)
@@ -428,47 +575,70 @@ namespace OW { namespace Config {
         return std::isfinite(value) ? std::clamp(value, 0.0f, 20.0f) : 0.1f;
     }
 
+    inline float RuntimeAimMethodAcceleration(int method)
+    {
+        if (ClampAimMethodIndex(method) != 4)
+            return 0.0f;
+        if (const AimMethodPreset* preset = ActiveAimMethodPreset(method)) {
+            const float value = preset->accelLimitedAcceleration;
+            return std::isfinite(value) ? std::clamp(value, 0.0f, 20.0f) : 0.1f;
+        }
+        return AimMethodAcceleration(method);
+    }
+
     inline float AimConstantAngularSpeedDeg()
     {
-        const float value = aimConstantAngularSpeedDeg;
-        return std::isfinite(value) ? std::clamp(value, 0.0f, 720.0f) : 30.0f;
+        return ClampAimConstantAngularSpeedDeg(aimConstantAngularSpeedDeg);
+    }
+
+    inline float RuntimeAimConstantAngularSpeedDeg()
+    {
+        if (const AimMethodPreset* preset = ActiveAimMethodPreset(5))
+            return ClampAimConstantAngularSpeedDeg(preset->constantAngularSpeedDeg);
+        return AimConstantAngularSpeedDeg();
     }
 
     inline float AimBehaviorAcceleration(int behavior)
     {
-        return AimMethodAcceleration(AimBehaviorMethod(behavior));
+        return RuntimeAimMethodAcceleration(AimBehaviorMethod(behavior));
     }
 
-    inline float AimPiecewiseNearDegrees()
+    inline float AimPiecewiseNearDegrees(const AimMethodPreset* preset = nullptr)
     {
-        return std::isfinite(aimPiecewiseNearDegrees) ? std::clamp(aimPiecewiseNearDegrees, 0.0f, 30.0f) : 2.0f;
+        const float value = preset ? preset->piecewiseNearDegrees : aimPiecewiseNearDegrees;
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 30.0f) : 2.0f;
     }
 
-    inline float AimPiecewiseMidDegrees()
+    inline float AimPiecewiseMidDegrees(const AimMethodPreset* preset = nullptr)
     {
-        const float value = std::isfinite(aimPiecewiseMidDegrees) ? aimPiecewiseMidDegrees : 6.0f;
-        return std::clamp(value, AimPiecewiseNearDegrees(), 45.0f);
+        const float raw = preset ? preset->piecewiseMidDegrees : aimPiecewiseMidDegrees;
+        const float value = std::isfinite(raw) ? raw : 6.0f;
+        return std::clamp(value, AimPiecewiseNearDegrees(preset), 45.0f);
     }
 
-    inline float AimPiecewiseFarDegrees()
+    inline float AimPiecewiseFarDegrees(const AimMethodPreset* preset = nullptr)
     {
-        const float value = std::isfinite(aimPiecewiseFarDegrees) ? aimPiecewiseFarDegrees : 12.0f;
-        return std::clamp(value, AimPiecewiseMidDegrees(), 60.0f);
+        const float raw = preset ? preset->piecewiseFarDegrees : aimPiecewiseFarDegrees;
+        const float value = std::isfinite(raw) ? raw : 12.0f;
+        return std::clamp(value, AimPiecewiseMidDegrees(preset), 60.0f);
     }
 
-    inline float AimPiecewiseNearScale()
+    inline float AimPiecewiseNearScale(const AimMethodPreset* preset = nullptr)
     {
-        return std::isfinite(aimPiecewiseNearScale) ? std::clamp(aimPiecewiseNearScale, 0.0f, 1.0f) : 0.20f;
+        const float value = preset ? preset->piecewiseNearScale : aimPiecewiseNearScale;
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.20f;
     }
 
-    inline float AimPiecewiseMidScale()
+    inline float AimPiecewiseMidScale(const AimMethodPreset* preset = nullptr)
     {
-        return std::isfinite(aimPiecewiseMidScale) ? std::clamp(aimPiecewiseMidScale, 0.0f, 1.0f) : 0.45f;
+        const float value = preset ? preset->piecewiseMidScale : aimPiecewiseMidScale;
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.45f;
     }
 
-    inline float AimPiecewiseFarScale()
+    inline float AimPiecewiseFarScale(const AimMethodPreset* preset = nullptr)
     {
-        return std::isfinite(aimPiecewiseFarScale) ? std::clamp(aimPiecewiseFarScale, 0.0f, 1.0f) : 0.75f;
+        const float value = preset ? preset->piecewiseFarScale : aimPiecewiseFarScale;
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.75f;
     }
 
     inline float AimBehaviorSmoothInput(int behavior, float scalePercent, float runtimeScale = 1.0f)
@@ -756,6 +926,7 @@ namespace OW { namespace Config {
         float hitbox = kDefaultHitboxScalePercent; // percentage of resolved bone+projectile window
         int aimMode = 0;         // 0=Tracking, 1=Flick
         int aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire
+        int aimBehaviorPresetId = -1;
         int aimMethod = 0;       // legacy: smoothing method now comes from Misc behavior profiles
         int smoothType = 0;      // legacy
         float pidP = 0.5f;
@@ -829,6 +1000,7 @@ namespace OW { namespace Config {
         float fov = 0.0f;
         int bone = kAimBoneChest;
         float hitbox = 0.0f;     // percentage of resolved bone+projectile window; 0 disables the gate
+        int aimBehaviorPresetId = -1;
     };
 
     struct HeroSkillSettings {

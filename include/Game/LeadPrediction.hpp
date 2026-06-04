@@ -98,8 +98,9 @@ inline float EstimateAimSettleTimeMs(const AimSettleEstimateInput& input)
     const float frameMs = ClampLeadFrameSeconds(input.frameSeconds) * 1000.0f;
 
     if (method == 5) {
+        constexpr float kLeadMaxConstantAngularSpeedDeg = 3600.0f;
         const float baseDegPerSecond = std::isfinite(input.constantAngularSpeedDeg)
-            ? std::clamp(input.constantAngularSpeedDeg, 0.0f, 720.0f)
+            ? std::clamp(input.constantAngularSpeedDeg, 0.0f, kLeadMaxConstantAngularSpeedDeg)
             : 30.0f;
         const float effectiveDegPerSecond = baseDegPerSecond * slotScale * methodScale;
         if (effectiveDegPerSecond <= 0.0001f)

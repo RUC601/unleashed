@@ -1271,8 +1271,8 @@ namespace OW {
             input.targetAngle = AimAngleForWorldPoint(rawAimPoint);
             input.method = method;
             input.slotSpeedScale = ResolveLeadSmoothInput(secondary);
-            input.methodSpeedScale = Config::AimMethodAngularSpeedScale(method);
-            input.constantAngularSpeedDeg = Config::AimConstantAngularSpeedDeg();
+            input.methodSpeedScale = Config::RuntimeAimMethodAngularSpeedScale(method);
+            input.constantAngularSpeedDeg = Config::RuntimeAimConstantAngularSpeedDeg();
             input.frameSeconds = kLeadDefaultFrameSeconds;
 
             return BuildLeadTiming(
@@ -2402,9 +2402,16 @@ namespace OW {
             return points.front();
         }
 
-        inline void GenerateBezierControlPoints(BezierState& state, const Vector3& current, const Vector3& target) {
-            const int intermediateCount = std::clamp(Config::aimBezierControlPoints, 2, 6);
-            const float curvature = std::clamp(Config::aimBezierCurvature, 0.0f, 1.0f);
+        inline void GenerateBezierControlPoints(BezierState& state,
+                                                const Vector3& current,
+                                                const Vector3& target,
+                                                const Config::AimMethodPreset* methodPreset) {
+            const int intermediateCount = std::clamp(
+                methodPreset ? methodPreset->bezierControlPoints : Config::aimBezierControlPoints,
+                2,
+                6);
+            const float rawCurvature = methodPreset ? methodPreset->bezierCurvature : Config::aimBezierCurvature;
+            const float curvature = std::isfinite(rawCurvature) ? std::clamp(rawCurvature, 0.0f, 1.0f) : 0.5f;
             const Vector3 delta = target - current;
             const float distance = delta.Size();
 
@@ -2438,12 +2445,19 @@ namespace OW {
         AimSmoothingDetail::ResetOvershootState();
     }
 
-    inline Vector3 SmoothPID(Vector3 current, Vector3 target, float deltaTime) {
+    inline Vector3 SmoothPID(Vector3 current,
+                             Vector3 target,
+                             float deltaTime,
+                             const Config::AimMethodPreset* methodPreset) {
         AimSmoothingDetail::PIDState& state = AimSmoothingDetail::GetPIDState();
         deltaTime = AimSmoothingDetail::ClampDeltaTime(deltaTime);
 
         const Vector3 error = target - current;
-        const float deadzone = std::clamp(Config::aimPidDeadzone * (M_PI_F / 180.0f), 0.0f, M_PI_F / 2.0f);
+        const float rawDeadzone = methodPreset ? methodPreset->pidDeadzone : Config::aimPidDeadzone;
+        const float deadzone = std::clamp(
+            (std::isfinite(rawDeadzone) ? rawDeadzone : 1.0f) * (M_PI_F / 180.0f),
+            0.0f,
+            M_PI_F / 2.0f);
         const float errorLength = error.Size();
 
         if (errorLength < deadzone) {
@@ -2477,9 +2491,10 @@ namespace OW {
 
         state.lastTarget = target;
         state.integral += error * deltaTime;
+        const float rawMaxIntegral = methodPreset ? methodPreset->pidMaxIntegral : Config::aimPidMaxIntegral;
         state.integral = AimSmoothingDetail::ClampIntegral(
             state.integral,
-            std::clamp(Config::aimPidMaxIntegral, 1.0f, 50.0f)
+            std::clamp(std::isfinite(rawMaxIntegral) ? rawMaxIntegral : 10.0f, 1.0f, 50.0f)
         );
 
         const Vector3 derivative = resetState
@@ -2487,15 +2502,22 @@ namespace OW {
             : (error - state.previousError) / deltaTime;
         state.previousError = error;
 
+        const float rawP = methodPreset ? methodPreset->pidP : Config::aimPidP;
+        const float rawI = methodPreset ? methodPreset->pidI : Config::aimPidI;
+        const float rawD = methodPreset ? methodPreset->pidD : Config::aimPidD;
         const Vector3 output =
-            error * std::clamp(Config::aimPidP, 0.0f, 2.0f) +
-            state.integral * std::clamp(Config::aimPidI, 0.0f, 0.5f) +
-            derivative * std::clamp(Config::aimPidD, 0.0f, 1.0f);
+            error * std::clamp(std::isfinite(rawP) ? rawP : 0.5f, 0.0f, 2.0f) +
+            state.integral * std::clamp(std::isfinite(rawI) ? rawI : 0.01f, 0.0f, 0.5f) +
+            derivative * std::clamp(std::isfinite(rawD) ? rawD : 0.1f, 0.0f, 1.0f);
 
         return current + AimSmoothingDetail::ClampStepToError(output, error);
     }
 
-    inline Vector3 SmoothBezier(Vector3 current, Vector3 target, float deltaTime, float speed) {
+    inline Vector3 SmoothBezier(Vector3 current,
+                                Vector3 target,
+                                float deltaTime,
+                                float speed,
+                                const Config::AimMethodPreset* methodPreset) {
         AimSmoothingDetail::BezierState& state = AimSmoothingDetail::GetBezierState();
         deltaTime = AimSmoothingDetail::ClampDeltaTime(deltaTime);
 
@@ -2504,7 +2526,7 @@ namespace OW {
             AimSmoothingDetail::IsRetarget(target, state.lastTarget);
 
         if (resetState)
-            AimSmoothingDetail::GenerateBezierControlPoints(state, current, target);
+            AimSmoothingDetail::GenerateBezierControlPoints(state, current, target, methodPreset);
         else {
             state.lastTarget = target;
             state.controlPoints.back() = target;
@@ -2522,16 +2544,19 @@ namespace OW {
         return AimSmoothingDetail::EvaluateBezier(state.controlPoints, state.t);
     }
 
-    inline Vector3 SmoothPiecewise(Vector3 current, Vector3 target, float speed) {
+    inline Vector3 SmoothPiecewise(Vector3 current,
+                                   Vector3 target,
+                                   float speed,
+                                   const Config::AimMethodPreset* methodPreset) {
         const Vector3 error = target - current;
         const float errorDegrees = RAD2DEG(error.Size());
-        float scale = Config::AimPiecewiseNearScale();
-        if (errorDegrees > Config::AimPiecewiseFarDegrees())
+        float scale = Config::AimPiecewiseNearScale(methodPreset);
+        if (errorDegrees > Config::AimPiecewiseFarDegrees(methodPreset))
             scale = 1.00f;
-        else if (errorDegrees > Config::AimPiecewiseMidDegrees())
-            scale = Config::AimPiecewiseFarScale();
-        else if (errorDegrees > Config::AimPiecewiseNearDegrees())
-            scale = Config::AimPiecewiseMidScale();
+        else if (errorDegrees > Config::AimPiecewiseMidDegrees(methodPreset))
+            scale = Config::AimPiecewiseFarScale(methodPreset);
+        else if (errorDegrees > Config::AimPiecewiseNearDegrees(methodPreset))
+            scale = Config::AimPiecewiseMidScale(methodPreset);
 
         return SmoothLinear(current, target, std::clamp(speed * scale, 0.0f, 1.0f));
     }
@@ -2546,7 +2571,7 @@ namespace OW {
         const float angularSpeedRad = DEG2RAD(std::clamp(
             std::isfinite(degreesPerSecond) ? degreesPerSecond : 30.0f,
             0.0f,
-            720.0f));
+            Config::kAimConstantAngularSpeedMaxDeg));
         const float maxStep = angularSpeedRad * deltaTime;
 
         if (errorLength <= 0.000001f || maxStep <= 0.0f)
@@ -2576,19 +2601,21 @@ namespace OW {
 
         const Vector3 adjustedTarget = AimSmoothingDetail::ApplyOvershootCurveTarget(local, target);
         const Vector3 error = adjustedTarget - local;
-        const float methodSpeedScale = Config::AimMethodAngularSpeedScale(method);
+        const Config::AimMethodPreset* methodPreset = Config::ActiveAimMethodPreset(method);
+        const float methodSpeedScale = Config::RuntimeAimMethodAngularSpeedScale(method);
         const float slotSpeedScale = std::isfinite(speed) ? std::clamp(speed, 0.0f, 2.0f) : 0.0f;
         const float effectiveSpeed = std::clamp(slotSpeedScale * methodSpeedScale, 0.0f, 1.0f);
-        const float effectiveAccel = method == 4 ? Config::AimMethodAcceleration(method) : accel;
+        const float effectiveAccel = method == 4 ? Config::RuntimeAimMethodAcceleration(method) : accel;
+        const float presetBezierSpeed = methodPreset ? methodPreset->bezierSpeed : Config::aimBezierSpeed;
         const float bezierSpeed = bezierSpeedOverride > 0.0f
             ? bezierSpeedOverride
-            : Config::aimBezierSpeed;
+            : presetBezierSpeed;
         const float effectiveBezierSpeed = std::clamp(bezierSpeed * slotSpeedScale * methodSpeedScale, 0.0f, 200.0f);
-        const float constantAngularSpeedDeg = Config::AimConstantAngularSpeedDeg();
+        const float constantAngularSpeedDeg = Config::RuntimeAimConstantAngularSpeedDeg();
         const float effectiveConstantAngularSpeedDeg = std::clamp(
             constantAngularSpeedDeg * slotSpeedScale * methodSpeedScale,
             0.0f,
-            720.0f);
+            Config::kAimConstantAngularSpeedMaxDeg);
         Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f slotSpeedScale=%.9f speedScale=%.9f effectiveSpeed=%.9f accel=%.9f effectiveAccel=%.9f dt=%.9f bezierSpeed=%.9f constantDegPerSec=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
             method,
             speed,
@@ -2625,13 +2652,13 @@ namespace OW {
             result = SmoothLinear(local, adjustedTarget, effectiveSpeed);
             break;
         case 1:
-            result = scaleCandidateStep(SmoothPID(local, adjustedTarget, deltaTime));
+            result = scaleCandidateStep(SmoothPID(local, adjustedTarget, deltaTime, methodPreset));
             break;
         case 2:
-            result = SmoothBezier(local, adjustedTarget, deltaTime, effectiveBezierSpeed);
+            result = SmoothBezier(local, adjustedTarget, deltaTime, effectiveBezierSpeed, methodPreset);
             break;
         case 3:
-            result = SmoothPiecewise(local, adjustedTarget, effectiveSpeed);
+            result = SmoothPiecewise(local, adjustedTarget, effectiveSpeed, methodPreset);
             break;
         case 4:
             result = SmoothAccelerate(local, adjustedTarget, effectiveSpeed, effectiveAccel);

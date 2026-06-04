@@ -1246,6 +1246,7 @@ namespace {
 
             Config::HeroPreset overlay = originalPreset;
             overlay.aimBehavior = Config::ClampAimBehaviorIndex(params.aimBehavior);
+            overlay.aimBehaviorPresetId = Config::ClampAimBehaviorPresetId(params.aimBehaviorPresetId);
             overlay.aimMode = Config::IsTrackingBehavior(overlay.aimBehavior) ? 0 : 1;
             overlay.fov = params.fov;
             overlay.smooth = params.speedScale;

@@ -2372,6 +2372,190 @@ static bool UISelect(const char* label, int* current, const char* const items[],
     return changed;
 }
 
+static int NextAimMethodPresetId() {
+    int nextId = 1;
+    for (const OW::Config::AimMethodPreset& preset : OW::Config::aimMethodPresets)
+        nextId = (std::max)(nextId, preset.id + 1);
+    return nextId;
+}
+
+static int NextAimBehaviorPresetId() {
+    int nextId = 1;
+    for (const OW::Config::AimBehaviorPreset& preset : OW::Config::aimBehaviorPresets)
+        nextId = (std::max)(nextId, preset.id + 1);
+    return nextId;
+}
+
+static std::string NormalizeUiPresetName(const char* text, const char* fallback, int index) {
+    std::string value = text ? text : "";
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+        value.erase(value.begin());
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+        value.pop_back();
+    if (value.empty()) {
+        value = fallback ? fallback : "Preset";
+        if (index >= 0) {
+            value += " ";
+            value += std::to_string(index + 1);
+        }
+    }
+    if (value.size() > 63)
+        value.resize(63);
+    return value;
+}
+
+static void CopyPresetNameToBuffer(const std::string& name, char (&buffer)[64]) {
+    std::snprintf(buffer, sizeof(buffer), "%s", name.c_str());
+}
+
+static OW::Config::AimMethodPreset CaptureMethodPresetFromCurrent(int method, const char* name) {
+    const int normalizedMethod = OW::Config::ClampAimMethodIndex(method);
+    OW::Config::AimMethodPreset preset{};
+    preset.id = NextAimMethodPresetId();
+    preset.name = NormalizeUiPresetName(name, "Method Preset", static_cast<int>(OW::Config::aimMethodPresets.size()));
+    preset.method = normalizedMethod;
+    preset.angularSpeedScale = OW::Config::ClampAimMethodAngularSpeedScalePercent(
+        OW::Config::aimMethodAngularSpeedScale[static_cast<size_t>(normalizedMethod)]);
+    preset.pidP = std::clamp(OW::Config::aimPidP, 0.0f, 2.0f);
+    preset.pidI = std::clamp(OW::Config::aimPidI, 0.0f, 0.5f);
+    preset.pidD = std::clamp(OW::Config::aimPidD, 0.0f, 1.0f);
+    preset.pidMaxIntegral = std::clamp(OW::Config::aimPidMaxIntegral, 1.0f, 50.0f);
+    preset.pidDeadzone = std::clamp(OW::Config::aimPidDeadzone, 0.0f, 10.0f);
+    preset.bezierControlPoints = std::clamp(OW::Config::aimBezierControlPoints, 2, 6);
+    preset.bezierCurvature = std::clamp(OW::Config::aimBezierCurvature, 0.0f, 1.0f);
+    preset.bezierSpeed = std::clamp(OW::Config::aimBezierSpeed, 1.0f, 200.0f);
+    preset.piecewiseNearDegrees = OW::Config::AimPiecewiseNearDegrees();
+    preset.piecewiseMidDegrees = OW::Config::AimPiecewiseMidDegrees();
+    preset.piecewiseFarDegrees = OW::Config::AimPiecewiseFarDegrees();
+    preset.piecewiseNearScale = OW::Config::AimPiecewiseNearScale();
+    preset.piecewiseMidScale = OW::Config::AimPiecewiseMidScale();
+    preset.piecewiseFarScale = OW::Config::AimPiecewiseFarScale();
+    preset.accelLimitedAcceleration = OW::Config::AimMethodAcceleration(4);
+    preset.constantAngularSpeedDeg = OW::Config::AimConstantAngularSpeedDeg();
+    return preset;
+}
+
+static OW::Config::AimBehaviorPreset CaptureBehaviorPresetFromCurrent(int behavior,
+                                                                      int method,
+                                                                      int methodPresetId,
+                                                                      float baseSpeed,
+                                                                      bool moveSplitEnabled,
+                                                                      int moveSplitMaxPixels,
+                                                                      int moveSplitDelayUs,
+                                                                      const char* name) {
+    OW::Config::AimBehaviorPreset preset{};
+    preset.id = NextAimBehaviorPresetId();
+    preset.name = NormalizeUiPresetName(name, "Behavior Preset", static_cast<int>(OW::Config::aimBehaviorPresets.size()));
+    preset.behavior = OW::Config::ClampAimBehaviorIndex(behavior);
+    preset.method = OW::Config::ClampAimMethodIndex(method);
+    preset.methodPresetId = OW::Config::ClampAimMethodPresetId(methodPresetId);
+    if (const OW::Config::AimMethodPreset* methodPreset = OW::Config::FindAimMethodPreset(preset.methodPresetId))
+        preset.method = OW::Config::ClampAimMethodIndex(methodPreset->method);
+    preset.baseSpeed = std::isfinite(baseSpeed) ? std::clamp(baseSpeed, 0.0f, 100.0f) : 100.0f;
+    preset.moveSplitEnabled = moveSplitEnabled;
+    preset.moveSplitMaxPixels = OW::Config::ClampMoveSplitMaxPixels(moveSplitMaxPixels);
+    preset.moveSplitDelayUs = OW::Config::ClampMoveSplitDelayUs(moveSplitDelayUs);
+    return preset;
+}
+
+static const char* AimBehaviorPresetPreview(int presetId, const char* noneText) {
+    const OW::Config::AimBehaviorPreset* preset = OW::Config::FindAimBehaviorPreset(presetId);
+    return preset ? preset->name.c_str() : noneText;
+}
+
+static const char* AimMethodPresetPreview(int presetId, const char* noneText) {
+    const OW::Config::AimMethodPreset* preset = OW::Config::FindAimMethodPreset(presetId);
+    return preset ? preset->name.c_str() : noneText;
+}
+
+static bool UISelectAimMethodPreset(const char* label, int* presetId, int filterMethod) {
+    if (!OW::Config::FindAimMethodPreset(*presetId))
+        *presetId = -1;
+
+    bool changed = false;
+    const char* preview = AimMethodPresetPreview(*presetId, "Current Method Config");
+    if (ImGui::BeginCombo(label, preview, ImGuiComboFlags_HeightLargest)) {
+        const bool noneSelected = *presetId < 0;
+        if (ImGui::Selectable("Current Method Config", noneSelected)) {
+            *presetId = -1;
+            changed = true;
+        }
+        if (noneSelected)
+            ImGui::SetItemDefaultFocus();
+
+        const int normalizedFilter = filterMethod >= 0 ? OW::Config::ClampAimMethodIndex(filterMethod) : -1;
+        for (const OW::Config::AimMethodPreset& preset : OW::Config::aimMethodPresets) {
+            const int method = OW::Config::ClampAimMethodIndex(preset.method);
+            if (normalizedFilter >= 0 && method != normalizedFilter)
+                continue;
+
+            std::string labelText = preset.name;
+            labelText += " / ";
+            labelText += kAimMethod[method];
+            const bool selected = *presetId == preset.id;
+            if (ImGui::Selectable(labelText.c_str(), selected)) {
+                *presetId = preset.id;
+                changed = true;
+            }
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+static bool UISelectAimBehaviorPreset(const char* label, int* presetId, int filterBehavior) {
+    if (!OW::Config::FindAimBehaviorPreset(*presetId))
+        *presetId = -1;
+
+    bool changed = false;
+    const char* preview = AimBehaviorPresetPreview(*presetId, "Class Default");
+    if (ImGui::BeginCombo(label, preview, ImGuiComboFlags_HeightLargest)) {
+        const bool noneSelected = *presetId < 0;
+        if (ImGui::Selectable("Class Default", noneSelected)) {
+            *presetId = -1;
+            changed = true;
+        }
+        if (noneSelected)
+            ImGui::SetItemDefaultFocus();
+
+        const int normalizedFilter = filterBehavior >= 0 ? OW::Config::ClampAimBehaviorIndex(filterBehavior) : -1;
+        for (const OW::Config::AimBehaviorPreset& preset : OW::Config::aimBehaviorPresets) {
+            const int behavior = OW::Config::ClampAimBehaviorIndex(preset.behavior);
+            if (normalizedFilter >= 0 && behavior != normalizedFilter)
+                continue;
+
+            std::string labelText = preset.name;
+            labelText += " / ";
+            labelText += kAimBehavior[behavior];
+            if (const OW::Config::AimMethodPreset* methodPreset = OW::Config::FindAimMethodPreset(preset.methodPresetId)) {
+                labelText += " / ";
+                labelText += methodPreset->name;
+            }
+            const bool selected = *presetId == preset.id;
+            if (ImGui::Selectable(labelText.c_str(), selected)) {
+                *presetId = preset.id;
+                changed = true;
+            }
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+static void ApplyAimBehaviorToHeroPreset(OW::Config::HeroPreset& preset, int behavior) {
+    preset.aimBehavior = OW::Config::ClampAimBehaviorIndex(behavior);
+    preset.aimMode = OW::Config::IsTrackingBehavior(preset.aimBehavior) ? 0 : 1;
+    if (preset.firePolicy == 0 || preset.firePolicy == 1 || preset.firePolicy == 2) {
+        preset.firePolicy = OW::Config::IsTrackingBehavior(preset.aimBehavior) ? 1 : 2;
+        preset.keepFiring = preset.firePolicy == 1;
+        preset.autoshot = preset.firePolicy >= 2;
+    }
+}
+
 static void UIDisabledSelect(const char* label, const char* previewText = kNotOpenedText) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return;
@@ -3033,12 +3217,18 @@ void UI::AimbotPage() {
             PushControlWidth();
             if (UISelect("##aimBehavior", &activePreset.aimBehavior,
                          kAimBehavior, IM_ARRAYSIZE(kAimBehavior))) {
-                activePreset.aimBehavior = OW::Config::ClampAimBehaviorIndex(activePreset.aimBehavior);
-                activePreset.aimMode = OW::Config::IsTrackingBehavior(activePreset.aimBehavior) ? 0 : 1;
-                if (activePreset.firePolicy == 0 || activePreset.firePolicy == 1 || activePreset.firePolicy == 2) {
-                    activePreset.firePolicy = OW::Config::IsTrackingBehavior(activePreset.aimBehavior) ? 1 : 2;
-                    activePreset.keepFiring = activePreset.firePolicy == 1;
-                    activePreset.autoshot = activePreset.firePolicy >= 2;
+                activePreset.aimBehaviorPresetId = -1;
+                ApplyAimBehaviorToHeroPreset(activePreset, activePreset.aimBehavior);
+                presetChanged = true;
+            }
+            ImGui::PopItemWidth();
+
+            SettingRow("Behavior Preset", kAimbotLeftLabelWidth);
+            PushControlWidth();
+            if (UISelectAimBehaviorPreset("##aimBehaviorPreset", &activePreset.aimBehaviorPresetId, -1)) {
+                if (const OW::Config::AimBehaviorPreset* behaviorPreset =
+                        OW::Config::FindAimBehaviorPreset(activePreset.aimBehaviorPresetId)) {
+                    ApplyAimBehaviorToHeroPreset(activePreset, behaviorPreset->behavior);
                 }
                 presetChanged = true;
             }
@@ -3656,6 +3846,19 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
                      kAimBehavior, IM_ARRAYSIZE(kAimBehavior))) {
             settings.tracking.aimBehavior =
                 OW::Config::ClampAimBehaviorIndex(settings.tracking.aimBehavior);
+            settings.tracking.aimBehaviorPresetId = -1;
+            changed = true;
+        }
+        ImGui::PopItemWidth();
+
+        SettingRow("Behavior Preset", kAimbotRightLabelWidth);
+        PushControlWidth();
+        if (UISelectAimBehaviorPreset("##skillTrackingBehaviorPreset", &settings.tracking.aimBehaviorPresetId, -1)) {
+            if (const OW::Config::AimBehaviorPreset* behaviorPreset =
+                    OW::Config::FindAimBehaviorPreset(settings.tracking.aimBehaviorPresetId)) {
+                settings.tracking.aimBehavior =
+                    OW::Config::ClampAimBehaviorIndex(behaviorPreset->behavior);
+            }
             changed = true;
         }
         ImGui::PopItemWidth();
@@ -4390,22 +4593,83 @@ static void DrawMiscBehaviorPage() {
     UIGroupBox("Behavior");
     {
         static int selectedBehavior = 0;
+        static int selectedBehaviorPresetId = -1;
+        static int lastBehaviorPresetId = -2;
+        static char behaviorPresetName[64] = "Behavior Preset";
         selectedBehavior = OW::Config::ClampAimBehaviorIndex(selectedBehavior);
 
         SettingRow("Behavior");
         PushControlWidth();
-        UISelect("##miscBehaviorSelector", &selectedBehavior,
-                 kAimBehavior, IM_ARRAYSIZE(kAimBehavior));
+        if (UISelect("##miscBehaviorSelector", &selectedBehavior,
+                     kAimBehavior, IM_ARRAYSIZE(kAimBehavior))) {
+            if (const OW::Config::AimBehaviorPreset* selectedPreset =
+                    OW::Config::FindAimBehaviorPreset(selectedBehaviorPresetId)) {
+                if (OW::Config::ClampAimBehaviorIndex(selectedPreset->behavior) != selectedBehavior)
+                    selectedBehaviorPresetId = -1;
+            }
+        }
+        ImGui::PopItemWidth();
+
+        SettingRow("Preset");
+        PushControlWidth();
+        if (UISelectAimBehaviorPreset("##miscBehaviorPreset", &selectedBehaviorPresetId, selectedBehavior)) {
+            if (const OW::Config::AimBehaviorPreset* selectedPreset =
+                    OW::Config::FindAimBehaviorPreset(selectedBehaviorPresetId)) {
+                selectedBehavior = OW::Config::ClampAimBehaviorIndex(selectedPreset->behavior);
+                CopyPresetNameToBuffer(selectedPreset->name, behaviorPresetName);
+            }
+        }
         ImGui::PopItemWidth();
 
         selectedBehavior = OW::Config::ClampAimBehaviorIndex(selectedBehavior);
         const int behaviorIndex = selectedBehavior;
-        int& behaviorMethod = OW::Config::aimBehaviorMethod[static_cast<size_t>(behaviorIndex)];
-        float& behaviorBaseSpeed = OW::Config::aimBehaviorBaseSpeed[static_cast<size_t>(behaviorIndex)];
-        bool& behaviorMoveSplitEnabled = OW::Config::aimBehaviorMoveSplitEnabled[static_cast<size_t>(behaviorIndex)];
-        int& behaviorMoveSplitMaxPixels = OW::Config::aimBehaviorMoveSplitMaxPixels[static_cast<size_t>(behaviorIndex)];
-        int& behaviorMoveSplitDelayUs = OW::Config::aimBehaviorMoveSplitDelayUs[static_cast<size_t>(behaviorIndex)];
+        OW::Config::AimBehaviorPreset* selectedPreset =
+            OW::Config::FindMutableAimBehaviorPreset(selectedBehaviorPresetId);
+        if (selectedPreset &&
+            OW::Config::ClampAimBehaviorIndex(selectedPreset->behavior) != behaviorIndex) {
+            selectedBehaviorPresetId = -1;
+            selectedPreset = nullptr;
+        }
+        if (lastBehaviorPresetId != selectedBehaviorPresetId) {
+            if (selectedPreset)
+                CopyPresetNameToBuffer(selectedPreset->name, behaviorPresetName);
+            else
+                CopyPresetNameToBuffer("Behavior Preset", behaviorPresetName);
+            lastBehaviorPresetId = selectedBehaviorPresetId;
+        }
+
+        SettingRow("Preset Name");
+        PushControlWidth();
+        if (ImGui::InputText("##miscBehaviorPresetName", behaviorPresetName, IM_ARRAYSIZE(behaviorPresetName))) {
+            if (selectedPreset)
+                selectedPreset->name = NormalizeUiPresetName(behaviorPresetName, "Behavior Preset", -1);
+        }
+        ImGui::PopItemWidth();
+
+        int& behaviorMethod = selectedPreset
+            ? selectedPreset->method
+            : OW::Config::aimBehaviorMethod[static_cast<size_t>(behaviorIndex)];
+        int& behaviorMethodPresetId = selectedPreset
+            ? selectedPreset->methodPresetId
+            : OW::Config::aimBehaviorMethodPreset[static_cast<size_t>(behaviorIndex)];
+        float& behaviorBaseSpeed = selectedPreset
+            ? selectedPreset->baseSpeed
+            : OW::Config::aimBehaviorBaseSpeed[static_cast<size_t>(behaviorIndex)];
+        bool& behaviorMoveSplitEnabled = selectedPreset
+            ? selectedPreset->moveSplitEnabled
+            : OW::Config::aimBehaviorMoveSplitEnabled[static_cast<size_t>(behaviorIndex)];
+        int& behaviorMoveSplitMaxPixels = selectedPreset
+            ? selectedPreset->moveSplitMaxPixels
+            : OW::Config::aimBehaviorMoveSplitMaxPixels[static_cast<size_t>(behaviorIndex)];
+        int& behaviorMoveSplitDelayUs = selectedPreset
+            ? selectedPreset->moveSplitDelayUs
+            : OW::Config::aimBehaviorMoveSplitDelayUs[static_cast<size_t>(behaviorIndex)];
         behaviorMethod = OW::Config::ClampAimMethodIndex(behaviorMethod);
+        behaviorMethodPresetId = OW::Config::ClampAimMethodPresetId(behaviorMethodPresetId);
+        if (const OW::Config::AimMethodPreset* methodPreset =
+                OW::Config::FindAimMethodPreset(behaviorMethodPresetId)) {
+            behaviorMethod = OW::Config::ClampAimMethodIndex(methodPreset->method);
+        }
         behaviorMoveSplitMaxPixels = OW::Config::ClampMoveSplitMaxPixels(behaviorMoveSplitMaxPixels);
         behaviorMoveSplitDelayUs = OW::Config::ClampMoveSplitDelayUs(behaviorMoveSplitDelayUs);
         OW::Config::aimMethod = behaviorMethod;
@@ -4415,7 +4679,23 @@ static void DrawMiscBehaviorPage() {
         if (UISelect("##miscBehaviorMethod", &behaviorMethod,
                      kAimMethod, IM_ARRAYSIZE(kAimMethod))) {
             behaviorMethod = OW::Config::ClampAimMethodIndex(behaviorMethod);
+            if (const OW::Config::AimMethodPreset* methodPreset =
+                    OW::Config::FindAimMethodPreset(behaviorMethodPresetId)) {
+                if (OW::Config::ClampAimMethodIndex(methodPreset->method) != behaviorMethod)
+                    behaviorMethodPresetId = -1;
+            }
             OW::Config::aimMethod = behaviorMethod;
+        }
+        ImGui::PopItemWidth();
+
+        SettingRow("Method Preset");
+        PushControlWidth();
+        if (UISelectAimMethodPreset("##miscBehaviorMethodPreset", &behaviorMethodPresetId, behaviorMethod)) {
+            if (const OW::Config::AimMethodPreset* methodPreset =
+                    OW::Config::FindAimMethodPreset(behaviorMethodPresetId)) {
+                behaviorMethod = OW::Config::ClampAimMethodIndex(methodPreset->method);
+                OW::Config::aimMethod = behaviorMethod;
+            }
         }
         ImGui::PopItemWidth();
 
@@ -4437,6 +4717,45 @@ static void DrawMiscBehaviorPage() {
             PushControlWidth();
             UISlider("##miscBehaviorMoveSplitDelay", &behaviorMoveSplitDelayUs, 0.0f, 10000.0f, "800 us");
             ImGui::PopItemWidth();
+        }
+
+        if (selectedPreset) {
+            selectedPreset->behavior = behaviorIndex;
+            selectedPreset->name = NormalizeUiPresetName(behaviorPresetName, "Behavior Preset", -1);
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Save New", ImVec2(92.0f, kControlHeight))) {
+            OW::Config::AimBehaviorPreset preset = CaptureBehaviorPresetFromCurrent(
+                behaviorIndex,
+                behaviorMethod,
+                behaviorMethodPresetId,
+                behaviorBaseSpeed,
+                behaviorMoveSplitEnabled,
+                behaviorMoveSplitMaxPixels,
+                behaviorMoveSplitDelayUs,
+                behaviorPresetName);
+            OW::Config::aimBehaviorPresets.push_back(preset);
+            selectedBehaviorPresetId = preset.id;
+            lastBehaviorPresetId = -2;
+            selectedPreset = nullptr;
+        }
+        if (selectedPreset) {
+            ImGui::SameLine(0.0f, 8.0f);
+            if (ImGui::Button("Delete", ImVec2(72.0f, kControlHeight))) {
+                const int deletedId = selectedBehaviorPresetId;
+                OW::Config::aimBehaviorPresets.erase(
+                    std::remove_if(OW::Config::aimBehaviorPresets.begin(),
+                                   OW::Config::aimBehaviorPresets.end(),
+                                   [deletedId](const OW::Config::AimBehaviorPreset& preset) {
+                                       return preset.id == deletedId;
+                                   }),
+                    OW::Config::aimBehaviorPresets.end());
+                if (OW::Config::aimBehaviorPresetId == deletedId)
+                    OW::Config::aimBehaviorPresetId = -1;
+                selectedBehaviorPresetId = -1;
+                lastBehaviorPresetId = -2;
+            }
         }
 
         SettingRow("Pitch Scale");
@@ -4466,15 +4785,60 @@ static void DrawMiscMethodPage() {
     UIGroupBox("Method");
     {
         static int selectedMethod = 0;
+        static int selectedMethodPresetId = -1;
+        static int lastMethodPresetId = -2;
+        static char methodPresetName[64] = "Method Preset";
         selectedMethod = OW::Config::ClampAimMethodIndex(selectedMethod);
 
         SettingRow("Method");
         PushControlWidth();
-        UISelect("##miscMethodSelector", &selectedMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod));
+        if (UISelect("##miscMethodSelector", &selectedMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod))) {
+            if (const OW::Config::AimMethodPreset* selectedPreset =
+                    OW::Config::FindAimMethodPreset(selectedMethodPresetId)) {
+                if (OW::Config::ClampAimMethodIndex(selectedPreset->method) != selectedMethod)
+                    selectedMethodPresetId = -1;
+            }
+        }
+        ImGui::PopItemWidth();
+
+        SettingRow("Preset");
+        PushControlWidth();
+        if (UISelectAimMethodPreset("##miscMethodPreset", &selectedMethodPresetId, selectedMethod)) {
+            if (const OW::Config::AimMethodPreset* selectedPreset =
+                    OW::Config::FindAimMethodPreset(selectedMethodPresetId)) {
+                selectedMethod = OW::Config::ClampAimMethodIndex(selectedPreset->method);
+                CopyPresetNameToBuffer(selectedPreset->name, methodPresetName);
+            }
+        }
+        ImGui::PopItemWidth();
+
+        OW::Config::AimMethodPreset* selectedPreset =
+            OW::Config::FindMutableAimMethodPreset(selectedMethodPresetId);
+        if (selectedPreset &&
+            OW::Config::ClampAimMethodIndex(selectedPreset->method) != selectedMethod) {
+            selectedMethodPresetId = -1;
+            selectedPreset = nullptr;
+        }
+        if (lastMethodPresetId != selectedMethodPresetId) {
+            if (selectedPreset)
+                CopyPresetNameToBuffer(selectedPreset->name, methodPresetName);
+            else
+                CopyPresetNameToBuffer("Method Preset", methodPresetName);
+            lastMethodPresetId = selectedMethodPresetId;
+        }
+
+        SettingRow("Preset Name");
+        PushControlWidth();
+        if (ImGui::InputText("##miscMethodPresetName", methodPresetName, IM_ARRAYSIZE(methodPresetName))) {
+            if (selectedPreset)
+                selectedPreset->name = NormalizeUiPresetName(methodPresetName, "Method Preset", -1);
+        }
         ImGui::PopItemWidth();
 
         selectedMethod = OW::Config::ClampAimMethodIndex(selectedMethod);
-        float& angularSpeedScale = OW::Config::aimMethodAngularSpeedScale[static_cast<size_t>(selectedMethod)];
+        float& angularSpeedScale = selectedPreset
+            ? selectedPreset->angularSpeedScale
+            : OW::Config::aimMethodAngularSpeedScale[static_cast<size_t>(selectedMethod)];
 
         auto drawAngularSpeed = [&](const char* id) {
             SettingRow("Angular Speed");
@@ -4490,103 +4854,144 @@ static void DrawMiscMethodPage() {
         case 1:
             SettingRow("P Gain");
             PushControlWidth();
-            UISlider("##methodPidP", &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
+            UISlider("##methodPidP", selectedPreset ? &selectedPreset->pidP : &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
             ImGui::PopItemWidth();
 
             SettingRow("I Gain");
             PushControlWidth();
-            UISlider("##methodPidI", &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
+            UISlider("##methodPidI", selectedPreset ? &selectedPreset->pidI : &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
             ImGui::PopItemWidth();
 
             SettingRow("D Gain");
             PushControlWidth();
-            UISlider("##methodPidD", &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
+            UISlider("##methodPidD", selectedPreset ? &selectedPreset->pidD : &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
             ImGui::PopItemWidth();
 
             SettingRow("Max Integral");
             PushControlWidth();
-            UISlider("##methodPidMaxI", &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
+            UISlider("##methodPidMaxI", selectedPreset ? &selectedPreset->pidMaxIntegral : &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
             ImGui::PopItemWidth();
 
             SettingRow("Deadzone");
             PushControlWidth();
-            UISlider("##methodPidDeadzone", &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
+            UISlider("##methodPidDeadzone", selectedPreset ? &selectedPreset->pidDeadzone : &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
             ImGui::PopItemWidth();
             break;
         case 2:
             SettingRow("Control Points");
             PushControlWidth();
-            UISlider("##methodBezierControlPoints", &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
+            UISlider("##methodBezierControlPoints", selectedPreset ? &selectedPreset->bezierControlPoints : &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
             ImGui::PopItemWidth();
 
             SettingRow("Curvature");
             PushControlWidth();
-            UISlider("##methodBezierCurvature", &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
+            UISlider("##methodBezierCurvature", selectedPreset ? &selectedPreset->bezierCurvature : &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
             ImGui::PopItemWidth();
 
             SettingRow("Curve Speed");
             PushControlWidth();
-            UISlider("##methodBezierSpeed", &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
+            UISlider("##methodBezierSpeed", selectedPreset ? &selectedPreset->bezierSpeed : &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
             ImGui::PopItemWidth();
             break;
-        case 3:
+        case 3: {
             drawAngularSpeed("##methodPiecewiseAngularSpeed");
 
             SettingRow("Near Degrees");
             PushControlWidth();
-            UISlider("##methodPiecewiseNearDegrees", &OW::Config::aimPiecewiseNearDegrees, 0.0f, 30.0f, "2.0 deg");
+            UISlider("##methodPiecewiseNearDegrees", selectedPreset ? &selectedPreset->piecewiseNearDegrees : &OW::Config::aimPiecewiseNearDegrees, 0.0f, 30.0f, "2.0 deg");
             ImGui::PopItemWidth();
 
-            OW::Config::aimPiecewiseMidDegrees = (std::max)(
-                OW::Config::aimPiecewiseMidDegrees,
-                OW::Config::AimPiecewiseNearDegrees());
+            float& midDegrees = selectedPreset ? selectedPreset->piecewiseMidDegrees : OW::Config::aimPiecewiseMidDegrees;
+            midDegrees = (std::max)(midDegrees, OW::Config::AimPiecewiseNearDegrees(selectedPreset));
             SettingRow("Mid Degrees");
             PushControlWidth();
-            UISlider("##methodPiecewiseMidDegrees", &OW::Config::aimPiecewiseMidDegrees,
-                     OW::Config::AimPiecewiseNearDegrees(), 45.0f, "6.0 deg");
+            UISlider("##methodPiecewiseMidDegrees", &midDegrees,
+                     OW::Config::AimPiecewiseNearDegrees(selectedPreset), 45.0f, "6.0 deg");
             ImGui::PopItemWidth();
 
-            OW::Config::aimPiecewiseFarDegrees = (std::max)(
-                OW::Config::aimPiecewiseFarDegrees,
-                OW::Config::AimPiecewiseMidDegrees());
+            float& farDegrees = selectedPreset ? selectedPreset->piecewiseFarDegrees : OW::Config::aimPiecewiseFarDegrees;
+            farDegrees = (std::max)(farDegrees, OW::Config::AimPiecewiseMidDegrees(selectedPreset));
             SettingRow("Far Degrees");
             PushControlWidth();
-            UISlider("##methodPiecewiseFarDegrees", &OW::Config::aimPiecewiseFarDegrees,
-                     OW::Config::AimPiecewiseMidDegrees(), 60.0f, "12.0 deg");
+            UISlider("##methodPiecewiseFarDegrees", &farDegrees,
+                     OW::Config::AimPiecewiseMidDegrees(selectedPreset), 60.0f, "12.0 deg");
             ImGui::PopItemWidth();
 
             SettingRow("Near Scale");
             PushControlWidth();
-            UISlider("##methodPiecewiseNearScale", &OW::Config::aimPiecewiseNearScale, 0.0f, 1.0f, "0.20");
+            UISlider("##methodPiecewiseNearScale", selectedPreset ? &selectedPreset->piecewiseNearScale : &OW::Config::aimPiecewiseNearScale, 0.0f, 1.0f, "0.20");
             ImGui::PopItemWidth();
 
             SettingRow("Mid Scale");
             PushControlWidth();
-            UISlider("##methodPiecewiseMidScale", &OW::Config::aimPiecewiseMidScale, 0.0f, 1.0f, "0.45");
+            UISlider("##methodPiecewiseMidScale", selectedPreset ? &selectedPreset->piecewiseMidScale : &OW::Config::aimPiecewiseMidScale, 0.0f, 1.0f, "0.45");
             ImGui::PopItemWidth();
 
             SettingRow("Far Scale");
             PushControlWidth();
-            UISlider("##methodPiecewiseFarScale", &OW::Config::aimPiecewiseFarScale, 0.0f, 1.0f, "0.75");
+            UISlider("##methodPiecewiseFarScale", selectedPreset ? &selectedPreset->piecewiseFarScale : &OW::Config::aimPiecewiseFarScale, 0.0f, 1.0f, "0.75");
             ImGui::PopItemWidth();
             break;
+        }
         case 4:
             drawAngularSpeed("##methodAccelAngularSpeed");
 
             SettingRow("Acceleration");
             PushControlWidth();
-            UISlider("##methodAccelAcceleration", &OW::Config::aimAccelLimitedAcceleration, 0.0f, 20.0f, "0.10");
+            UISlider("##methodAccelAcceleration", selectedPreset ? &selectedPreset->accelLimitedAcceleration : &OW::Config::aimAccelLimitedAcceleration, 0.0f, 20.0f, "0.10");
             ImGui::PopItemWidth();
             break;
         case 5:
             SettingRow("Angular Speed");
             PushControlWidth();
-            UISlider("##methodConstantAngularSpeed", &OW::Config::aimConstantAngularSpeedDeg,
-                     0.0f, 720.0f, "30 deg/s");
+            UISlider("##methodConstantAngularSpeed",
+                     selectedPreset ? &selectedPreset->constantAngularSpeedDeg : &OW::Config::aimConstantAngularSpeedDeg,
+                     0.0f, OW::Config::kAimConstantAngularSpeedMaxDeg, "30 deg/s");
             ImGui::PopItemWidth();
             break;
         default:
             break;
+        }
+
+        if (selectedPreset) {
+            selectedPreset->method = selectedMethod;
+            selectedPreset->name = NormalizeUiPresetName(methodPresetName, "Method Preset", -1);
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Save New", ImVec2(92.0f, kControlHeight))) {
+            OW::Config::AimMethodPreset preset =
+                selectedPreset ? *selectedPreset : CaptureMethodPresetFromCurrent(selectedMethod, methodPresetName);
+            preset.id = NextAimMethodPresetId();
+            preset.name = NormalizeUiPresetName(methodPresetName, "Method Preset", static_cast<int>(OW::Config::aimMethodPresets.size()));
+            preset.method = selectedMethod;
+            OW::Config::aimMethodPresets.push_back(preset);
+            selectedMethodPresetId = preset.id;
+            lastMethodPresetId = -2;
+            selectedPreset = nullptr;
+        }
+        if (selectedPreset) {
+            ImGui::SameLine(0.0f, 8.0f);
+            if (ImGui::Button("Delete", ImVec2(72.0f, kControlHeight))) {
+                const int deletedId = selectedMethodPresetId;
+                OW::Config::aimMethodPresets.erase(
+                    std::remove_if(OW::Config::aimMethodPresets.begin(),
+                                   OW::Config::aimMethodPresets.end(),
+                                   [deletedId](const OW::Config::AimMethodPreset& preset) {
+                                       return preset.id == deletedId;
+                                   }),
+                    OW::Config::aimMethodPresets.end());
+                for (int& methodPresetId : OW::Config::aimBehaviorMethodPreset) {
+                    if (methodPresetId == deletedId)
+                        methodPresetId = -1;
+                }
+                for (OW::Config::AimBehaviorPreset& behaviorPreset : OW::Config::aimBehaviorPresets) {
+                    if (behaviorPreset.methodPresetId == deletedId)
+                        behaviorPreset.methodPresetId = -1;
+                }
+                selectedMethodPresetId = -1;
+                lastMethodPresetId = -2;
+            }
         }
     }
     CloseGroupBox();

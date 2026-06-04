@@ -278,11 +278,11 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 6;
+        constexpr int kCurrentConfigVersion = 7;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
-        constexpr int kCurrentHeroConfigVersion = 9;
+        constexpr int kCurrentHeroConfigVersion = 10;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
@@ -293,6 +293,7 @@ namespace OW { namespace Config {
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
         constexpr const char* kAimMethodSection = "AimMethod";
+        constexpr int kMaxAimCustomPresets = 64;
         constexpr const char* kDefaultKmboxIp = "192.168.2.188";
         constexpr int kDefaultKmboxPort = 8808;
         constexpr int kDefaultKmboxMonitorPort = kDefaultKmboxPort + 1;
@@ -320,6 +321,107 @@ namespace OW { namespace Config {
             return ClampAimBehaviorIndex(legacySemantics
                 ? MigrateLegacyAimBehavior(value)
                 : value);
+        }
+
+        std::string NormalizeAimPresetName(std::string value, const char* fallback, int fallbackIndex)
+        {
+            size_t first = 0;
+            while (first < value.size() && std::isspace(static_cast<unsigned char>(value[first])))
+                ++first;
+            size_t last = value.size();
+            while (last > first && std::isspace(static_cast<unsigned char>(value[last - 1])))
+                --last;
+            value = value.substr(first, last - first);
+            if (value.empty()) {
+                value = fallback ? fallback : "Preset";
+                if (fallbackIndex >= 0) {
+                    value += " ";
+                    value += std::to_string(fallbackIndex + 1);
+                }
+            }
+            if (value.size() > 63)
+                value.resize(63);
+            return value;
+        }
+
+        AimMethodPreset ValidateAimMethodPresetValue(AimMethodPreset preset, int fallbackIndex = -1)
+        {
+            preset.name = NormalizeAimPresetName(preset.name, "Method Preset", fallbackIndex);
+            preset.method = ClampAimMethodIndex(preset.method);
+            preset.angularSpeedScale = ClampAimMethodAngularSpeedScalePercent(preset.angularSpeedScale);
+            preset.pidP = std::isfinite(preset.pidP) ? std::clamp(preset.pidP, 0.0f, 2.0f) : 0.5f;
+            preset.pidI = std::isfinite(preset.pidI) ? std::clamp(preset.pidI, 0.0f, 0.5f) : 0.01f;
+            preset.pidD = std::isfinite(preset.pidD) ? std::clamp(preset.pidD, 0.0f, 1.0f) : 0.1f;
+            preset.pidMaxIntegral = std::isfinite(preset.pidMaxIntegral)
+                ? std::clamp(preset.pidMaxIntegral, 1.0f, 50.0f)
+                : 10.0f;
+            preset.pidDeadzone = std::isfinite(preset.pidDeadzone)
+                ? std::clamp(preset.pidDeadzone, 0.0f, 10.0f)
+                : 1.0f;
+            preset.bezierControlPoints = std::clamp(preset.bezierControlPoints, 2, 6);
+            preset.bezierCurvature = std::isfinite(preset.bezierCurvature)
+                ? std::clamp(preset.bezierCurvature, 0.0f, 1.0f)
+                : 0.5f;
+            preset.bezierSpeed = std::isfinite(preset.bezierSpeed)
+                ? std::clamp(preset.bezierSpeed, 1.0f, 200.0f)
+                : 50.0f;
+            preset.piecewiseNearDegrees = std::isfinite(preset.piecewiseNearDegrees)
+                ? std::clamp(preset.piecewiseNearDegrees, 0.0f, 30.0f)
+                : 2.0f;
+            preset.piecewiseMidDegrees = std::isfinite(preset.piecewiseMidDegrees)
+                ? std::clamp(preset.piecewiseMidDegrees, preset.piecewiseNearDegrees, 45.0f)
+                : 6.0f;
+            preset.piecewiseFarDegrees = std::isfinite(preset.piecewiseFarDegrees)
+                ? std::clamp(preset.piecewiseFarDegrees, preset.piecewiseMidDegrees, 60.0f)
+                : 12.0f;
+            preset.piecewiseNearScale = std::isfinite(preset.piecewiseNearScale)
+                ? std::clamp(preset.piecewiseNearScale, 0.0f, 1.0f)
+                : 0.20f;
+            preset.piecewiseMidScale = std::isfinite(preset.piecewiseMidScale)
+                ? std::clamp(preset.piecewiseMidScale, 0.0f, 1.0f)
+                : 0.45f;
+            preset.piecewiseFarScale = std::isfinite(preset.piecewiseFarScale)
+                ? std::clamp(preset.piecewiseFarScale, 0.0f, 1.0f)
+                : 0.75f;
+            preset.accelLimitedAcceleration = std::isfinite(preset.accelLimitedAcceleration)
+                ? std::clamp(preset.accelLimitedAcceleration, 0.0f, 20.0f)
+                : 0.1f;
+            preset.constantAngularSpeedDeg = ClampAimConstantAngularSpeedDeg(preset.constantAngularSpeedDeg);
+            return preset;
+        }
+
+        AimBehaviorPreset ValidateAimBehaviorPresetValue(AimBehaviorPreset preset, int fallbackIndex = -1)
+        {
+            preset.name = NormalizeAimPresetName(preset.name, "Behavior Preset", fallbackIndex);
+            preset.behavior = ClampAimBehaviorIndex(preset.behavior);
+            preset.methodPresetId = ClampAimMethodPresetId(preset.methodPresetId);
+            if (const AimMethodPreset* methodPreset = FindAimMethodPreset(preset.methodPresetId))
+                preset.method = ClampAimMethodIndex(methodPreset->method);
+            else
+                preset.method = ClampAimMethodIndex(preset.method);
+
+            preset.baseSpeed = std::isfinite(preset.baseSpeed)
+                ? std::clamp(preset.baseSpeed, 0.0f, 100.0f)
+                : 100.0f;
+            preset.moveSplitMaxPixels = ClampMoveSplitMaxPixels(preset.moveSplitMaxPixels);
+            preset.moveSplitDelayUs = ClampMoveSplitDelayUs(preset.moveSplitDelayUs);
+            return preset;
+        }
+
+        int NextCustomPresetId(const std::vector<AimMethodPreset>& presets)
+        {
+            int nextId = 1;
+            for (const AimMethodPreset& preset : presets)
+                nextId = (std::max)(nextId, preset.id + 1);
+            return nextId;
+        }
+
+        int NextCustomPresetId(const std::vector<AimBehaviorPreset>& presets)
+        {
+            int nextId = 1;
+            for (const AimBehaviorPreset& preset : presets)
+                nextId = (std::max)(nextId, preset.id + 1);
+            return nextId;
         }
 
         struct HeroPresetDefinition {
@@ -1517,6 +1619,9 @@ namespace OW { namespace Config {
             if (preset.aimMode == 1 && preset.aimBehavior == 0)
                 preset.aimBehavior = kAimBehaviorFlick;
             preset.aimBehavior = ClampAimBehaviorIndex(preset.aimBehavior);
+            preset.aimBehaviorPresetId = ClampAimBehaviorPresetId(preset.aimBehaviorPresetId);
+            if (const AimBehaviorPreset* behaviorPreset = FindAimBehaviorPreset(preset.aimBehaviorPresetId))
+                preset.aimBehavior = ClampAimBehaviorIndex(behaviorPreset->behavior);
             preset.aimMode = IsTrackingBehavior(preset.aimBehavior) ? 0 : 1;
             preset.aimMethod = ClampAimMethodIndex(preset.aimMethod);
             preset.smoothType = std::clamp(preset.smoothType, 0, 2);
@@ -1611,6 +1716,9 @@ namespace OW { namespace Config {
                 step.jitterMs = std::clamp(step.jitterMs, 0, 50);
             }
             settings.tracking.aimBehavior = ClampAimBehaviorIndex(settings.tracking.aimBehavior);
+            settings.tracking.aimBehaviorPresetId = ClampAimBehaviorPresetId(settings.tracking.aimBehaviorPresetId);
+            if (const AimBehaviorPreset* behaviorPreset = FindAimBehaviorPreset(settings.tracking.aimBehaviorPresetId))
+                settings.tracking.aimBehavior = ClampAimBehaviorIndex(behaviorPreset->behavior);
             settings.tracking.method = ClampAimMethodIndex(settings.tracking.method);
             settings.tracking.smooth = std::clamp(settings.tracking.smooth, 0.0f, 100.0f);
             settings.tracking.speedScale = std::clamp(settings.tracking.speedScale, 0.0f, 100.0f);
@@ -1950,6 +2058,43 @@ namespace OW { namespace Config {
             }
         }
 
+        void ValidateAimCustomPresetsUnlocked()
+        {
+            auto idUsed = [](const auto& presets, int id, size_t beforeIndex) {
+                for (size_t index = 0; index < beforeIndex; ++index) {
+                    if (presets[index].id == id)
+                        return true;
+                }
+                return false;
+            };
+
+            int nextMethodId = NextCustomPresetId(aimMethodPresets);
+            if (aimMethodPresets.size() > static_cast<size_t>(kMaxAimCustomPresets))
+                aimMethodPresets.resize(static_cast<size_t>(kMaxAimCustomPresets));
+            for (size_t index = 0; index < aimMethodPresets.size(); ++index) {
+                if (aimMethodPresets[index].id < 0 || idUsed(aimMethodPresets, aimMethodPresets[index].id, index))
+                    aimMethodPresets[index].id = nextMethodId++;
+                aimMethodPresets[index] = ValidateAimMethodPresetValue(
+                    aimMethodPresets[index],
+                    static_cast<int>(index));
+            }
+
+            int nextBehaviorId = NextCustomPresetId(aimBehaviorPresets);
+            if (aimBehaviorPresets.size() > static_cast<size_t>(kMaxAimCustomPresets))
+                aimBehaviorPresets.resize(static_cast<size_t>(kMaxAimCustomPresets));
+            for (size_t index = 0; index < aimBehaviorPresets.size(); ++index) {
+                if (aimBehaviorPresets[index].id < 0 || idUsed(aimBehaviorPresets, aimBehaviorPresets[index].id, index))
+                    aimBehaviorPresets[index].id = nextBehaviorId++;
+                aimBehaviorPresets[index] = ValidateAimBehaviorPresetValue(
+                    aimBehaviorPresets[index],
+                    static_cast<int>(index));
+            }
+
+            for (int& presetId : aimBehaviorMethodPreset)
+                presetId = ClampAimMethodPresetId(presetId);
+            aimBehaviorPresetId = ClampAimBehaviorPresetId(aimBehaviorPresetId);
+        }
+
         void ResetHeroDefaultsUnlocked()
         {
             // Defaults match Config.hpp inline initializers for per-hero/runtime aim settings.
@@ -2117,6 +2262,7 @@ namespace OW { namespace Config {
         {
             aimMethod = 0;
             aimBehaviorMethod = { 0, 0, 0, 0 };
+            aimBehaviorMethodPreset = { -1, -1, -1, -1 };
             aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
             aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f };
             aimBehaviorMoveSplitEnabled = { true, false, false, true };
@@ -2140,6 +2286,9 @@ namespace OW { namespace Config {
             aimPiecewiseFarScale = 0.75f;
             aimAccelLimitedAcceleration = 0.1f;
             aimConstantAngularSpeedDeg = 30.0f;
+            aimBehaviorPresetId = -1;
+            aimMethodPresets.clear();
+            aimBehaviorPresets.clear();
         }
 
         void ResetGlobalDefaultsUnlocked()
@@ -2244,6 +2393,7 @@ namespace OW { namespace Config {
             if (preset.aimMode < 0 || preset.aimMode > 1)
                 preset.aimMode = 0;
             preset.aimBehavior = aimBehavior;
+            preset.aimBehaviorPresetId = aimBehaviorPresetId;
             preset.aimMethod = AimBehaviorMethod(aimBehavior);
             preset.smoothType = aimbotSmoothType;
             preset.pidP = aimPidP;
@@ -2325,6 +2475,7 @@ namespace OW { namespace Config {
             aimbotTeam = preset.targetTeam;
             aimbotAttack = preset.trigger.action;
             aimBehavior = preset.aimBehavior;
+            aimBehaviorPresetId = preset.aimBehaviorPresetId;
             aimbotSmoothType = preset.smoothType;
             aim_key = preset.key;
             aimbotAutoshot = preset.autoshot;
@@ -2420,6 +2571,11 @@ namespace OW { namespace Config {
                 "aimBehavior",
                 hasAimBehavior ? slot.preset.aimBehavior : slot.preset.aimMode),
                 legacyAimBehaviorValues);
+            slot.preset.aimBehaviorPresetId = ReadInt(
+                ini,
+                section,
+                "aimBehaviorPresetId",
+                slot.preset.aimBehaviorPresetId);
             slot.preset.aimMethod = ReadInt(ini, section, "aimMethod", slot.preset.aimMethod);
             slot.preset.smoothType = ReadInt(ini, section, "aimbotSmoothType", slot.preset.smoothType);
             slot.preset.pidP = ReadFixedFloat(ini, section, "aimPidP", slot.preset.pidP);
@@ -2515,6 +2671,11 @@ namespace OW { namespace Config {
             preset.aimBehavior = NormalizeAimBehaviorForLoad(
                 ReadInt(ini, section, "aimBehavior", preset.aimMode),
                 legacyAimBehaviorValues);
+            preset.aimBehaviorPresetId = ReadInt(
+                ini,
+                section,
+                "aimBehaviorPresetId",
+                preset.aimBehaviorPresetId);
             preset.aimMethod = ReadInt(ini, section, "aimMethod", preset.aimMethod);
             preset.smoothType = ReadInt(ini, section, "aimbotSmoothType", preset.smoothType);
             preset.pidP = ReadFixedFloat(ini, section, "aimPidP", preset.pidP);
@@ -2585,6 +2746,7 @@ namespace OW { namespace Config {
             WritePlainFloatValue(path, section, "hitboxScale", preset.hitbox);
             WriteIntValue(path, section, "aimMode", preset.aimMode);
             WriteIntValue(path, section, "aimBehavior", preset.aimBehavior);
+            WriteIntValue(path, section, "aimBehaviorPresetId", preset.aimBehaviorPresetId);
             WriteIntValue(path, section, "key", preset.key);
             WriteBoolValue(path, section, "aimbotAutoshot", preset.autoshot);
             WriteBoolValue(path, section, "aimbotKeepFiring", preset.keepFiring);
@@ -2691,6 +2853,7 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "hitboxScale", preset.hitbox, allocator);
             AddJsonInt(value, "aimMode", preset.aimMode, allocator);
             AddJsonInt(value, "aimBehavior", preset.aimBehavior, allocator);
+            AddJsonInt(value, "aimBehaviorPresetId", preset.aimBehaviorPresetId, allocator);
             AddJsonInt(value, "key", preset.key, allocator);
             AddJsonBool(value, "autoshot", preset.autoshot, allocator);
             AddJsonBool(value, "keepFiring", preset.keepFiring, allocator);
@@ -2821,6 +2984,7 @@ namespace OW { namespace Config {
             value.AddMember(sequenceStepsKey, sequenceSteps, allocator);
 
             AddJsonInt(value, "trackingAimBehavior", settings.tracking.aimBehavior, allocator);
+            AddJsonInt(value, "trackingAimBehaviorPresetId", settings.tracking.aimBehaviorPresetId, allocator);
             AddJsonFloat(value, "trackingSpeedScale", settings.tracking.speedScale, allocator);
             AddJsonInt(value, "trackingMethod", settings.tracking.method, allocator);
             AddJsonFloat(value, "trackingSmooth", settings.tracking.smooth, allocator);
@@ -3229,6 +3393,10 @@ namespace OW { namespace Config {
 
             defaults.tracking.aimBehavior = ClampAimBehaviorIndex(
                 ReadJsonInt(value, "trackingAimBehavior", defaults.tracking.aimBehavior));
+            defaults.tracking.aimBehaviorPresetId = ReadJsonInt(
+                value,
+                "trackingAimBehaviorPresetId",
+                defaults.tracking.aimBehaviorPresetId);
             defaults.tracking.speedScale = ReadJsonFloat(
                 value,
                 "trackingSpeedScale",
@@ -3584,6 +3752,10 @@ namespace OW { namespace Config {
             defaults.aimBehavior = NormalizeAimBehaviorForLoad(
                 ReadJsonInt(value, "aimBehavior", hasAimBehavior ? defaults.aimBehavior : defaults.aimMode),
                 legacyAimBehaviorValues);
+            defaults.aimBehaviorPresetId = ReadJsonInt(
+                value,
+                "aimBehaviorPresetId",
+                defaults.aimBehaviorPresetId);
             defaults.aimMethod = ReadJsonInt(value, "aimMethod", defaults.aimMethod);
             defaults.smoothType = ReadJsonInt(value, "smoothType", defaults.smoothType);
             defaults.pidP = ReadJsonFloat(value, "pidP", defaults.pidP);
@@ -4302,6 +4474,81 @@ namespace OW { namespace Config {
             triggerbotLastFireTick2 = 0;
         }
 
+        AimMethodPreset ReadAimMethodPresetSection(const IniFile& ini, const char* section, int fallbackIndex)
+        {
+            AimMethodPreset preset{};
+            preset.id = ReadInt(ini, section, "id", fallbackIndex + 1);
+            preset.name = ReadString(ini, section, "name", NormalizeAimPresetName("", "Method Preset", fallbackIndex).c_str());
+            preset.method = ReadInt(ini, section, "method", preset.method);
+            preset.angularSpeedScale = ReadFixedFloat(ini, section, "angularSpeedScale", preset.angularSpeedScale);
+            preset.pidP = ReadFixedFloat(ini, section, "pidP", preset.pidP);
+            preset.pidI = ReadFixedFloat(ini, section, "pidI", preset.pidI);
+            preset.pidD = ReadFixedFloat(ini, section, "pidD", preset.pidD);
+            preset.pidMaxIntegral = ReadFixedFloat(ini, section, "pidMaxIntegral", preset.pidMaxIntegral);
+            preset.pidDeadzone = ReadFixedFloat(ini, section, "pidDeadzone", preset.pidDeadzone);
+            preset.bezierControlPoints = ReadInt(ini, section, "bezierControlPoints", preset.bezierControlPoints);
+            preset.bezierCurvature = ReadFixedFloat(ini, section, "bezierCurvature", preset.bezierCurvature);
+            preset.bezierSpeed = ReadFixedFloat(ini, section, "bezierSpeed", preset.bezierSpeed);
+            preset.piecewiseNearDegrees = ReadFixedFloat(ini, section, "piecewiseNearDegrees", preset.piecewiseNearDegrees);
+            preset.piecewiseMidDegrees = ReadFixedFloat(ini, section, "piecewiseMidDegrees", preset.piecewiseMidDegrees);
+            preset.piecewiseFarDegrees = ReadFixedFloat(ini, section, "piecewiseFarDegrees", preset.piecewiseFarDegrees);
+            preset.piecewiseNearScale = ReadFixedFloat(ini, section, "piecewiseNearScale", preset.piecewiseNearScale);
+            preset.piecewiseMidScale = ReadFixedFloat(ini, section, "piecewiseMidScale", preset.piecewiseMidScale);
+            preset.piecewiseFarScale = ReadFixedFloat(ini, section, "piecewiseFarScale", preset.piecewiseFarScale);
+            preset.accelLimitedAcceleration = ReadFixedFloat(ini, section, "accelLimitedAcceleration", preset.accelLimitedAcceleration);
+            preset.constantAngularSpeedDeg = ReadFixedFloat(ini, section, "constantAngularSpeedDeg", preset.constantAngularSpeedDeg);
+            return ValidateAimMethodPresetValue(preset, fallbackIndex);
+        }
+
+        AimBehaviorPreset ReadAimBehaviorPresetSection(const IniFile& ini, const char* section, int fallbackIndex)
+        {
+            AimBehaviorPreset preset{};
+            preset.id = ReadInt(ini, section, "id", fallbackIndex + 1);
+            preset.name = ReadString(ini, section, "name", NormalizeAimPresetName("", "Behavior Preset", fallbackIndex).c_str());
+            preset.behavior = ReadInt(ini, section, "behavior", preset.behavior);
+            preset.method = ReadInt(ini, section, "method", preset.method);
+            preset.methodPresetId = ReadInt(ini, section, "methodPresetId", preset.methodPresetId);
+            preset.baseSpeed = ReadFixedFloat(ini, section, "baseSpeed", preset.baseSpeed);
+            preset.moveSplitEnabled = ReadBool(ini, section, "moveSplitEnabled", preset.moveSplitEnabled);
+            preset.moveSplitMaxPixels = ReadInt(ini, section, "moveSplitMaxPixels", preset.moveSplitMaxPixels);
+            preset.moveSplitDelayUs = ReadInt(ini, section, "moveSplitDelayUs", preset.moveSplitDelayUs);
+            return ValidateAimBehaviorPresetValue(preset, fallbackIndex);
+        }
+
+        void LoadAimCustomPresetsUnlocked(const IniFile& ini)
+        {
+            constexpr const char* section = kAimMethodSection;
+            const int methodPresetCount = std::clamp(
+                ReadInt(ini, section, "methodPresetCount", 0),
+                0,
+                kMaxAimCustomPresets);
+            aimMethodPresets.clear();
+            aimMethodPresets.reserve(static_cast<size_t>(methodPresetCount));
+            for (int index = 0; index < methodPresetCount; ++index) {
+                char presetSection[64] = {};
+                std::snprintf(presetSection, sizeof(presetSection), "AimMethodPreset.%d", index);
+                if (!SectionExists(ini, presetSection))
+                    continue;
+                aimMethodPresets.push_back(ReadAimMethodPresetSection(ini, presetSection, index));
+            }
+            ValidateAimCustomPresetsUnlocked();
+
+            const int behaviorPresetCount = std::clamp(
+                ReadInt(ini, section, "behaviorPresetCount", 0),
+                0,
+                kMaxAimCustomPresets);
+            aimBehaviorPresets.clear();
+            aimBehaviorPresets.reserve(static_cast<size_t>(behaviorPresetCount));
+            for (int index = 0; index < behaviorPresetCount; ++index) {
+                char presetSection[64] = {};
+                std::snprintf(presetSection, sizeof(presetSection), "AimBehaviorPreset.%d", index);
+                if (!SectionExists(ini, presetSection))
+                    continue;
+                aimBehaviorPresets.push_back(ReadAimBehaviorPresetSection(ini, presetSection, index));
+            }
+            ValidateAimCustomPresetsUnlocked();
+        }
+
         void LoadAimMethodSettingsUnlocked(const IniFile& ini)
         {
             constexpr const char* section = kAimMethodSection;
@@ -4316,6 +4563,12 @@ namespace OW { namespace Config {
                 "flickBaseSpeed",
                 "flick2ndBaseSpeed",
                 "reacquireBaseSpeed"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> methodPresetKeys = {
+                "trackingMethodPresetId",
+                "flickMethodPresetId",
+                "flick2ndMethodPresetId",
+                "reacquireMethodPresetId"
             };
             constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
                 "trackingAcceleration",
@@ -4399,6 +4652,10 @@ namespace OW { namespace Config {
                     ReadFixedFloat(ini, section, "flickClampAcceleration", aimBehaviorAcceleration[static_cast<size_t>(kAimBehaviorFlick2nd)]);
             for (size_t index = 0; index < aimMethodAngularSpeedScale.size(); ++index)
                 aimMethodAngularSpeedScale[index] = ReadFixedFloat(ini, section, angularSpeedKeys[index], 100.0f);
+            LoadAimCustomPresetsUnlocked(ini);
+            for (size_t index = 0; index < aimBehaviorMethodPreset.size(); ++index)
+                aimBehaviorMethodPreset[index] = ReadInt(ini, section, methodPresetKeys[index], -1);
+            aimBehaviorPresetId = ReadInt(ini, section, "aimBehaviorPresetId", aimBehaviorPresetId);
             secondaryAimMethodOverride[0] = ReadInt(
                 ini, section, "secondaryTrackingMethod", secondaryAimMethodOverride[0]);
             secondaryAimMethodOverride[1] = ReadInt(
@@ -4471,6 +4728,70 @@ namespace OW { namespace Config {
             WriteBoolValue(path, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
         }
 
+        void WriteAimMethodPresetSection(const std::string& path,
+                                         const char* section,
+                                         const AimMethodPreset& rawPreset,
+                                         int fallbackIndex)
+        {
+            const AimMethodPreset preset = ValidateAimMethodPresetValue(rawPreset, fallbackIndex);
+            WriteIntValue(path, section, "id", preset.id);
+            WriteStringValue(path, section, "name", preset.name.c_str());
+            WriteIntValue(path, section, "method", preset.method);
+            WriteFixedFloatValue(path, section, "angularSpeedScale", preset.angularSpeedScale);
+            WriteFixedFloatValue(path, section, "pidP", preset.pidP);
+            WriteFixedFloatValue(path, section, "pidI", preset.pidI);
+            WriteFixedFloatValue(path, section, "pidD", preset.pidD);
+            WriteFixedFloatValue(path, section, "pidMaxIntegral", preset.pidMaxIntegral);
+            WriteFixedFloatValue(path, section, "pidDeadzone", preset.pidDeadzone);
+            WriteIntValue(path, section, "bezierControlPoints", preset.bezierControlPoints);
+            WriteFixedFloatValue(path, section, "bezierCurvature", preset.bezierCurvature);
+            WriteFixedFloatValue(path, section, "bezierSpeed", preset.bezierSpeed);
+            WriteFixedFloatValue(path, section, "piecewiseNearDegrees", preset.piecewiseNearDegrees);
+            WriteFixedFloatValue(path, section, "piecewiseMidDegrees", preset.piecewiseMidDegrees);
+            WriteFixedFloatValue(path, section, "piecewiseFarDegrees", preset.piecewiseFarDegrees);
+            WriteFixedFloatValue(path, section, "piecewiseNearScale", preset.piecewiseNearScale);
+            WriteFixedFloatValue(path, section, "piecewiseMidScale", preset.piecewiseMidScale);
+            WriteFixedFloatValue(path, section, "piecewiseFarScale", preset.piecewiseFarScale);
+            WriteFixedFloatValue(path, section, "accelLimitedAcceleration", preset.accelLimitedAcceleration);
+            WriteFixedFloatValue(path, section, "constantAngularSpeedDeg", preset.constantAngularSpeedDeg);
+        }
+
+        void WriteAimBehaviorPresetSection(const std::string& path,
+                                           const char* section,
+                                           const AimBehaviorPreset& rawPreset,
+                                           int fallbackIndex)
+        {
+            const AimBehaviorPreset preset = ValidateAimBehaviorPresetValue(rawPreset, fallbackIndex);
+            WriteIntValue(path, section, "id", preset.id);
+            WriteStringValue(path, section, "name", preset.name.c_str());
+            WriteIntValue(path, section, "behavior", preset.behavior);
+            WriteIntValue(path, section, "method", preset.method);
+            WriteIntValue(path, section, "methodPresetId", preset.methodPresetId);
+            WriteFixedFloatValue(path, section, "baseSpeed", preset.baseSpeed);
+            WriteBoolValue(path, section, "moveSplitEnabled", preset.moveSplitEnabled);
+            WriteIntValue(path, section, "moveSplitMaxPixels", preset.moveSplitMaxPixels);
+            WriteIntValue(path, section, "moveSplitDelayUs", preset.moveSplitDelayUs);
+        }
+
+        void SaveAimCustomPresetsUnlocked(const std::string& path)
+        {
+            ValidateAimCustomPresetsUnlocked();
+            constexpr const char* section = kAimMethodSection;
+            WriteIntValue(path, section, "methodPresetCount", static_cast<int>(aimMethodPresets.size()));
+            for (size_t index = 0; index < aimMethodPresets.size(); ++index) {
+                char presetSection[64] = {};
+                std::snprintf(presetSection, sizeof(presetSection), "AimMethodPreset.%zu", index);
+                WriteAimMethodPresetSection(path, presetSection, aimMethodPresets[index], static_cast<int>(index));
+            }
+
+            WriteIntValue(path, section, "behaviorPresetCount", static_cast<int>(aimBehaviorPresets.size()));
+            for (size_t index = 0; index < aimBehaviorPresets.size(); ++index) {
+                char presetSection[64] = {};
+                std::snprintf(presetSection, sizeof(presetSection), "AimBehaviorPreset.%zu", index);
+                WriteAimBehaviorPresetSection(path, presetSection, aimBehaviorPresets[index], static_cast<int>(index));
+            }
+        }
+
         void SaveAimMethodSettingsUnlocked(const std::string& path)
         {
             constexpr const char* section = kAimMethodSection;
@@ -4485,6 +4806,12 @@ namespace OW { namespace Config {
                 "flickBaseSpeed",
                 "flick2ndBaseSpeed",
                 "reacquireBaseSpeed"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> methodPresetKeys = {
+                "trackingMethodPresetId",
+                "flickMethodPresetId",
+                "flick2ndMethodPresetId",
+                "reacquireMethodPresetId"
             };
             constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
                 "trackingAcceleration",
@@ -4536,23 +4863,29 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "aimPiecewiseFarScale", AimPiecewiseFarScale());
             WriteFixedFloatValue(path, section, "aimAccelLimitedAcceleration", AimMethodAcceleration(4));
             WriteFixedFloatValue(path, section, "aimConstantAngularSpeedDeg", AimConstantAngularSpeedDeg());
+            WriteIntValue(path, section, "aimBehaviorPresetId", ClampAimBehaviorPresetId(aimBehaviorPresetId));
 
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
-                WriteIntValue(path, section, methodKeys[index], AimBehaviorMethod(static_cast<int>(index)));
-                WriteFixedFloatValue(path, section, speedKeys[index], AimBehaviorBaseSpeed(static_cast<int>(index)));
+                WriteIntValue(path, section, methodKeys[index], ClampAimMethodIndex(aimBehaviorMethod[index]));
+                WriteIntValue(path, section, methodPresetKeys[index], ClampAimMethodPresetId(aimBehaviorMethodPreset[index]));
+                const float baseSpeed = std::isfinite(aimBehaviorBaseSpeed[index])
+                    ? std::clamp(aimBehaviorBaseSpeed[index], 0.0f, 100.0f)
+                    : 100.0f;
+                WriteFixedFloatValue(path, section, speedKeys[index], baseSpeed);
                 const float legacyAcceleration = std::isfinite(aimBehaviorAcceleration[index])
                     ? std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f)
                     : 0.1f;
                 WriteFixedFloatValue(path, section, accelerationKeys[index], legacyAcceleration);
-                WriteBoolValue(path, section, splitEnabledKeys[index], AimBehaviorMoveSplitEnabled(static_cast<int>(index)));
-                WriteIntValue(path, section, splitMaxPixelsKeys[index], AimBehaviorMoveSplitMaxPixels(static_cast<int>(index)));
-                WriteIntValue(path, section, splitDelayUsKeys[index], AimBehaviorMoveSplitDelayUs(static_cast<int>(index)));
+                WriteBoolValue(path, section, splitEnabledKeys[index], aimBehaviorMoveSplitEnabled[index]);
+                WriteIntValue(path, section, splitMaxPixelsKeys[index], ClampMoveSplitMaxPixels(aimBehaviorMoveSplitMaxPixels[index]));
+                WriteIntValue(path, section, splitDelayUsKeys[index], ClampMoveSplitDelayUs(aimBehaviorMoveSplitDelayUs[index]));
             }
             for (size_t index = 0; index < aimMethodAngularSpeedScale.size(); ++index)
                 WriteFixedFloatValue(path, section, angularSpeedKeys[index],
                     AimMethodAngularSpeedScale(static_cast<int>(index)) * 100.0f);
             WriteIntValue(path, section, "secondaryTrackingMethod", ClampAimMethodOverride(secondaryAimMethodOverride[0]));
             WriteIntValue(path, section, "secondaryFlickMethod", ClampAimMethodOverride(secondaryAimMethodOverride[1]));
+            SaveAimCustomPresetsUnlocked(path);
         }
 
         void LoadGlobalSettingsUnlocked(const IniFile& ini)
@@ -4797,7 +5130,7 @@ namespace OW { namespace Config {
             ClampFloatSetting("aimPiecewiseMidScale", aimPiecewiseMidScale, 0.0f, 1.0f, 0.45f);
             ClampFloatSetting("aimPiecewiseFarScale", aimPiecewiseFarScale, 0.0f, 1.0f, 0.75f);
             ClampFloatSetting("aimAccelLimitedAcceleration", aimAccelLimitedAcceleration, 0.0f, 20.0f, 0.1f);
-            ClampFloatSetting("aimConstantAngularSpeedDeg", aimConstantAngularSpeedDeg, 0.0f, 720.0f, 30.0f);
+            ClampFloatSetting("aimConstantAngularSpeedDeg", aimConstantAngularSpeedDeg, 0.0f, kAimConstantAngularSpeedMaxDeg, 30.0f);
             ClampFloatSetting("aimbotStickiness", aimbotStickiness, 0.0f, 100.0f, 100.0f);
             ClampFloatSetting("aimbotSmoothY", aimbotSmoothY, 0.0f, 100.0f, 50.0f);
             ClampFloatSetting("aimbotPitchScale", aimbotPitchScale, 0.1f, 3.0f, 1.0f);
@@ -4865,6 +5198,7 @@ namespace OW { namespace Config {
             ClampSetting("aimMethod", aimMethod, 0, kAimMethodCount - 1, 0);
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
                 aimBehaviorMethod[index] = ClampAimMethodIndex(aimBehaviorMethod[index]);
+                aimBehaviorMethodPreset[index] = ClampAimMethodPresetId(aimBehaviorMethodPreset[index]);
                 if (!std::isfinite(aimBehaviorBaseSpeed[index]))
                     aimBehaviorBaseSpeed[index] = 100.0f;
                 if (!std::isfinite(aimBehaviorAcceleration[index]))
@@ -4881,9 +5215,13 @@ namespace OW { namespace Config {
             }
             for (int& method : secondaryAimMethodOverride)
                 method = ClampAimMethodOverride(method);
+            ValidateAimCustomPresetsUnlocked();
             ClampSetting("aimbotSmoothType", aimbotSmoothType, 0, 2, 0);
             ClampSetting("aimbotPredictionMode", aimbotPredictionMode, 0, 2, 0);
             aimBehavior = ClampAimBehaviorIndex(aimBehavior);
+            aimBehaviorPresetId = ClampAimBehaviorPresetId(aimBehaviorPresetId);
+            if (const AimBehaviorPreset* behaviorPreset = FindAimBehaviorPreset(aimBehaviorPresetId))
+                aimBehavior = ClampAimBehaviorIndex(behaviorPreset->behavior);
             ClampSetting("aimbotFirePolicy", aimbotFirePolicy, 0, 5, 1);
             aimbotTwoStage = IsFlick2ndBehavior(aimBehavior);
             aimbotTwoStageTriggerGate = aimbotFlick2ndTriggerGate;

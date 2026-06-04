@@ -4839,7 +4839,7 @@ namespace AimbotDetail {
             ? OW::Config::ClampAimMethodIndex(methodOverride)
             : OW::Config::AimBehaviorMethod(behavior);
         const float dispatchAcceleration = dispatchMethod == 4
-            ? OW::Config::AimMethodAcceleration(dispatchMethod)
+            ? OW::Config::RuntimeAimMethodAcceleration(dispatchMethod)
             : (accelerated ? acceleration : 0.0f);
         data.smoothed_angle = OW::SmoothDispatchWithMethod(
             data.local_angle,
@@ -4847,7 +4847,7 @@ namespace AimbotDetail {
             smooth,
             dispatchAcceleration,
             dispatchMethod,
-            bezierSpeedOverride > 0.0f ? bezierSpeedOverride : OW::Config::aimBezierSpeed
+            bezierSpeedOverride
         );
         const Vector3 rawDelta = data.target_angle - data.local_angle;
         const Vector3 smoothDelta = data.smoothed_angle - data.local_angle;
@@ -6156,7 +6156,7 @@ namespace AimbotDetail {
                         vec,
                         false,
                         OW::Config::AimBehaviorSmoothInput(0, OW::Config::Tracking_smooth2),
-                        OW::Config::AimMethodAcceleration(method),
+                        OW::Config::RuntimeAimMethodAcceleration(method),
                         method);
                 } else if (OW::Config::Flick2) {
                     const int method = OW::Config::SecondaryAimMethod(1);
@@ -6164,7 +6164,7 @@ namespace AimbotDetail {
                         vec,
                         true,
                         OW::Config::AimBehaviorSmoothInput(1, OW::Config::Flick_smooth2),
-                        OW::Config::AimMethodAcceleration(method),
+                        OW::Config::RuntimeAimMethodAcceleration(method),
                         method);
                 } else
                     aim = BuildAimData(vec, false, 1.0f, 0.0f);
