@@ -52,6 +52,7 @@ namespace HeroSkillControls {
     inline constexpr HeroSkillControlFlags Bone = 1u << 18;
     inline constexpr HeroSkillControlFlags Hitbox = 1u << 19;
     inline constexpr HeroSkillControlFlags HealthAbsolute = 1u << 20;
+    inline constexpr HeroSkillControlFlags ComboAction = 1u << 21;
 }
 
 namespace HeroSkillHotkey {
@@ -272,6 +273,37 @@ inline Config::HeroSkillSettings MakeFrejaSequenceSetDefaults()
         { 0x02, 180 },
         { 0x00, 180 },
     };
+    return settings;
+}
+
+inline Config::HeroSkillSettings MakeGenjiDashComboDefaults()
+{
+    Config::HeroSkillSettings settings{};
+    settings.enabled = false;
+    settings.key = HeroSkillHotkey::Mouse4;
+    settings.healthThreshold = 50.0f;
+    settings.enemyHealthThreshold = 100.0f;
+    settings.allyHealthThreshold = 50.0f;
+    settings.distance = 20.0f;
+    settings.mode = 0;
+    settings.cooldown = 0.0f;
+    settings.cooldownGuard = true;
+    settings.prediction = true;
+    settings.minTargets = 1;
+    settings.radius = 0.0f;
+    settings.tracking = {
+        Config::kAimBehaviorFlick,
+        0,
+        0.0f,
+        100.0f,
+        30.0f,
+        Config::kAimBoneHead,
+        Config::kDefaultHitboxScalePercent
+    };
+    settings.projectileSpeed = 75.0f;
+    settings.projectileRadius = 0.125f;
+    settings.projectileGravity = false;
+    settings.preFireDelayMs = 0.0f;
     return settings;
 }
 
@@ -570,6 +602,21 @@ inline const HeroSkillDefinition kHeroSkillDefinitions[] = {
             HeroSkillControls::Distance | HeroSkillControls::CooldownGuard |
             HeroSkillControls::Cooldown,
         { false, HeroSkillHotkey::Space, 50.0f, 50.0f, 50.0f, 7.85f, 0, 4.0f, true, false, 1, 0.0f }
+    },
+    {
+        OW::eHero::HERO_GENJI,
+        "genji",
+        "dash-combo",
+        "Dash Combo",
+        "swift-strike",
+        HeroSkillInputAction::Ability1,
+        HeroSkillCategory::Skill,
+        HeroSkillControls::Enabled | HeroSkillControls::Key |
+            HeroSkillControls::EnemyHealthThreshold | HeroSkillControls::Distance |
+            HeroSkillControls::CooldownGuard | HeroSkillControls::Prediction |
+            HeroSkillControls::Cooldown | HeroSkillControls::TrackingOverlay |
+            HeroSkillControls::ComboAction,
+        MakeGenjiDashComboDefaults()
     },
     {
         OW::eHero::HERO_GENJI,

@@ -21,6 +21,7 @@
 #include "Game/AbilityIcons.hpp"
 #include "Game/HeroSkills.hpp"
 #include "Game/Target.hpp"
+#include "Kmbox/KmBoxMock.h"
 #include "Renderer/IconManager.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Utils/Config.hpp"
@@ -3918,8 +3919,8 @@ namespace AimbotDetail {
             DWORD lastLogTick = 0;
         };
 
-        static LastLogState lastStates[3]{};
-        const int stateIndex = (sourceType >= 0 && sourceType < 3) ? sourceType : 0;
+        static LastLogState lastStates[4]{};
+        const int stateIndex = (sourceType >= 0 && sourceType < 4) ? sourceType : 0;
         LastLogState& state = lastStates[stateIndex];
 
         const DWORD now = GetTickCount();
@@ -3934,13 +3935,23 @@ namespace AimbotDetail {
                 sourceLabel = "kmbox_monitor";
             else if (sourceType == 2)
                 sourceLabel = "dma_keystate";
+            else if (sourceType == 3)
+                sourceLabel = "mock_hardware";
+
+            const bool mockSource = sourceType == 3;
+            const int monitorRunning = mockSource
+                ? (kmbox::MockHardwareMgr.IsInitialized() ? 1 : 0)
+                : (kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0);
+            const unsigned long long monitorPackets = mockSource
+                ? kmbox::MockHardwareMgr.InputPacketCount()
+                : kmbox::KmBoxMgr.KeyBoard.InputPacketCount();
 
             Diagnostics::Aim("hotkey state keySetting=%d vk=0x%X source=%s monitorRunning=%d monitorPackets=%llu pressed=%d",
                 keySetting,
                 vk,
                 sourceLabel,
-                kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0,
-                kmbox::KmBoxMgr.KeyBoard.InputPacketCount(),
+                monitorRunning,
+                monitorPackets,
                 pressed ? 1 : 0);
             state.initialized = true;
             state.keySetting = keySetting;
@@ -3957,6 +3968,12 @@ namespace AimbotDetail {
             kmbox::KmBoxMgr.KeyBoard.InputPacketCount() > 0;
     }
 
+    inline bool IsMockHardwareAvailable() {
+        return OW::Config::kmboxEnabled &&
+            OW::Config::kmboxDeviceType == 2 &&
+            kmbox::MockHardwareMgr.IsInitialized();
+    }
+
     inline bool ReadKmBoxMonitorVk(int vk, int keySetting) {
         bool pressed = false;
         if (IsMouseActivationKey(vk))
@@ -3965,6 +3982,12 @@ namespace AimbotDetail {
             pressed = kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
 
         LogAimKeyState(keySetting, vk, 1, pressed);
+        return pressed;
+    }
+
+    inline bool ReadMockHardwareVk(int vk, int keySetting) {
+        const bool pressed = kmbox::MockHardwareMgr.IsVkDown(vk);
+        LogAimKeyState(keySetting, vk, 3, pressed);
         return pressed;
     }
 
@@ -4034,6 +4057,15 @@ namespace AimbotDetail {
             return false;
         }
 
+        if (OW::Config::inputSource == 4 ||
+            (OW::Config::inputSource == 1 && OW::Config::kmboxDeviceType == 2)) {
+            if (!IsMockHardwareAvailable()) {
+                LogAimKeyState(keySetting, vk, 3, false);
+                return false;
+            }
+            return ReadMockHardwareVk(vk, keySetting);
+        }
+
         if (OW::Config::inputSource == 1) {
             if (!IsKmBoxMonitorAvailable()) {
                 LogAimKeyState(keySetting, vk, 1, false);
@@ -4051,6 +4083,9 @@ namespace AimbotDetail {
 
         // Auto is only a fallback mode. If KMBox monitor is running, trust it
         // exclusively so a released KMBox key cannot be overridden by local/DMA.
+        if (IsMockHardwareAvailable())
+            return ReadMockHardwareVk(vk, keySetting);
+
         if (IsKmBoxMonitorAvailable())
             return ReadKmBoxMonitorVk(vk, keySetting);
 
@@ -4061,6 +4096,10 @@ namespace AimbotDetail {
         if (IsMouseActivationKey(vk))
             return kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
         return kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
+    }
+
+    inline bool ReadMockHardwareVkQuiet(int vk) {
+        return kmbox::MockHardwareMgr.IsVkDown(vk);
     }
 
     inline bool ReadDmaKeyStateVkQuiet(int vk) {
@@ -4082,6 +4121,13 @@ namespace AimbotDetail {
         if (vk <= 0)
             return false;
 
+        if (OW::Config::inputSource == 4 ||
+            (OW::Config::inputSource == 1 && OW::Config::kmboxDeviceType == 2)) {
+            if (IsMockHardwareAvailable())
+                return ReadMockHardwareVkQuiet(vk);
+            return false;
+        }
+
         if (OW::Config::inputSource == 1) {
             if (IsKmBoxMonitorAvailable())
                 return ReadKmBoxMonitorVkQuiet(vk);
@@ -4093,6 +4139,9 @@ namespace AimbotDetail {
 
         if (OW::Config::inputSource == 2)
             return ReadLocalAsyncKeyStateVkQuiet(vk);
+
+        if (IsMockHardwareAvailable())
+            return ReadMockHardwareVkQuiet(vk);
 
         if (IsKmBoxMonitorAvailable())
             return ReadKmBoxMonitorVkQuiet(vk);
@@ -4248,7 +4297,8 @@ namespace AimbotDetail {
     }
 
     inline void RecoverMouseAfterMaskedRelease(const char* reason, int button = 0) {
-        if (!OW::Config::kmboxEnabled || OW::Config::kmboxDeviceType != 0)
+        if (!OW::Config::kmboxEnabled ||
+            (OW::Config::kmboxDeviceType != 0 && OW::Config::kmboxDeviceType != 2))
             return;
 
         Diagnostics::Aim("fire.recover_mouse reason=%s button=%d stage=force_release",
@@ -4260,7 +4310,8 @@ namespace AimbotDetail {
     }
 
     inline void RecoverHanzoPostFireMouseState() {
-        if (!OW::Config::kmboxEnabled || OW::Config::kmboxDeviceType != 0)
+        if (!OW::Config::kmboxEnabled ||
+            (OW::Config::kmboxDeviceType != 0 && OW::Config::kmboxDeviceType != 2))
             return;
 
         RecoverMouseAfterMaskedRelease("hanzo_post_fire", 0);

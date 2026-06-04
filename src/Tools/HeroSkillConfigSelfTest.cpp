@@ -36,6 +36,7 @@ int main()
     const OW::HeroSkillDefinition* sigmaAccretion = nullptr;
     const OW::HeroSkillDefinition* zaryaPropelJump = nullptr;
     const OW::HeroSkillDefinition* zaryaLowAmmoRightClick = nullptr;
+    const OW::HeroSkillDefinition* genjiDashCombo = nullptr;
     const OW::HeroSkillDefinition* tracerAutoMelee = nullptr;
     size_t autoMeleeDefinitions = 0;
     for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
@@ -82,6 +83,9 @@ int main()
         } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ZARYA) &&
                    skillId == "reload-ammo-probe") {
             zaryaLowAmmoRightClick = &definition;
+        } else if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_GENJI) &&
+                   skillId == "dash-combo") {
+            genjiDashCombo = &definition;
         }
 
         if (skillId == "auto-melee") {
@@ -98,7 +102,7 @@ int main()
         !brigitteWhipShot || !sigmaAccretion)
         return Fail();
     if (!tracerRecall || !reaperWraithForm || !zenyattaTranscendence ||
-        !zaryaPropelJump || !zaryaLowAmmoRightClick)
+        !zaryaPropelJump || !zaryaLowAmmoRightClick || !genjiDashCombo)
         return Fail();
     if (!tracerAutoMelee)
         return Fail();
@@ -220,6 +224,27 @@ int main()
         return Fail();
     }
     if (zaryaLowAmmoRightClick->defaultSettings.key != OW::HeroSkillHotkey::RightMouse)
+        return Fail();
+
+    if (!OW::HasHeroSkillControl(*genjiDashCombo, OW::HeroSkillControls::ComboAction))
+        return Fail();
+    if (!OW::HasHeroSkillControl(*genjiDashCombo, OW::HeroSkillControls::TrackingOverlay))
+        return Fail();
+    if (!OW::HasHeroSkillControl(*genjiDashCombo, OW::HeroSkillControls::Prediction))
+        return Fail();
+    if (genjiDashCombo->defaultSettings.key != OW::HeroSkillHotkey::Mouse4)
+        return Fail();
+    if (!NearlyEqual(genjiDashCombo->defaultSettings.distance, 20.0f))
+        return Fail();
+    if (!NearlyEqual(genjiDashCombo->defaultSettings.enemyHealthThreshold, 100.0f))
+        return Fail();
+    if (genjiDashCombo->defaultSettings.tracking.aimBehavior != OW::Config::kAimBehaviorFlick)
+        return Fail();
+    if (genjiDashCombo->defaultSettings.tracking.bone != OW::Config::kAimBoneHead)
+        return Fail();
+    if (!NearlyEqual(genjiDashCombo->defaultSettings.projectileSpeed, 75.0f))
+        return Fail();
+    if (!NearlyEqual(genjiDashCombo->defaultSettings.projectileRadius, 0.125f))
         return Fail();
 
     if (!OW::HasHeroSkillControl(*tracerAutoMelee, OW::HeroSkillControls::EnemyHealthAbsolute))

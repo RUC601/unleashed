@@ -4750,7 +4750,7 @@ namespace OW { namespace Config {
             ClampSetting("aim_key2", aim_key2, 0, MaxActivationKeyIndex(), 1);
             ClampSetting("togglekey", togglekey, 0, 54, 0);
             ClampSetting("MenuToggleKey", MenuToggleKey, 1, 255, VK_HOME);
-            ClampSetting("inputSource", inputSource, 0, 3, 1);
+            ClampSetting("inputSource", inputSource, 0, 4, 1);
             ClampSetting("aimDryRunLogIntervalMs", aimDryRunLogIntervalMs, 50, 1000, 100);
             ClampSetting("ultimateDisplayMode", ultimateDisplayMode, 0, 2, 0);
             ClampSetting("skillDisplayMode", skillDisplayMode, 0, 2, 0);
@@ -4897,7 +4897,7 @@ namespace OW { namespace Config {
             ClampSetting("aimbotAttack", aimbotAttack, 0, 7, 0);
             ClampSetting("aimbotTeam", aimbotTeam, 0, 2, 0);
             ClampSetting("aimbotPriority", aimbotPriority, 0, 2, 0);
-            ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 1, 0);
+            ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 2, 0);
             ClampSetting("kmboxPort", kmboxPort, 1, 65535, kDefaultKmboxPort);
             const int fallbackMonitorPort = (kmboxPort >= 1 && kmboxPort < 65535)
                 ? kmboxPort + 1

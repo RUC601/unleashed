@@ -4,6 +4,7 @@
 
 #include "Features/UI.hpp"
 #include "Kmbox/KmBoxConfig.h"
+#include "Kmbox/KmBoxMock.h"
 #include "Kmbox/KmBoxNetManager.h"
 #include "Kmbox/KmboxB.h"
 #include "Kmbox/KmboxMoveTest.h"
@@ -79,6 +80,13 @@ namespace {
             kmbox::KmBoxMgr.KeyBoard.InputPacketCount() > 0;
     }
 
+    bool MockHardwareAvailable()
+    {
+        return OW::Config::kmboxEnabled &&
+            OW::Config::kmboxDeviceType == 2 &&
+            kmbox::MockHardwareMgr.IsInitialized();
+    }
+
     bool DmaKeyStateAvailable()
     {
         return KeyState::initialized.load() && KeyState::gafAsyncKeyStateAddr.load() != 0;
@@ -99,10 +107,17 @@ namespace {
         return KmboxMonitorAvailable() && kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
     }
 
+    bool ReadMockMouseButton(int vk)
+    {
+        return MockHardwareAvailable() && kmbox::MockHardwareMgr.IsVkDown(vk);
+    }
+
     bool ReadRecorderMouseButton(int vk)
     {
         switch (OW::Config::inputSource) {
         case 1:
+            if (MockHardwareAvailable())
+                return ReadMockMouseButton(vk);
             if (KmboxMonitorAvailable())
                 return ReadKmboxMouseButton(vk);
             return ReadDmaMouseButton(vk) || ReadLocalMouseButton(vk);
@@ -110,7 +125,11 @@ namespace {
             return ReadLocalMouseButton(vk);
         case 3:
             return ReadDmaMouseButton(vk);
+        case 4:
+            return ReadMockMouseButton(vk);
         default:
+            if (MockHardwareAvailable())
+                return ReadMockMouseButton(vk);
             if (KmboxMonitorAvailable())
                 return ReadKmboxMouseButton(vk);
             return ReadDmaMouseButton(vk) || ReadLocalMouseButton(vk);
@@ -119,12 +138,18 @@ namespace {
 
     const char* RecorderInputSourceName()
     {
+        if (OW::Config::inputSource == 1 && MockHardwareAvailable())
+            return "mock_hardware";
         if (OW::Config::inputSource == 1)
             return KmboxMonitorAvailable() ? "kmbox_monitor" : "kmbox_fallback_dma_or_local";
         if (OW::Config::inputSource == 2)
             return "local_GetAsyncKeyState";
         if (OW::Config::inputSource == 3)
             return "dma_keystate";
+        if (OW::Config::inputSource == 4)
+            return "mock_hardware";
+        if (MockHardwareAvailable())
+            return "auto_mock_hardware";
         return KmboxMonitorAvailable() ? "auto_kmbox_monitor" : "auto_dma_or_local";
     }
 
@@ -598,6 +623,12 @@ namespace {
 
     KmboxConnectionTestResult TestKmboxConnection()
     {
+        if (OW::Config::kmboxDeviceType == 2) {
+            if (!kmbox::MockHardwareMgr.IsInitialized())
+                kmbox::MockHardwareMgr.Initialize();
+            return { true, "Mock ready" };
+        }
+
         return OW::Config::kmboxDeviceType == 0
             ? TestNetworkKmboxConnection()
             : TestSerialKmboxConnection();
@@ -607,6 +638,19 @@ namespace {
     {
         if (!OW::Config::kmboxEnabled)
             return { false, "Disabled" };
+
+        if (OW::Config::kmboxDeviceType == 2) {
+            const int status = kmbox::MockHardwareMgr.Initialize();
+            if (status == success) {
+                Diagnostics::Info("KMBox UI enable mock init succeeded.");
+                Diagnostics::Aim("kmbox.ui_enable mock success");
+                return { true, "Mock ready" };
+            }
+
+            Diagnostics::Error("KMBox UI enable mock init failed. status=%d", status);
+            Diagnostics::Aim("kmbox.ui_enable mock failure status=%d", status);
+            return { false, "Mock init failed" };
+        }
 
         kmbox::EnsureTimerResolution();
 
@@ -843,7 +887,7 @@ static const HeroOption kHeroOptions[] = {
 };
 static const char* kInputSource[] = {
     "KMBox Monitor (Primary)", "Auto (KMBox > DMA > Local)",
-    "DMA KeyState (Diagnostic)", "Local GetAsyncKeyState (Diagnostic)"
+    "Mock Hardware", "DMA KeyState (Diagnostic)", "Local GetAsyncKeyState (Diagnostic)"
 };
 static const char* kHeroSkillModes[] = {
     "Auto", "Assist", "Manual"
@@ -854,7 +898,7 @@ static const char* kHeroSkillTrackingBones[] = {
 static const char* kHeroSkillTargetBones[] = {
     "Chest", "Head", "Neck", "Closest"
 };
-static constexpr int kInputSourceConfigOrder[] = { 1, 0, 3, 2 };
+static constexpr int kInputSourceConfigOrder[] = { 1, 0, 4, 3, 2 };
 static const char* kBonePreference[] = { "Head", "Neck", "Chest", "Closest" };
 static constexpr int kBonePreferenceAimBones[] = {
     OW::Config::kAimBoneHead,
@@ -873,7 +917,8 @@ static const char* kPriority[]     = { "Lowest FOV", "Lowest HP", "Distance" };
 static const char* kTeam[]         = { "Enemies", "Allies", "All" };
 static const char* kTrace[]        = { "Strict", "Relaxed", "Off" };
 static const char* kUnlock[]       = { "Anytime", "On Release", "Never" };
-static const char* kKmBoxDeviceTypes[] = { "Network", "Serial" };
+static const char* kKmBoxDeviceTypes[] = { "Network", "Serial", "Mock" };
+static const char* kMockFaultModes[] = { "None", "Output Timeout", "Drop Output", "Input Jitter", "Stuck Buttons" };
 static const char* kMenuToggleKeys[] = {
     "Home", "Insert", "End", "Delete",
     "F1", "F2", "F3", "F4", "F5", "F6",
@@ -930,6 +975,8 @@ static void DrawAimHotkeyProbe() {
         ImGui::SameLine();
         DrawProbeState("DMA KeyState", false, false);
         ImGui::SameLine();
+        DrawProbeState("Mock", false, false);
+        ImGui::SameLine();
         DrawProbeState("Local", false, false);
         return;
     }
@@ -950,10 +997,14 @@ static void DrawAimHotkeyProbe() {
         KeyState::initialized.load() &&
         KeyState::gafAsyncKeyStateAddr.load() != 0;
     const bool dmaDown = dmaAvailable && KeyState::IsKeyDown(vk);
+    const bool mockAvailable = MockHardwareAvailable();
+    const bool mockDown = mockAvailable && kmbox::MockHardwareMgr.PeekVkDown(vk);
 
     DrawProbeState("KMBox Monitor", kmboxAvailable, kmboxDown);
     ImGui::SameLine();
     DrawProbeState("DMA KeyState", dmaAvailable, dmaDown);
+    ImGui::SameLine();
+    DrawProbeState("Mock", mockAvailable, mockDown);
     ImGui::SameLine();
     DrawProbeState("Local", true, localDown);
 }
@@ -3446,12 +3497,13 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
 
     const bool hasSequenceControls = hasControl(OW::HeroSkillControls::SequenceSteps);
     const bool hasTrackingOverlay = hasControl(OW::HeroSkillControls::TrackingOverlay);
+    const bool hasComboAction = hasControl(OW::HeroSkillControls::ComboAction);
     const bool hasPitchControls = hasControl(OW::HeroSkillControls::PitchControl);
     const bool hasPhaseTiming = hasControl(OW::HeroSkillControls::PhaseTiming);
     const bool hasHealthThreshold = hasControl(OW::HeroSkillControls::HealthThreshold);
     const bool hasAbsoluteHealth = hasControl(OW::HeroSkillControls::HealthAbsolute);
     const bool hasAbsoluteEnemyHealth = hasControl(OW::HeroSkillControls::EnemyHealthAbsolute);
-    const bool hasSkillOutputKey = !hasSequenceControls &&
+    const bool hasSkillOutputKey = !hasSequenceControls && !hasComboAction &&
         (hasControl(OW::HeroSkillControls::Key) || hasPitchControls ||
          hasPhaseTiming || hasHealthThreshold || hasAbsoluteHealth);
 
@@ -3825,8 +3877,14 @@ void UI::SequencesPage() {
 
     if (selectedHero.heroId != 0) {
         for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
-            if (definition.heroId != selectedHero.heroId ||
-                !OW::HasHeroSkillControl(definition, OW::HeroSkillControls::SequenceSteps)) {
+            if (definition.heroId != selectedHero.heroId)
+                continue;
+
+            const bool sequenceCombo =
+                OW::HasHeroSkillControl(definition, OW::HeroSkillControls::SequenceSteps);
+            const bool dedicatedCombo =
+                OW::HasHeroSkillControl(definition, OW::HeroSkillControls::ComboAction);
+            if (!sequenceCombo && !dedicatedCombo) {
                 continue;
             }
 
@@ -3834,7 +3892,10 @@ void UI::SequencesPage() {
             title += " / ";
             title += definition.displayName;
             UIGroupBox(title.c_str());
-            DrawHeroSkillSequenceDefinition(definition, selectedHero.heroId);
+            if (sequenceCombo)
+                DrawHeroSkillSequenceDefinition(definition, selectedHero.heroId);
+            else
+                DrawHeroSkillDefinition(definition, selectedHero.heroId);
             CloseGroupBox();
             ++renderedSequenceCount;
         }
@@ -4272,6 +4333,18 @@ static void DrawMiscDiagnosticsPage() {
             }
         }
 
+        if (OW::Config::inputSource == 4) {
+            const kmbox::MockHardwareSnapshot snapshot = kmbox::MockHardwareMgr.Snapshot();
+            ImGui::TextColored(
+                snapshot.initialized ? ImVec4(0.25f, 1.0f, 0.45f, 1)
+                                     : ImVec4(1, 0.35f, 0.2f, 1),
+                "Mock Hardware: %s packets=%llu events=%llu fault=%s",
+                snapshot.initialized ? "ready" : "not initialized",
+                snapshot.monitorPackets,
+                snapshot.totalEvents,
+                kmbox::ToString(snapshot.faultMode));
+        }
+
         DrawAimHotkeyProbe();
         ImGui::Spacing();
 
@@ -4544,6 +4617,7 @@ static void DrawMiscKmboxPage() {
             } else if (!OW::Config::kmboxEnabled && wasKmboxEnabled) {
                 kmboxConnectionTestOk = true;
                 kmboxConnectionTestMessage = "Disabled";
+                kmbox::MockHardwareMgr.Shutdown();
                 kmbox::ReleaseTimerResolution();
             }
         }
@@ -4558,8 +4632,12 @@ static void DrawMiscKmboxPage() {
 
         SettingRow("Device Type");
         PushControlWidth();
-        kmboxSaveRequested |= ImGui::Combo("##DeviceType", &OW::Config::kmboxDeviceType,
-                                           kKmBoxDeviceTypes, IM_ARRAYSIZE(kKmBoxDeviceTypes));
+        if (ImGui::Combo("##DeviceType", &OW::Config::kmboxDeviceType,
+                         kKmBoxDeviceTypes, IM_ARRAYSIZE(kKmBoxDeviceTypes))) {
+            kmboxSaveRequested = true;
+            if (OW::Config::kmboxDeviceType == 2)
+                OW::Config::inputSource = 4;
+        }
         ImGui::PopItemWidth();
 
         if (OW::Config::kmboxDeviceType == 0) {
@@ -4586,12 +4664,19 @@ static void DrawMiscKmboxPage() {
             ImGui::InputText("##Mac", OW::Config::kmboxMac, IM_ARRAYSIZE(OW::Config::kmboxMac));
             kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
-        } else {
+        } else if (OW::Config::kmboxDeviceType == 1) {
             SettingRow("COM Port");
             PushControlWidth();
             ImGui::InputText("##ComPort", OW::Config::kmboxComPort, IM_ARRAYSIZE(OW::Config::kmboxComPort));
             kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
             ImGui::PopItemWidth();
+        } else {
+            const kmbox::MockHardwareSnapshot snapshot = kmbox::MockHardwareMgr.Snapshot();
+            SettingRow("Mock Status");
+            ImGui::TextColored(
+                snapshot.initialized ? ImVec4(0.30f, 0.90f, 0.45f, 1.0f)
+                                     : ImVec4(0.85f, 0.65f, 0.25f, 1.0f),
+                snapshot.initialized ? "Ready" : "Not initialized");
         }
 
         SettingRow("Base Counts/Rad");
@@ -4660,6 +4745,57 @@ static void DrawMiscKmboxPage() {
 
         SettingRow("Debug Logging");
         kmboxSaveRequested |= ImGui::Checkbox("##Debug", &OW::Config::kmboxDebugLog);
+
+        if (OW::Config::kmboxDeviceType == 2) {
+            kmbox::MockHardwareSnapshot snapshot = kmbox::MockHardwareMgr.Snapshot();
+
+            SettingRow("Mock Fault");
+            PushControlWidth();
+            int faultMode = static_cast<int>(snapshot.faultMode);
+            if (ImGui::Combo("##MockFaultMode", &faultMode, kMockFaultModes, IM_ARRAYSIZE(kMockFaultModes))) {
+                faultMode = std::clamp(faultMode, 0, IM_ARRAYSIZE(kMockFaultModes) - 1);
+                kmbox::MockHardwareMgr.SetFaultMode(static_cast<kmbox::MockFaultMode>(faultMode));
+                snapshot = kmbox::MockHardwareMgr.Snapshot();
+            }
+            ImGui::PopItemWidth();
+
+            SettingRow("Mock Input");
+            bool leftDown = kmbox::MockHardwareMgr.PeekVkDown(VK_LBUTTON);
+            bool rightDown = kmbox::MockHardwareMgr.PeekVkDown(VK_RBUTTON);
+            bool middleDown = kmbox::MockHardwareMgr.PeekVkDown(VK_MBUTTON);
+            bool x1Down = kmbox::MockHardwareMgr.PeekVkDown(VK_XBUTTON1);
+            bool x2Down = kmbox::MockHardwareMgr.PeekVkDown(VK_XBUTTON2);
+            if (ImGui::Checkbox("L##MockLeft", &leftDown))
+                kmbox::MockHardwareMgr.SetInputVk(VK_LBUTTON, leftDown);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("R##MockRight", &rightDown))
+                kmbox::MockHardwareMgr.SetInputVk(VK_RBUTTON, rightDown);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("M##MockMiddle", &middleDown))
+                kmbox::MockHardwareMgr.SetInputVk(VK_MBUTTON, middleDown);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("X1##MockX1", &x1Down))
+                kmbox::MockHardwareMgr.SetInputVk(VK_XBUTTON1, x1Down);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("X2##MockX2", &x2Down))
+                kmbox::MockHardwareMgr.SetInputVk(VK_XBUTTON2, x2Down);
+
+            SettingRow("Mock Reset");
+            if (ImGui::Button("Reset", ImVec2(72.0f, kControlHeight)))
+                kmbox::MockHardwareMgr.Reset();
+
+            snapshot = kmbox::MockHardwareMgr.Snapshot();
+            SettingRow("Mock Stats");
+            ImGui::Text("events=%llu moves=%llu buttons=%llu keys=%llu packets=%llu in=0x%02X out=0x%02X stuck=0x%02X",
+                snapshot.totalEvents,
+                snapshot.moveEvents,
+                snapshot.buttonEvents,
+                snapshot.keyboardEvents,
+                snapshot.monitorPackets,
+                snapshot.inputMouseButtons,
+                snapshot.outputMouseButtons,
+                snapshot.stuckMouseButtons);
+        }
 
         // ---- Counts-per-radian auto-calibration button ----
         SettingRow("Counts Calibration");

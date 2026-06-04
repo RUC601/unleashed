@@ -20,6 +20,7 @@
 #include "Game/LeadPrediction.hpp"
 #include "Game/Motion.hpp"
 #include "Game/WeaponSpec.hpp"
+#include "Kmbox/KmBoxMock.h"
 #include "Kmbox/KmBoxNetManager.h"
 #include "Kmbox/KmboxB.h"
 #include "Utils/Config.hpp"
@@ -112,7 +113,16 @@ namespace OW {
         return std::clamp(moveTimeMs, 0, 20);
     }
 
+    inline const char* KmboxTransportName() {
+        if (Config::kmboxDeviceType == 2)
+            return "mock";
+        return Config::kmboxDeviceType == 0 ? "network" : "serial";
+    }
+
     inline int EnqueueKmboxPixelMove(int pixelX, int pixelY, int automoveRuntimeMs) {
+        if (Config::kmboxDeviceType == 2)
+            return kmbox::MockHardwareMgr.RecordMove(pixelX, pixelY, automoveRuntimeMs);
+
         if (Config::kmboxDeviceType == 0) {
             return automoveRuntimeMs > 0
                 ? kmbox::KmBoxMgr.Mouse.Move_Auto(pixelX, pixelY, automoveRuntimeMs)
@@ -233,7 +243,7 @@ namespace OW {
             if (steps <= 1) {
                 const int status = EnqueueKmboxPixelMove(pixelX, pixelY, automoveRuntimeMs);
                 Diagnostics::Aim("mouse.enqueue transport=%s command=%s pixel=(%d,%d) runtimeMs=%d behavior=%d splitEnabled=%d status=%d",
-                    Config::kmboxDeviceType == 0 ? "network" : "serial",
+                    KmboxTransportName(),
                     automoveRuntimeMs > 0 ? "automove" : "move",
                     pixelX,
                     pixelY,
@@ -262,7 +272,7 @@ namespace OW {
 
                     const int status = EnqueueKmboxPixelMove(curX, curY, automoveRuntimeMs);
                     Diagnostics::Aim("mouse.enqueue.split transport=%s command=%s step=%d/%d cur=(%d,%d) runtimeMs=%d status=%d",
-                        Config::kmboxDeviceType == 0 ? "network" : "serial",
+                        KmboxTransportName(),
                         automoveRuntimeMs > 0 ? "automove" : "move",
                         i + 1,
                         steps,
@@ -311,7 +321,9 @@ namespace OW {
         // 3. Send a known horizontal mouse move (only yaw matters)
         int moveX = Config::calibrationMovePixels;
         int moveY = 0;
-        if (Config::kmboxDeviceType == 0)
+        if (Config::kmboxDeviceType == 2)
+            kmbox::MockHardwareMgr.RecordMove(moveX, moveY, 0);
+        else if (Config::kmboxDeviceType == 0)
             kmbox::KmBoxMgr.Mouse.Move(moveX, moveY);
         else
             kmbox::kmBoxBMgr.km_move(moveX, moveY);
@@ -349,7 +361,9 @@ namespace OW {
 
             int pitchMoveX = 0;
             int pitchMoveY = Config::calibrationMovePixels;
-            if (Config::kmboxDeviceType == 0)
+            if (Config::kmboxDeviceType == 2)
+                kmbox::MockHardwareMgr.RecordMove(pitchMoveX, pitchMoveY, 0);
+            else if (Config::kmboxDeviceType == 0)
                 kmbox::KmBoxMgr.Mouse.Move(pitchMoveX, pitchMoveY);
             else
                 kmbox::kmBoxBMgr.km_move(pitchMoveX, pitchMoveY);
@@ -431,7 +445,9 @@ namespace OW {
                     button, down ? 1 : 0, Config::kmboxDeviceType);
             }
 
-            if (Config::kmboxDeviceType == 0) {
+            if (Config::kmboxDeviceType == 2) {
+                kmbox::MockHardwareMgr.RecordButton(button, down);
+            } else if (Config::kmboxDeviceType == 0) {
                 if (button == 0) kmbox::KmBoxMgr.Mouse.Left(down);
                 else if (button == 1) kmbox::KmBoxMgr.Mouse.Right(down);
                 else if (button == 2) kmbox::KmBoxMgr.Mouse.Middle(down);
@@ -448,7 +464,9 @@ namespace OW {
         if (!Config::kmboxEnabled)
             return;
 
-        if (Config::kmboxDeviceType == 0) {
+        if (Config::kmboxDeviceType == 2) {
+            kmbox::MockHardwareMgr.ForceReleaseMouseButtons();
+        } else if (Config::kmboxDeviceType == 0) {
             kmbox::KmBoxMgr.ForceReleaseMouseButtons();
         } else {
             kmbox::kmBoxBMgr.km_left(false);
@@ -461,7 +479,9 @@ namespace OW {
         if (!Config::kmboxEnabled)
             return;
 
-        if (Config::kmboxDeviceType == 0) {
+        if (Config::kmboxDeviceType == 2) {
+            kmbox::MockHardwareMgr.ForceReleaseMouseButton(button);
+        } else if (Config::kmboxDeviceType == 0) {
             kmbox::KmBoxMgr.ForceReleaseMouseButton(button);
         } else {
             switch (button) {
@@ -481,23 +501,35 @@ namespace OW {
     }
 
     inline bool SendMouseButtonStateMask(uint32_t stateMask, bool force = false) {
-        if (!Config::kmboxEnabled || Config::kmboxDeviceType != 0)
+        if (!Config::kmboxEnabled)
             return false;
 
+        if (Config::kmboxDeviceType == 2)
+            return kmbox::MockHardwareMgr.SetMouseButtonStateMask(stateMask & 0x7u, force) == success;
+        if (Config::kmboxDeviceType != 0)
+            return false;
         return kmbox::KmBoxMgr.SetMouseButtonStateMask(stateMask & 0x7u, force) == success;
     }
 
     inline bool MaskPhysicalMouseButtons(uint32_t mask) {
-        if (!Config::kmboxEnabled || Config::kmboxDeviceType != 0)
+        if (!Config::kmboxEnabled)
             return false;
 
+        if (Config::kmboxDeviceType == 2)
+            return kmbox::MockHardwareMgr.MaskMouse(mask & 0x7Fu) == success;
+        if (Config::kmboxDeviceType != 0)
+            return false;
         return kmbox::KmBoxMgr.MaskMouse(mask & 0x7Fu) == success;
     }
 
     inline bool UnmaskPhysicalMouseButtons() {
-        if (!Config::kmboxEnabled || Config::kmboxDeviceType != 0)
+        if (!Config::kmboxEnabled)
             return false;
 
+        if (Config::kmboxDeviceType == 2)
+            return kmbox::MockHardwareMgr.UnmaskAll() == success;
+        if (Config::kmboxDeviceType != 0)
+            return false;
         return kmbox::KmBoxMgr.UnmaskAll() == success;
     }
 

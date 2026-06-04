@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include "Kmbox/KmBoxNetManager.h"
+#include "Kmbox/KmBoxMock.h"
 #include "Kmbox/KmboxB.h"
 #include "Kmbox/KmboxTimerResolution.h"
 #include "Utils/Config.hpp"
@@ -126,14 +127,17 @@ void RunKmboxMoveTest()
     }
 
     const int deviceType = OW::Config::kmboxDeviceType;
-    if (deviceType != 0 && deviceType != 1) {
-        PrintLine("Unsupported KMBox deviceType=%d; expected 0=network or 1=serial.", deviceType);
+    if (deviceType != 0 && deviceType != 1 && deviceType != 2) {
+        PrintLine("Unsupported KMBox deviceType=%d; expected 0=network, 1=serial, or 2=mock.", deviceType);
         return;
     }
 
     if (deviceType == 0) {
         if (!EnsureNetworkKmboxReady())
             return;
+    } else if (deviceType == 2) {
+        if (!kmbox::MockHardwareMgr.IsInitialized())
+            kmbox::MockHardwareMgr.Initialize();
     } else if (!EnsureSerialKmboxReady()) {
         return;
     }
@@ -147,7 +151,18 @@ void RunKmboxMoveTest()
     for (std::size_t index = 0; index < kSquareTrajectory.size(); ++index) {
         const MoveDelta& move = kSquareTrajectory[index];
 
-        if (deviceType == 0) {
+        if (deviceType == 2) {
+            const int status = kmbox::MockHardwareMgr.RecordMove(move.dx, move.dy, 0);
+            if (status == success)
+                ++movesSent;
+            PrintLine("step=%02zu/%zu dx=%d dy=%d status=%d sent=%d",
+                index + 1,
+                kSquareTrajectory.size(),
+                move.dx,
+                move.dy,
+                status,
+                movesSent);
+        } else if (deviceType == 0) {
             const int status = kmbox::KmBoxMgr.Mouse.Move(move.dx, move.dy);
             if (status == success)
                 ++movesSent;

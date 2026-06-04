@@ -4,6 +4,7 @@
 
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
+#include "Kmbox/KmBoxMock.h"
 #include "Kmbox/KmBoxNetManager.h"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
@@ -57,6 +58,22 @@ namespace {
     constexpr auto kZaryaAutoRightRestoreSettle = std::chrono::milliseconds(10);
     constexpr auto kZaryaReloadSuccessMinDuration = std::chrono::milliseconds(900);
     constexpr auto kZaryaBudgetLogInterval = std::chrono::milliseconds(250);
+    constexpr float kGenjiComboMinDistance = 10.0f;
+    constexpr float kGenjiComboFallbackFollowupRange = 8.0f;
+    constexpr int kGenjiComboOpeningFlickMs = 8;
+    constexpr int kGenjiComboFinalFlickMs = 8;
+    constexpr int kGenjiComboFrontTurnMs = 20;
+    constexpr int kGenjiComboOverheadTurnMs = 14;
+    constexpr int kGenjiComboBehindTurnMs = 8;
+    constexpr int kGenjiComboRightHoldMs = 22;
+    constexpr int kGenjiComboShiftHoldMs = 35;
+    constexpr int kGenjiComboMeleeHoldMs = 24;
+    constexpr int kGenjiComboAfterOpeningFireMs = 18;
+    constexpr int kGenjiComboAfterTurnMs = 12;
+    constexpr int kGenjiComboAfterFinalFireMs = 18;
+    constexpr int kGenjiComboMinDashWaitMs = 180;
+    constexpr int kGenjiComboMaxDashWaitMs = 380;
+    constexpr float kGenjiComboDashMsPerMeter = 18.0f;
     struct SequenceRuntime {
         bool active = false;
         size_t stepIndex = 0;
@@ -70,6 +87,40 @@ namespace {
         float hitLastHealth = std::numeric_limits<float>::quiet_NaN();
         int hitDamageEvents = 0;
         bool hitHasSample = false;
+    };
+
+    enum class GenjiDashPositionClass {
+        Front,
+        Overhead,
+        Behind
+    };
+
+    namespace GenjiComboPhase {
+        constexpr int Idle = 0;
+        constexpr int OpeningFire = 1;
+        constexpr int AfterOpeningFire = 2;
+        constexpr int Shift = 3;
+        constexpr int DashWait = 4;
+        constexpr int AfterTurn = 5;
+        constexpr int FinalFire = 6;
+        constexpr int AfterFinalFire = 7;
+        constexpr int Melee = 8;
+        constexpr int Completed = 9;
+        constexpr int Cancelled = 10;
+    }
+
+    struct GenjiComboRuntime {
+        bool active = false;
+        bool prevKeyDown = false;
+        int phase = GenjiComboPhase::Idle;
+        Clock::time_point phaseStarted{};
+        uint64_t targetKey = 0;
+        float initialDistance = 0.0f;
+        int dashWaitMs = kGenjiComboMinDashWaitMs;
+        GenjiDashPositionClass dashClass = GenjiDashPositionClass::Front;
+        bool rightDown = false;
+        bool shiftDown = false;
+        bool meleeDown = false;
     };
 
     struct SequenceSelfTestRuntime {
@@ -215,6 +266,7 @@ namespace {
     };
 
     std::unordered_map<std::string, SequenceRuntime> g_sequences;
+    std::unordered_map<std::string, GenjiComboRuntime> g_genjiCombos;
     std::unordered_map<std::string, ViewpointRuntime> g_viewpoints;
     std::unordered_map<std::string, Clock::time_point> g_lastActionExecutions;
     std::unordered_map<std::string, Clock::time_point> g_lastSkillGuardLogs;
@@ -230,6 +282,9 @@ namespace {
     uint64_t g_lastHeroId = 0;
 
     void RefreshAnyInputSequenceActive();
+    bool IsActionDebounced(const std::string& runtimeKey);
+    bool ShouldLogSkillGuard(const std::string& runtimeKey);
+    void MarkActionExecuted(const std::string& runtimeKey);
     bool ConsumeSequenceAmmoBudgetForStep(const std::string& runtimeKey,
                                           int previousMask,
                                           int nextMask,
@@ -355,6 +410,12 @@ namespace {
     {
         return definition.heroId == static_cast<uint64_t>(eHero::HERO_ZARYA) &&
             std::string(definition.skillId ? definition.skillId : "") == "reload-ammo-probe";
+    }
+
+    bool IsGenjiDashComboDefinition(const HeroSkillDefinition& definition)
+    {
+        return definition.heroId == static_cast<uint64_t>(eHero::HERO_GENJI) &&
+            std::string(definition.skillId ? definition.skillId : "") == "dash-combo";
     }
 
     int PickZaryaAutoRightThreshold()
@@ -526,6 +587,10 @@ namespace {
         const unsigned char hidCode = VkToHidKeyCode(vk);
         if (hidCode == 0)
             return false;
+
+        if (Config::kmboxEnabled && Config::kmboxDeviceType == 2) {
+            return kmbox::MockHardwareMgr.RecordKeyboardKey(hidCode, down) == success;
+        }
 
         if (Config::kmboxEnabled && Config::kmboxDeviceType == 0) {
             kmbox::KmBoxMgr.SendKeyboardKey(hidCode, down);
@@ -1113,7 +1178,10 @@ namespace {
         const int py = static_cast<int>(std::lround(pitchDeg * kViewpointPixelsPerDegree));
 
         if (Config::kmboxEnabled) {
-            if (Config::kmboxDeviceType == 0) {
+            if (Config::kmboxDeviceType == 2) {
+                if (px != 0 || py != 0)
+                    kmbox::MockHardwareMgr.RecordMove(px, py, 0);
+            } else if (Config::kmboxDeviceType == 0) {
                 if (px != 0 || py != 0)
                     kmbox::KmBoxMgr.Mouse.Move(px, py);
             } else {
@@ -1602,7 +1670,8 @@ namespace {
     }
 
     SkillAimCandidate FindBestSkillAimCandidate(const Config::HeroSkillSettings& settings,
-                                                const SkillProjectileRuntime& projectile)
+                                                const SkillProjectileRuntime& projectile,
+                                                float minRange = 0.0f)
     {
         SkillAimCandidate best{};
         const float effectiveRange = settings.distance > 0.0f
@@ -1610,6 +1679,10 @@ namespace {
             : projectile.maxRange;
         if (!std::isfinite(effectiveRange) || effectiveRange <= 0.0f)
             return best;
+        const float effectiveMinRange = std::clamp(
+            std::isfinite(minRange) ? minRange : 0.0f,
+            0.0f,
+            effectiveRange);
 
         const c_entity local = TargetingDetail::SnapshotLocalEntity();
         const Vector3 source = SourcePositionForAction(local);
@@ -1650,8 +1723,11 @@ namespace {
                 continue;
 
             const float rawDistance = source.DistTo(rawAimPoint);
-            if (!std::isfinite(rawDistance) || rawDistance > effectiveRange)
+            if (!std::isfinite(rawDistance) ||
+                rawDistance < effectiveMinRange ||
+                rawDistance > effectiveRange) {
                 continue;
+            }
 
             ++matchingTargets;
 
@@ -1903,6 +1979,541 @@ namespace {
             EndTimedAction(runtimeKey);
         }).detach();
         return true;
+    }
+
+    const char* GenjiDashPositionClassName(GenjiDashPositionClass value)
+    {
+        switch (value) {
+        case GenjiDashPositionClass::Front: return "front";
+        case GenjiDashPositionClass::Overhead: return "overhead";
+        case GenjiDashPositionClass::Behind: return "behind";
+        default: return "unknown";
+        }
+    }
+
+    const char* GenjiComboPhaseName(int phase)
+    {
+        switch (phase) {
+        case GenjiComboPhase::Idle: return "idle";
+        case GenjiComboPhase::OpeningFire: return "opening_fire";
+        case GenjiComboPhase::AfterOpeningFire: return "after_opening_fire";
+        case GenjiComboPhase::Shift: return "shift";
+        case GenjiComboPhase::DashWait: return "dash_wait";
+        case GenjiComboPhase::AfterTurn: return "after_turn";
+        case GenjiComboPhase::FinalFire: return "final_fire";
+        case GenjiComboPhase::AfterFinalFire: return "after_final_fire";
+        case GenjiComboPhase::Melee: return "melee";
+        case GenjiComboPhase::Completed: return "completed";
+        case GenjiComboPhase::Cancelled: return "cancelled";
+        default: return "unknown";
+        }
+    }
+
+    uint64_t EntityRuntimeKey(const c_entity& entity)
+    {
+        return entity.address ? entity.address : entity.LinkBase;
+    }
+
+    int ScaledGenjiMoveMs(int baseMs, const Config::HeroSkillSettings& settings)
+    {
+        const float speedScale = std::clamp(
+            std::isfinite(settings.tracking.speedScale) ? settings.tracking.speedScale / 100.0f : 1.0f,
+            0.25f,
+            1.5f);
+        return std::clamp(static_cast<int>(std::lround(static_cast<float>(baseMs) / speedScale)), 1, 20);
+    }
+
+    int GenjiTurnMoveMs(GenjiDashPositionClass dashClass, const Config::HeroSkillSettings& settings)
+    {
+        switch (dashClass) {
+        case GenjiDashPositionClass::Behind:
+            return ScaledGenjiMoveMs(kGenjiComboBehindTurnMs, settings);
+        case GenjiDashPositionClass::Overhead:
+            return ScaledGenjiMoveMs(kGenjiComboOverheadTurnMs, settings);
+        case GenjiDashPositionClass::Front:
+        default:
+            return ScaledGenjiMoveMs(kGenjiComboFrontTurnMs, settings);
+        }
+    }
+
+    int GenjiDashWaitMs(float distance)
+    {
+        if (!std::isfinite(distance) || distance <= 0.0f)
+            return kGenjiComboMinDashWaitMs;
+
+        return std::clamp(
+            static_cast<int>(std::lround(distance * kGenjiComboDashMsPerMeter)),
+            kGenjiComboMinDashWaitMs,
+            kGenjiComboMaxDashWaitMs);
+    }
+
+    bool BuildSkillAimCandidateFromEntity(const Config::HeroSkillSettings& settings,
+                                          const SkillProjectileRuntime& projectile,
+                                          const c_entity& local,
+                                          c_entity entity,
+                                          int entityIndex,
+                                          float maxRange,
+                                          SkillAimCandidate& outCandidate)
+    {
+        const Vector3 source = SourcePositionForAction(local);
+        if (!IsUsablePosition(source))
+            return false;
+
+        const int boneSetting = Config::NormalizeAimBone(settings.tracking.bone);
+        const int boneId = AimBoneToSkeletonBoneId(boneSetting);
+        const Vector3 rawAimPoint = SkillAimPointForEntity(entity, boneSetting);
+        if (!IsUsablePosition(rawAimPoint))
+            return false;
+
+        const float rawDistance = source.DistTo(rawAimPoint);
+        if (!std::isfinite(rawDistance) || rawDistance > maxRange)
+            return false;
+
+        Vector3 aimPoint = rawAimPoint;
+        if (settings.prediction && projectile.speed > 0.0f) {
+            const ProjectileRuntimeSpec projectileSpec{
+                projectile.speed,
+                projectile.gravity,
+                false
+            };
+            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                entity,
+                rawAimPoint,
+                projectileSpec,
+                true,
+                false,
+                projectile.preFireDelayMs);
+            aimPoint = lead.finalAimPoint;
+        }
+
+        if (!IsUsablePosition(aimPoint))
+            return false;
+
+        const float aimedDistance = source.DistTo(aimPoint);
+        if (!std::isfinite(aimedDistance) || aimedDistance > maxRange + projectile.projectileRadius)
+            return false;
+
+        outCandidate = {};
+        outCandidate.valid = true;
+        outCandidate.entity = entity;
+        outCandidate.entityIndex = entityIndex;
+        outCandidate.entityKey = EntityRuntimeKey(entity);
+        outCandidate.boneId = boneId;
+        outCandidate.distance = aimedDistance;
+        outCandidate.vitalityPercent = VitalityPercent(entity);
+        outCandidate.rawAimPoint = rawAimPoint;
+        outCandidate.aimPoint = aimPoint;
+        outCandidate.hitWindow = ResolveSkillHitWindow(
+            entity,
+            boneId,
+            projectile,
+            settings.tracking.hitbox);
+        return true;
+    }
+
+    SkillAimCandidate FindGenjiFollowupCandidate(const Config::HeroSkillSettings& settings,
+                                                 const SkillProjectileRuntime& projectile,
+                                                 uint64_t targetKey)
+    {
+        SkillAimCandidate fallback{};
+        const c_entity local = TargetingDetail::SnapshotLocalEntity();
+        const float maxRange = settings.distance > 0.0f
+            ? (std::min)(settings.distance, projectile.maxRange)
+            : projectile.maxRange;
+        if (!std::isfinite(maxRange) || maxRange <= 0.0f)
+            return fallback;
+
+        const float fallbackRange = (std::min)(maxRange, kGenjiComboFallbackFollowupRange);
+        const std::vector<c_entity> snapshot = TargetingDetail::SnapshotEntities();
+        float bestFallbackDistance = (std::numeric_limits<float>::max)();
+
+        for (size_t index = 0; index < snapshot.size(); ++index) {
+            c_entity entity = snapshot[index];
+            if (!TargetingDetail::IsSelectableCandidate(entity, 0, local))
+                continue;
+            if (Config::aimbotIgnoreInvisible && !entity.Vis)
+                continue;
+            if ((entity.imort || entity.barrprot) && !Config::switch_team)
+                continue;
+
+            const float vitality = VitalityPercent(entity);
+            if (vitality > settings.enemyHealthThreshold)
+                continue;
+
+            SkillAimCandidate candidate{};
+            if (!BuildSkillAimCandidateFromEntity(
+                    settings,
+                    projectile,
+                    local,
+                    entity,
+                    static_cast<int>(index),
+                    maxRange,
+                    candidate)) {
+                continue;
+            }
+
+            if (targetKey != 0 && candidate.entityKey == targetKey)
+                return candidate;
+
+            if (candidate.distance <= fallbackRange && candidate.distance < bestFallbackDistance) {
+                fallback = candidate;
+                bestFallbackDistance = candidate.distance;
+            }
+        }
+
+        return fallback;
+    }
+
+    bool ProjectToScreen(const Vector3& position, Vector2& projected)
+    {
+        Matrix view{}, viewXor{};
+        GetViewMatricesSnapshot(view, viewXor);
+        (void)viewXor;
+        return view.WorldToScreen(position, &projected, Vector2(WX, WY), false);
+    }
+
+    GenjiDashPositionClass ClassifyGenjiDashPosition(const SkillAimCandidate& candidate,
+                                                     const Config::HeroSkillSettings& settings)
+    {
+        if (!candidate.valid || !IsUsablePosition(candidate.aimPoint))
+            return GenjiDashPositionClass::Behind;
+
+        ScopedTrackingConfig trackingOverride(settings.tracking);
+        const int method = Config::ClampAimMethodIndex(settings.tracking.method);
+        const AimbotDetail::AimData aim = AimbotDetail::BuildAimData(
+            candidate.aimPoint,
+            false,
+            1.0f,
+            0.0f,
+            method);
+        if (!IsFiniteVector(aim.local_angle) || !IsFiniteVector(aim.target_angle))
+            return GenjiDashPositionClass::Behind;
+
+        const float yawDeltaDeg = std::fabs(NormalizeAngle(
+            aim.target_angle.Y - aim.local_angle.Y)) * kRadToDeg;
+        const float pitchDeltaDeg = (aim.target_angle.X - aim.local_angle.X) * kRadToDeg;
+
+        Vector2 projected{};
+        const bool onScreen = ProjectToScreen(candidate.aimPoint, projected);
+        const Vector2 crosshair = TargetingDetail::CrosshairCenter();
+        const float screenHeight = WY > 0.0f
+            ? WY
+            : static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+        const bool highOnScreen = onScreen &&
+            projected.Y < crosshair.Y - (std::max)(120.0f, screenHeight * 0.12f);
+
+        const Vector3 camera = TargetingDetail::CameraPosition();
+        const Vector3 delta = candidate.aimPoint - camera;
+        const float horizontal = std::sqrt(delta.X * delta.X + delta.Z * delta.Z);
+        const bool verticallyOverhead =
+            std::isfinite(delta.Y) && std::isfinite(horizontal) &&
+            delta.Y > 1.75f && horizontal < 6.0f;
+
+        if (!onScreen || yawDeltaDeg >= 110.0f)
+            return GenjiDashPositionClass::Behind;
+        if (highOnScreen || verticallyOverhead || pitchDeltaDeg < -22.0f)
+            return GenjiDashPositionClass::Overhead;
+        return GenjiDashPositionClass::Front;
+    }
+
+    bool MoveGenjiAimToPoint(const std::string& runtimeKey,
+                             const Config::HeroSkillSettings& settings,
+                             const Vector3& aimPoint,
+                             int moveMs,
+                             float yawJitterDeg,
+                             const char* phaseName)
+    {
+        if (!IsUsablePosition(aimPoint) || settings.tracking.speedScale <= 0.0f)
+            return false;
+
+        ScopedTrackingConfig trackingOverride(settings.tracking);
+        const int method = Config::ClampAimMethodIndex(settings.tracking.method);
+        const AimbotDetail::AimData aim = AimbotDetail::BuildAimData(
+            aimPoint,
+            false,
+            1.0f,
+            0.0f,
+            method);
+        if (!IsFiniteVector(aim.local_angle) || !IsFiniteVector(aim.target_angle))
+            return false;
+
+        Vector3 targetAngle = aim.target_angle;
+        targetAngle.Y += yawJitterDeg * kDegToRad;
+        AimbotDetail::MoveAimDelta(aim.local_angle, targetAngle, std::clamp(moveMs, 1, 20));
+
+        Diagnostics::Aim("genji.combo flick skill=%s phase=%s moveMs=%d yawJitterDeg=%.2f deltaPitchDeg=%.2f deltaYawDeg=%.2f target=(%.3f,%.3f,%.3f)",
+            runtimeKey.c_str(),
+            phaseName ? phaseName : "unknown",
+            moveMs,
+            yawJitterDeg,
+            (targetAngle.X - aim.local_angle.X) * kRadToDeg,
+            NormalizeAngle(targetAngle.Y - aim.local_angle.Y) * kRadToDeg,
+            aimPoint.X,
+            aimPoint.Y,
+            aimPoint.Z);
+        return true;
+    }
+
+    void SetGenjiComboPhase(GenjiComboRuntime& runtime, int phase)
+    {
+        runtime.phase = phase;
+        runtime.phaseStarted = Clock::now();
+    }
+
+    bool GenjiComboPhaseElapsed(const GenjiComboRuntime& runtime, int milliseconds)
+    {
+        return Clock::now() - runtime.phaseStarted >= std::chrono::milliseconds(milliseconds);
+    }
+
+    void FinishGenjiCombo(const std::string& runtimeKey,
+                          GenjiComboRuntime& runtime,
+                          const char* reason,
+                          bool completed)
+    {
+        if (runtime.rightDown) {
+            SetHotkeyState(VK_RBUTTON, false);
+            runtime.rightDown = false;
+        }
+        if (runtime.shiftDown) {
+            SendKeyboardState(VK_LSHIFT, false);
+            runtime.shiftDown = false;
+        }
+        if (runtime.meleeDown) {
+            SendKeyboardState(0x56, false);
+            runtime.meleeDown = false;
+        }
+
+        const bool prevKeyDown = runtime.prevKeyDown;
+        runtime = GenjiComboRuntime{};
+        runtime.prevKeyDown = prevKeyDown;
+        runtime.phase = completed ? GenjiComboPhase::Completed : GenjiComboPhase::Cancelled;
+        Diagnostics::Aim("genji.combo %s skill=%s reason=%s",
+            completed ? "completed" : "cancelled",
+            runtimeKey.c_str(),
+            reason ? reason : "");
+        RefreshAnyInputSequenceActive();
+    }
+
+    bool BeginGenjiDashCombo(const std::string& runtimeKey,
+                             GenjiComboRuntime& runtime,
+                             const Config::HeroSkillSettings& settings,
+                             const SkillAimCandidate& candidate)
+    {
+        runtime = GenjiComboRuntime{};
+        runtime.active = true;
+        runtime.prevKeyDown = true;
+        runtime.targetKey = candidate.entityKey;
+        runtime.initialDistance = candidate.distance;
+        runtime.dashWaitMs = GenjiDashWaitMs(candidate.distance);
+        g_anyInputSequenceActive.store(true, std::memory_order_release);
+        MarkActionExecuted(runtimeKey);
+
+        if (!MoveGenjiAimToPoint(
+                runtimeKey,
+                settings,
+                candidate.aimPoint,
+                ScaledGenjiMoveMs(kGenjiComboOpeningFlickMs, settings),
+                0.0f,
+                "opening")) {
+            FinishGenjiCombo(runtimeKey, runtime, "opening_flick_failed", false);
+            return false;
+        }
+
+        if (!SetHotkeyState(VK_RBUTTON, true)) {
+            FinishGenjiCombo(runtimeKey, runtime, "opening_right_down_failed", false);
+            return false;
+        }
+
+        runtime.rightDown = true;
+        SetGenjiComboPhase(runtime, GenjiComboPhase::OpeningFire);
+        Diagnostics::Aim("genji.combo started skill=%s target=0x%llX distance=%.2f dashWaitMs=%d",
+            runtimeKey.c_str(),
+            static_cast<unsigned long long>(runtime.targetKey),
+            runtime.initialDistance,
+            runtime.dashWaitMs);
+        return true;
+    }
+
+    bool AdvanceGenjiDashCombo(const std::string& runtimeKey,
+                               GenjiComboRuntime& runtime,
+                               const Config::HeroSkillSettings& settings,
+                               const SkillProjectileRuntime& projectile)
+    {
+        if (!runtime.active)
+            return false;
+
+        switch (runtime.phase) {
+        case GenjiComboPhase::OpeningFire:
+            if (!GenjiComboPhaseElapsed(runtime, kGenjiComboRightHoldMs))
+                return true;
+            SetHotkeyState(VK_RBUTTON, false);
+            runtime.rightDown = false;
+            SetGenjiComboPhase(runtime, GenjiComboPhase::AfterOpeningFire);
+            return true;
+
+        case GenjiComboPhase::AfterOpeningFire:
+            if (!GenjiComboPhaseElapsed(runtime, kGenjiComboAfterOpeningFireMs))
+                return true;
+            if (!SendKeyboardState(VK_LSHIFT, true)) {
+                FinishGenjiCombo(runtimeKey, runtime, "shift_down_failed", false);
+                return false;
+            }
+            runtime.shiftDown = true;
+            SetGenjiComboPhase(runtime, GenjiComboPhase::Shift);
+            return true;
+
+        case GenjiComboPhase::Shift:
+            if (!GenjiComboPhaseElapsed(runtime, kGenjiComboShiftHoldMs))
+                return true;
+            SendKeyboardState(VK_LSHIFT, false);
+            runtime.shiftDown = false;
+            SetGenjiComboPhase(runtime, GenjiComboPhase::DashWait);
+            return true;
+
+        case GenjiComboPhase::DashWait: {
+            if (!GenjiComboPhaseElapsed(runtime, runtime.dashWaitMs))
+                return true;
+            const SkillAimCandidate followup =
+                FindGenjiFollowupCandidate(settings, projectile, runtime.targetKey);
+            if (!followup.valid) {
+                FinishGenjiCombo(runtimeKey, runtime, "followup_target_lost", false);
+                return false;
+            }
+
+            runtime.dashClass = ClassifyGenjiDashPosition(followup, settings);
+            const float yawJitter = PickSignedJitter(3.0f);
+            const int moveMs = GenjiTurnMoveMs(runtime.dashClass, settings);
+            if (!MoveGenjiAimToPoint(
+                    runtimeKey,
+                    settings,
+                    followup.aimPoint,
+                    moveMs,
+                    yawJitter,
+                    GenjiDashPositionClassName(runtime.dashClass))) {
+                FinishGenjiCombo(runtimeKey, runtime, "turn_flick_failed", false);
+                return false;
+            }
+
+            Diagnostics::Aim("genji.combo dash_class skill=%s class=%s moveMs=%d yawJitterDeg=%.2f distance=%.2f target=0x%llX",
+                runtimeKey.c_str(),
+                GenjiDashPositionClassName(runtime.dashClass),
+                moveMs,
+                yawJitter,
+                followup.distance,
+                static_cast<unsigned long long>(followup.entityKey));
+            SetGenjiComboPhase(runtime, GenjiComboPhase::AfterTurn);
+            return true;
+        }
+
+        case GenjiComboPhase::AfterTurn: {
+            if (!GenjiComboPhaseElapsed(runtime, kGenjiComboAfterTurnMs))
+                return true;
+            const SkillAimCandidate followup =
+                FindGenjiFollowupCandidate(settings, projectile, runtime.targetKey);
+            if (!followup.valid) {
+                FinishGenjiCombo(runtimeKey, runtime, "final_target_lost", false);
+                return false;
+            }
+
+            if (!MoveGenjiAimToPoint(
+                    runtimeKey,
+                    settings,
+                    followup.aimPoint,
+                    ScaledGenjiMoveMs(kGenjiComboFinalFlickMs, settings),
+                    0.0f,
+                    "final")) {
+                FinishGenjiCombo(runtimeKey, runtime, "final_flick_failed", false);
+                return false;
+            }
+
+            if (!SetHotkeyState(VK_RBUTTON, true)) {
+                FinishGenjiCombo(runtimeKey, runtime, "final_right_down_failed", false);
+                return false;
+            }
+            runtime.rightDown = true;
+            SetGenjiComboPhase(runtime, GenjiComboPhase::FinalFire);
+            return true;
+        }
+
+        case GenjiComboPhase::FinalFire:
+            if (!GenjiComboPhaseElapsed(runtime, kGenjiComboRightHoldMs))
+                return true;
+            SetHotkeyState(VK_RBUTTON, false);
+            runtime.rightDown = false;
+            SetGenjiComboPhase(runtime, GenjiComboPhase::AfterFinalFire);
+            return true;
+
+        case GenjiComboPhase::AfterFinalFire:
+            if (!GenjiComboPhaseElapsed(runtime, kGenjiComboAfterFinalFireMs))
+                return true;
+            if (!SendKeyboardState(0x56, true)) {
+                FinishGenjiCombo(runtimeKey, runtime, "melee_down_failed", false);
+                return false;
+            }
+            runtime.meleeDown = true;
+            SetGenjiComboPhase(runtime, GenjiComboPhase::Melee);
+            return true;
+
+        case GenjiComboPhase::Melee:
+            if (!GenjiComboPhaseElapsed(runtime, kGenjiComboMeleeHoldMs))
+                return true;
+            SendKeyboardState(0x56, false);
+            runtime.meleeDown = false;
+            FinishGenjiCombo(runtimeKey, runtime, "done", true);
+            return true;
+
+        case GenjiComboPhase::Completed:
+        case GenjiComboPhase::Cancelled:
+        case GenjiComboPhase::Idle:
+        default:
+            FinishGenjiCombo(runtimeKey, runtime, GenjiComboPhaseName(runtime.phase), false);
+            return false;
+        }
+    }
+
+    bool EvaluateGenjiDashComboAction(const std::string& runtimeKey,
+                                      const Config::HeroSkillSettings& settings)
+    {
+        GenjiComboRuntime& runtime = g_genjiCombos[runtimeKey];
+        const bool held = IsSequenceSelfTestHeld(settings.key) || IsActivationKeyHeld(settings.key);
+        const SkillProjectileRuntime projectile = ResolveSkillProjectileRuntime(
+            settings,
+            { 75.0f, 40.0f, 0.0f, 0.125f, 0.0f });
+
+        if (runtime.active) {
+            runtime.prevKeyDown = held;
+            return AdvanceGenjiDashCombo(runtimeKey, runtime, settings, projectile);
+        }
+
+        if (!held) {
+            runtime.prevKeyDown = false;
+            return false;
+        }
+        if (runtime.prevKeyDown || IsActionDebounced(runtimeKey))
+            return false;
+
+        Config::HeroSkillSettings candidateSettings = settings;
+        candidateSettings.distance = settings.distance > 0.0f
+            ? (std::min)(settings.distance, 20.0f)
+            : 20.0f;
+        const SkillAimCandidate candidate = FindBestSkillAimCandidate(
+            candidateSettings,
+            projectile,
+            kGenjiComboMinDistance);
+        if (!candidate.valid) {
+            if (ShouldLogSkillGuard(runtimeKey)) {
+                Diagnostics::Aim("genji.combo guard skill=%s reason=no_target minDistance=%.2f maxDistance=%.2f fov=%.2f",
+                    runtimeKey.c_str(),
+                    kGenjiComboMinDistance,
+                    candidateSettings.distance,
+                    settings.tracking.fov);
+            }
+            return false;
+        }
+
+        const bool started = BeginGenjiDashCombo(runtimeKey, runtime, candidateSettings, candidate);
+        runtime.prevKeyDown = started;
+        return started;
     }
 
     bool IsActionDebounced(const std::string& runtimeKey)
@@ -2234,6 +2845,12 @@ namespace {
         return item != g_sequences.end() && item->second.active;
     }
 
+    bool IsGenjiComboActive(const std::string& runtimeKey)
+    {
+        const auto item = g_genjiCombos.find(runtimeKey);
+        return item != g_genjiCombos.end() && item->second.active;
+    }
+
     void RefreshAnyInputSequenceActive()
     {
         bool active = false;
@@ -2242,6 +2859,15 @@ namespace {
             if (runtime.active || runtime.worker.joinable() || runtime.currentMask != 0) {
                 active = true;
                 break;
+            }
+        }
+        if (!active) {
+            for (const auto& item : g_genjiCombos) {
+                const GenjiComboRuntime& runtime = item.second;
+                if (runtime.active || runtime.rightDown || runtime.shiftDown || runtime.meleeDown) {
+                    active = true;
+                    break;
+                }
             }
         }
         g_anyInputSequenceActive.store(active, std::memory_order_release);
@@ -2930,6 +3556,13 @@ namespace {
         if (sequence != g_sequences.end())
             CancelSequence(skillId, sequence->second, "disabled_or_inactive");
 
+        auto genjiCombo = g_genjiCombos.find(skillId);
+        if (genjiCombo != g_genjiCombos.end() &&
+            (genjiCombo->second.active || genjiCombo->second.rightDown ||
+             genjiCombo->second.shiftDown || genjiCombo->second.meleeDown)) {
+            FinishGenjiCombo(skillId, genjiCombo->second, "disabled_or_inactive", false);
+        }
+
         auto viewpoint = g_viewpoints.find(skillId);
         if (viewpoint != g_viewpoints.end())
             CancelViewpoint(skillId, viewpoint->second, "disabled_or_inactive");
@@ -3198,6 +3831,13 @@ void CancelActiveSkill()
     for (auto& item : g_sequences)
         CancelSequence(item.first, item.second, "cancel_all");
 
+    for (auto& item : g_genjiCombos) {
+        if (item.second.active || item.second.rightDown ||
+            item.second.shiftDown || item.second.meleeDown) {
+            FinishGenjiCombo(item.first, item.second, "cancel_all", false);
+        }
+    }
+
     for (auto& item : g_viewpoints)
         CancelViewpoint(item.first, item.second, "cancel_all");
 
@@ -3254,13 +3894,16 @@ void ProcessHeroSkills()
         }
 
         const bool sequenceSkill = SkillControls(definition, HeroSkillControls::SequenceSteps);
+        const bool genjiComboSkill = IsGenjiDashComboDefinition(definition);
         const bool sequenceActive = sequenceSkill && IsSequenceActive(skillKey);
+        const bool genjiComboActive = genjiComboSkill && IsGenjiComboActive(skillKey);
         if (sequenceSkill)
             UpdateSequenceAmmoBudgetReloadState(skillKey, localSnapshot, settings.ammoGuardReserve);
         if (sequenceSkill && !sequenceActive && AimbotDetail::IsInputVkDown('R'))
             ResetSequenceAmmoBudget(skillKey);
 
-        if (!sequenceActive && IsInRechargeInterval(definition, settings, localSnapshot)) {
+        if (!sequenceActive && !genjiComboActive &&
+            IsInRechargeInterval(definition, settings, localSnapshot)) {
             CancelSkill(skillKey);
             if (ShouldLogSkillGuard(skillKey)) {
                 Diagnostics::Aim("skill.cooldown_guard block skill=%s input=%d reloading=%d skillcd1=%.3f skillcd2=%.3f ultimate=%.1f",
@@ -3274,7 +3917,8 @@ void ProcessHeroSkills()
             continue;
         }
 
-        if (!sequenceActive && IsManualCooldownActive(skillKey, settings)) {
+        if (!sequenceActive && !genjiComboActive &&
+            IsManualCooldownActive(skillKey, settings)) {
             if (ShouldLogSkillGuard(skillKey)) {
                 Diagnostics::Aim("skill.manual_cooldown block skill=%s cooldown=%.3f",
                     skillKey.c_str(),
@@ -3290,6 +3934,11 @@ void ProcessHeroSkills()
 
         if (IsAutoMeleeDefinition(definition)) {
             EvaluateAutoMeleeAction(skillKey, definition, settings);
+            continue;
+        }
+
+        if (genjiComboSkill) {
+            EvaluateGenjiDashComboAction(skillKey, settings);
             continue;
         }
 

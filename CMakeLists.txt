@@ -49,6 +49,7 @@ set(GAME_HEADERS
     include/Kmbox/KmboxTimerResolution.h
     include/Kmbox/KmBoxConfig.h
     include/Kmbox/KmBoxData.h
+    include/Kmbox/KmBoxMock.h
     include/Kmbox/KmBoxNetManager.h
     include/Memory/KeyState.hpp
     include/Memory/Memory.h
@@ -81,6 +82,7 @@ set(UNLEASHED_SOURCES
     src/Kmbox/KmboxB.cpp
     src/Kmbox/KmboxMoveTest.cpp
     src/Kmbox/KmboxTimerResolution.cpp
+    src/Kmbox/KmBoxMock.cpp
     src/Kmbox/KmBoxNetManager.cpp
     vendor/stb/stb_image.cpp
 )
@@ -114,11 +116,20 @@ add_executable(HeroSkillConfigSelfTest
     src/Tools/HeroSkillConfigSelfTest.cpp
 )
 
+add_executable(MockHardwareSelfTest
+    src/Tools/MockHardwareSelfTest.cpp
+    src/Kmbox/KmBoxMock.cpp
+    src/Kmbox/KmBoxNetManager.cpp
+    src/Kmbox/KmboxB.cpp
+    src/Utils/Diagnostics.cpp
+)
+
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
 add_test(NAME LeadPredictionSelfTest COMMAND LeadPredictionSelfTest)
 add_test(NAME HeroSkillConfigSelfTest COMMAND HeroSkillConfigSelfTest)
+add_test(NAME MockHardwareSelfTest COMMAND MockHardwareSelfTest)
 
 # ============================================================================
 # Include directories
@@ -160,6 +171,12 @@ target_include_directories(HeroSkillConfigSelfTest PRIVATE
     vendor/imgui
 )
 
+target_include_directories(MockHardwareSelfTest PRIVATE
+    include
+    vendor/leechcore
+    vendor/imgui
+)
+
 # ============================================================================
 # Link libraries
 # ============================================================================
@@ -175,6 +192,11 @@ target_link_libraries(Unleashed PRIVATE
     winmm
     shell32
     dwmapi
+    setupapi
+)
+
+target_link_libraries(MockHardwareSelfTest PRIVATE
+    ws2_32
     setupapi
 )
 
@@ -265,3 +287,5 @@ target_compile_options(LeadPredictionSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd430
 target_compile_definitions(LeadPredictionSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(HeroSkillConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(HeroSkillConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(MockHardwareSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(MockHardwareSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)

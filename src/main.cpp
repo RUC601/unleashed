@@ -29,6 +29,7 @@
 #include "Game/Offsets.hpp"       // offset constants
 #include "Kmbox/KmBoxNetManager.h" // kmbox::KmBoxMgr
 #include "Kmbox/KmboxB.h"         // kmbox::kmBoxBMgr
+#include "Kmbox/KmBoxMock.h"      // kmbox::MockHardwareMgr
 #include "Kmbox/KmboxMoveTest.h"  // RunKmboxMoveTest
 #include "Kmbox/KmboxTimerResolution.h" // kmbox::EnsureTimerResolution
 #include "Utils/Config.hpp"       // OW::Config
@@ -554,7 +555,7 @@ namespace {
         }
 
         if (targetAngleDeg <= centerAngleDeg)
-            return 0.0f;
+            return FovRadiusLinearFallback(width, height, targetAngleDeg);
         if (targetAngleDeg >= maxAngleDeg)
             return maxRadius;
 
@@ -605,7 +606,7 @@ namespace {
         }
     }
 
-    static void DrawStyledFovRing(const OW::Vector2& center,
+    static bool DrawStyledFovRing(const OW::Vector2& center,
                                   float width,
                                   float height,
                                   float fovDeg,
@@ -617,11 +618,11 @@ namespace {
     {
         OW::Config::FovRingSlotStyle style = rawStyle;
         if (!style.visible)
-            return;
+            return false;
 
         const float radius = FovRadiusForViewport(width, height, fovDeg, projection, fovContext);
         if (radius <= 0.0f)
-            return;
+            return false;
 
         const float thickness = active
             ? (std::max)(style.thickness + 0.8f, 2.0f)
@@ -643,6 +644,8 @@ namespace {
                                             (std::max)(4.0f, height - 18.0f));
             Render::DrawText(ImVec2(labelX, labelY), color.ToImU32(), label, active ? 14.0f : 13.0f);
         }
+
+        return true;
     }
 
     static bool DrawHeroAimFovRings(uint64_t heroId,
@@ -674,16 +677,15 @@ namespace {
                           "A%d %.0f deg",
                           slotIndex + 1,
                           OW::Config::ClampFovDeg(slot.preset.fov));
-            DrawStyledFovRing(center,
-                              width,
-                              height,
-                              slot.preset.fov,
-                              projection,
-                              fovContext,
-                              style,
-                              active,
-                              label);
-            drewAny = true;
+            drewAny |= DrawStyledFovRing(center,
+                                         width,
+                                         height,
+                                         slot.preset.fov,
+                                         projection,
+                                         fovContext,
+                                         style,
+                                         active,
+                                         label);
         }
         return drewAny;
     }
@@ -1018,6 +1020,14 @@ static void InitializeKmBoxFromConfig()
         return;
     }
 
+    if (OW::Config::kmboxDeviceType == 2) {
+        const int status = kmbox::MockHardwareMgr.Initialize();
+        std::printf("[KMBOX] Mock hardware ready. status=%d\n", status);
+        Diagnostics::Info("KMBox mock hardware ready. status=%d", status);
+        Diagnostics::Aim("kmbox.init mock success status=%d", status);
+        return;
+    }
+
     kmbox::EnsureTimerResolution();
 
     if (OW::Config::kmboxDeviceType == 0) {
@@ -1112,6 +1122,7 @@ static void ShutdownHeadlessRuntime()
     mem.CloseDma();
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
+    kmbox::MockHardwareMgr.Shutdown();
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
@@ -1546,6 +1557,7 @@ int main(int argc, char** argv)
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
     Diagnostics::Info("DMA subsystem closed.");
+    kmbox::MockHardwareMgr.Shutdown();
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();

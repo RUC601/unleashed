@@ -659,8 +659,8 @@ namespace OW { namespace Config {
 
     // ---- KMBox input output ----
     inline bool kmboxEnabled = false;
-    inline int inputSource = 1; // 0=Auto (KMBox>DMA>Local), 1=KMBox, 2=Local, 3=DMA
-    inline int  kmboxDeviceType = 0; // 0=Network/UDP, 1=Serial/COM
+    inline int inputSource = 1; // 0=Auto (KMBox>DMA>Local), 1=KMBox, 2=Local, 3=DMA, 4=Mock
+    inline int  kmboxDeviceType = 0; // 0=Network/UDP, 1=Serial/COM, 2=Mock
     inline char kmboxIp[32] = "192.168.2.188";
     inline int  kmboxPort = 8808;
     inline int  kmboxMonitorPort = 8809;

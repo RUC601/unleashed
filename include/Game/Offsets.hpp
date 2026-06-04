@@ -214,13 +214,13 @@ namespace OW {
         inline constexpr RuntimeOffsetProfile kCnNeRuntimeProfile{
             "cn/ne",
             ComponentTransformMode::Identity,
-            0x42D2268, // live-verified 2026-05-31: CN entity root
-            0x411E4EC, // live-verified 2026-05-31: input.MouseScaleX
-            0x411E504, // live-verified 2026-05-31: input.MouseScaleY
+            0x42D2298, // live-verified 2026-06-03: NE entity root
+            0x411E4FC, // live-verified 2026-06-03: input.MouseScaleX
+            0x411E514, // live-verified 2026-06-03: input.MouseScaleY
             0,         // unresolved: CN viewport width
             0,         // unresolved: CN viewport height
             0x98,      // live-verified 2026-06-01: CN visibility raw bool, raw == 1 means visible
-            0x49A6A90, // live-verified 2026-06-01: direct ViewMatrix root
+            0x49A6A80, // live-verified 2026-06-03: direct ViewMatrix root
             0,         // not used by CN direct ViewMatrix path
             0,         // not used by CN direct ViewMatrix path
             0x20,
