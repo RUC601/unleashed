@@ -102,6 +102,8 @@ namespace OW {
         HERO_JUNO          = GameData::MakeHeroId(0x365),
         HERO_WUYANG        = GameData::MakeHeroId(0x3C3),
         HERO_VENDETTA      = GameData::MakeHeroId(0x472),
+        HERO_SIERRA        = GameData::MakeHeroId(0x4D2),
+        HERO_EMRE          = GameData::MakeHeroId(0x4D8),
         HERO_ANRAN         = GameData::MakeHeroId(0x4DD),
         HERO_JETPACKCAT    = GameData::MakeHeroId(0x516),
         HERO_TRAININGBOT1  = GameData::MakeHeroId(0x33C),

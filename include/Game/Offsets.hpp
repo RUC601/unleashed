@@ -15,7 +15,6 @@
 //   - Visibility uses profile-specific runtime polarity; CN/NE uses +0x98 as
 //     a live-verified raw bool state.
 //   - ViewMatrix root moved and lost the third key: new formula is (enc + key1) ^ key2.
-//   - GameAdmin root moved and now reads +0x30 with a two-rotate formula.
 // =============================================================================
 
 namespace OW {
@@ -53,13 +52,6 @@ namespace OW {
             uint64_t VM_ViewMatrix = 0;
             uint64_t VM_ProjMatrix = 0;
 
-            uint64_t Address_game_admin_root = 0;
-            uint64_t GameAdmin_RootPtr = 0;
-            uint64_t GameAdmin_Add1 = 0;
-            uint64_t GameAdmin_Xor1 = 0;
-            uint64_t GameAdmin_Ror1 = 0;
-            uint64_t GameAdmin_Add2 = 0;
-            uint64_t GameAdmin_Ror2 = 0;
         };
 
         // =========================================================================
@@ -164,20 +156,7 @@ namespace OW {
         static constexpr auto ViewportWidth_RVA  = 0x4037C38;
         static constexpr auto ViewportHeight_RVA = 0x4037CA8;
 
-        // GameAdmin / input globals (forum p330 correction, IDA RVA 0x56B120).
-        // OLD (0521): static constexpr auto Address_game_admin_root = 0x3A8CCB0;
-        static constexpr auto Address_game_admin_root = 0x3A92F80; // verified 0527: root xrefs + corrected forum post
-        // OLD (0521): static constexpr auto GameAdmin_RootPtr = 0x160;
-        static constexpr auto GameAdmin_RootPtr       = 0x30;      // verified 0527: mov rax,[rcx+30h]
-        // OLD (0521): Add1=0x78B568A5D3C8EF76, Xor1=0x8B846BECDFD77B79, Add2=0x73978469CB862683, Ror=48
-        static constexpr auto GameAdmin_Add1          = 0x3A7D48F98701DF53; // verified 0527
-        static constexpr auto GameAdmin_Xor1          = 0xA0CC9EB06D3118CD; // verified 0527
-        static constexpr auto GameAdmin_Ror1          = 17;                 // verified 0527
-        static constexpr auto GameAdmin_Add2          = 0x2AF9257775C5D0FF; // verified 0527
-        static constexpr auto GameAdmin_Ror2          = 34;                 // verified 0527
-        static constexpr auto GameAdmin_Ror           = GameAdmin_Ror2;     // compatibility alias for older diagnostics
-
-        static constexpr auto HeapSlotIndex_InputSystem = 6; // slot-6 input system helper
+        // Input globals.
         static constexpr auto InputMouseScaleX_RVA      = 0x3778BCC; // input.MouseScaleX
         static constexpr auto InputMouseScaleY_RVA      = 0x3778BE4; // input.MouseScaleY
 
@@ -202,13 +181,6 @@ namespace OW {
             VM_ViewProjectionMatrix,
             VM_ViewMatrix,
             VM_ProjMatrix,
-            Address_game_admin_root,
-            GameAdmin_RootPtr,
-            GameAdmin_Add1,
-            GameAdmin_Xor1,
-            GameAdmin_Ror1,
-            GameAdmin_Add2,
-            GameAdmin_Ror2,
         };
 
         inline constexpr RuntimeOffsetProfile kCnNeRuntimeProfile{
@@ -230,13 +202,6 @@ namespace OW {
             0xC0,
             0x140,
             0xB0,
-            0,         // unresolved: CN GameAdmin root/formula/table
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
         };
 
         inline std::atomic<RuntimeProfile>& ActiveProfileStorage()
@@ -275,15 +240,6 @@ namespace OW {
         // =========================================================================
         // Legacy / unresolved offsets
         // =========================================================================
-
-        // Deprecated Rigel HeapManager chain. The old base RVA is NULL on current builds;
-        // kept only as a last-resort compatibility probe.
-        static constexpr auto HeapManager          = 0x38B55F0;
-        static constexpr auto HeapManager_Var      = 0x3899DD5;
-        static constexpr auto HeapManager_Key      = 0xE7E1F898E11B68B1;
-        static constexpr auto HeapManager_Pointer  = 0x160;
-
-        static constexpr auto SensitivePtr = 0x2054;
 
         static constexpr auto VisFN        = 0x79E722;  // broken legacy table-walk path
         static constexpr auto Vis_Key      = 0x1AAC46FF0D473EBA; // broken legacy table-walk path

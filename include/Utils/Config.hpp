@@ -849,6 +849,15 @@ namespace OW { namespace Config {
     inline int   kmboxInputDelayMs = 0;
     inline bool kmboxDebugLog = false;
 
+    inline int RecommendedKmboxMonitorPort(int commandPort)
+    {
+        if (commandPort >= 1 && commandPort < 65535)
+            return commandPort + 1;
+        if (commandPort == 65535)
+            return commandPort - 1;
+        return 8809;
+    }
+
     // ---- Diagnostics / Dry-run ----
     inline bool aimDryRun = false;              // Dry-run mode: log everything, don't move cursor
     inline bool aimVerboseLog = false;          // Extra verbose per-tick logging
@@ -1107,6 +1116,7 @@ namespace OW { namespace Config {
     void LoadHeroPresets(const std::string& path);
     void SaveConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);
     void LoadConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);
+    void NormalizeKmboxPorts();
     void SaveConfig(const std::string& path);
     void LoadConfig(const std::string& path);
 

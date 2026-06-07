@@ -1,7 +1,12 @@
 // WinSock2 must be included before Windows.h to avoid version conflicts
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <WinSock2.h>
+#include <mstcpip.h>
 #pragma comment(lib, "ws2_32.lib")
+
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
 
 #include "Kmbox/KmBoxNetManager.h"
 #include "Utils/Diagnostics.hpp"
@@ -16,6 +21,27 @@ namespace
     bool IsValidSocket(SOCKET socketHandle)
     {
         return socketHandle != 0 && socketHandle != INVALID_SOCKET;
+    }
+
+    void DisableUdpConnectionReset(SOCKET socketHandle, const char* label)
+    {
+        BOOL resetEnabled = FALSE;
+        DWORD bytesReturned = 0;
+        const int status = WSAIoctl(
+            socketHandle,
+            SIO_UDP_CONNRESET,
+            &resetEnabled,
+            sizeof(resetEnabled),
+            nullptr,
+            0,
+            &bytesReturned,
+            nullptr,
+            nullptr);
+        if (status == SOCKET_ERROR) {
+            Diagnostics::Warn("[KMBOX-NET] Failed to disable UDP connection reset on %s socket. WSA=%d",
+                label ? label : "unknown",
+                WSAGetLastError());
+        }
     }
 
     KmBoxCommandType CommandTypeForCmd(unsigned int cmd)
@@ -311,6 +337,7 @@ bool KmBoxNetManager::OpenSocket()
         s_Client = 0;
         return false;
     }
+    DisableUdpConnectionReset(s_Client, "command");
 
     AddrServer = {};
     AddrServer.sin_addr.S_un.S_addr = inet_addr(ip.c_str());
@@ -1151,6 +1178,7 @@ void KmBoxKeyBoard::ListenThread()
         WSACleanup();
         return;
     }
+    DisableUdpConnectionReset(this->s_ListenSocket, "monitor");
 
     sockaddr_in AddrServer{};
     AddrServer.sin_family = PF_INET;
@@ -1233,21 +1261,22 @@ int KmBoxKeyBoard::StartMonitor(WORD Port)
 {
     Diagnostics::Info("[KMBOX-NET] monitor start requested. port=%u", Port);
 
+    if (Port == 0) {
+        EndMonitor();
+        Diagnostics::Info("[KMBOX-NET] monitor disabled by port 0.");
+        return success;
+    }
+
     if (!kmbox::KmBoxMgr.EnsureConnected()) {
         Diagnostics::Info("[KMBOX-NET] monitor start failed. port=%u status=%d",
             Port, err_creat_socket);
         return err_creat_socket;
     }
 
-    client_data packet = kmbox::KmBoxMgr.BuildPacket(cmd_monitor, Port | 0xaa55 << 16);
-    const int status = kmbox::KmBoxMgr.SendSynchronousCommand(cmd_monitor, packet.head.rand,
-        sizeof(cmd_head_t), KmBoxCommandType::Monitor, &packet);
-    if (status != success) {
-        Diagnostics::Info("[KMBOX-NET] monitor command failed. port=%u status=%d", Port, status);
-        return status;
-    }
+    EndMonitor();
 
     this->MonitorPort = Port;
+    this->ListenerRuned.store(false, std::memory_order_release);
     this->inputPacketCount.store(0, std::memory_order_release);
     this->lastLoggedMouseButtons.store(0, std::memory_order_release);
     {
@@ -1258,29 +1287,37 @@ int KmBoxKeyBoard::StartMonitor(WORD Port)
         this->monitorStartResolved = false;
     }
 
-    if (IsValidSocket(this->s_ListenSocket)) {
-        closesocket(this->s_ListenSocket);
-        this->s_ListenSocket = 0;
-    }
-
-    if (this->t_Listen.joinable())
-        this->t_Listen.join();
-
     this->t_Listen = std::thread(&KmBoxKeyBoard::ListenThread, this);
+
+    int listenerStatus = success;
     {
         std::unique_lock<std::mutex> lock(this->monitorMutex);
         if (!this->monitorStartCv.wait_for(lock, std::chrono::milliseconds(500),
             [this]() { return this->monitorStartResolved; })) {
             Diagnostics::Info("[KMBOX-NET] monitor start failed. port=%u status=%d",
                 Port, err_net_rx_timeout);
-            return err_net_rx_timeout;
+            listenerStatus = err_net_rx_timeout;
+        } else {
+            listenerStatus = this->monitorStartStatus;
         }
+    }
 
-        if (this->monitorStartStatus != success) {
-            Diagnostics::Info("[KMBOX-NET] monitor start failed. port=%u status=%d",
-                Port, this->monitorStartStatus);
-            return this->monitorStartStatus;
-        }
+    if (listenerStatus != success) {
+        Diagnostics::Info("[KMBOX-NET] monitor listener failed. port=%u status=%d",
+            Port, listenerStatus);
+        EndMonitor();
+        return listenerStatus;
+    }
+
+    client_data packet = kmbox::KmBoxMgr.BuildPacket(
+        cmd_monitor,
+        static_cast<unsigned int>(Port) | (0xaa55u << 16));
+    const int status = kmbox::KmBoxMgr.SendSynchronousCommand(cmd_monitor, packet.head.rand,
+        sizeof(cmd_head_t), KmBoxCommandType::Monitor, &packet);
+    if (status != success) {
+        Diagnostics::Info("[KMBOX-NET] monitor command failed. port=%u status=%d", Port, status);
+        EndMonitor();
+        return status;
     }
 
     Diagnostics::Info("[KMBOX-NET] monitor start succeeded. port=%u", Port);
@@ -1289,15 +1326,13 @@ int KmBoxKeyBoard::StartMonitor(WORD Port)
 
 void KmBoxKeyBoard::EndMonitor()
 {
-    if (this->ListenerRuned.load(std::memory_order_acquire)) {
-        this->ListenerRuned.store(false, std::memory_order_release);
+    this->ListenerRuned.store(false, std::memory_order_release);
 
-        if (IsValidSocket(this->s_ListenSocket))
-            closesocket(this->s_ListenSocket);
+    if (IsValidSocket(this->s_ListenSocket))
+        closesocket(this->s_ListenSocket);
 
-        this->s_ListenSocket = 0;
-        this->MonitorPort = 0;
-    }
+    this->s_ListenSocket = 0;
+    this->MonitorPort = 0;
 
     if (this->t_Listen.joinable())
         this->t_Listen.join();

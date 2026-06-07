@@ -304,6 +304,26 @@ namespace OW { namespace Config {
 
         using SectionValues = std::unordered_map<std::string, std::string>;
 
+        void LogConfig(Diagnostics::LogLevel level, const char* fmt, ...);
+
+        void NormalizeKmboxPortsUnlocked(const char* reason)
+        {
+            if (kmboxMonitorPort != kmboxPort)
+                return;
+
+            const int oldMonitorPort = kmboxMonitorPort;
+            kmboxMonitorPort = RecommendedKmboxMonitorPort(kmboxPort);
+            LogConfig(Diagnostics::LogLevel::Warn,
+                "kmboxMonitorPort matched kmboxPort (%d); using %d because KMBox monitor traffic uses a separate UDP port.",
+                oldMonitorPort,
+                kmboxMonitorPort);
+            Diagnostics::Aim("config.kmbox_monitor_port_adjusted reason=%s commandPort=%d oldMonitorPort=%d newMonitorPort=%d",
+                reason ? reason : "unknown",
+                kmboxPort,
+                oldMonitorPort,
+                kmboxMonitorPort);
+        }
+
         int MigrateLegacyAimBehavior(int value)
         {
             switch (value) {
@@ -450,7 +470,9 @@ namespace OW { namespace Config {
             { OW::eHero::HERO_SOJOURN,      "Sojourn",      "Sojourn",        nullptr },
             { OW::eHero::HERO_VENTURE,      "Venture",      "Venture",        nullptr },
             { OW::eHero::HERO_ECHO,         "Echo",         "Echo",           nullptr },
+            { OW::eHero::HERO_EMRE,         "Emre",         nullptr,          nullptr },
             { OW::eHero::HERO_FREJA,        "Freja",        nullptr,          nullptr },
+            { OW::eHero::HERO_SIERRA,       "Sierra",       nullptr,          nullptr },
             { OW::eHero::HERO_VENDETTA,     "Vendetta",     nullptr,          nullptr },
             { OW::eHero::HERO_ANRAN,        "Anran",        nullptr,          nullptr },
             { OW::eHero::HERO_REINHARDT,    "Reinhardt",    "Reinhardt",      nullptr },
@@ -1473,6 +1495,13 @@ namespace OW { namespace Config {
                     AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
                     AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
                 };
+            case static_cast<uint64_t>(OW::eHero::HERO_EMRE):
+                return {
+                    AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
+                    AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
+                };
+            case static_cast<uint64_t>(OW::eHero::HERO_SIERRA):
+                return { AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse) };
             case static_cast<uint64_t>(OW::eHero::HERO_VENTURE):
                 return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
             default:
@@ -5241,6 +5270,7 @@ namespace OW { namespace Config {
                 ? kmboxPort + 1
                 : kDefaultKmboxMonitorPort;
             ClampSetting("kmboxMonitorPort", kmboxMonitorPort, 1, 65535, fallbackMonitorPort);
+            NormalizeKmboxPortsUnlocked("validate");
             ClampSetting("kmboxInputDelayMs", kmboxInputDelayMs, 0, 20, kDefaultKmboxInputDelayMs);
             ClampSetting("manualScreenWidth", manualScreenWidth, 0, 16384, 1920);
             ClampSetting("manualScreenHeight", manualScreenHeight, 0, 16384, 1080);
@@ -6120,6 +6150,14 @@ namespace OW { namespace Config {
         SaveSystemConfigUnlocked(path);
         LogConfig(Diagnostics::LogLevel::Info,
             "Saved system config to %s.", path.c_str());
+    }
+
+    void NormalizeKmboxPorts()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        ClampSetting("kmboxPort", kmboxPort, 1, 65535, kDefaultKmboxPort);
+        ClampSetting("kmboxMonitorPort", kmboxMonitorPort, 1, 65535, RecommendedKmboxMonitorPort(kmboxPort));
+        NormalizeKmboxPortsUnlocked("runtime");
     }
 
     void LoadConfig(const std::string& path)

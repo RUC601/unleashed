@@ -69,7 +69,7 @@ constexpr WeaponSpec W(uint64_t heroId,
     };
 }
 
-constexpr std::array<WeaponSpec, 71> kWeaponSpecs = {
+constexpr std::array<WeaponSpec, 74> kWeaponSpecs = {
     W(eHero::HERO_REAPER, "Reaper", "reaper_hellfire_shotguns", "Hellfire Shotguns", 0, 1, AC::Shotgun, Hitscan(0.04f), AB::FlickClamp, FP::TapOnHitWindow),
     W(eHero::HERO_TRACER, "Tracer", "tracer_pulse_pistols", "Pulse Pistols", 0, 1, AC::HitscanAuto, Hitscan(0.04f), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_MERCY, "Mercy", "mercy_caduceus_staff_heal", "Caduceus Staff", 0, 1, AC::Targeted, Hitscan(0.0f), AB::Tracking, FP::ManualOnly),
@@ -134,11 +134,14 @@ constexpr std::array<WeaponSpec, 71> kWeaponSpecs = {
     W(eHero::HERO_MAUGA, "Mauga", "mauga_volatile_chaingun", "Volatile Chaingun", 1, 2, AC::HitscanAuto, Hitscan(0.04f), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_ILLARI, "Illari", "illari_solar_rifle", "Solar Rifle", 0, 1, AC::HitscanSingle, Hitscan(0.07f), AB::Flick, FP::TapOnHitWindow),
     W(eHero::HERO_ILLARI, "Illari", "illari_solar_rifle_alt", "Solar Rifle Alt Fire", 1, 2, AC::Beam, Hitscan(0.25f), AB::Tracking, FP::HoldWhileTracking),
+    W(eHero::HERO_EMRE, "Emre", "emre_synthetic_burst_rifle", "Synthetic Burst Rifle", 0, 1, AC::HitscanBurst, Hitscan(0.07f), AB::FlickClamp, FP::TapOnHitWindow),
+    W(eHero::HERO_EMRE, "Emre", "emre_synthetic_burst_rifle_ads", "Synthetic Burst Rifle ADS", 2, 2, AC::HitscanBurst, Hitscan(0.07f), AB::FlickClamp, FP::TapOnHitWindow),
     W(eHero::HERO_FREJA, "Freja", "freja_revdraw_crossbow", "Revdraw Crossbow", 0, 1, AC::ProjectileAuto, Projectile(125.0f, 0.175f), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_FREJA, "Freja", "freja_take_aim", "Take Aim", 2, 2, AC::ProjectileExplosive, Projectile(125.0f, 0.175f, true), AB::FlickDelay, FP::ChargeRelease),
     W(eHero::HERO_VENTURE, "Venture", "venture_smart_excavator", "Smart Excavator", 0, 1, AC::ProjectileExplosive, Projectile(50.0f, 0.32f, true), AB::FlickDelay, FP::ReleaseAfterDelay),
     W(eHero::HERO_HAZARD, "Hazard", "hazard_bonespur", "Bonespur", 0, 1, AC::Shotgun, Projectile(140.0f, 0.05f), AB::FlickClamp, FP::TapOnHitWindow),
     W(eHero::HERO_JUNO, "Juno", "juno_mediblaster", "Mediblaster", 0, 1, AC::HitscanBurst, Hitscan(0.04f), AB::FlickClamp, FP::TapOnHitWindow),
+    W(eHero::HERO_SIERRA, "Sierra", "sierra_helix_rifle", "Helix Rifle", 0, 1, AC::ProjectileAuto, Projectile(85.0f, 0.26f), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_WUYANG, "Wuyang", "wuyang_xuanwu_staff", "Xuanwu Staff", 0, 1, AC::ProjectileExplosive, Projectile(25.0f, 0.42f, true), AB::FlickDelay, FP::ReleaseAfterDelay),
     W(eHero::HERO_JETPACKCAT, "Jetpack Cat", "jetpackcat_biotic_pawjectiles", "Biotic Pawjectiles", 0, 1, AC::Shotgun, Projectile(60.0f, 0.37f, true), AB::FlickClamp, FP::TapOnHitWindow),
 };

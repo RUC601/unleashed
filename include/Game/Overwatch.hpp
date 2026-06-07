@@ -608,18 +608,6 @@ inline void entity_thread() {
         localStats.cameraYCm = std::isfinite(cameraLocation.Y) ? static_cast<int>(cameraLocation.Y * 100.0f) : 0;
         localStats.cameraZCm = std::isfinite(cameraLocation.Z) ? static_cast<int>(cameraLocation.Z * 100.0f) : 0;
 
-        // Resolve local player UID from GameAdmin chain (slot 79)
-        const uint32_t gameAdminLocalUID = OW::GetGameAdminLocalUID();
-        bool gameAdminLocalUidUsed = false;
-        static bool gameAdminLocalUidLoggedCycle = false;
-        if (gameAdminLocalUID != 0 && !gameAdminLocalUidLoggedCycle && OW::PipelineDebugEnabled()) {
-            Diagnostics::Info("[PIPELINE] Stage 4 GameAdmin LocalUID=0x%08X(%u).",
-                static_cast<unsigned int>(gameAdminLocalUID),
-                static_cast<unsigned int>(gameAdminLocalUID));
-            gameAdminLocalUidLoggedCycle = true;
-        }
-        localStats.gameAdminLocalUID = gameAdminLocalUID;
-
         // Also log entity MatchIds for cross-reference on first detailed cycle
         static bool matchIdLogEnabled = true;
 
@@ -1291,8 +1279,9 @@ inline void entity_thread() {
             }
 
             // ---- Player controller / local entity detection ----
-            // PRIMARY: GameAdmin LocalUID matching (slot 79 -> admin+offset vs entity+0x138 MatchId)
-            // FALLBACK: camera proximity (dist <= 1m + known hero name)
+            // AngleBase is produced from the PlayerController component and is
+            // the primary local-player anchor. Camera proximity remains a
+            // secondary diagnostic fallback.
             if (entity.AngleBase) {
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_start angle=0x%llX.",
@@ -1316,24 +1305,6 @@ inline void entity_thread() {
                 if (localHeroName != "Unknown")
                     localStats.namedCandidates++;
 
-                // --- GameAdmin LocalUID match check ---
-                bool isLocalByUID = false;
-                uint32_t entityMatchId = 0;
-                if (gameAdminLocalUID != 0 && !gameAdminLocalUidUsed) {
-                    entityMatchId = entity.match_id;
-                    if (entityMatchId == gameAdminLocalUID) {
-                        isLocalByUID = true;
-                        gameAdminLocalUidUsed = true;
-                        localStats.localUidResolved = true;
-                        Diagnostics::Info("[PIPELINE] Stage 4 LOCAL FOUND by GameAdmin UID: entity=0x%llX MatchId=0x%08X LocalUID=0x%08X dist=%.1fm hero=%s.",
-                            static_cast<unsigned long long>(entity.address),
-                            static_cast<unsigned int>(entityMatchId),
-                            static_cast<unsigned int>(gameAdminLocalUID),
-                            static_cast<double>(dist),
-                            localHeroName.c_str());
-                    }
-                }
-
                 // Log MatchId cross-reference on first cycle (diagnostic only)
                 if (matchIdLogEnabled) {
                     const uint32_t eMatchId = entity.match_id;
@@ -1347,8 +1318,6 @@ inline void entity_thread() {
                             static_cast<double>(dist));
                     }
                 }
-                // entityMatchId was used for GameAdmin UID comparison above
-
                 // Track proximity stats
                 if (dist <= 1.f)
                     localStats.nearCameraCandidates++;
@@ -1368,22 +1337,20 @@ inline void entity_thread() {
                 }
 
                 // Selection priority:
-                // 1. GameAdmin UID match (unambiguous)
-                // 2. AngleBase present = local player (only local has PlayerController)
-                // 3. Proximity fallback (within 1m + known name)
+                // 1. First AngleBase candidate (only local has PlayerController)
+                // 2. Proximity fallback (within 1m + known name)
                 const bool isNearCamera = dist <= 1.f;
                 const bool hasKnownName = localHeroName != "Unknown";
-                const bool shouldSelectLocal = isLocalByUID ||
-                    (!gameAdminLocalUidUsed && localStats.selected == 0) ||
-                    (!gameAdminLocalUidUsed && isNearCamera && hasKnownName);
+                const bool shouldSelectLocal =
+                    localStats.selected == 0 ||
+                    (isNearCamera && hasKnownName);
 
                 if (shouldSelectLocal) {
                     if (detailedProcessLog) {
-                        Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_start skill_base=0x%llX hero=%s uid=%d.",
+                        Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_start skill_base=0x%llX hero=%s.",
                             i,
                             static_cast<unsigned long long>(entity.SkillBase),
-                            localHeroName.c_str(),
-                            isLocalByUID ? 1 : 0);
+                            localHeroName.c_str());
                     }
                     if (refreshSlowFields)
                         slowCache.skillcd1 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x189c);
@@ -1426,12 +1393,10 @@ inline void entity_thread() {
                     }
                     if (entity.GetTeam() == OW::eTeam::TEAM_DEATHMATCH)
                         entity.Team = false;
-                } else if (isLocalByUID) {
-                    // UID matched but selection already happened (should never occur)
                 }
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
-                    Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_done selected=%zu uid=%d.",
-                        i, localStats.selected, isLocalByUID ? 1 : 0);
+                    Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_done selected=%zu.",
+                        i, localStats.selected);
                 }
             }
 
@@ -1586,7 +1551,7 @@ inline void entity_thread() {
                     processStats.sampleHeadBadLocalXCm,
                     processStats.sampleHeadBadLocalYCm,
                     processStats.sampleHeadBadLocalZCm);
-                Diagnostics::Info("[PIPELINE] Stage 4 local angle_candidates=%zu near_camera=%zu named=%zu selected=%zu best_dist_cm=%d health=%d hero=0x%llX angle=0x%llX LocalUID=0x%08X(%u) uidResolved=%d.",
+                Diagnostics::Info("[PIPELINE] Stage 4 local angle_candidates=%zu near_camera=%zu named=%zu selected=%zu best_dist_cm=%d health=%d hero=0x%llX angle=0x%llX.",
                     localStats.angleCandidates,
                     localStats.nearCameraCandidates,
                     localStats.namedCandidates,
@@ -1594,10 +1559,7 @@ inline void entity_thread() {
                     localStats.bestDistanceCm,
                     localStats.selectedHealth,
                     static_cast<unsigned long long>(localStats.selectedHeroId),
-                    static_cast<unsigned long long>(localStats.selectedAngleBase),
-                    static_cast<unsigned int>(localStats.gameAdminLocalUID),
-                    static_cast<unsigned int>(localStats.gameAdminLocalUID),
-                    localStats.localUidResolved ? 1 : 0);
+                    static_cast<unsigned long long>(localStats.selectedAngleBase));
                 Diagnostics::Info("[PIPELINE] Stage 4 local coords zero_head=%zu nonzero_pos=%zu best addr=0x%llX hero=0x%llX angle=0x%llX health=%d head_cm=(%d,%d,%d) pos_cm=(%d,%d,%d) camera_cm=(%d,%d,%d).",
                     localStats.zeroHeadCandidates,
                     localStats.nonZeroPositionCandidates,

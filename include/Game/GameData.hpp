@@ -28,6 +28,7 @@ constexpr bool HasHeroIdPrefix(uint64_t heroId) noexcept {
 
 // Source: D:\Desktop\uc\grap\516727\332.txt, plexies, 2026-05-27 04:18 AM.
 // Live CN probe additions, 2026-06-02: Vendetta/Anran.
+// Local research additions, 2026-06-07: Sierra/Emre.
 inline constexpr NamedU64 kHeroIds[] = {
     { "Reaper", MakeHeroId(0x002) },
     { "Tracer", MakeHeroId(0x003) },
@@ -74,6 +75,8 @@ inline constexpr NamedU64 kHeroIds[] = {
     { "Juno", MakeHeroId(0x365) },
     { "Wuyang", MakeHeroId(0x3C3) },
     { "Vendetta", MakeHeroId(0x472) },
+    { "Sierra", MakeHeroId(0x4D2) },
+    { "Emre", MakeHeroId(0x4D8) },
     { "Anran", MakeHeroId(0x4DD) },
     { "Jetpack Cat", MakeHeroId(0x516) },
     { "Standard Bot", MakeHeroId(0x33C) },

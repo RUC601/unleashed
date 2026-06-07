@@ -1031,6 +1031,7 @@ static void InitializeKmBoxFromConfig()
     kmbox::EnsureTimerResolution();
 
     if (OW::Config::kmboxDeviceType == 0) {
+        OW::Config::NormalizeKmboxPorts();
         std::printf("[KMBOX] Initialising network device %s:%d...\n",
             OW::Config::kmboxIp, OW::Config::kmboxPort);
         Diagnostics::Aim("kmbox.init network start ip=%s port=%d mac=%s",

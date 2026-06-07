@@ -23,6 +23,8 @@ namespace
         OW::Config::kmboxEnabled = true;
         OW::Config::kmboxDeviceType = 2;
         OW::Config::inputSource = 4;
+        OW::Config::kmboxPort = 8808;
+        OW::Config::kmboxMonitorPort = 8809;
         OW::Config::kmboxCountsPerRadian = 1000.0f;
         OW::Config::calibratedCountsPerRadian = 0.0f;
         OW::Config::calibratedPitchCountsPerRadian = 0.0f;
@@ -31,12 +33,29 @@ namespace
         OW::Config::referenceGameSensitivity = 15.0f;
         OW::Config::kmboxInputDelayMs = 0;
     }
+
+    int VerifyKmboxMonitorPortNormalization()
+    {
+        if (OW::Config::RecommendedKmboxMonitorPort(5512) != 5513)
+            return Fail("recommended KMBox monitor port did not use command port + 1");
+
+        if (OW::Config::RecommendedKmboxMonitorPort(65535) != 65534)
+            return Fail("recommended KMBox monitor port did not handle 65535 command port");
+
+        if (OW::Config::RecommendedKmboxMonitorPort(0) != 8809)
+            return Fail("recommended KMBox monitor port did not fall back for invalid command port");
+
+        return EXIT_SUCCESS;
+    }
 }
 
 int main()
 {
     Diagnostics::Initialize(Diagnostics::LogLevel::Error, "NUL");
     Diagnostics::InitializeAimLog("NUL");
+
+    if (VerifyKmboxMonitorPortNormalization() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
 
     ConfigureMockRuntime();
     if (kmbox::MockHardwareMgr.Initialize() != success)

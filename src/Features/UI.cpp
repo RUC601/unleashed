@@ -655,8 +655,13 @@ namespace {
         kmbox::EnsureTimerResolution();
 
         if (OW::Config::kmboxDeviceType == 0) {
+            OW::Config::NormalizeKmboxPorts();
             if (OW::Config::kmboxPort <= 0 || OW::Config::kmboxPort > 65535)
                 return { false, "Invalid port" };
+
+            unsigned int deviceMac = 0;
+            if (!TryParseHexU32(OW::Config::kmboxMac, deviceMac))
+                return { false, "Invalid MAC" };
 
             const int status = kmbox::KmBoxMgr.InitDevice(
                 OW::Config::kmboxIp,
@@ -699,6 +704,32 @@ namespace {
         Diagnostics::Info("KMBox UI enable serial init succeeded. port=%s", OW::Config::kmboxComPort);
         Diagnostics::Aim("kmbox.ui_enable serial success port=%s", OW::Config::kmboxComPort);
         return { true, "Init OK" };
+    }
+
+    KmboxConnectionTestResult ReinitializeKmboxRuntimeFromCurrentConfig()
+    {
+        kmbox::KmBoxMgr.KeyBoard.EndMonitor();
+        if (OW::Config::kmboxDeviceType != 2)
+            kmbox::MockHardwareMgr.Shutdown();
+        if (OW::Config::kmboxDeviceType != 0)
+            kmbox::ReleaseTimerResolution();
+
+        Diagnostics::Info("KMBox UI runtime reinit requested. deviceType=%d ip=%s port=%d monitor=%d mac=%s com=%s",
+            OW::Config::kmboxDeviceType,
+            OW::Config::kmboxIp,
+            OW::Config::kmboxPort,
+            OW::Config::kmboxMonitorPort,
+            OW::Config::kmboxMac,
+            OW::Config::kmboxComPort);
+        Diagnostics::Aim("kmbox.ui_reinit requested deviceType=%d ip=%s port=%d monitor=%d mac=%s com=%s",
+            OW::Config::kmboxDeviceType,
+            OW::Config::kmboxIp,
+            OW::Config::kmboxPort,
+            OW::Config::kmboxMonitorPort,
+            OW::Config::kmboxMac,
+            OW::Config::kmboxComPort);
+
+        return InitializeKmboxFromCurrentConfig();
     }
 
     void CopyConfigProfileName(char (&destination)[kConfigProfileNameBufferSize], const std::string& name)
@@ -868,7 +899,9 @@ static const HeroOption kHeroOptions[] = {
     { "Sojourn", OW::eHero::HERO_SOJOURN, "Damage" },
     { "Venture", OW::eHero::HERO_VENTURE, "Damage" },
     { "Echo", OW::eHero::HERO_ECHO, "Damage" },
+    { "Emre", OW::eHero::HERO_EMRE, "Damage" },
     { "Freja", OW::eHero::HERO_FREJA, "Damage" },
+    { "Sierra", OW::eHero::HERO_SIERRA, "Damage" },
     { "Vendetta", OW::eHero::HERO_VENDETTA, "Damage" },
     { "Anran", OW::eHero::HERO_ANRAN, "Damage" },
     { "Mercy", OW::eHero::HERO_MERCY, "Support" },
@@ -5001,12 +5034,21 @@ static void DrawMiscKmboxPage() {
     UIGroupBox("KMBox Settings");
     {
         bool kmboxSaveRequested = false;
+        bool kmboxRuntimeReinitRequested = false;
         static bool kmboxConnectionTestOk = false;
         static std::string kmboxConnectionTestMessage;
         static bool kmboxNetworkRestartOk = false;
         static std::string kmboxNetworkRestartMessage;
         static bool kmboxFirewallOk = false;
         static std::string kmboxFirewallMessage;
+        auto markKmboxRuntimeConfigChanged = [&]() {
+            kmboxSaveRequested = true;
+            kmboxConnectionTestMessage.clear();
+            kmboxNetworkRestartMessage.clear();
+            kmboxFirewallMessage.clear();
+            if (OW::Config::kmboxEnabled)
+                kmboxRuntimeReinitRequested = true;
+        };
         ImGui::PushID("KMBoxSettings");
 
         SettingRow("Enable KMBox");
@@ -5022,6 +5064,7 @@ static void DrawMiscKmboxPage() {
             } else if (!OW::Config::kmboxEnabled && wasKmboxEnabled) {
                 kmboxConnectionTestOk = true;
                 kmboxConnectionTestMessage = "Disabled";
+                kmbox::KmBoxMgr.KeyBoard.EndMonitor();
                 kmbox::MockHardwareMgr.Shutdown();
                 kmbox::ReleaseTimerResolution();
             }
@@ -5039,7 +5082,7 @@ static void DrawMiscKmboxPage() {
         PushControlWidth();
         if (ImGui::Combo("##DeviceType", &OW::Config::kmboxDeviceType,
                          kKmBoxDeviceTypes, IM_ARRAYSIZE(kKmBoxDeviceTypes))) {
-            kmboxSaveRequested = true;
+            markKmboxRuntimeConfigChanged();
             if (OW::Config::kmboxDeviceType == 2)
                 OW::Config::inputSource = 4;
         }
@@ -5049,31 +5092,36 @@ static void DrawMiscKmboxPage() {
             SettingRow("IP");
             PushControlWidth();
             ImGui::InputText("##Ip", OW::Config::kmboxIp, IM_ARRAYSIZE(OW::Config::kmboxIp));
-            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
 
             SettingRow("Port");
             PushControlWidth();
             ImGui::InputInt("##Port", &OW::Config::kmboxPort, 0, 0);
-            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
 
             SettingRow("Monitor Port");
             PushControlWidth();
             ImGui::InputInt("##MonitorPort", &OW::Config::kmboxMonitorPort, 0, 0);
-            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
 
             SettingRow("MAC");
             PushControlWidth();
             ImGui::InputText("##Mac", OW::Config::kmboxMac, IM_ARRAYSIZE(OW::Config::kmboxMac));
-            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
         } else if (OW::Config::kmboxDeviceType == 1) {
             SettingRow("COM Port");
             PushControlWidth();
             ImGui::InputText("##ComPort", OW::Config::kmboxComPort, IM_ARRAYSIZE(OW::Config::kmboxComPort));
-            kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
         } else {
             const kmbox::MockHardwareSnapshot snapshot = kmbox::MockHardwareMgr.Snapshot();
@@ -5287,6 +5335,12 @@ static void DrawMiscKmboxPage() {
                     "%s",
                     kmboxFirewallMessage.c_str());
             }
+        }
+
+        if (kmboxRuntimeReinitRequested) {
+            const KmboxConnectionTestResult initResult = ReinitializeKmboxRuntimeFromCurrentConfig();
+            kmboxConnectionTestOk = initResult.ok;
+            kmboxConnectionTestMessage = initResult.message;
         }
 
         if (kmboxSaveRequested)

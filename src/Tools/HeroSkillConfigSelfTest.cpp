@@ -38,6 +38,8 @@ int main()
     const OW::HeroSkillDefinition* zaryaLowAmmoRightClick = nullptr;
     const OW::HeroSkillDefinition* genjiDashCombo = nullptr;
     const OW::HeroSkillDefinition* tracerAutoMelee = nullptr;
+    const OW::HeroSkillDefinition* emreAutoMelee = nullptr;
+    const OW::HeroSkillDefinition* sierraAutoMelee = nullptr;
     size_t autoMeleeDefinitions = 0;
     for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
         const std::string skillId(definition.skillId ? definition.skillId : "");
@@ -92,6 +94,10 @@ int main()
             ++autoMeleeDefinitions;
             if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_TRACER))
                 tracerAutoMelee = &definition;
+            if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_EMRE))
+                emreAutoMelee = &definition;
+            if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_SIERRA))
+                sierraAutoMelee = &definition;
         }
     }
 
@@ -104,7 +110,11 @@ int main()
     if (!tracerRecall || !reaperWraithForm || !zenyattaTranscendence ||
         !zaryaPropelJump || !zaryaLowAmmoRightClick || !genjiDashCombo)
         return Fail();
-    if (!tracerAutoMelee)
+    if (!tracerAutoMelee || !emreAutoMelee || !sierraAutoMelee)
+        return Fail();
+    if (std::string(OW::GameData::HeroName(static_cast<uint64_t>(OW::eHero::HERO_EMRE))) != "Emre")
+        return Fail();
+    if (std::string(OW::GameData::HeroName(static_cast<uint64_t>(OW::eHero::HERO_SIERRA))) != "Sierra")
         return Fail();
     if (autoMeleeDefinitions != OW::AutoMeleeHeroDefinitionCount())
         return Fail();
