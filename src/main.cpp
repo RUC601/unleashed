@@ -535,7 +535,7 @@ namespace {
                                       const FovProjectionContext& projection,
                                       const OW::TargetingDetail::FovRuntimeContext& fovContext)
     {
-        const float targetAngleDeg = OW::Config::ClampFovDeg(fovDeg);
+        const float targetAngleDeg = OW::Config::FovCircleRenderAngleDeg(fovDeg);
         if (targetAngleDeg <= 0.0f)
             return 0.0f;
 
@@ -670,17 +670,18 @@ namespace {
             const bool active = activeState.active &&
                 activeState.slotKind == static_cast<int>(OW::Config::FovRingSlotKind::Aim) &&
                 activeState.slotIndex == slotIndex;
+            const float ringFovDeg = active ? activeState.fovDeg : slot.preset.fov;
 
             char label[32] = {};
             std::snprintf(label,
                           sizeof(label),
                           "A%d %.0f deg",
                           slotIndex + 1,
-                          OW::Config::ClampFovDeg(slot.preset.fov));
+                          OW::Config::ClampFovDeg(ringFovDeg));
             drewAny |= DrawStyledFovRing(center,
                                          width,
                                          height,
-                                         slot.preset.fov,
+                                         ringFovDeg,
                                          projection,
                                          fovContext,
                                          style,

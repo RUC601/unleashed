@@ -41,6 +41,11 @@ namespace OW { namespace Config {
                           kMaxFovDeg);
     }
 
+    inline float FovCircleRenderAngleDeg(float fovDeg)
+    {
+        return ClampFovDeg(ClampFovDeg(fovDeg) * 2.0f);
+    }
+
     inline float LegacyFovApertureToAngleDeg(float fovApertureDeg)
     {
         return ClampFovDeg(std::isfinite(fovApertureDeg)
@@ -691,7 +696,7 @@ namespace OW { namespace Config {
     // ---- ESP toggles ----
     inline bool draw_info       = true;
     inline bool drawbattletag   = false;
-    inline bool drawhealth      = true;
+    inline bool drawhealth      = false;
     inline bool healthbar       = false;
     inline bool healthbar2      = false;
     inline float healthbartextsize = 16.f;
@@ -722,13 +727,13 @@ namespace OW { namespace Config {
     extern bool manualsave;
 
     // ---- Outline colours (float4, 0-1 range) ----
-    inline ImVec4 enargb        = ImVec4(1.f, 0.f, 0.f, 0.4f);
-    inline ImVec4 invisnenargb  = ImVec4(1.f, 0.f, 0.f, 0.4f);
-    inline ImVec4 targetargb    = ImVec4(0.f, 1.f, 0.f, 0.8f);
-    inline ImVec4 allyargb      = ImVec4(0.f, 0.f, 1.f, 0.4f);
+    inline ImVec4 enargb        = ImVec4(1.f, 0.f, 0.f, 1.f);
+    inline ImVec4 invisnenargb  = ImVec4(1.f, 1.f, 1.f, 1.f);
+    inline ImVec4 targetargb    = ImVec4(1.f, 1.f, 0.f, 1.f);
+    inline ImVec4 allyargb      = ImVec4(0.f, 0.f, 1.f, 0.f);
 
     // ---- Box/fov colours ----
-    inline ImVec4 EnemyCol   = ImVec4(1.f, 1.f, 1.f, 1.f);
+    inline ImVec4 EnemyCol   = ImVec4(1.f, 0.f, 0.f, 0.f);
     inline ImVec4 fovcol     = ImVec4(1.f, 1.f, 1.f, 1.f);
 
     enum class FovRingSlotKind : int {

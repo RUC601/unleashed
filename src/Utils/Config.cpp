@@ -2325,7 +2325,7 @@ namespace OW { namespace Config {
             // Defaults match Config.hpp inline initializers for global visual/UI settings.
             draw_info = true;             // default: true
             drawbattletag = false;        // default: false
-            drawhealth = true;            // default: true
+            drawhealth = false;           // current box theme: disable health-gradient line colours
             healthbar = false;            // legacy vertical healthbar is disabled
             healthbar2 = false;           // default: false
             healthbartextsize = 16.0f;    // default: 16
@@ -2352,11 +2352,11 @@ namespace OW { namespace Config {
             gafAsyncKeyStateSessionId = 0; // default: auto from interactive proxy process
             lastConfigProfile = "config.ini";
 
-            enargb = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);       // default: 1,0,0,0.4
-            invisnenargb = ImVec4(1.0f, 0.0f, 0.0f, 0.4f); // default: 1,0,0,0.4
-            targetargb = ImVec4(0.0f, 1.0f, 0.0f, 0.8f);   // default: 0,1,0,0.8
-            allyargb = ImVec4(0.0f, 0.0f, 1.0f, 0.4f);     // default: 0,0,1,0.4
-            EnemyCol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);     // default: 1,1,1,1
+            enargb = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);       // current box theme: visible fill red
+            invisnenargb = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // current box theme: hidden fill white
+            targetargb = ImVec4(1.0f, 1.0f, 0.0f, 1.0f);   // current box theme: target fill yellow
+            allyargb = ImVec4(0.0f, 0.0f, 1.0f, 0.0f);     // current box theme: ally fill transparent blue
+            EnemyCol = ImVec4(1.0f, 0.0f, 0.0f, 0.0f);     // current box theme: transparent red outline
             fovcol = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);       // default: 1,1,1,1
             aimFovRingStyles = MakeDefaultFovRingStyles(FovRingSlotKind::Aim);
 
