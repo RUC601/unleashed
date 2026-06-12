@@ -2633,7 +2633,7 @@ namespace OverlayRenderDetail {
                 std::snprintf(line, sizeof(line),
                               "#%d %s | %s | %s | charge:%s | invis:%s | slot:%s trig:%s%s",
                               slotIndex + 1,
-                              OW::Labels::AttackActionCompactName(trigger.action),
+                              OW::AttackActionCompactNameForHero(heroId, trigger.action),
                               OW::Labels::TriggerbotModeName(trigger.mode),
                               OW::Labels::AimActivationKeyName(trigger.key),
                               YesNo(trigger.chargeAware),

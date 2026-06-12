@@ -112,6 +112,14 @@ namespace OW { namespace Config {
 
     inline std::string configFileName = "config.ini";
     inline std::string lastConfigProfile = "config.ini";
+    inline constexpr int kUiLanguageEnglish = 0;
+    inline constexpr int kUiLanguageChineseSimplified = 1;
+    inline constexpr int kUiLanguageCount = 2;
+    inline int uiLanguage = kUiLanguageEnglish;
+    inline int ClampUiLanguage(int value)
+    {
+        return std::clamp(value, 0, kUiLanguageCount - 1);
+    }
     std::string ConfigDirectoryPath();
     std::string ConfigPath();
     std::string HeroConfigPath();

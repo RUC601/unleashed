@@ -963,6 +963,308 @@ static constexpr int kMenuToggleVk[] = {
     VK_F7, VK_F8, VK_F9, VK_F10, VK_F11, VK_F12
 };
 
+enum class UiText : size_t {
+    NotOpened,
+    TopAiming,
+    TopVisuals,
+    TopTheme,
+    TopMisc,
+    SubAim,
+    SubTrigger,
+    SubSkills,
+    SubCombo,
+    SubPlayers,
+    SubGeneral,
+    SubAimFov,
+    SubDiagnostics,
+    SubBehavior,
+    SubMethod,
+    SubKmBox,
+    SubScreen,
+    GroupConfigProfile,
+    ActiveProfile,
+    Folder,
+    Open,
+    NewProfile,
+    Create,
+    GroupMenu,
+    ToggleKey,
+    Language,
+    GroupApplication,
+    Unleashed,
+    CloseUn,
+    ReconnectUn,
+    RuntimeVersion,
+    Process,
+    SaveConfig,
+    CreatedConfigProfile,
+    ConfigProfileExists,
+    SavedPrefix,
+    ConfigSuffix,
+    GlobalConfig,
+    TooltipHeroSpecific,
+    TooltipHeroFallback,
+    TooltipSaveHero,
+    TooltipSaveFallback,
+    TooltipReconnect,
+    GroupDiagnostics,
+    InputSource,
+    HotkeyProbe,
+    StatusNa,
+    StatusDown,
+    StatusUp,
+    FireRecorder,
+    Stop,
+    Start,
+    DryRunLogOnly,
+    NoCursorMovement,
+    ShowLogOverlay,
+    ClearLog,
+    VerboseAimLogs,
+    VerboseLogsWarning,
+    LogIntervalMs,
+    GroupBehavior,
+    Preset,
+    PresetName,
+    MethodPreset,
+    BaseAngularSpeed,
+    MoveSplit,
+    SplitChunk,
+    SplitDelay,
+    SaveNew,
+    Delete,
+    PitchScale,
+    OvershootCurve,
+    OvershootGain,
+    OvershootReset,
+    GroupMethod,
+    AngularSpeed,
+    PGain,
+    IGain,
+    DGain,
+    MaxIntegral,
+    Deadzone,
+    ControlPoints,
+    Curvature,
+    CurveSpeed,
+    NearDegrees,
+    MidDegrees,
+    FarDegrees,
+    NearScale,
+    MidScale,
+    FarScale,
+    Acceleration,
+    GroupKmBoxSettings,
+    EnableKmBox,
+    DeviceType,
+    Ip,
+    Port,
+    MonitorPort,
+    Mac,
+    ComPort,
+    MockStatus,
+    Ready,
+    NotInitialized,
+    BaseCountsRad,
+    CurrentGameSens,
+    HostDpiDma,
+    MouseDpi,
+    ReferenceGameSens,
+    UseCurrent,
+    AutoSensScale,
+    InputDelayMs,
+    DebugLogging,
+    MockFault,
+    MockInput,
+    MockReset,
+    Reset,
+    MockStats,
+    CountsCalibration,
+    Calibrating,
+    Calibrate,
+    NotCalibrated,
+    KmBoxMoveStress,
+    Run,
+    ConsoleAimLog,
+    ConnectionTest,
+    Test,
+    RestartNic,
+    MonitorFirewall,
+    FixFirewall,
+    Disabled,
+    GroupTargetScreen,
+    LocalWidth,
+    LocalHeight,
+    DmaWidth,
+    DmaHeight,
+    FallbackWidth,
+    FallbackHeight,
+    Count
+};
+
+struct UiTextPair {
+    const char* en;
+    const char* zh;
+};
+
+static constexpr UiTextPair kUiText[] = {
+    { "Not opened", "未打开" },
+    { "Aiming", "瞄准" },
+    { "Visuals", "可视化" },
+    { "Theme", "主题" },
+    { "Misc", "杂项" },
+    { "Aim", "瞄准" },
+    { "Trigger", "触发" },
+    { "Skills", "技能" },
+    { "Combo", "连招" },
+    { "Players", "玩家" },
+    { "General", "通用" },
+    { "Aim FOV", "瞄准视野" },
+    { "Diagnostics", "诊断" },
+    { "Behavior", "行为" },
+    { "Method", "方法" },
+    { "KMBox", "KMBox" },
+    { "Screen", "屏幕" },
+    { "Config Profile", "配置档案" },
+    { "Active Profile", "当前档案" },
+    { "Folder", "文件夹" },
+    { "Open", "打开" },
+    { "New Profile", "新建档案" },
+    { "Create", "创建" },
+    { "Menu", "菜单" },
+    { "Toggle Key", "菜单热键" },
+    { "Language", "语言" },
+    { "Application", "应用" },
+    { "Unleashed", "Unleashed" },
+    { "Close UN", "关闭 UN" },
+    { "Reconnect UN", "重连 UN" },
+    { "Runtime Version", "运行版本" },
+    { "Process", "进程" },
+    { "Save Config", "保存配置" },
+    { "Created config profile", "已创建配置档案" },
+    { "Config profile already exists", "配置档案已存在" },
+    { "Saved ", "已保存 " },
+    { " config", " 配置" },
+    { "global", "全局" },
+    { "Aim and Trigger have separate slot lists for the selected hero. Save Config writes that hero's JSON config.",
+      "瞄准和触发为所选英雄使用独立槽位列表。保存配置会写入该英雄的 JSON 配置。" },
+    { "All uses the current local hero or global config fallback. Aim and Trigger slot lists are separate.",
+      "All 会使用当前本地英雄或全局配置后备。瞄准和触发槽位列表彼此独立。" },
+    { "Save the selected hero's presets to config.heroes.json.",
+      "将所选英雄预设保存到 config.heroes.json。" },
+    { "Save config.ini using the current local hero or global fallback.",
+      "使用当前本地英雄或全局后备保存 config.ini。" },
+    { "Force a fresh target-process PID scan and SDK attach.",
+      "强制重新扫描目标进程 PID 并附加 SDK。" },
+    { "Diagnostics", "诊断" },
+    { "Input Source", "输入来源" },
+    { "Hotkey Probe", "热键探测" },
+    { "n/a", "不可用" },
+    { "DOWN", "按下" },
+    { "up", "抬起" },
+    { "Fire Recorder", "开火记录" },
+    { "Stop", "停止" },
+    { "Start", "开始" },
+    { "Dry Run (Log Only)", "干运行(仅日志)" },
+    { "(NO cursor movement)", "(不会移动光标)" },
+    { "Show Log Overlay", "显示日志浮层" },
+    { "Clear Log", "清空日志" },
+    { "Verbose Aim Logs", "详细瞄准日志" },
+    { "Warning: verbose logging may impact performance", "警告：详细日志可能影响性能" },
+    { "Log Interval (ms)", "日志间隔(ms)" },
+    { "Behavior", "行为" },
+    { "Preset", "预设" },
+    { "Preset Name", "预设名称" },
+    { "Method Preset", "方法预设" },
+    { "Base Angular Speed", "基础角速度" },
+    { "Move Split", "分段移动" },
+    { "Split Chunk", "分段大小" },
+    { "Split Delay", "分段延迟" },
+    { "Save New", "另存新项" },
+    { "Delete", "删除" },
+    { "Pitch Scale", "俯仰缩放" },
+    { "Overshoot Curve", "过冲曲线" },
+    { "Overshoot Gain", "过冲增益" },
+    { "Overshoot Reset", "过冲复位" },
+    { "Method", "方法" },
+    { "Angular Speed", "角速度" },
+    { "P Gain", "P 增益" },
+    { "I Gain", "I 增益" },
+    { "D Gain", "D 增益" },
+    { "Max Integral", "最大积分" },
+    { "Deadzone", "死区" },
+    { "Control Points", "控制点" },
+    { "Curvature", "曲率" },
+    { "Curve Speed", "曲线速度" },
+    { "Near Degrees", "近距角度" },
+    { "Mid Degrees", "中距角度" },
+    { "Far Degrees", "远距角度" },
+    { "Near Scale", "近距缩放" },
+    { "Mid Scale", "中距缩放" },
+    { "Far Scale", "远距缩放" },
+    { "Acceleration", "加速度" },
+    { "KMBox Settings", "KMBox 设置" },
+    { "Enable KMBox", "启用 KMBox" },
+    { "Device Type", "设备类型" },
+    { "IP", "IP" },
+    { "Port", "端口" },
+    { "Monitor Port", "监听端口" },
+    { "MAC", "MAC" },
+    { "COM Port", "COM 端口" },
+    { "Mock Status", "模拟状态" },
+    { "Ready", "就绪" },
+    { "Not initialized", "未初始化" },
+    { "Base Counts/Rad", "基础计数/弧度" },
+    { "Current Game Sens", "当前游戏灵敏度" },
+    { "Host DPI (DMA)", "主机 DPI (DMA)" },
+    { "Mouse DPI", "鼠标 DPI" },
+    { "Reference Game Sens", "参考游戏灵敏度" },
+    { "Use Current", "用当前值" },
+    { "Auto Sens Scale", "自动灵敏度缩放" },
+    { "Input Delay (ms)", "输入延迟(ms)" },
+    { "Debug Logging", "调试日志" },
+    { "Mock Fault", "模拟故障" },
+    { "Mock Input", "模拟输入" },
+    { "Mock Reset", "模拟重置" },
+    { "Reset", "重置" },
+    { "Mock Stats", "模拟统计" },
+    { "Counts Calibration", "计数校准" },
+    { "Calibrating...", "校准中..." },
+    { "Calibrate", "校准" },
+    { "Not calibrated", "未校准" },
+    { "KMBox Move Stress", "KMBox 移动压测" },
+    { "Run", "运行" },
+    { "Console + aim log", "控制台 + 瞄准日志" },
+    { "Connection Test", "连接测试" },
+    { "Test", "测试" },
+    { "Restart NIC", "重启网卡" },
+    { "Monitor Firewall", "监听防火墙" },
+    { "Fix Firewall", "修复防火墙" },
+    { "Disabled", "已禁用" },
+    { "Target Screen", "目标屏幕" },
+    { "Local Width", "本机宽度" },
+    { "Local Height", "本机高度" },
+    { "DMA Width", "DMA 宽度" },
+    { "DMA Height", "DMA 高度" },
+    { "Fallback Width", "后备宽度" },
+    { "Fallback Height", "后备高度" },
+};
+static_assert(static_cast<size_t>(UiText::Count) == IM_ARRAYSIZE(kUiText));
+
+static constexpr const char* kUiLanguageOptions[] = { "English", "简体中文" };
+
+static const char* T(UiText id) {
+    const size_t index = static_cast<size_t>(id);
+    if (index >= static_cast<size_t>(IM_ARRAYSIZE(kUiText)))
+        return "";
+
+    const int language = OW::Config::ClampUiLanguage(OW::Config::uiLanguage);
+    const char* text = language == OW::Config::kUiLanguageChineseSimplified
+        ? kUiText[index].zh
+        : kUiText[index].en;
+    return (text && text[0] != '\0') ? text : kUiText[index].en;
+}
+
 static int InputSourceConfigToUiIndex(int configValue) {
     for (int i = 0; i < IM_ARRAYSIZE(kInputSourceConfigOrder); ++i) {
         if (kInputSourceConfigOrder[i] == configValue)
@@ -981,7 +1283,8 @@ static void DrawProbeState(const char* label, bool available, bool down) {
     const ImVec4 color = !available
         ? ImVec4(0.55f, 0.58f, 0.62f, 1.0f)
         : (down ? ImVec4(0.25f, 1.0f, 0.45f, 1.0f) : ImVec4(0.86f, 0.88f, 0.92f, 1.0f));
-    ImGui::TextColored(color, "%s: %s", label, !available ? "n/a" : (down ? "DOWN" : "up"));
+    ImGui::TextColored(color, "%s: %s", label,
+        !available ? T(UiText::StatusNa) : (down ? T(UiText::StatusDown) : T(UiText::StatusUp)));
 }
 
 static bool IsAimMouseActivationVk(int vk) {
@@ -1002,7 +1305,7 @@ static void DrawAimHotkeyProbe() {
     const int vk = OW::get_bind_id(keySetting);
     const char* keyLabel = OW::Labels::AimActivationKeyName(keySetting);
 
-    ImGui::Text("Hotkey Probe: %s  vk=0x%02X", keyLabel, vk > 0 ? vk : 0);
+    ImGui::Text("%s: %s  vk=0x%02X", T(UiText::HotkeyProbe), keyLabel, vk > 0 ? vk : 0);
     if (vk <= 0) {
         DrawProbeState("KMBox Monitor", false, false);
         ImGui::SameLine();
@@ -1149,15 +1452,15 @@ static bool IsConcreteHeroSelection(const HeroOption& hero) {
 static void ShowAimSlotSummaryTooltip(bool hasSpecificHero) {
     ImGui::SetItemTooltip("%s",
         hasSpecificHero
-            ? "Aim and Trigger have separate slot lists for the selected hero. Save Config writes that hero's JSON config."
-            : "All uses the current local hero or global config fallback. Aim and Trigger slot lists are separate.");
+            ? T(UiText::TooltipHeroSpecific)
+            : T(UiText::TooltipHeroFallback));
 }
 
 static void ShowSaveConfigTooltip(bool savesSelectedHero) {
     ImGui::SetItemTooltip("%s",
         savesSelectedHero
-            ? "Save the selected hero's presets to config.heroes.json."
-            : "Save config.ini using the current local hero or global fallback.");
+            ? T(UiText::TooltipSaveHero)
+            : T(UiText::TooltipSaveFallback));
 }
 
 // =====================================================================
@@ -1214,13 +1517,6 @@ static const ImU32 kColAccent       = IM_COL32(0xe4, 0x11, 0x43, 0xFF);
 static const ImU32 kColAccentDark   = IM_COL32(0xa9, 0x0a, 0x2e, 0xFF);
 static const ImU32 kColAccentSoft   = IM_COL32(0xe4, 0x11, 0x43, 0x58);
 static const ImU32 kColAccentGlow   = IM_COL32(0xe4, 0x11, 0x43, 0x28);
-static constexpr const char* kNotOpenedText = "\xE6\x9C\xAA\xE6\x89\x93\xE5\xBC\x80";
-static constexpr ImWchar kNotOpenedGlyphRanges[] = {
-    0x5F00, 0x5F00,
-    0x6253, 0x6253,
-    0x672A, 0x672A,
-    0
-};
 
 static ImFont* s_regularFont = nullptr;
 static ImFont* s_boldFont = nullptr;
@@ -1383,10 +1679,13 @@ static std::string SaveSelectedConfig() {
         const std::string heroPath = OW::Config::HeroConfigPath(path);
         OW::Config::SaveConfig(path);
         OW::Config::SaveConfigForHero(path, selectedHero.heroId, localSnapshot.LinkBase);
-        std::string status = "Saved ";
+        std::string logStatus = "Saved ";
+        logStatus += selectedHero.label;
+        logStatus += " config";
+        Diagnostics::Info("%s to %s.", logStatus.c_str(), heroPath.c_str());
+        std::string status = T(UiText::SavedPrefix);
         status += selectedHero.label;
-        status += " config";
-        Diagnostics::Info("%s to %s.", status.c_str(), heroPath.c_str());
+        status += T(UiText::ConfigSuffix);
         return status;
     }
 
@@ -1398,10 +1697,13 @@ static std::string SaveSelectedConfig() {
     const std::string savedName = savedHeroId != 0
         ? HeroDisplayNameForId(savedHeroId)
         : std::string("global");
-    std::string status = "Saved ";
-    status += savedName;
-    status += " config";
-    Diagnostics::Info("%s to %s.", status.c_str(), path.c_str());
+    std::string logStatus = "Saved ";
+    logStatus += savedName;
+    logStatus += " config";
+    Diagnostics::Info("%s to %s.", logStatus.c_str(), path.c_str());
+    std::string status = T(UiText::SavedPrefix);
+    status += savedHeroId != 0 ? savedName : T(UiText::GlobalConfig);
+    status += T(UiText::ConfigSuffix);
     return status;
 }
 
@@ -1532,7 +1834,7 @@ static void DrawPresetSummary(const HeroOption& hero,
                       "%s - %s | Trigger %s | %s | %s | Hitbox %.0f%% | %s",
                       hero.label, scope,
                       preset.trigger.enabled ? "On" : "Off",
-                      OW::Labels::AttackActionName(preset.trigger.action),
+                      OW::AttackActionNameForHero(hero.heroId, preset.trigger.action),
                       OW::Labels::TriggerbotModeName(preset.trigger.mode),
                       preset.hitbox,
                       OW::Labels::AimModeName(preset.aimMode));
@@ -2589,9 +2891,11 @@ static void ApplyAimBehaviorToHeroPreset(OW::Config::HeroPreset& preset, int beh
     }
 }
 
-static void UIDisabledSelect(const char* label, const char* previewText = kNotOpenedText) {
+static void UIDisabledSelect(const char* label, const char* previewText = nullptr) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return;
+    if (!previewText)
+        previewText = T(UiText::NotOpened);
 
     const ImGuiID id = window->GetID(label);
     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -2669,7 +2973,7 @@ static bool UIAttackActionSelect(const char* label, int* action, uint64_t heroId
     std::vector<const char*> actionLabels;
     actionLabels.reserve(actionValues.size());
     for (int value : actionValues)
-        actionLabels.push_back(OW::Labels::AttackActionName(value));
+        actionLabels.push_back(OW::AttackActionNameForHero(heroId, value));
 
     if (UISelect(label, &currentIndex, actionLabels.data(), static_cast<int>(actionLabels.size()))) {
         *action = actionValues[static_cast<size_t>(currentIndex)];
@@ -3139,7 +3443,8 @@ void UI::InitStyle() {
                 fallbackConfig.OversampleV = fontConfig.OversampleV;
                 fallbackConfig.PixelSnapH = fontConfig.PixelSnapH;
                 fallbackConfig.RasterizerMultiply = fontConfig.RasterizerMultiply;
-                io.Fonts->AddFontFromFileTTF(fallbackPath, size, &fallbackConfig, kNotOpenedGlyphRanges);
+                io.Fonts->AddFontFromFileTTF(fallbackPath, size, &fallbackConfig,
+                                             io.Fonts->GetGlyphRangesChineseFull());
             }
             return font;
         };
@@ -4394,7 +4699,7 @@ void UI::MiscPage() {
 // Misc page sections
 // =====================================================================
 static void DrawMiscGeneralPage() {
-    UIGroupBox("Config Profile");
+    UIGroupBox(T(UiText::GroupConfigProfile));
     {
         static char profileName[kConfigProfileNameBufferSize] = "";
         static char newProfileName[kConfigProfileNameBufferSize] = "";
@@ -4419,7 +4724,7 @@ static void DrawMiscGeneralPage() {
             profileNameInitialized = true;
         }
 
-        SettingRow("Active Profile");
+        SettingRow(T(UiText::ActiveProfile));
         PushControlWidth();
         int selectedProfileIndex = FindConfigProfileIndex(profiles, OW::Config::configFileName);
         if (UISelect("##configProfile", &selectedProfileIndex,
@@ -4431,7 +4736,7 @@ static void DrawMiscGeneralPage() {
         }
         ImGui::PopItemWidth();
 
-        SettingRow("Folder");
+        SettingRow(T(UiText::Folder));
         {
             char folderBuffer[MAX_PATH] = {};
             const std::string configDirectory = OW::Config::ConfigDirectoryPath();
@@ -4446,11 +4751,11 @@ static void DrawMiscGeneralPage() {
                              ImGuiInputTextFlags_ReadOnly);
             ImGui::PopItemWidth();
             ImGui::SameLine();
-            if (ImGui::Button("Open", ImVec2(openButtonWidth, kControlHeight)))
+            if (ImGui::Button(T(UiText::Open), ImVec2(openButtonWidth, kControlHeight)))
                 ShellExecuteA(nullptr, "open", configDirectory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
 
-        SettingRow("New Profile");
+        SettingRow(T(UiText::NewProfile));
         {
             const float createButtonWidth = 64.0f;
             const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
@@ -4461,16 +4766,16 @@ static void DrawMiscGeneralPage() {
             ImGui::InputText("##newConfigProfile", newProfileName, IM_ARRAYSIZE(newProfileName));
             ImGui::PopItemWidth();
             ImGui::SameLine();
-            if (ImGui::Button("Create", ImVec2(createButtonWidth, kControlHeight))) {
+            if (ImGui::Button(T(UiText::Create), ImVec2(createButtonWidth, kControlHeight))) {
                 const std::string normalizedProfile = NormalizeProfileFileName(newProfileName);
                 if (CreateConfigProfileFromCurrent(normalizedProfile)) {
                     SelectConfigProfile(normalizedProfile.c_str(), profileName);
                     OW::Config::lastConfigProfile = normalizedProfile;
                     PersistLastConfigProfile();
                     newProfileName[0] = '\0';
-                    s_configSaveStatus = "Created config profile";
+                    s_configSaveStatus = T(UiText::CreatedConfigProfile);
                 } else {
-                    s_configSaveStatus = "Config profile already exists";
+                    s_configSaveStatus = T(UiText::ConfigProfileExists);
                 }
                 s_configSaveStatusUntil = ImGui::GetTime() + 3.0;
             }
@@ -4478,9 +4783,16 @@ static void DrawMiscGeneralPage() {
     }
     CloseGroupBox();
 
-    UIGroupBox("Menu");
+    UIGroupBox(T(UiText::GroupMenu));
     {
-        SettingRow("Toggle Key");
+        SettingRow(T(UiText::Language));
+        PushControlWidth();
+        int uiLanguage = OW::Config::ClampUiLanguage(OW::Config::uiLanguage);
+        if (UISelect("##uiLanguage", &uiLanguage, kUiLanguageOptions, IM_ARRAYSIZE(kUiLanguageOptions)))
+            OW::Config::uiLanguage = OW::Config::ClampUiLanguage(uiLanguage);
+        ImGui::PopItemWidth();
+
+        SettingRow(T(UiText::ToggleKey));
         PushControlWidth();
         int toggleKeyIndex = FindMenuToggleKeyIndex(OW::Config::MenuToggleKey);
         OW::Config::MenuToggleKey = kMenuToggleVk[toggleKeyIndex];
@@ -4490,10 +4802,10 @@ static void DrawMiscGeneralPage() {
     }
     CloseGroupBox();
 
-    UIGroupBox("Application");
+    UIGroupBox(T(UiText::GroupApplication));
     {
-        SettingRow("Unleashed");
-        if (ImGui::Button("Close UN", ImVec2(96.0f, kControlHeight)))
+        SettingRow(T(UiText::Unleashed));
+        if (ImGui::Button(T(UiText::CloseUn), ImVec2(96.0f, kControlHeight)))
             g_Overlay.RequestExit();
         ImGui::SameLine();
         const bool reconnectBusy =
@@ -4501,14 +4813,14 @@ static void DrawMiscGeneralPage() {
             OW::ProcessConnection::IsReconnectRequested();
         if (reconnectBusy)
             ImGui::BeginDisabled();
-        if (ImGui::Button("Reconnect UN", ImVec2(112.0f, kControlHeight)))
+        if (ImGui::Button(T(UiText::ReconnectUn), ImVec2(112.0f, kControlHeight)))
             OW::ProcessConnection::RequestReconnect();
         if (reconnectBusy)
             ImGui::EndDisabled();
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Force a fresh target-process PID scan and SDK attach.");
+            ImGui::SetTooltip("%s", T(UiText::TooltipReconnect));
 
-        SettingRow("Runtime Version");
+        SettingRow(T(UiText::RuntimeVersion));
         const bool cnNeProfile = OW::offset::IsCnNeProfile();
         ImGui::TextColored(
             cnNeProfile ? ImVec4(0.25f, 1.0f, 0.45f, 1.0f)
@@ -4518,7 +4830,7 @@ static void DrawMiscGeneralPage() {
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", OW::offset::ActiveProfileName());
 
-        SettingRow("Process");
+        SettingRow(T(UiText::Process));
         const bool connected = OW::ProcessConnection::IsConnected();
         const bool connecting = OW::ProcessConnection::IsConnecting();
         const ImVec4 statusColor = connected
@@ -4536,9 +4848,9 @@ static void DrawMiscGeneralPage() {
 }
 
 static void DrawMiscDiagnosticsPage() {
-    UIGroupBox("Diagnostics");
+    UIGroupBox(T(UiText::GroupDiagnostics));
     {
-        SettingRow("Input Source");
+        SettingRow(T(UiText::InputSource));
         PushControlWidth();
         int inputSourceUiIndex = InputSourceConfigToUiIndex(OW::Config::inputSource);
         if (UISelect("##inputSource", &inputSourceUiIndex,
@@ -4584,12 +4896,12 @@ static void DrawMiscDiagnosticsPage() {
         DrawAimHotkeyProbe();
         ImGui::Spacing();
 
-        SettingRow("Fire Recorder");
+        SettingRow(T(UiText::FireRecorder));
         if (IsFirePatternRecorderRunning()) {
-            if (ImGui::Button("Stop", ImVec2(72.0f, kControlHeight)))
+            if (ImGui::Button(T(UiText::Stop), ImVec2(72.0f, kControlHeight)))
                 StopFirePatternRecorder();
         } else {
-            if (ImGui::Button("Start", ImVec2(72.0f, kControlHeight)))
+            if (ImGui::Button(T(UiText::Start), ImVec2(72.0f, kControlHeight)))
                 StartFirePatternRecorder();
         }
         if (ImGui::IsItemHovered()) {
@@ -4599,22 +4911,22 @@ static void DrawMiscDiagnosticsPage() {
         ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "%s", GetFirePatternRecorderStatus().c_str());
 
         ImGui::Spacing();
-        ImGui::Checkbox("Dry Run (Log Only)", &OW::Config::aimDryRun);
+        ImGui::Checkbox(T(UiText::DryRunLogOnly), &OW::Config::aimDryRun);
         if (OW::Config::aimDryRun) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(NO cursor movement)");
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "%s", T(UiText::NoCursorMovement));
         }
         bool showLogOverlay = Diagnostics::IsLogOverlayVisible();
-        if (ImGui::Checkbox("Show Log Overlay", &showLogOverlay))
+        if (ImGui::Checkbox(T(UiText::ShowLogOverlay), &showLogOverlay))
             Diagnostics::SetLogOverlayVisible(showLogOverlay);
         ImGui::SameLine();
-        if (ImGui::Button("Clear Log"))
+        if (ImGui::Button(T(UiText::ClearLog)))
             Diagnostics::ClearLogLines();
-        ImGui::Checkbox("Verbose Aim Logs", &OW::Config::aimVerboseLog);
+        ImGui::Checkbox(T(UiText::VerboseAimLogs), &OW::Config::aimVerboseLog);
         if (OW::Config::aimVerboseLog) {
-            ImGui::TextWrapped("Warning: verbose logging may impact performance");
+            ImGui::TextWrapped("%s", T(UiText::VerboseLogsWarning));
         }
-        SettingRow("Log Interval (ms)");
+        SettingRow(T(UiText::LogIntervalMs));
         PushControlWidth();
         UISlider("##LogInterval", &OW::Config::aimDryRunLogIntervalMs, 50.0f, 1000.0f, "50 ms");
         ImGui::PopItemWidth();
@@ -4623,7 +4935,7 @@ static void DrawMiscDiagnosticsPage() {
 }
 
 static void DrawMiscBehaviorPage() {
-    UIGroupBox("Behavior");
+    UIGroupBox(T(UiText::GroupBehavior));
     {
         static int selectedBehavior = 0;
         static int selectedBehaviorPresetId = -1;
@@ -4631,7 +4943,7 @@ static void DrawMiscBehaviorPage() {
         static char behaviorPresetName[64] = "Behavior Preset";
         selectedBehavior = OW::Config::ClampAimBehaviorIndex(selectedBehavior);
 
-        SettingRow("Behavior");
+        SettingRow(T(UiText::SubBehavior));
         PushControlWidth();
         if (UISelect("##miscBehaviorSelector", &selectedBehavior,
                      kAimBehavior, IM_ARRAYSIZE(kAimBehavior))) {
@@ -4643,7 +4955,7 @@ static void DrawMiscBehaviorPage() {
         }
         ImGui::PopItemWidth();
 
-        SettingRow("Preset");
+        SettingRow(T(UiText::Preset));
         PushControlWidth();
         if (UISelectAimBehaviorPreset("##miscBehaviorPreset", &selectedBehaviorPresetId, selectedBehavior)) {
             if (const OW::Config::AimBehaviorPreset* selectedPreset =
@@ -4671,7 +4983,7 @@ static void DrawMiscBehaviorPage() {
             lastBehaviorPresetId = selectedBehaviorPresetId;
         }
 
-        SettingRow("Preset Name");
+        SettingRow(T(UiText::PresetName));
         PushControlWidth();
         if (ImGui::InputText("##miscBehaviorPresetName", behaviorPresetName, IM_ARRAYSIZE(behaviorPresetName))) {
             if (selectedPreset)
@@ -4707,7 +5019,7 @@ static void DrawMiscBehaviorPage() {
         behaviorMoveSplitDelayUs = OW::Config::ClampMoveSplitDelayUs(behaviorMoveSplitDelayUs);
         OW::Config::aimMethod = behaviorMethod;
 
-        SettingRow("Method");
+        SettingRow(T(UiText::SubMethod));
         PushControlWidth();
         if (UISelect("##miscBehaviorMethod", &behaviorMethod,
                      kAimMethod, IM_ARRAYSIZE(kAimMethod))) {
@@ -4721,7 +5033,7 @@ static void DrawMiscBehaviorPage() {
         }
         ImGui::PopItemWidth();
 
-        SettingRow("Method Preset");
+        SettingRow(T(UiText::MethodPreset));
         PushControlWidth();
         if (UISelectAimMethodPreset("##miscBehaviorMethodPreset", &behaviorMethodPresetId, behaviorMethod)) {
             if (const OW::Config::AimMethodPreset* methodPreset =
@@ -4732,21 +5044,21 @@ static void DrawMiscBehaviorPage() {
         }
         ImGui::PopItemWidth();
 
-        SettingRow("Base Angular Speed");
+        SettingRow(T(UiText::BaseAngularSpeed));
         PushControlWidth();
         UISlider("##miscBaseAngularSpeed", &behaviorBaseSpeed, 0.0f, 100.0f, "100");
         ImGui::PopItemWidth();
 
-        SettingRow("Move Split");
+        SettingRow(T(UiText::MoveSplit));
         UICheckbox("##miscBehaviorMoveSplit", &behaviorMoveSplitEnabled);
 
         if (behaviorMoveSplitEnabled) {
-            SettingRow("Split Chunk");
+            SettingRow(T(UiText::SplitChunk));
             PushControlWidth();
             UISlider("##miscBehaviorMoveSplitMax", &behaviorMoveSplitMaxPixels, 1.0f, 50.0f, "4 px");
             ImGui::PopItemWidth();
 
-            SettingRow("Split Delay");
+            SettingRow(T(UiText::SplitDelay));
             PushControlWidth();
             UISlider("##miscBehaviorMoveSplitDelay", &behaviorMoveSplitDelayUs, 0.0f, 10000.0f, "800 us");
             ImGui::PopItemWidth();
@@ -4758,7 +5070,7 @@ static void DrawMiscBehaviorPage() {
         }
 
         ImGui::Spacing();
-        if (ImGui::Button("Save New", ImVec2(92.0f, kControlHeight))) {
+        if (ImGui::Button(T(UiText::SaveNew), ImVec2(92.0f, kControlHeight))) {
             OW::Config::AimBehaviorPreset preset = CaptureBehaviorPresetFromCurrent(
                 behaviorIndex,
                 behaviorMethod,
@@ -4775,7 +5087,7 @@ static void DrawMiscBehaviorPage() {
         }
         if (selectedPreset) {
             ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button("Delete", ImVec2(72.0f, kControlHeight))) {
+            if (ImGui::Button(T(UiText::Delete), ImVec2(72.0f, kControlHeight))) {
                 const int deletedId = selectedBehaviorPresetId;
                 OW::Config::aimBehaviorPresets.erase(
                     std::remove_if(OW::Config::aimBehaviorPresets.begin(),
@@ -4791,21 +5103,21 @@ static void DrawMiscBehaviorPage() {
             }
         }
 
-        SettingRow("Pitch Scale");
+        SettingRow(T(UiText::PitchScale));
         PushControlWidth();
         UISlider("##miscPitchScale", &OW::Config::aimbotPitchScale, 0.1f, 3.0f, "1.00");
         ImGui::PopItemWidth();
 
-        SettingRow("Overshoot Curve");
+        SettingRow(T(UiText::OvershootCurve));
         UICheckbox("##miscOvershootCurve", &OW::Config::aimOvershootCurve);
 
         if (OW::Config::aimOvershootCurve) {
-            SettingRow("Overshoot Gain");
+            SettingRow(T(UiText::OvershootGain));
             PushControlWidth();
             UISlider("##miscOvershootGain", &OW::Config::aimOvershootGain, 0.0f, 1.0f, "0.25");
             ImGui::PopItemWidth();
 
-            SettingRow("Overshoot Reset");
+            SettingRow(T(UiText::OvershootReset));
             PushControlWidth();
             UISlider("##miscOvershootReset", &OW::Config::aimOvershootResetPixels, 1.0f, 250.0f, "56 px");
             ImGui::PopItemWidth();
@@ -4815,7 +5127,7 @@ static void DrawMiscBehaviorPage() {
 }
 
 static void DrawMiscMethodPage() {
-    UIGroupBox("Method");
+    UIGroupBox(T(UiText::GroupMethod));
     {
         static int selectedMethod = 0;
         static int selectedMethodPresetId = -1;
@@ -4823,7 +5135,7 @@ static void DrawMiscMethodPage() {
         static char methodPresetName[64] = "Method Preset";
         selectedMethod = OW::Config::ClampAimMethodIndex(selectedMethod);
 
-        SettingRow("Method");
+        SettingRow(T(UiText::SubMethod));
         PushControlWidth();
         if (UISelect("##miscMethodSelector", &selectedMethod, kAimMethod, IM_ARRAYSIZE(kAimMethod))) {
             if (const OW::Config::AimMethodPreset* selectedPreset =
@@ -4834,7 +5146,7 @@ static void DrawMiscMethodPage() {
         }
         ImGui::PopItemWidth();
 
-        SettingRow("Preset");
+        SettingRow(T(UiText::Preset));
         PushControlWidth();
         if (UISelectAimMethodPreset("##miscMethodPreset", &selectedMethodPresetId, selectedMethod)) {
             if (const OW::Config::AimMethodPreset* selectedPreset =
@@ -4860,7 +5172,7 @@ static void DrawMiscMethodPage() {
             lastMethodPresetId = selectedMethodPresetId;
         }
 
-        SettingRow("Preset Name");
+        SettingRow(T(UiText::PresetName));
         PushControlWidth();
         if (ImGui::InputText("##miscMethodPresetName", methodPresetName, IM_ARRAYSIZE(methodPresetName))) {
             if (selectedPreset)
@@ -4874,7 +5186,7 @@ static void DrawMiscMethodPage() {
             : OW::Config::aimMethodAngularSpeedScale[static_cast<size_t>(selectedMethod)];
 
         auto drawAngularSpeed = [&](const char* id) {
-            SettingRow("Angular Speed");
+            SettingRow(T(UiText::AngularSpeed));
             PushControlWidth();
             UISlider(id, &angularSpeedScale, 0.0f, 200.0f, "100 %");
             ImGui::PopItemWidth();
@@ -4885,43 +5197,43 @@ static void DrawMiscMethodPage() {
             drawAngularSpeed("##methodLinearAngularSpeed");
             break;
         case 1:
-            SettingRow("P Gain");
+            SettingRow(T(UiText::PGain));
             PushControlWidth();
             UISlider("##methodPidP", selectedPreset ? &selectedPreset->pidP : &OW::Config::aimPidP, 0.0f, 2.0f, "0.50");
             ImGui::PopItemWidth();
 
-            SettingRow("I Gain");
+            SettingRow(T(UiText::IGain));
             PushControlWidth();
             UISlider("##methodPidI", selectedPreset ? &selectedPreset->pidI : &OW::Config::aimPidI, 0.0f, 0.5f, "0.050");
             ImGui::PopItemWidth();
 
-            SettingRow("D Gain");
+            SettingRow(T(UiText::DGain));
             PushControlWidth();
             UISlider("##methodPidD", selectedPreset ? &selectedPreset->pidD : &OW::Config::aimPidD, 0.0f, 1.0f, "0.10");
             ImGui::PopItemWidth();
 
-            SettingRow("Max Integral");
+            SettingRow(T(UiText::MaxIntegral));
             PushControlWidth();
             UISlider("##methodPidMaxI", selectedPreset ? &selectedPreset->pidMaxIntegral : &OW::Config::aimPidMaxIntegral, 1.0f, 50.0f, "10.0");
             ImGui::PopItemWidth();
 
-            SettingRow("Deadzone");
+            SettingRow(T(UiText::Deadzone));
             PushControlWidth();
             UISlider("##methodPidDeadzone", selectedPreset ? &selectedPreset->pidDeadzone : &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
             ImGui::PopItemWidth();
             break;
         case 2:
-            SettingRow("Control Points");
+            SettingRow(T(UiText::ControlPoints));
             PushControlWidth();
             UISlider("##methodBezierControlPoints", selectedPreset ? &selectedPreset->bezierControlPoints : &OW::Config::aimBezierControlPoints, 2.0f, 6.0f, "2");
             ImGui::PopItemWidth();
 
-            SettingRow("Curvature");
+            SettingRow(T(UiText::Curvature));
             PushControlWidth();
             UISlider("##methodBezierCurvature", selectedPreset ? &selectedPreset->bezierCurvature : &OW::Config::aimBezierCurvature, 0.0f, 1.0f, "0.50");
             ImGui::PopItemWidth();
 
-            SettingRow("Curve Speed");
+            SettingRow(T(UiText::CurveSpeed));
             PushControlWidth();
             UISlider("##methodBezierSpeed", selectedPreset ? &selectedPreset->bezierSpeed : &OW::Config::aimBezierSpeed, 1.0f, 200.0f, "50.0");
             ImGui::PopItemWidth();
@@ -4929,14 +5241,14 @@ static void DrawMiscMethodPage() {
         case 3: {
             drawAngularSpeed("##methodPiecewiseAngularSpeed");
 
-            SettingRow("Near Degrees");
+            SettingRow(T(UiText::NearDegrees));
             PushControlWidth();
             UISlider("##methodPiecewiseNearDegrees", selectedPreset ? &selectedPreset->piecewiseNearDegrees : &OW::Config::aimPiecewiseNearDegrees, 0.0f, 30.0f, "2.0 deg");
             ImGui::PopItemWidth();
 
             float& midDegrees = selectedPreset ? selectedPreset->piecewiseMidDegrees : OW::Config::aimPiecewiseMidDegrees;
             midDegrees = (std::max)(midDegrees, OW::Config::AimPiecewiseNearDegrees(selectedPreset));
-            SettingRow("Mid Degrees");
+            SettingRow(T(UiText::MidDegrees));
             PushControlWidth();
             UISlider("##methodPiecewiseMidDegrees", &midDegrees,
                      OW::Config::AimPiecewiseNearDegrees(selectedPreset), 45.0f, "6.0 deg");
@@ -4944,23 +5256,23 @@ static void DrawMiscMethodPage() {
 
             float& farDegrees = selectedPreset ? selectedPreset->piecewiseFarDegrees : OW::Config::aimPiecewiseFarDegrees;
             farDegrees = (std::max)(farDegrees, OW::Config::AimPiecewiseMidDegrees(selectedPreset));
-            SettingRow("Far Degrees");
+            SettingRow(T(UiText::FarDegrees));
             PushControlWidth();
             UISlider("##methodPiecewiseFarDegrees", &farDegrees,
                      OW::Config::AimPiecewiseMidDegrees(selectedPreset), 60.0f, "12.0 deg");
             ImGui::PopItemWidth();
 
-            SettingRow("Near Scale");
+            SettingRow(T(UiText::NearScale));
             PushControlWidth();
             UISlider("##methodPiecewiseNearScale", selectedPreset ? &selectedPreset->piecewiseNearScale : &OW::Config::aimPiecewiseNearScale, 0.0f, 1.0f, "0.20");
             ImGui::PopItemWidth();
 
-            SettingRow("Mid Scale");
+            SettingRow(T(UiText::MidScale));
             PushControlWidth();
             UISlider("##methodPiecewiseMidScale", selectedPreset ? &selectedPreset->piecewiseMidScale : &OW::Config::aimPiecewiseMidScale, 0.0f, 1.0f, "0.45");
             ImGui::PopItemWidth();
 
-            SettingRow("Far Scale");
+            SettingRow(T(UiText::FarScale));
             PushControlWidth();
             UISlider("##methodPiecewiseFarScale", selectedPreset ? &selectedPreset->piecewiseFarScale : &OW::Config::aimPiecewiseFarScale, 0.0f, 1.0f, "0.75");
             ImGui::PopItemWidth();
@@ -4969,13 +5281,13 @@ static void DrawMiscMethodPage() {
         case 4:
             drawAngularSpeed("##methodAccelAngularSpeed");
 
-            SettingRow("Acceleration");
+            SettingRow(T(UiText::Acceleration));
             PushControlWidth();
             UISlider("##methodAccelAcceleration", selectedPreset ? &selectedPreset->accelLimitedAcceleration : &OW::Config::aimAccelLimitedAcceleration, 0.0f, 20.0f, "0.10");
             ImGui::PopItemWidth();
             break;
         case 5:
-            SettingRow("Angular Speed");
+            SettingRow(T(UiText::AngularSpeed));
             PushControlWidth();
             UISlider("##methodConstantAngularSpeed",
                      selectedPreset ? &selectedPreset->constantAngularSpeedDeg : &OW::Config::aimConstantAngularSpeedDeg,
@@ -4992,7 +5304,7 @@ static void DrawMiscMethodPage() {
         }
 
         ImGui::Spacing();
-        if (ImGui::Button("Save New", ImVec2(92.0f, kControlHeight))) {
+        if (ImGui::Button(T(UiText::SaveNew), ImVec2(92.0f, kControlHeight))) {
             OW::Config::AimMethodPreset preset =
                 selectedPreset ? *selectedPreset : CaptureMethodPresetFromCurrent(selectedMethod, methodPresetName);
             preset.id = NextAimMethodPresetId();
@@ -5005,7 +5317,7 @@ static void DrawMiscMethodPage() {
         }
         if (selectedPreset) {
             ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button("Delete", ImVec2(72.0f, kControlHeight))) {
+            if (ImGui::Button(T(UiText::Delete), ImVec2(72.0f, kControlHeight))) {
                 const int deletedId = selectedMethodPresetId;
                 OW::Config::aimMethodPresets.erase(
                     std::remove_if(OW::Config::aimMethodPresets.begin(),
@@ -5031,7 +5343,7 @@ static void DrawMiscMethodPage() {
 }
 
 static void DrawMiscKmboxPage() {
-    UIGroupBox("KMBox Settings");
+    UIGroupBox(T(UiText::GroupKmBoxSettings));
     {
         bool kmboxSaveRequested = false;
         bool kmboxRuntimeReinitRequested = false;
@@ -5051,7 +5363,7 @@ static void DrawMiscKmboxPage() {
         };
         ImGui::PushID("KMBoxSettings");
 
-        SettingRow("Enable KMBox");
+        SettingRow(T(UiText::EnableKmBox));
         const bool wasKmboxEnabled = OW::Config::kmboxEnabled;
         if (ImGui::Checkbox("##Enable", &OW::Config::kmboxEnabled)) {
             kmboxSaveRequested = true;
@@ -5063,7 +5375,7 @@ static void DrawMiscKmboxPage() {
                 kmboxConnectionTestMessage = initResult.message;
             } else if (!OW::Config::kmboxEnabled && wasKmboxEnabled) {
                 kmboxConnectionTestOk = true;
-                kmboxConnectionTestMessage = "Disabled";
+                kmboxConnectionTestMessage = T(UiText::Disabled);
                 kmbox::KmBoxMgr.KeyBoard.EndMonitor();
                 kmbox::MockHardwareMgr.Shutdown();
                 kmbox::ReleaseTimerResolution();
@@ -5078,7 +5390,7 @@ static void DrawMiscKmboxPage() {
                 kmboxConnectionTestMessage.c_str());
         }
 
-        SettingRow("Device Type");
+        SettingRow(T(UiText::DeviceType));
         PushControlWidth();
         if (ImGui::Combo("##DeviceType", &OW::Config::kmboxDeviceType,
                          kKmBoxDeviceTypes, IM_ARRAYSIZE(kKmBoxDeviceTypes))) {
@@ -5089,35 +5401,35 @@ static void DrawMiscKmboxPage() {
         ImGui::PopItemWidth();
 
         if (OW::Config::kmboxDeviceType == 0) {
-            SettingRow("IP");
+            SettingRow(T(UiText::Ip));
             PushControlWidth();
             ImGui::InputText("##Ip", OW::Config::kmboxIp, IM_ARRAYSIZE(OW::Config::kmboxIp));
             if (ImGui::IsItemDeactivatedAfterEdit())
                 markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
 
-            SettingRow("Port");
+            SettingRow(T(UiText::Port));
             PushControlWidth();
             ImGui::InputInt("##Port", &OW::Config::kmboxPort, 0, 0);
             if (ImGui::IsItemDeactivatedAfterEdit())
                 markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
 
-            SettingRow("Monitor Port");
+            SettingRow(T(UiText::MonitorPort));
             PushControlWidth();
             ImGui::InputInt("##MonitorPort", &OW::Config::kmboxMonitorPort, 0, 0);
             if (ImGui::IsItemDeactivatedAfterEdit())
                 markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
 
-            SettingRow("MAC");
+            SettingRow(T(UiText::Mac));
             PushControlWidth();
             ImGui::InputText("##Mac", OW::Config::kmboxMac, IM_ARRAYSIZE(OW::Config::kmboxMac));
             if (ImGui::IsItemDeactivatedAfterEdit())
                 markKmboxRuntimeConfigChanged();
             ImGui::PopItemWidth();
         } else if (OW::Config::kmboxDeviceType == 1) {
-            SettingRow("COM Port");
+            SettingRow(T(UiText::ComPort));
             PushControlWidth();
             ImGui::InputText("##ComPort", OW::Config::kmboxComPort, IM_ARRAYSIZE(OW::Config::kmboxComPort));
             if (ImGui::IsItemDeactivatedAfterEdit())
@@ -5125,14 +5437,15 @@ static void DrawMiscKmboxPage() {
             ImGui::PopItemWidth();
         } else {
             const kmbox::MockHardwareSnapshot snapshot = kmbox::MockHardwareMgr.Snapshot();
-            SettingRow("Mock Status");
+            SettingRow(T(UiText::MockStatus));
             ImGui::TextColored(
                 snapshot.initialized ? ImVec4(0.30f, 0.90f, 0.45f, 1.0f)
                                      : ImVec4(0.85f, 0.65f, 0.25f, 1.0f),
-                snapshot.initialized ? "Ready" : "Not initialized");
+                "%s",
+                snapshot.initialized ? T(UiText::Ready) : T(UiText::NotInitialized));
         }
 
-        SettingRow("Base Counts/Rad");
+        SettingRow(T(UiText::BaseCountsRad));
         PushControlWidth();
         ImGui::InputFloat("##CountsPerRadian", &OW::Config::kmboxCountsPerRadian,
                           1.0f, 10.0f, "%.1f");
@@ -5141,7 +5454,7 @@ static void DrawMiscKmboxPage() {
             ImGui::SetTooltip("Manual KMBox relative mouse counts per radian. Calibration overrides this value until calibration is cleared.");
         ImGui::PopItemWidth();
 
-        SettingRow("Current Game Sens");
+        SettingRow(T(UiText::CurrentGameSens));
         PushControlWidth();
         ImGui::InputFloat("##GameSens", &OW::Config::gameMouseSensitivity,
                           0.0f, 0.0f, "%.2f");
@@ -5150,7 +5463,7 @@ static void DrawMiscKmboxPage() {
             ImGui::SetTooltip("Manual current in-game sensitivity. DMA sensitivity reading is not used for this value.");
         ImGui::PopItemWidth();
 
-        SettingRow("Host DPI (DMA)");
+        SettingRow(T(UiText::HostDpiDma));
         PushControlWidth();
         float detectedHostDpi = OW::Config::hostMouseDpiAutoDetected
             ? OW::Config::detectedHostMouseDpi
@@ -5159,14 +5472,14 @@ static void DrawMiscKmboxPage() {
                           ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
-        SettingRow("Mouse DPI");
+        SettingRow(T(UiText::MouseDpi));
         PushControlWidth();
         ImGui::InputFloat("##MouseDpi", &OW::Config::hostMouseDpi,
                           0.0f, 0.0f, "%.0f");
         kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         ImGui::PopItemWidth();
 
-        SettingRow("Reference Game Sens");
+        SettingRow(T(UiText::ReferenceGameSens));
         const float useCurrentButtonWidth = 88.0f;
         const float useCurrentSpacing = ImGui::GetStyle().ItemInnerSpacing.x;
         const float referenceWidth = MaxFloat(
@@ -5180,29 +5493,29 @@ static void DrawMiscKmboxPage() {
             ImGui::SetTooltip("The in-game sensitivity used when Base Counts/Rad or calibration was measured.");
         ImGui::PopItemWidth();
         ImGui::SameLine();
-        if (ImGui::Button("Use Current", ImVec2(useCurrentButtonWidth, kControlHeight))) {
+        if (ImGui::Button(T(UiText::UseCurrent), ImVec2(useCurrentButtonWidth, kControlHeight))) {
             OW::Config::referenceGameSensitivity = OW::Config::gameMouseSensitivity;
             kmboxSaveRequested = true;
         }
 
-        SettingRow("Auto Sens Scale");
+        SettingRow(T(UiText::AutoSensScale));
         kmboxSaveRequested |= UICheckbox("##AutoScaleGameSens", &OW::Config::autoScaleByGameSensitivity);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Scales KMBox counts by reference game sensitivity divided by current game sensitivity.");
 
-        SettingRow("Input Delay (ms)");
+        SettingRow(T(UiText::InputDelayMs));
         PushControlWidth();
         kmboxSaveRequested |= UISlider("##InputDelay", &OW::Config::kmboxInputDelayMs,
                                        0.0f, 20.0f, "0 ms");
         ImGui::PopItemWidth();
 
-        SettingRow("Debug Logging");
+        SettingRow(T(UiText::DebugLogging));
         kmboxSaveRequested |= ImGui::Checkbox("##Debug", &OW::Config::kmboxDebugLog);
 
         if (OW::Config::kmboxDeviceType == 2) {
             kmbox::MockHardwareSnapshot snapshot = kmbox::MockHardwareMgr.Snapshot();
 
-            SettingRow("Mock Fault");
+            SettingRow(T(UiText::MockFault));
             PushControlWidth();
             int faultMode = static_cast<int>(snapshot.faultMode);
             if (ImGui::Combo("##MockFaultMode", &faultMode, kMockFaultModes, IM_ARRAYSIZE(kMockFaultModes))) {
@@ -5212,7 +5525,7 @@ static void DrawMiscKmboxPage() {
             }
             ImGui::PopItemWidth();
 
-            SettingRow("Mock Input");
+            SettingRow(T(UiText::MockInput));
             bool leftDown = kmbox::MockHardwareMgr.PeekVkDown(VK_LBUTTON);
             bool rightDown = kmbox::MockHardwareMgr.PeekVkDown(VK_RBUTTON);
             bool middleDown = kmbox::MockHardwareMgr.PeekVkDown(VK_MBUTTON);
@@ -5233,12 +5546,12 @@ static void DrawMiscKmboxPage() {
             if (ImGui::Checkbox("X2##MockX2", &x2Down))
                 kmbox::MockHardwareMgr.SetInputVk(VK_XBUTTON2, x2Down);
 
-            SettingRow("Mock Reset");
-            if (ImGui::Button("Reset", ImVec2(72.0f, kControlHeight)))
+            SettingRow(T(UiText::MockReset));
+            if (ImGui::Button(T(UiText::Reset), ImVec2(72.0f, kControlHeight)))
                 kmbox::MockHardwareMgr.Reset();
 
             snapshot = kmbox::MockHardwareMgr.Snapshot();
-            SettingRow("Mock Stats");
+            SettingRow(T(UiText::MockStats));
             ImGui::Text("events=%llu moves=%llu buttons=%llu keys=%llu packets=%llu in=0x%02X out=0x%02X stuck=0x%02X",
                 snapshot.totalEvents,
                 snapshot.moveEvents,
@@ -5251,10 +5564,11 @@ static void DrawMiscKmboxPage() {
         }
 
         // ---- Counts-per-radian auto-calibration button ----
-        SettingRow("Counts Calibration");
+        SettingRow(T(UiText::CountsCalibration));
         {
             const bool wasCalibrated = OW::Config::calibratedCountsPerRadian > 0.0f;
-            if (ImGui::Button(OW::Config::calibrationInProgress ? "Calibrating..." : "Calibrate", ImVec2(72.0f, kControlHeight))) {
+            if (ImGui::Button(OW::Config::calibrationInProgress ? T(UiText::Calibrating) : T(UiText::Calibrate),
+                              ImVec2(72.0f, kControlHeight))) {
                 if (!OW::Config::calibrationInProgress) {
                     OW::CalibrateSensitivity();
                     kmboxSaveRequested = true;
@@ -5276,28 +5590,28 @@ static void DrawMiscKmboxPage() {
                 }
                 ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.45f, 1.0f), "%s", buf);
             } else {
-                ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "Not calibrated");
+                ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "%s", T(UiText::NotCalibrated));
             }
         }
 
-        SettingRow("KMBox Move Stress");
-        if (ImGui::Button("Run", ImVec2(72.0f, kControlHeight))) {
+        SettingRow(T(UiText::KmBoxMoveStress));
+        if (ImGui::Button(T(UiText::Run), ImVec2(72.0f, kControlHeight))) {
             RunKmboxMoveTest();
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Sends a rapid square mouse-movement sequence through the current KMBox device.\nNo sleep is added between move commands; results are printed to the console and aim diagnostics log.");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "Console + aim log");
+        ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "%s", T(UiText::ConsoleAimLog));
 
-        SettingRow("Connection Test");
-        if (ImGui::Button("Test", ImVec2(72.0f, kControlHeight))) {
+        SettingRow(T(UiText::ConnectionTest));
+        if (ImGui::Button(T(UiText::Test), ImVec2(72.0f, kControlHeight))) {
             const KmboxConnectionTestResult testResult = TestKmboxConnection();
             kmboxConnectionTestOk = testResult.ok;
             kmboxConnectionTestMessage = testResult.message;
         }
         if (OW::Config::kmboxDeviceType == 0) {
             ImGui::SameLine();
-            if (ImGui::Button("Restart NIC", ImVec2(104.0f, kControlHeight))) {
+            if (ImGui::Button(T(UiText::RestartNic), ImVec2(104.0f, kControlHeight))) {
                 const KmboxConnectionTestResult restartResult = RestartKmboxNetworkAdapter();
                 kmboxNetworkRestartOk = restartResult.ok;
                 kmboxNetworkRestartMessage = restartResult.message;
@@ -5319,8 +5633,8 @@ static void DrawMiscKmboxPage() {
                 kmboxNetworkRestartMessage.c_str());
         }
         if (OW::Config::kmboxDeviceType == 0) {
-            SettingRow("Monitor Firewall");
-            if (ImGui::Button("Fix Firewall", ImVec2(112.0f, kControlHeight))) {
+            SettingRow(T(UiText::MonitorFirewall));
+            if (ImGui::Button(T(UiText::FixFirewall), ImVec2(112.0f, kControlHeight))) {
                 const KmboxConnectionTestResult firewallResult = AllowKmboxMonitorFirewall();
                 kmboxFirewallOk = firewallResult.ok;
                 kmboxFirewallMessage = firewallResult.message;
@@ -5352,7 +5666,7 @@ static void DrawMiscKmboxPage() {
 }
 
 static void DrawMiscScreenPage() {
-    UIGroupBox("Target Screen");
+    UIGroupBox(T(UiText::GroupTargetScreen));
     {
         bool screenChanged = false;
         bool screenSaveRequested = false;
@@ -5371,31 +5685,31 @@ static void DrawMiscScreenPage() {
         int detectedWidth = OW::detectedScreenWidth;
         int detectedHeight = OW::detectedScreenHeight;
 
-        SettingRow("Local Width");
+        SettingRow(T(UiText::LocalWidth));
         PushControlWidth();
         ImGui::InputInt("##localScreenWidth", &localWidth, 0, 0,
                         ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
-        SettingRow("Local Height");
+        SettingRow(T(UiText::LocalHeight));
         PushControlWidth();
         ImGui::InputInt("##localScreenHeight", &localHeight, 0, 0,
                         ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
-        SettingRow("DMA Width");
+        SettingRow(T(UiText::DmaWidth));
         PushControlWidth();
         ImGui::InputInt("##detectedScreenWidth", &detectedWidth, 0, 0,
                         ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
-        SettingRow("DMA Height");
+        SettingRow(T(UiText::DmaHeight));
         PushControlWidth();
         ImGui::InputInt("##detectedScreenHeight", &detectedHeight, 0, 0,
                         ImGuiInputTextFlags_ReadOnly);
         ImGui::PopItemWidth();
 
-        SettingRow("Fallback Width");
+        SettingRow(T(UiText::FallbackWidth));
         PushControlWidth();
         screenChanged |= ImGui::InputInt("##manualScreenWidth", &OW::Config::manualScreenWidth, 0, 0);
         screenSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
@@ -5403,7 +5717,7 @@ static void DrawMiscScreenPage() {
             OW::Config::manualScreenWidth = 0;
         ImGui::PopItemWidth();
 
-        SettingRow("Fallback Height");
+        SettingRow(T(UiText::FallbackHeight));
         PushControlWidth();
         screenChanged |= ImGui::InputInt("##manualScreenHeight", &OW::Config::manualScreenHeight, 0, 0);
         screenSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
@@ -5572,7 +5886,7 @@ void UI::Render() {
         ShowAimSlotSummaryTooltip(selectedHero.heroId != 0);
 
         ImGui::SetCursorScreenPos(ImVec2(saveX, rowY));
-        if (ImGui::Button("Save Config", ImVec2(configButtonW, controlH))) {
+        if (ImGui::Button(T(UiText::SaveConfig), ImVec2(configButtonW, controlH))) {
             s_configSaveStatus = SaveSelectedConfig();
             s_configSaveStatusUntil = ImGui::GetTime() + 3.0;
         }
@@ -5596,7 +5910,12 @@ void UI::Render() {
         // Top tab bar at the bottom of the header
         ImGui::SetCursorScreenPos(ImVec2(winPos.x + 20.0f, winPos.y + kHeaderHeight - 43.0f));
 
-        const char* topTabNames[] = { "Aiming", "Visuals", "Theme", "Misc" };
+        const char* topTabNames[] = {
+            T(UiText::TopAiming),
+            T(UiText::TopVisuals),
+            T(UiText::TopTheme),
+            T(UiText::TopMisc),
+        };
         for (int i = 0; i < IM_ARRAYSIZE(topTabNames); i++) {
             bool isActive = (state.activeTab == i);
 
@@ -5657,33 +5976,33 @@ void UI::Render() {
 
     switch (state.activeTab) {
         case TAB_AIMING:
-            subTabNames[0] = "Aim";
-            subTabNames[1] = "Trigger";
-            subTabNames[2] = "Skills";
-            subTabNames[3] = "Combo";
+            subTabNames[0] = T(UiText::SubAim);
+            subTabNames[1] = T(UiText::SubTrigger);
+            subTabNames[2] = T(UiText::SubSkills);
+            subTabNames[3] = T(UiText::SubCombo);
             subTabCount = kAimingSubTabCount;
             state.aimingSubTab = ImClamp(state.aimingSubTab, 0, subTabCount - 1);
             activeSub   = &state.aimingSubTab;
             break;
         case TAB_VISUALS:
-            subTabNames[0] = "Players";
+            subTabNames[0] = T(UiText::SubPlayers);
             subTabCount = 1;
             activeSub   = &state.visualsSubTab;
             break;
         case TAB_THEME:
-            subTabNames[0] = "General";
-            subTabNames[1] = "Aim FOV";
+            subTabNames[0] = T(UiText::SubGeneral);
+            subTabNames[1] = T(UiText::SubAimFov);
             subTabCount = kThemeSubTabCount;
             state.themeSubTab = ImClamp(state.themeSubTab, 0, subTabCount - 1);
             activeSub   = &state.themeSubTab;
             break;
         case TAB_MISC:
-            subTabNames[0] = "General";
-            subTabNames[1] = "Diagnostics";
-            subTabNames[2] = "Behavior";
-            subTabNames[3] = "Method";
-            subTabNames[4] = "KMBox";
-            subTabNames[5] = "Screen";
+            subTabNames[0] = T(UiText::SubGeneral);
+            subTabNames[1] = T(UiText::SubDiagnostics);
+            subTabNames[2] = T(UiText::SubBehavior);
+            subTabNames[3] = T(UiText::SubMethod);
+            subTabNames[4] = T(UiText::SubKmBox);
+            subTabNames[5] = T(UiText::SubScreen);
             subTabCount = kMiscSubTabCount;
             state.miscSubTab = ImClamp(state.miscSubTab, 0, subTabCount - 1);
             activeSub   = &state.miscSubTab;

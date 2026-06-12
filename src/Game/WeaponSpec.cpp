@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "Game/Structs.hpp"
+#include "Utils/InputLabels.hpp"
 
 namespace OW {
 namespace {
@@ -180,6 +181,34 @@ const WeaponSpec* WeaponSpecsEnd()
 std::size_t WeaponSpecCount()
 {
     return kWeaponSpecs.size();
+}
+
+bool HeroHasAttackAction(uint64_t heroId, int action)
+{
+    for (const WeaponSpec& spec : kWeaponSpecs) {
+        if (spec.heroId == heroId && spec.action == action)
+            return true;
+    }
+    return false;
+}
+
+bool HeroUsesScopedStanceActions(uint64_t heroId)
+{
+    return HeroHasAttackAction(heroId, 0) && HeroHasAttackAction(heroId, 2);
+}
+
+const char* AttackActionNameForHero(uint64_t heroId, int action)
+{
+    if (HeroUsesScopedStanceActions(heroId) && action == 0)
+        return "Unscoped";
+    return Labels::AttackActionName(action);
+}
+
+const char* AttackActionCompactNameForHero(uint64_t heroId, int action)
+{
+    if (HeroUsesScopedStanceActions(heroId) && action == 0)
+        return "Unscoped";
+    return Labels::AttackActionCompactName(action);
 }
 
 const char* AimClassName(AimClass value)

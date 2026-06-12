@@ -1283,10 +1283,10 @@ namespace OW { namespace Config {
             }
         }
 
-        std::string BasicHeroSlotName(int action, int slotIndex)
+        std::string BasicHeroSlotName(uint64_t heroId, int action, int slotIndex)
         {
             if (action >= 0 && action < OW::Labels::AttackActionCount())
-                return OW::Labels::AttackActionCompactName(action);
+                return OW::AttackActionCompactNameForHero(heroId, action);
             return DefaultHeroSlotName(slotIndex);
         }
 
@@ -1412,7 +1412,7 @@ namespace OW { namespace Config {
                 auto fastFlick = AimSlot("Scoped Fast Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse4);
                 fastFlick.smooth = 100.0f;
                 return {
-                    AimSlot("Hip Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    AimSlot("Unscoped Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
                     scopedTrack,
                     AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
                     fastFlick,
@@ -1469,7 +1469,7 @@ namespace OW { namespace Config {
                 scopedTrack.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
                 scopedTrack.maxAimTime = 30.0f;
                 return {
-                    AimSlot("Hip Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
+                    AimSlot("Unscoped Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
                     AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
                     scopedTrack,
                 };
@@ -1477,7 +1477,7 @@ namespace OW { namespace Config {
             case static_cast<uint64_t>(OW::eHero::HERO_BRIGITTE):
                 return { DisabledAimSlot() };
             case static_cast<uint64_t>(OW::eHero::HERO_ASHE):
-                return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+                return { AimSlot("Unscoped Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
             case static_cast<uint64_t>(OW::eHero::HERO_ECHO):
                 return {
                     AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
@@ -1492,12 +1492,12 @@ namespace OW { namespace Config {
                 return { AimSlot("Secondary Tracking", kActionSecondary, kAimBehaviorTracking, kKeyRightMouse) };
             case static_cast<uint64_t>(OW::eHero::HERO_FREJA):
                 return {
-                    AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    AimSlot("Unscoped Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
                     AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
                 };
             case static_cast<uint64_t>(OW::eHero::HERO_EMRE):
                 return {
-                    AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
+                    AimSlot("Unscoped Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
                     AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
                 };
             case static_cast<uint64_t>(OW::eHero::HERO_SIERRA):
@@ -1816,7 +1816,7 @@ namespace OW { namespace Config {
                 const int action = actions[static_cast<size_t>(slotIndex)];
                 HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
                 ResetHeroPresetSlot(slot, slotIndex);
-                slot.name = BasicHeroSlotName(action, slotIndex);
+                slot.name = BasicHeroSlotName(heroId, action, slotIndex);
                 slot.present = true;
                 slot.enabled = true;
                 slot.preset = basePreset;
@@ -1849,7 +1849,7 @@ namespace OW { namespace Config {
                     const DocumentedAimSlotSpec& spec = specs[static_cast<size_t>(slotIndex)];
                     HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
                     ResetHeroPresetSlot(slot, slotIndex);
-                    slot.name = spec.name ? spec.name : BasicHeroSlotName(spec.action, slotIndex);
+                    slot.name = spec.name ? spec.name : BasicHeroSlotName(heroId, spec.action, slotIndex);
                     slot.present = true;
                     slot.enabled = spec.enabled;
                     slot.preset = MakeDocumentedAimPreset(heroId, basePreset, spec);
@@ -1868,7 +1868,7 @@ namespace OW { namespace Config {
                 const DocumentedTriggerSlotSpec& spec = specs[static_cast<size_t>(slotIndex)];
                 HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
                 ResetHeroPresetSlot(slot, slotIndex);
-                slot.name = spec.name ? spec.name : BasicHeroSlotName(spec.action, slotIndex);
+                slot.name = spec.name ? spec.name : BasicHeroSlotName(heroId, spec.action, slotIndex);
                 slot.present = true;
                 slot.enabled = spec.enabled;
                 slot.preset = MakeDocumentedTriggerPreset(heroId, basePreset, spec);
@@ -2031,7 +2031,7 @@ namespace OW { namespace Config {
                 slot.preset = ValidateHeroPresetValueForHero(heroId, slot.preset);
                 slot.name = NormalizeHeroSlotName(slot.name, writeIndex);
                 if (slot.name == DefaultHeroSlotName(writeIndex))
-                    slot.name = BasicHeroSlotName(slot.preset.trigger.action, writeIndex);
+                    slot.name = BasicHeroSlotName(heroId, slot.preset.trigger.action, writeIndex);
                 normalized[static_cast<size_t>(writeIndex)] = slot;
                 ++writeIndex;
             }
@@ -4950,6 +4950,7 @@ namespace OW { namespace Config {
             gafAsyncKeyStateSize = ReadInt(ini, section, "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
             gafAsyncKeyStateSessionId = ReadInt(ini, section, "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
             lastConfigProfile = ReadString(ini, section, "lastConfigProfile", lastConfigProfile.c_str());
+            uiLanguage = ReadInt(ini, section, "uiLanguage", uiLanguage);
             manualScreenWidth = ReadInt(ini, section, "manualScreenWidth", manualScreenWidth);
             manualScreenHeight = ReadInt(ini, section, "manualScreenHeight", manualScreenHeight);
 
@@ -5264,6 +5265,7 @@ namespace OW { namespace Config {
             ClampSetting("aimbotAttack", aimbotAttack, 0, 7, 0);
             ClampSetting("aimbotTeam", aimbotTeam, 0, 2, 0);
             ClampSetting("aimbotPriority", aimbotPriority, 0, 2, 0);
+            ClampSetting("uiLanguage", uiLanguage, 0, kUiLanguageCount - 1, kUiLanguageEnglish);
             ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 2, 0);
             ClampSetting("kmboxPort", kmboxPort, 1, 65535, kDefaultKmboxPort);
             const int fallbackMonitorPort = (kmboxPort >= 1 && kmboxPort < 65535)
@@ -5933,6 +5935,7 @@ namespace OW { namespace Config {
             WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
             WriteIntValue(path, "Global", "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
             WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
+            WriteIntValue(path, "Global", "uiLanguage", ClampUiLanguage(uiLanguage));
             WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
             WriteIntValue(path, "Global", "manualScreenHeight", manualScreenHeight);
             WriteColor(path, "Global", "EnemyCol", EnemyCol);

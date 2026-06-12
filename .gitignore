@@ -39,6 +39,7 @@ dist/
 
 # Local handoff notes
 docs/win10-kmbox-input-handoff.md
+docs/.obsidian/
 
 # Machine-local config variants
 config/*.local.cfg

@@ -131,7 +131,6 @@ namespace OW {
         TYPE_HEALTH           = 0x3B,
         TYPE_PLAYERCONTROLLER = 0x43,  // corrected per plexies p332 (was 0x44)
         TYPE_P_HEROID         = 0x54,
-        // PlayerController +0x1260 is a field offset, not a component ID.
         // TYPE_OUTLINE = 0x5B  — REMOVED: DMA external cannot render outlines
         TYPE_STAT             = 0x25,
     };
