@@ -26,7 +26,7 @@ constexpr bool HasHeroIdPrefix(uint64_t heroId) noexcept {
     return (heroId & kHeroIdPrefixMask) == kHeroIdPrefix;
 }
 
-// Source: D:\Desktop\uc\grap\516727\332.txt, plexies, 2026-05-27 04:18 AM.
+// Source: D:\Desktop\SenseZen\uc\grap\516727\332.txt, plexies, 2026-05-27 04:18 AM.
 // Live CN probe additions, 2026-06-02: Vendetta/Anran.
 // Local research additions, 2026-06-07: Sierra/Emre.
 inline constexpr NamedU64 kHeroIds[] = {

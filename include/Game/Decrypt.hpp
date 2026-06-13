@@ -390,19 +390,33 @@ namespace OW {
             offset::Singleton_Ror) + offset::Singleton_K3_add;
     }
 
+    inline uint64_t ResolveSingletonList(uint64_t raw) {
+        switch (offset::Active().singletonListMode) {
+        case offset::SingletonListMode::Plain:
+            return raw;
+        case offset::SingletonListMode::EncryptedWorldBz:
+        default:
+            return DecryptSingletonList(raw);
+        }
+    }
+
     inline bool TryGetGlobalAdminSingleton(uint64_t index, uint64_t& object) {
         object = 0;
         if (!SDK->dwGameBase)
             return false;
 
+        const auto& activeOffsets = offset::Active();
+        if (!activeOffsets.GlobalAdmin_RVA)
+            return false;
+
         const uint64_t admin = SDK->RPM<uint64_t>(
-            SDK->dwGameBase + offset::GlobalAdmin_RVA);
+            SDK->dwGameBase + activeOffsets.GlobalAdmin_RVA);
         if (!IsPlausibleUserPointer(admin))
             return false;
 
-        const uint64_t listEncrypted = SDK->RPM<uint64_t>(
+        const uint64_t listRaw = SDK->RPM<uint64_t>(
             admin + offset::Singleton_InputOffset);
-        const uint64_t list = DecryptSingletonList(listEncrypted);
+        const uint64_t list = ResolveSingletonList(listRaw);
         if (!IsPlausibleUserPointer(list))
             return false;
 

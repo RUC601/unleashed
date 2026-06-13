@@ -1,6 +1,6 @@
 # Annotated Source: include/Game/Target.hpp
 
-Source: D:/Desktop/ClaudeCodexCoding/Unleashed/include/Game/Target.hpp
+Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/include/Game/Target.hpp
 Snapshot: Git HEAD 10e87de + dirty working tree on 2026-06-10.
 Purpose: reading notes only, not runtime source of truth.
 

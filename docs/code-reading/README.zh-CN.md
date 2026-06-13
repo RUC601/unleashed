@@ -1,6 +1,6 @@
 # Unleashed Code Reading Notes
 
-Source: D:/Desktop/ClaudeCodexCoding/Unleashed
+Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed
 Snapshot: Git HEAD 10e87de + dirty working tree on 2026-06-10. The dirty files included CMakeLists.txt, include/Game/Overwatch.hpp, include/Game/Structs.hpp, include/Game/WeaponSpec.hpp, include/Utils/Config.hpp, src/Features/UI.cpp, src/Game/WeaponSpec.cpp, src/Utils/Config.cpp, and src/Tools/WeaponSpecDisplaySelfTest.cpp.
 Purpose: reading notes only, not runtime source of truth.
 

@@ -15,7 +15,7 @@ using AB = AimBehaviorType;
 using FP = FirePolicyType;
 
 constexpr std::string_view kReviewSource =
-    "D:/Desktop/ClaudeCodexCoding/research/武器分类研究/weapon_backend_mapping_review_0530_zh.md";
+    "D:/Desktop/SenseZen/ClaudeCodexCoding/research/武器分类研究/weapon_backend_mapping_review_0530_zh.md";
 constexpr std::string_view kWikiBase = "https://overwatch.fandom.com/wiki/";
 constexpr std::string_view kTemporaryProjectileFallbackNote =
     "Temporary radius fallback from data/aim_public_weapon_projectiles_0530.tsv; verify against live/source data later.";

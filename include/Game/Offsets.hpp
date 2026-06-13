@@ -6,7 +6,7 @@
 // =============================================================================
 // Overwatch Offsets - static dump verified on 2026-05-27
 //
-// Dump: D:\Desktop\downp\0527\dump_SCY.exe
+// Dump: D:\Desktop\SenseZen\downp\0527\dump_SCY.exe
 // ImageBase=0x7FF7BD100000  SizeOfImage=0x4725000  Timestamp=2026-05-14T18:32:55Z
 //
 // Changes from 0521/0525:
@@ -28,6 +28,11 @@ namespace OW {
         enum class ComponentTransformMode {
             World0527,
             Identity,
+        };
+
+        enum class SingletonListMode {
+            EncryptedWorldBz,
+            Plain,
         };
 
         struct RuntimeOffsetProfile {
@@ -52,6 +57,8 @@ namespace OW {
             uint64_t VM_ViewMatrix = 0;
             uint64_t VM_ProjMatrix = 0;
 
+            uint64_t GlobalAdmin_RVA = 0;
+            SingletonListMode singletonListMode = SingletonListMode::EncryptedWorldBz;
         };
 
         // =========================================================================
@@ -174,7 +181,9 @@ namespace OW {
         // Sensitivity_EncryptedPtr direct object can read, but live checks showed
         // singleton[0x6] + 0x2238 is the value that follows setting changes.
         static constexpr auto Sensitivity_EncryptedPtr_RVA = 0x38DC290;
-        static constexpr auto GlobalAdmin_RVA = 0x3A98CF0;
+        static constexpr auto GlobalAdmin_WorldBz_RVA = 0x3A98CF0;
+        static constexpr auto GlobalAdmin_Ne_2_22_1_1_150434_RVA = 0x43F1BF0;
+        static constexpr auto GlobalAdmin_RVA = GlobalAdmin_WorldBz_RVA;
         static constexpr auto Singleton_K1_xor = 0x41D346232DA856D8;
         static constexpr auto Singleton_K2_sub = 0x53B5A9FA87525DFC;
         static constexpr auto Singleton_K3_add = 0x57374166C207BDC2;
@@ -237,6 +246,8 @@ namespace OW {
             VM_ViewProjectionMatrix,
             VM_ViewMatrix,
             VM_ProjMatrix,
+            GlobalAdmin_WorldBz_RVA,
+            SingletonListMode::EncryptedWorldBz,
         };
 
         inline constexpr RuntimeOffsetProfile kCnNeRuntimeProfile{
@@ -258,6 +269,8 @@ namespace OW {
             0xC0,
             0x140,
             0xB0,
+            GlobalAdmin_Ne_2_22_1_1_150434_RVA,
+            SingletonListMode::Plain,
         };
 
         inline std::atomic<RuntimeProfile>& ActiveProfileStorage()
