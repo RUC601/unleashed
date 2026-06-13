@@ -3371,6 +3371,50 @@ inline uint64_t g_trackingMoves = 0;
 inline uint64_t g_flickAttempts = 0;
 inline uint64_t g_flickFires = 0;
 
+namespace OW {
+
+inline bool RefreshAutoGameMouseSensitivity(bool force = false) {
+    static DWORD lastRefreshTick = 0;
+
+    if (!OW::Config::autoReadGameMouseSensitivity) {
+        OW::Config::detectedGameMouseSensitivity = 0.0f;
+        OW::Config::gameMouseSensitivityAutoDetected = false;
+        return false;
+    }
+
+    const DWORD now = GetTickCount();
+    if (!force && lastRefreshTick != 0 && now - lastRefreshTick < 1000)
+        return OW::Config::gameMouseSensitivityAutoDetected;
+    lastRefreshTick = now;
+
+    float sensitivity = 0.0f;
+    uint64_t sourceObject = 0;
+    if (!OW::TryReadGameMouseSensitivity(sensitivity, &sourceObject)) {
+        if (OW::Config::gameMouseSensitivityAutoDetected) {
+            Diagnostics::Aim("game_sens.auto_read lost previous=%.6f manual=%.6f",
+                OW::Config::detectedGameMouseSensitivity,
+                OW::Config::gameMouseSensitivity);
+        }
+        OW::Config::detectedGameMouseSensitivity = 0.0f;
+        OW::Config::gameMouseSensitivityAutoDetected = false;
+        return false;
+    }
+
+    const bool changed =
+        !OW::Config::gameMouseSensitivityAutoDetected ||
+        std::fabs(OW::Config::detectedGameMouseSensitivity - sensitivity) > 0.001f;
+    OW::Config::detectedGameMouseSensitivity = sensitivity;
+    OW::Config::gameMouseSensitivityAutoDetected = true;
+    if (changed) {
+        Diagnostics::Aim("game_sens.auto_read value=%.6f object=0x%llX source=globaladmin_singleton_0x6",
+            sensitivity,
+            static_cast<unsigned long long>(sourceObject));
+    }
+    return true;
+}
+
+} // namespace OW
+
 namespace AimbotDetail {
 
     struct RuntimeState {
@@ -6169,6 +6213,8 @@ namespace AimbotDetail {
             OW::SetKey(0x57);
             Sleep(1000);
         }
+
+        OW::RefreshAutoGameMouseSensitivity();
 
         if (!HasEntitySnapshot()) {
             if (IsAimKeyPressed()) {

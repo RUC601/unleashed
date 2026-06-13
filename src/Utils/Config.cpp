@@ -810,6 +810,7 @@ namespace OW { namespace Config {
                    setting == "kmboxCountsPerRadian" ||
                    setting == "kmboxAimSensitivity" ||
                    setting == "gameMouseSensitivity" ||
+                   setting == "autoReadGameMouseSensitivity" ||
                    setting == "hostMouseDpi" ||
                    setting == "referenceGameSensitivity" ||
                    setting == "autoScaleByGameSensitivity" ||
@@ -2371,6 +2372,9 @@ namespace OW { namespace Config {
             gameMouseSensitivity = 15.0f;        // default manual/effective current game sensitivity
             referenceGameSensitivity = 15.0f;    // default calibration point
             autoScaleByGameSensitivity = false;  // default: manual counts-per-radian only
+            autoReadGameMouseSensitivity = false; // default: preserve manual game sensitivity
+            detectedGameMouseSensitivity = 0.0f;
+            gameMouseSensitivityAutoDetected = false;
             calibratedCountsPerRadian = 0.0f;
             calibratedPitchCountsPerRadian = 0.0f;
             hostMouseDpi = kDefaultHostMouseDpi;
@@ -4980,6 +4984,13 @@ namespace OW { namespace Config {
                 KeyExists(ini, section, "kmboxCountsPerRadian") ? "kmboxCountsPerRadian" : "kmboxAimSensitivity",
                 kmboxCountsPerRadian);
             gameMouseSensitivity = ReadFixedFloat(ini, section, "gameMouseSensitivity", gameMouseSensitivity);
+            autoReadGameMouseSensitivity = ReadBool(
+                ini,
+                section,
+                "autoReadGameMouseSensitivity",
+                autoReadGameMouseSensitivity);
+            detectedGameMouseSensitivity = 0.0f;
+            gameMouseSensitivityAutoDetected = false;
             referenceGameSensitivity = ReadFixedFloat(
                 ini,
                 section,
@@ -5019,6 +5030,7 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, "KMBox", "kmboxCountsPerRadian", kmboxCountsPerRadian);
             WriteFixedFloatValue(path, "KMBox", "kmboxAimSensitivity", kmboxCountsPerRadian);
             WriteFixedFloatValue(path, "KMBox", "gameMouseSensitivity", gameMouseSensitivity);
+            WriteBoolValue(path, "KMBox", "autoReadGameMouseSensitivity", autoReadGameMouseSensitivity);
             WriteFixedFloatValue(path, "KMBox", "referenceGameSensitivity", referenceGameSensitivity);
             WriteFixedFloatValue(path, "KMBox", "sensReference", referenceGameSensitivity);
             WriteBoolValue(path, "KMBox", "autoScaleByGameSensitivity", autoScaleByGameSensitivity);
@@ -5279,13 +5291,22 @@ namespace OW { namespace Config {
             ClampFloatSetting("kmboxCountsPerRadian", kmboxCountsPerRadian, 0.1f, 20000.0f, 100.0f);
             ClampFloatSetting("gameMouseSensitivity", gameMouseSensitivity, 0.01f, 100.0f, 15.0f);
             ClampFloatSetting("referenceGameSensitivity", referenceGameSensitivity, 0.01f, 100.0f, 15.0f);
+            if (!autoReadGameMouseSensitivity) {
+                detectedGameMouseSensitivity = 0.0f;
+                gameMouseSensitivityAutoDetected = false;
+            } else if (!std::isfinite(detectedGameMouseSensitivity) ||
+                       detectedGameMouseSensitivity <= 0.0f ||
+                       detectedGameMouseSensitivity >= 100.0f) {
+                detectedGameMouseSensitivity = 0.0f;
+                gameMouseSensitivityAutoDetected = false;
+            }
             ClampFloatSetting("calibratedCountsPerRadian", calibratedCountsPerRadian, 0.0f, 20000.0f, 0.0f);
             ClampFloatSetting("calibratedPitchCountsPerRadian", calibratedPitchCountsPerRadian, 0.0f, 20000.0f, 0.0f);
             ClampFloatSetting("hostMouseDpi", hostMouseDpi, 100.0f, 64000.0f, kDefaultHostMouseDpi);
             const float baseCountsPerRadian = KmboxBaseCountsPerRadian();
             const float yawCountsPerRadian = KmboxYawCountsPerRadian();
             const float pitchCountsPerRadian = KmboxPitchCountsPerRadian();
-            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f calibratedPitchCountsPerRadian=%.6f baseCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f yawCountsPerRadian=%.6f pitchCountsPerRadian=%.6f inputDelayMs=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
+            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f calibratedPitchCountsPerRadian=%.6f baseCountsPerRadian=%.6f gameMouseSensitivity=%.6f effectiveGameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d autoReadGameMouseSensitivity=%d autoDetected=%d hostMouseDpi=%.6f yawCountsPerRadian=%.6f pitchCountsPerRadian=%.6f inputDelayMs=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
                 kmboxEnabled ? 1 : 0,
                 kmboxDeviceType,
                 kmboxIp,
@@ -5296,8 +5317,11 @@ namespace OW { namespace Config {
                 calibratedPitchCountsPerRadian,
                 baseCountsPerRadian,
                 gameMouseSensitivity,
+                EffectiveGameMouseSensitivity(),
                 referenceGameSensitivity,
                 autoScaleByGameSensitivity ? 1 : 0,
+                autoReadGameMouseSensitivity ? 1 : 0,
+                gameMouseSensitivityAutoDetected ? 1 : 0,
                 hostMouseDpi,
                 yawCountsPerRadian,
                 pitchCountsPerRadian,
@@ -5415,11 +5439,14 @@ namespace OW { namespace Config {
                 AutoRMBdistance, ToText(AutoSkill).c_str(), SkillHealth, ToText(AntiAFK).c_str());
             LogConfig(level, "Dump: secondary secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
-            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d monitorPort=%d mac=%s comPort=%s countsPerRadian=%.3f calibratedCountsPerRadian=%.3f calibratedPitchCountsPerRadian=%.3f gameMouseSensitivity=%.3f referenceGameSensitivity=%.3f autoScaleByGameSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s",
+            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d monitorPort=%d mac=%s comPort=%s countsPerRadian=%.3f calibratedCountsPerRadian=%.3f calibratedPitchCountsPerRadian=%.3f gameMouseSensitivity=%.3f effectiveGameMouseSensitivity=%.3f referenceGameSensitivity=%.3f autoScaleByGameSensitivity=%s autoReadGameMouseSensitivity=%s autoDetectedGameSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMonitorPort, kmboxMac,
                 kmboxComPort, kmboxCountsPerRadian, calibratedCountsPerRadian, calibratedPitchCountsPerRadian,
-                gameMouseSensitivity, referenceGameSensitivity,
-                ToText(autoScaleByGameSensitivity).c_str(), hostMouseDpi, detectedHostMouseDpi,
+                gameMouseSensitivity, EffectiveGameMouseSensitivity(), referenceGameSensitivity,
+                ToText(autoScaleByGameSensitivity).c_str(),
+                ToText(autoReadGameMouseSensitivity).c_str(),
+                ToText(gameMouseSensitivityAutoDetected).c_str(),
+                hostMouseDpi, detectedHostMouseDpi,
                 ToText(hostMouseDpiAutoDetected).c_str(), kmboxInputDelayMs,
                 ToText(kmboxDebugLog).c_str());
             LogConfig(level, "Dump: keystate offset=%s size=%d sessionId=%d",

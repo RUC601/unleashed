@@ -120,9 +120,11 @@ namespace OW {
 
     enum eComponentType {
         TYPE_ERROR            = -1,
+        TYPE_TRANSFORM        = 0x01,
         TYPE_VELOCITY         = 0x4,
         TYPE_TEAM             = 0x21,
         TYPE_BONE             = 0x24,  // updated per UC p330 (was 0x27)
+        TYPE_TRANSFORM_ALT    = 0x25,
         TYPE_ROTATION         = 0x2F,
         TYPE_LINK             = 0x34,
         TYPE_P_VISIBILITY     = 0x35,
@@ -131,8 +133,9 @@ namespace OW {
         TYPE_HEALTH           = 0x3B,
         TYPE_PLAYERCONTROLLER = 0x43,  // corrected per plexies p332 (was 0x44)
         TYPE_P_HEROID         = 0x54,
-        // TYPE_OUTLINE = 0x5B  — REMOVED: DMA external cannot render outlines
-        TYPE_STAT             = 0x25,
+        TYPE_OUTLINE          = 0x5A,
+        TYPE_REPLICATED_POS   = 0x60,
+        TYPE_STAT             = TYPE_TRANSFORM_ALT,
     };
 
     // =========================================================================

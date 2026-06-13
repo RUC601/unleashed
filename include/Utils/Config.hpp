@@ -853,6 +853,9 @@ namespace OW { namespace Config {
     inline float gameMouseSensitivity = 15.0f;        // manual/effective current in-game sensitivity used for scaling
     inline float referenceGameSensitivity = 15.0f;    // game sens used when counts-per-radian was measured
     inline bool  autoScaleByGameSensitivity = false;  // scale counts by reference/current game sensitivity
+    inline bool  autoReadGameMouseSensitivity = false; // read current game sens from DMA when available
+    inline float detectedGameMouseSensitivity = 0.0f;  // runtime-only DMA-read current game sens
+    inline bool  gameMouseSensitivityAutoDetected = false;
     inline float& kmboxAimSensitivity = kmboxCountsPerRadian;     // legacy config/code alias
     inline float& sensReference = referenceGameSensitivity;       // legacy config/code alias
     inline bool&  autoSyncSensitivity = autoScaleByGameSensitivity; // legacy config/code alias
@@ -902,14 +905,31 @@ namespace OW { namespace Config {
 
     inline float KmboxGameSensitivityScale()
     {
+        const float effectiveGameSensitivity =
+            (autoReadGameMouseSensitivity &&
+             gameMouseSensitivityAutoDetected &&
+             std::isfinite(detectedGameMouseSensitivity) &&
+             detectedGameMouseSensitivity > 0.0f)
+                ? detectedGameMouseSensitivity
+                : gameMouseSensitivity;
         if (!autoScaleByGameSensitivity ||
-            !std::isfinite(gameMouseSensitivity) ||
+            !std::isfinite(effectiveGameSensitivity) ||
             !std::isfinite(referenceGameSensitivity) ||
-            gameMouseSensitivity <= 0.0f ||
+            effectiveGameSensitivity <= 0.0f ||
             referenceGameSensitivity <= 0.0f) {
             return 1.0f;
         }
-        return referenceGameSensitivity / gameMouseSensitivity;
+        return referenceGameSensitivity / effectiveGameSensitivity;
+    }
+
+    inline float EffectiveGameMouseSensitivity()
+    {
+        return (autoReadGameMouseSensitivity &&
+                gameMouseSensitivityAutoDetected &&
+                std::isfinite(detectedGameMouseSensitivity) &&
+                detectedGameMouseSensitivity > 0.0f)
+            ? detectedGameMouseSensitivity
+            : gameMouseSensitivity;
     }
 
     inline float KmboxYawCountsPerRadian()

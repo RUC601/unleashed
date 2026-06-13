@@ -165,11 +165,12 @@ namespace OW {
             float pitchSensitivity = Config::KmboxPitchCountsPerRadian();
 
             if (!std::isfinite(sensitivity) || sensitivity <= 0.0f) {
-                Diagnostics::Aim("mouse.convert warning invalid_counts_per_rad computed=%.9f fallback=%.9f autoScale=%d gameSens=%.9f refSens=%.9f pitchCountsPerRad=%.9f",
+                Diagnostics::Aim("mouse.convert warning invalid_counts_per_rad computed=%.9f fallback=%.9f autoScale=%d gameSens=%.9f effectiveGameSens=%.9f refSens=%.9f pitchCountsPerRad=%.9f",
                     sensitivity,
                     baseCountsPerRadian,
                     Config::autoScaleByGameSensitivity ? 1 : 0,
                     Config::gameMouseSensitivity,
+                    Config::EffectiveGameMouseSensitivity(),
                     Config::referenceGameSensitivity,
                     pitchSensitivity);
                 sensitivity = baseCountsPerRadian;

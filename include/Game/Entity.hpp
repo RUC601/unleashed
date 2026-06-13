@@ -8,6 +8,7 @@
 #include <DirectXMath.h>
 using namespace DirectX;
 
+#include "Game/BoneSlots.hpp"
 #include "Game/Structs.hpp"
 #include "Game/Offsets.hpp"
 #include "Game/SDK.hpp"

@@ -123,12 +123,68 @@ namespace OW {
         // Entity system.
         // OLD (0521): static constexpr auto Address_entity_base = 0x39298C8;
         static constexpr auto Address_entity_base = 0x3935908; // verified 0527: forum p330 + IDA xref, stride 0x10
+        static constexpr auto EntityList_SlotCount_RVA = 0x39358F4; // carry-forward p337
         static constexpr auto entity_entry_stride = 0x10;      // entity list slot: { entity, pad }
         static constexpr auto Entity_MatchId      = 0x138;     // u32 on component parent; retained from 0521
         static constexpr auto Entity_PoolPtr      = 0x30;      // masked with 0xFFFFFFFFFFFFFFC0
         static constexpr auto Pool_PoolId         = 0x10;
         static constexpr auto Link_UniqueId       = 0xD4;      // u32 on decrypted link component
         static constexpr auto Link_UniqueIdAlt    = 0xD8;
+
+        // p344 verified/carry-forward structural constants. Keep these named even
+        // when a runtime path still uses older local helpers.
+        static constexpr auto Address_LiveFov_RVA = 0x4037628;
+        static constexpr auto Default_FOV_Horizontal_Deg = 103.0f;
+        static constexpr auto kOpenProcessFlags = 0x438;
+
+        static constexpr auto Transform_PositionOffset = 0x3D0;
+        static constexpr auto ReplicatedTransform_PositionOffset = 0x180;
+        static constexpr auto Velocity_PositionOffset = 0x200;
+        static constexpr auto Velocity_LocationOffset = 0x200;
+        static constexpr auto Velocity_VelocityOffset = 0x050;
+        static constexpr auto Velocity_LocationYBias = 1.0f;
+        static constexpr auto Velocity_BoneDataPtrOffset = 0x8B0;
+        static constexpr auto BoneData_BonesArrayOffset = 0x20;
+        static constexpr auto BoneEntryStride = 0x30;
+        static constexpr auto Bone_PosOffset = 0x20;
+        static constexpr auto Actor_TeamOffsetFromHeroId = 0x180;
+        static constexpr auto Actor_PositionOffsetFromHeroId = 0x1C;
+        static constexpr auto HeroId_HighWord = 0x02E0;
+        static constexpr auto RotationBase_Sub1 = 0x888;
+        static constexpr auto RotationBase_Sub2 = 0x90C;
+        static constexpr auto Vis_DataOffsetInComp = 0x98;
+        static constexpr auto Vis_OccludedBitMask = 0x800;
+        static constexpr auto Team1_Mask = 0x00800000;
+        static constexpr auto Team2_Mask = 0x01000000;
+
+        static constexpr auto Outline_ByteRva = 0x377E6E4;
+        static constexpr auto Outline_QwordBaseRva = ComponentXorQword_RVA;
+        static constexpr auto Outline_QwordOffset = 0x97;
+        static constexpr auto Outline_Rol1Amount = 23;
+        static constexpr auto Outline_XorK1 = 0xEF781B6466FAB59B;
+        static constexpr auto Outline_SubK2 = 0x2240EA534C11100D;
+        static constexpr auto Outline_AddK3 = 0x605EC85DF1D6897D;
+        static constexpr auto Outline_AddK4 = 0x1F21DE5151741226;
+
+        static constexpr auto Healthpack_Small = 0x40000000000005F;
+        static constexpr auto Healthpack_Large = 0x400000000000060;
+        static constexpr auto Healthpack_Mega = 0x40000000000480A;
+
+        // GlobalAdmin singleton path for current game sensitivity. The legacy
+        // Sensitivity_EncryptedPtr direct object can read, but live checks showed
+        // singleton[0x6] + 0x2238 is the value that follows setting changes.
+        static constexpr auto Sensitivity_EncryptedPtr_RVA = 0x38DC290;
+        static constexpr auto GlobalAdmin_RVA = 0x3A98CF0;
+        static constexpr auto Singleton_K1_xor = 0x41D346232DA856D8;
+        static constexpr auto Singleton_K2_sub = 0x53B5A9FA87525DFC;
+        static constexpr auto Singleton_K3_add = 0x57374166C207BDC2;
+        static constexpr auto Singleton_Ror = 59;
+        static constexpr auto Singleton_InputOffset = 0x160;
+        static constexpr auto SensitivitySingletonIndex = 0x6;
+        static constexpr auto Sensitivity = 0x2238;
+        static constexpr auto SensX_Scale = 0x2224;
+        static constexpr auto SensY_Scale = 0x2228;
+        static constexpr auto Invert_Y_Flag = 0x2156;
 
         // ViewMatrix - VM12 (2026-05-27, UC p330/p331 betsit)
         //   Chain: enc = RPM(base+Addr); dec = (enc + k1) ^ k2

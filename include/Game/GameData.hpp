@@ -82,6 +82,7 @@ inline constexpr NamedU64 kHeroIds[] = {
     { "Standard Bot", MakeHeroId(0x33C) },
     { "Tank Bot", MakeHeroId(0x337) },
     { "Sniper Bot", MakeHeroId(0x35A) },
+    { "Training Bot 4", MakeHeroId(0x16C) },
     { "Friendly Bot", MakeHeroId(0x4E7) },
     { "Friendly Heavy Bot", MakeHeroId(0x363) },
     { "Training Bot 6", MakeHeroId(0x349) },
@@ -110,8 +111,8 @@ inline constexpr NamedInt kBoneIds[] = {
 };
 
 inline constexpr NamedU64 kPoolIds[] = {
-    { "HealthPack_Small", 0x400000000000060ull },
-    { "HealthPack_Large", 0x40000000000005Full },
+    { "HealthPack_Small", 0x40000000000005Full },
+    { "HealthPack_Large", 0x400000000000060ull },
     { "HealthPack_Mega", 0x40000000000480Aull },
     { "Torb_Turret", 0x4000000000028B7ull },
     { "Illari_Pylon", 0x400000000004BCAull },
@@ -220,6 +221,7 @@ constexpr bool IsTrainingBotHeroId(uint64_t heroId) noexcept {
     return heroId == MakeHeroId(0x33C) ||
            heroId == MakeHeroId(0x337) ||
            heroId == MakeHeroId(0x35A) ||
+           heroId == MakeHeroId(0x16C) ||
            heroId == MakeHeroId(0x4E7) ||
            heroId == MakeHeroId(0x363) ||
            heroId == MakeHeroId(0x349) ||

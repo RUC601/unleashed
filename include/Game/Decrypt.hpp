@@ -378,6 +378,62 @@ namespace OW {
         return value > 0.0f && value < 100.0f;
     }
 
+    inline bool IsPlausibleUserPointer(uint64_t value) {
+        return value >= 0x10000ull &&
+            value < 0x0000800000000000ull &&
+            (value % alignof(void*) == 0);
+    }
+
+    inline uint64_t DecryptSingletonList(uint64_t raw) {
+        return ROR64(
+            (raw ^ offset::Singleton_K1_xor) - offset::Singleton_K2_sub,
+            offset::Singleton_Ror) + offset::Singleton_K3_add;
+    }
+
+    inline bool TryGetGlobalAdminSingleton(uint64_t index, uint64_t& object) {
+        object = 0;
+        if (!SDK->dwGameBase)
+            return false;
+
+        const uint64_t admin = SDK->RPM<uint64_t>(
+            SDK->dwGameBase + offset::GlobalAdmin_RVA);
+        if (!IsPlausibleUserPointer(admin))
+            return false;
+
+        const uint64_t listEncrypted = SDK->RPM<uint64_t>(
+            admin + offset::Singleton_InputOffset);
+        const uint64_t list = DecryptSingletonList(listEncrypted);
+        if (!IsPlausibleUserPointer(list))
+            return false;
+
+        object = SDK->RPM<uint64_t>(list + 8ull * index);
+        return IsPlausibleUserPointer(object);
+    }
+
+    inline bool TryReadGameMouseSensitivity(float& value, uint64_t* sourceObject = nullptr) {
+        value = 0.0f;
+        if (sourceObject)
+            *sourceObject = 0;
+
+        uint64_t sensitivityObject = 0;
+        if (!TryGetGlobalAdminSingleton(offset::SensitivitySingletonIndex, sensitivityObject))
+            return false;
+
+        const float sensitivity = SDK->RPM<float>(sensitivityObject + offset::Sensitivity);
+        if (!IsPlausibleSensitivity(sensitivity))
+            return false;
+
+        const float sensX = SDK->RPM<float>(sensitivityObject + offset::SensX_Scale);
+        const float sensY = SDK->RPM<float>(sensitivityObject + offset::SensY_Scale);
+        if (!std::isfinite(sensX) || !std::isfinite(sensY))
+            return false;
+
+        value = sensitivity;
+        if (sourceObject)
+            *sourceObject = sensitivityObject;
+        return true;
+    }
+
     inline uintptr_t GetSenstivePTR() {
         if (!SDK->dwGameBase)
             return 0;

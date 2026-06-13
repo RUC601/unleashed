@@ -1067,6 +1067,9 @@ enum class UiText : size_t {
     NotInitialized,
     BaseCountsRad,
     CurrentGameSens,
+    AutoReadGameSens,
+    ReadGameSens,
+    EffectiveGameSens,
     HostDpiDma,
     MouseDpi,
     ReferenceGameSens,
@@ -1216,6 +1219,9 @@ static constexpr UiTextPair kUiText[] = {
     { "Not initialized", "未初始化" },
     { "Base Counts/Rad", "基础计数/弧度" },
     { "Current Game Sens", "当前游戏灵敏度" },
+    { "Auto Read Game Sens", "自动读取游戏灵敏度" },
+    { "Read", "读取" },
+    { "Effective Game Sens", "生效游戏灵敏度" },
     { "Host DPI (DMA)", "主机 DPI (DMA)" },
     { "Mouse DPI", "鼠标 DPI" },
     { "Reference Game Sens", "参考游戏灵敏度" },
@@ -5353,6 +5359,8 @@ static void DrawMiscKmboxPage() {
         static std::string kmboxNetworkRestartMessage;
         static bool kmboxFirewallOk = false;
         static std::string kmboxFirewallMessage;
+        static bool gameSensitivityReadOk = false;
+        static std::string gameSensitivityReadMessage;
         auto markKmboxRuntimeConfigChanged = [&]() {
             kmboxSaveRequested = true;
             kmboxConnectionTestMessage.clear();
@@ -5460,8 +5468,73 @@ static void DrawMiscKmboxPage() {
                           0.0f, 0.0f, "%.2f");
         kmboxSaveRequested |= ImGui::IsItemDeactivatedAfterEdit();
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Manual current in-game sensitivity. DMA sensitivity reading is not used for this value.");
+            ImGui::SetTooltip("Manual current in-game sensitivity. Auto-read uses a separate runtime value and falls back to this when unavailable.");
         ImGui::PopItemWidth();
+
+        SettingRow(T(UiText::AutoReadGameSens));
+        if (UICheckbox("##AutoReadGameSens", &OW::Config::autoReadGameMouseSensitivity)) {
+            kmboxSaveRequested = true;
+            gameSensitivityReadMessage.clear();
+            if (OW::Config::autoReadGameMouseSensitivity) {
+                gameSensitivityReadOk = OW::RefreshAutoGameMouseSensitivity(true);
+                char buffer[96] = {};
+                std::snprintf(buffer, sizeof(buffer),
+                    gameSensitivityReadOk ? "live %.2f" : "not available",
+                    OW::Config::detectedGameMouseSensitivity);
+                gameSensitivityReadMessage = buffer;
+            } else {
+                OW::Config::detectedGameMouseSensitivity = 0.0f;
+                OW::Config::gameMouseSensitivityAutoDetected = false;
+            }
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Reads current in-game sensitivity from GlobalAdmin singleton[0x6] + 0x2238 at a low cadence. Manual sensitivity remains the fallback.");
+        ImGui::SameLine();
+        if (ImGui::Button(T(UiText::ReadGameSens), ImVec2(64.0f, kControlHeight))) {
+            float detectedSensitivity = 0.0f;
+            uint64_t sourceObject = 0;
+            gameSensitivityReadOk = OW::TryReadGameMouseSensitivity(detectedSensitivity, &sourceObject);
+            char buffer[128] = {};
+            if (gameSensitivityReadOk) {
+                if (OW::Config::autoReadGameMouseSensitivity) {
+                    OW::Config::detectedGameMouseSensitivity = detectedSensitivity;
+                    OW::Config::gameMouseSensitivityAutoDetected = true;
+                } else {
+                    OW::Config::gameMouseSensitivity = detectedSensitivity;
+                    OW::Config::gameMouseSensitivityAutoDetected = false;
+                    OW::Config::detectedGameMouseSensitivity = 0.0f;
+                    kmboxSaveRequested = true;
+                }
+                std::snprintf(buffer, sizeof(buffer), "read %.2f", detectedSensitivity);
+                Diagnostics::Aim("game_sens.manual_read value=%.6f object=0x%llX autoRead=%d",
+                    detectedSensitivity,
+                    static_cast<unsigned long long>(sourceObject),
+                    OW::Config::autoReadGameMouseSensitivity ? 1 : 0);
+            } else {
+                std::snprintf(buffer, sizeof(buffer), "read failed");
+            }
+            gameSensitivityReadMessage = buffer;
+        }
+        if (!gameSensitivityReadMessage.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(
+                gameSensitivityReadOk ? ImVec4(0.30f, 0.90f, 0.45f, 1.0f)
+                                      : ImVec4(1.00f, 0.28f, 0.28f, 1.0f),
+                "%s",
+                gameSensitivityReadMessage.c_str());
+        }
+        if (OW::Config::autoReadGameMouseSensitivity)
+            OW::RefreshAutoGameMouseSensitivity();
+
+        SettingRow(T(UiText::EffectiveGameSens));
+        PushControlWidth();
+        float effectiveGameSensitivity = OW::Config::EffectiveGameMouseSensitivity();
+        ImGui::InputFloat("##EffectiveGameSens", &effectiveGameSensitivity,
+                          0.0f, 0.0f, "%.2f",
+                          ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopItemWidth();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The sensitivity value currently used by Auto Sens Scale. It is DMA-read when auto-read succeeds, otherwise manual.");
 
         SettingRow(T(UiText::HostDpiDma));
         PushControlWidth();
@@ -5494,7 +5567,7 @@ static void DrawMiscKmboxPage() {
         ImGui::PopItemWidth();
         ImGui::SameLine();
         if (ImGui::Button(T(UiText::UseCurrent), ImVec2(useCurrentButtonWidth, kControlHeight))) {
-            OW::Config::referenceGameSensitivity = OW::Config::gameMouseSensitivity;
+            OW::Config::referenceGameSensitivity = OW::Config::EffectiveGameMouseSensitivity();
             kmboxSaveRequested = true;
         }
 
