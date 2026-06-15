@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "Game/Decrypt.hpp"
 #include "Game/GameData.hpp"
 #include "Game/HeroPerks.hpp"
 #include "Game/Target.hpp"
@@ -485,6 +486,7 @@ std::string BuildDiagnosticsJson()
 void AppendHeroPerkJson(std::ostringstream& out, const OW::HeroPerks::State& perk)
 {
     const OW::HeroPerks::Classification& classification = perk.classification;
+    const OW::HeroPerks::ResearchSelectedBoolean& researchSelected = perk.researchSelected;
     out << "{\"available\":" << (perk.available ? "true" : "false")
         << ",\"lookup_ready\":" << (perk.lookupReady ? "true" : "false")
         << ",\"policy\":";
@@ -508,6 +510,33 @@ void AppendHeroPerkJson(std::ostringstream& out, const OW::HeroPerks::State& per
     AppendHexString(out, perk.e78U32);
     out << ",\"e78_u64\":";
     AppendHexString(out, perk.e78U64);
+    out << ",\"research_selected_boolean\":{"
+        << "\"evidence\":\"20260615_live_validation_fail_closed\","
+        << "\"supported_hero\":" << (researchSelected.supportedHero ? "true" : "false")
+        << ",\"available\":" << (researchSelected.available ? "true" : "false")
+        << ",\"selected\":";
+    if (researchSelected.available)
+        out << (researchSelected.selected ? "true" : "false");
+    else
+        out << "null";
+    out << ",\"rule\":";
+    if (researchSelected.rule && researchSelected.rule[0] != '\0')
+        AppendJsonString(out, researchSelected.rule);
+    else
+        out << "null";
+    out << ",\"raw\":{"
+        << "\"skill_16c2_read\":" << (researchSelected.skill16C2Read ? "true" : "false")
+        << ",\"skill_16c2_u16\":";
+    AppendHexString(out, researchSelected.skill16C2);
+    out << ",\"symmetra_02e8_read\":" << (researchSelected.symmetra02E8Read ? "true" : "false")
+        << ",\"symmetra_02e8_u64\":";
+    AppendHexString(out, researchSelected.symmetra02E8);
+    out << ",\"component55_base\":";
+    AppendHexOrNull(out, researchSelected.component55Base);
+    out << ",\"component55_270_read\":" << (researchSelected.component55_270Read ? "true" : "false")
+        << ",\"component55_270_u32\":";
+    AppendHexString(out, researchSelected.component55_270);
+    out << "}}";
     out << ",\"result\":";
     AppendJsonString(out, OW::HeroPerks::ResultName(classification.result));
     out << ",\"selected\":";
@@ -581,7 +610,8 @@ std::string BuildLocalJson()
     std::vector<std::string> warnings;
     const OW::c_entity local = OW::TargetingDetail::SnapshotLocalEntity();
     const OW::TargetingDetail::FovRuntimeContext fov = OW::TargetingDetail::SnapshotFovRuntimeContext();
-    const OW::HeroPerks::State perk = OW::HeroPerks::ReadCurrent(local.HeroID, local.SkillBase);
+    const OW::HeroPerks::State perk =
+        OW::HeroPerks::ReadCurrent(local.HeroID, local.SkillBase, local.address);
     const bool hasLocal = local.address != 0 || local.HeroID != 0 || local.LinkBase != 0;
     if (!hasLocal)
         warnings.emplace_back("local entity snapshot is unavailable");

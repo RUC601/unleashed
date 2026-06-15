@@ -45,6 +45,7 @@ void FinishDerivedState(OW::HeroPerks::State& state)
     state.stateCodeKey = OW::HeroPerks::BuildStateCodeKey(state);
     OW::HeroPerks::BuildResearchCandidateKeys(state);
     state.classification = OW::HeroPerks::Classify(state);
+    OW::HeroPerks::EvaluateResearchSelectedBoolean(state);
 }
 
 OW::HeroPerks::State MakeBaptisteUltimateRightFixture()
@@ -107,6 +108,36 @@ OW::HeroPerks::State MakeBaptisteUltimateRightFixture()
 
 int main()
 {
+    OW::HeroPerks::State unresolvedCandidate{};
+    unresolvedCandidate.heroId = OW::GameData::MakeHeroId(0x005);
+    unresolvedCandidate.researchSelected.skill16C2Read = true;
+    unresolvedCandidate.researchSelected.skill16C2 = 1;
+    OW::HeroPerks::EvaluateResearchSelectedBoolean(unresolvedCandidate);
+    if (unresolvedCandidate.researchSelected.available || unresolvedCandidate.researchSelected.selected)
+        return Fail();
+    if (std::strcmp(unresolvedCandidate.researchSelected.rule, "candidate_unresolved_fail_closed") != 0)
+        return Fail();
+
+    OW::HeroPerks::State knownFalseCandidate{};
+    knownFalseCandidate.heroId = OW::GameData::MakeHeroId(0x005);
+    knownFalseCandidate.classification.result = OW::HeroPerks::Result::KnownFalse;
+    knownFalseCandidate.classification.selected = false;
+    OW::HeroPerks::EvaluateResearchSelectedBoolean(knownFalseCandidate);
+    if (!knownFalseCandidate.researchSelected.available || knownFalseCandidate.researchSelected.selected)
+        return Fail();
+    if (std::strcmp(
+            knownFalseCandidate.researchSelected.rule,
+            "legacy_lookup_known_false_fail_closed") != 0)
+        return Fail();
+
+    OW::HeroPerks::State unsupportedCandidate{};
+    unsupportedCandidate.heroId = OW::GameData::MakeHeroId(0x221);
+    unsupportedCandidate.researchSelected.skill16C2Read = true;
+    unsupportedCandidate.researchSelected.skill16C2 = 1;
+    OW::HeroPerks::EvaluateResearchSelectedBoolean(unsupportedCandidate);
+    if (unsupportedCandidate.researchSelected.available || unsupportedCandidate.researchSelected.selected)
+        return Fail();
+
     OW::HeroPerks::State fixture = MakeBaptisteUltimateRightFixture();
     if (fixture.uniqueNo338Signature != 0xC565375C7A6B154Dull)
         return Fail();
@@ -115,6 +146,10 @@ int main()
     if (fixture.classification.result != OW::HeroPerks::Result::KnownTrue)
         return Fail();
     if (!fixture.classification.selected)
+        return Fail();
+    if (!fixture.researchSelected.available || !fixture.researchSelected.selected)
+        return Fail();
+    if (std::strcmp(fixture.researchSelected.rule, "legacy_lookup_known_true_fail_closed") != 0)
         return Fail();
     if (fixture.classification.key != fixture.uniqueNo338Key)
         return Fail();

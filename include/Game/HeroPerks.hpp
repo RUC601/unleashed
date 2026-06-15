@@ -5,8 +5,13 @@
 #include <cstdint>
 #include <vector>
 
+#include "Game/GameData.hpp"
 #include "Game/HeroPerkLookupSeed.hpp"
 #include "Game/SDK.hpp"
+
+namespace OW {
+uintptr_t DecryptComponent(uintptr_t parent, uint32_t idx);
+}
 
 namespace OW::HeroPerks {
 
@@ -81,11 +86,26 @@ struct ResearchCandidateKey {
     uint64_t key = 0;
 };
 
+struct ResearchSelectedBoolean {
+    bool supportedHero = false;
+    bool available = false;
+    bool selected = false;
+    const char* rule = "";
+    bool skill16C2Read = false;
+    uint16_t skill16C2 = 0;
+    bool symmetra02E8Read = false;
+    uint64_t symmetra02E8 = 0;
+    uint64_t component55Base = 0;
+    bool component55_270Read = false;
+    uint32_t component55_270 = 0;
+};
+
 struct State {
     bool available = false;
     bool lookupReady = false;
     uint64_t heroId = 0;
     uint64_t skillBase = 0;
+    uint64_t componentParent = 0;
     bool e44Read = false;
     uint32_t e44U32 = 0;
     uint64_t e44U64 = 0;
@@ -104,6 +124,7 @@ struct State {
     uint64_t stateCodeKey = 0;
     std::array<ResearchCandidateKey, 5> researchCandidateKeys{};
     size_t researchCandidateKeyCount = 0;
+    ResearchSelectedBoolean researchSelected{};
     Classification classification{};
 };
 
@@ -402,6 +423,76 @@ inline void BuildResearchCandidateKeys(State& state)
         BuildSmallSubsetSignature(state, PointerSignatureMode::Unique, kUnique320328));
 }
 
+inline bool IsResearchSelectedSupportedHero(uint64_t heroId)
+{
+    constexpr uint64_t kHeroDVa = OW::GameData::MakeHeroId(0x07A);
+    constexpr uint64_t kHeroHanzo = OW::GameData::MakeHeroId(0x005);
+    constexpr uint64_t kHeroJunkerQueen = OW::GameData::MakeHeroId(0x236);
+    constexpr uint64_t kHeroOrisa = OW::GameData::MakeHeroId(0x13E);
+    constexpr uint64_t kHeroReinhardt = OW::GameData::MakeHeroId(0x007);
+    constexpr uint64_t kHeroSymmetra = OW::GameData::MakeHeroId(0x016);
+    constexpr uint64_t kHeroZarya = OW::GameData::MakeHeroId(0x068);
+
+    switch (heroId) {
+    case kHeroDVa:
+    case kHeroHanzo:
+    case kHeroJunkerQueen:
+    case kHeroOrisa:
+    case kHeroReinhardt:
+    case kHeroSymmetra:
+    case kHeroZarya:
+        return true;
+    default:
+        return false;
+    }
+}
+
+inline void EvaluateResearchSelectedBoolean(State& state)
+{
+    ResearchSelectedBoolean& candidate = state.researchSelected;
+    candidate.supportedHero = IsResearchSelectedSupportedHero(state.heroId);
+
+    if (state.classification.result == Result::KnownTrue ||
+        state.classification.result == Result::KnownFalse) {
+        candidate.available = true;
+        candidate.selected = state.classification.selected;
+        candidate.rule = state.classification.selected
+            ? "legacy_lookup_known_true_fail_closed"
+            : "legacy_lookup_known_false_fail_closed";
+        return;
+    }
+
+    candidate.available = false;
+    candidate.selected = false;
+    candidate.rule = candidate.supportedHero
+        ? "candidate_unresolved_fail_closed"
+        : "unsupported_or_unread";
+}
+
+inline void ReadResearchSelectedBoolean(State& state)
+{
+    constexpr uint64_t kHeroZarya = OW::GameData::MakeHeroId(0x068);
+
+    ResearchSelectedBoolean& candidate = state.researchSelected;
+    if (!state.available)
+        return;
+
+    candidate.skill16C2Read = TryRead(state.skillBase + 0x16C2, candidate.skill16C2);
+    candidate.symmetra02E8Read = TryRead(state.skillBase + 0x02E8, candidate.symmetra02E8);
+
+    if (state.heroId == kHeroZarya &&
+        IsPlausibleUserPointer(state.componentParent)) {
+        candidate.component55Base = OW::DecryptComponent(
+            static_cast<uintptr_t>(state.componentParent),
+            0x55u);
+        if (IsPlausibleUserPointer(candidate.component55Base)) {
+            candidate.component55_270Read =
+                TryRead(candidate.component55Base + 0x0270, candidate.component55_270);
+        }
+    }
+
+}
+
 template <size_t N>
 inline const HeroPerkLookupSeed::Entry* FindUsable(
     const std::array<HeroPerkLookupSeed::Entry, N>& entries,
@@ -497,14 +588,17 @@ inline Classification Classify(const State& state)
     return classification;
 }
 
-inline State ReadCurrent(uint64_t heroId, uint64_t skillBase)
+inline State ReadCurrent(uint64_t heroId, uint64_t skillBase, uint64_t componentParent = 0)
 {
     State state{};
     state.heroId = heroId;
     state.skillBase = skillBase;
+    state.componentParent = componentParent;
     state.available = heroId != 0 && IsPlausibleUserPointer(skillBase) && SDK != nullptr;
     if (!state.available)
         return state;
+
+    ReadResearchSelectedBoolean(state);
 
     state.e44Read = TryRead(skillBase + 0xE44, state.e44U32);
     TryRead(skillBase + 0xE44, state.e44U64);
@@ -518,8 +612,10 @@ inline State ReadCurrent(uint64_t heroId, uint64_t skillBase)
         state.e44Read &&
         state.e78Read &&
         HasRequiredPointerTargets(state);
-    if (!state.lookupReady)
+    if (!state.lookupReady) {
+        EvaluateResearchSelectedBoolean(state);
         return state;
+    }
 
     state.orderedSignature = BuildSmallOrderedSignature(state);
     state.clusterSignature = BuildClusterSignature(state);
@@ -532,6 +628,7 @@ inline State ReadCurrent(uint64_t heroId, uint64_t skillBase)
     state.stateCodeKey = BuildStateCodeKey(state);
     BuildResearchCandidateKeys(state);
     state.classification = Classify(state);
+    EvaluateResearchSelectedBoolean(state);
     return state;
 }
 
