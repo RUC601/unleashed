@@ -31,6 +31,9 @@ namespace OW::Plexies20260609 {
     inline constexpr std::size_t kSkeletonSlotCount =
         static_cast<std::size_t>(SkeletonSlot::Count);
     using SkeletonMap = std::array<int, kSkeletonSlotCount>;
+    using RenderSkeletonMap = std::array<int, 18>;
+
+    inline constexpr int kUnusedRenderSkeletonBone = -1;
 
     inline constexpr SkeletonMap kDefaultSkeletonMap{
         17, 16, 15, 2, 13, 14, 28, 54,
@@ -125,6 +128,35 @@ namespace OW::Plexies20260609 {
         default:
             return kDefaultSkeletonMap;
         }
+    }
+
+    inline constexpr RenderSkeletonMap ToRenderSkeletonMap(const SkeletonMap& map)
+    {
+        return {
+            map[static_cast<std::size_t>(SkeletonSlot::Forehead)],
+            map[static_cast<std::size_t>(SkeletonSlot::Neck)],
+            map[static_cast<std::size_t>(SkeletonSlot::Chest)],
+            map[static_cast<std::size_t>(SkeletonSlot::Pelvis)],
+            map[static_cast<std::size_t>(SkeletonSlot::UpperArmLeft)],
+            map[static_cast<std::size_t>(SkeletonSlot::UpperArmRight)],
+            map[static_cast<std::size_t>(SkeletonSlot::LowerArmLeft)],
+            map[static_cast<std::size_t>(SkeletonSlot::LowerArmRight)],
+            map[static_cast<std::size_t>(SkeletonSlot::UpperLegLeft)],
+            map[static_cast<std::size_t>(SkeletonSlot::UpperLegRight)],
+            map[static_cast<std::size_t>(SkeletonSlot::LowerLegLeft)],
+            map[static_cast<std::size_t>(SkeletonSlot::LowerLegRight)],
+            map[static_cast<std::size_t>(SkeletonSlot::HandLeft)],
+            map[static_cast<std::size_t>(SkeletonSlot::HandRight)],
+            map[static_cast<std::size_t>(SkeletonSlot::FootLeft)],
+            map[static_cast<std::size_t>(SkeletonSlot::FootRight)],
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+        };
+    }
+
+    inline RenderSkeletonMap ResolveRenderSkeletonMap(uint64_t heroId)
+    {
+        return ToRenderSkeletonMap(ResolveSkeletonMap(heroId));
     }
 
 } // namespace OW::Plexies20260609

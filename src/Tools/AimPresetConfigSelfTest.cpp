@@ -20,8 +20,11 @@ void ResetAimPresetState()
     using namespace OW::Config;
     aimMethodPresets.clear();
     aimBehaviorPresets.clear();
+    dynamicFovPresets.clear();
     aimBehaviorPresetId = -1;
     aimBehavior = kAimBehaviorTracking;
+    aimbotFovMode = kFovModeFixed;
+    aimbotDynamicFovPresetId = -1;
     aimBehaviorMethod = { 0, 0, 0, 0 };
     aimBehaviorMethodPreset = { -1, -1, -1, -1 };
     aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
@@ -84,6 +87,27 @@ int main()
     if (AimBehaviorMethod(kAimBehaviorFlick) != 0)
         return Fail();
     if (!NearlyEqual(RuntimeAimConstantAngularSpeedDeg(), 30.0f))
+        return Fail();
+
+    DynamicFovPreset dynamic{};
+    dynamic.id = 301;
+    dynamic.pointCount = 3;
+    dynamic.smooth = false;
+    dynamic.points[0] = { 0.0f, 180.0f };
+    dynamic.points[1] = { 5.0f, 180.0f };
+    dynamic.points[2] = { 30.0f, 5.0f };
+    dynamicFovPresets.push_back(dynamic);
+
+    HeroPreset heroPreset{};
+    heroPreset.fov = 60.0f;
+    heroPreset.fovMode = kFovModeDynamicPreset;
+    heroPreset.dynamicFovPresetId = dynamic.id;
+    if (!NearlyEqual(ResolveHeroPresetFovForDistance(heroPreset, 2.0f), 180.0f))
+        return Fail();
+    if (!NearlyEqual(ResolveHeroPresetFovForDistance(heroPreset, 30.0f), 5.0f))
+        return Fail();
+    heroPreset.dynamicFovPresetId = 9999;
+    if (!NearlyEqual(ResolveHeroPresetFovForDistance(heroPreset, 30.0f), 60.0f))
         return Fail();
 
     return EXIT_SUCCESS;

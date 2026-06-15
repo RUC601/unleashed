@@ -9,11 +9,13 @@
 #include <Windows.h>
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <chrono>
@@ -40,6 +42,7 @@
 #include "Renderer/Renderer.hpp"  // Render:: drawing primitives
 #include "Features/UI.hpp"        // UI::Render
 #include "Utils/Diagnostics.hpp"   // lightweight runtime diagnostics
+#include "Utils/TestServer.hpp"    // optional Scenario telemetry server
 
 // =============================================================================
 // Render callback  --  called every frame by the overlay
@@ -106,6 +109,29 @@ namespace {
                 return false;
 
             value = parsed;
+            return true;
+        }
+        return false;
+    }
+
+    bool TryGetCommandLineInt(int argc, char** argv, const char* flag, int& value)
+    {
+        for (int index = 1; index + 1 < argc; ++index) {
+            if (!argv[index] || std::strcmp(argv[index], flag) != 0)
+                continue;
+
+            char* end = nullptr;
+            errno = 0;
+            const long parsed = std::strtol(argv[index + 1], &end, 10);
+            if (end == argv[index + 1] ||
+                *end != '\0' ||
+                errno == ERANGE ||
+                parsed < (std::numeric_limits<int>::min)() ||
+                parsed > (std::numeric_limits<int>::max)()) {
+                return false;
+            }
+
+            value = static_cast<int>(parsed);
             return true;
         }
         return false;
@@ -670,7 +696,9 @@ namespace {
             const bool active = activeState.active &&
                 activeState.slotKind == static_cast<int>(OW::Config::FovRingSlotKind::Aim) &&
                 activeState.slotIndex == slotIndex;
-            const float ringFovDeg = active ? activeState.fovDeg : slot.preset.fov;
+            const float ringFovDeg = active
+                ? activeState.fovDeg
+                : OW::Config::ResolveHeroPresetFovForDistance(slot.preset, 0.0f);
 
             char label[32] = {};
             std::snprintf(label,
@@ -1117,6 +1145,7 @@ static void LoadRuntimeConfigForDiagnostics()
 static void ShutdownHeadlessRuntime()
 {
     OW::Config::doingentity = 0;
+    TestServer::Stop();
     KeyState::Stop();
     StopProcessConnectionThread();
     OW::ProcessConnection::SetStatus(false, false, 0, 0, "Shutting down");
@@ -1442,6 +1471,18 @@ int main(int argc, char** argv)
         return RunKmboxCalibrationCli(referenceGameSensitivityOverride);
     }
 
+    const bool testServerRequested = HasCommandLineFlag(argc, argv, "--test-server");
+    const bool testServerCorsRequested = HasCommandLineFlag(argc, argv, "--test-server-cors");
+    int testServerPortValue = 19550;
+    if (HasCommandLineFlag(argc, argv, "--test-server-port")) {
+        if (!TryGetCommandLineInt(argc, argv, "--test-server-port", testServerPortValue) ||
+            testServerPortValue <= 0 ||
+            testServerPortValue > 65535) {
+            std::fprintf(stderr, "[FATAL] Invalid --test-server-port. Expected 1..65535.\n");
+            return 1;
+        }
+    }
+
     // ---------------------------------------------------------------
     // Step 1 -- Initialise the DMA subsystem (configured VMMDLL device)
     // ---------------------------------------------------------------
@@ -1484,6 +1525,21 @@ int main(int argc, char** argv)
         mem.GetDmaDeviceString().empty() ? "<unknown>" : mem.GetDmaDeviceString().c_str());
     StartDiagnosticStatusThread();
 
+    if (testServerRequested) {
+        TestServer::Options testServerOptions{};
+        testServerOptions.port = static_cast<uint16_t>(testServerPortValue);
+        testServerOptions.allowWildcardCors = testServerCorsRequested;
+        if (!TestServer::Start(testServerOptions)) {
+            std::fprintf(stderr, "[FATAL] Failed to start Unleashed test server on 127.0.0.1:%d.\n",
+                testServerPortValue);
+            ShutdownHeadlessRuntime();
+            return 2;
+        }
+        std::printf("[MAIN] Test server ready on http://127.0.0.1:%d%s\n\n",
+            testServerPortValue,
+            testServerCorsRequested ? " (wildcard CORS enabled)" : "");
+    }
+
     // ---------------------------------------------------------------
     // Step 2 -- Start target process connector
     // ---------------------------------------------------------------
@@ -1512,6 +1568,7 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "[FATAL] Overlay initialisation failed.\n");
         Diagnostics::Error("Overlay initialisation failed.");
         OW::Config::doingentity = 0;
+        TestServer::Stop();
         KeyState::Stop();
         StopProcessConnectionThread();
         OW::ProcessConnection::SetStatus(false, false, 0, 0, "Shutting down");
@@ -1547,6 +1604,7 @@ int main(int argc, char** argv)
     std::printf("\n[MAIN] Display closed.  Shutting down...\n");
     Diagnostics::Info("Display closed. Shutting down.");
     OW::CancelActiveSkill();
+    TestServer::Stop();
     StopProcessConnectionThread();
     StopDiagnosticStatusThread();
     Diagnostics::DumpStatus();

@@ -5,6 +5,8 @@ project(Unleashed LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(UNLEASHED_TEST_SERVER "Build the optional localhost read-only test server" ON)
+
 enable_testing()
 
 if(MSVC)
@@ -35,6 +37,8 @@ set(GAME_HEADERS
     include/Game/Decrypt.hpp
     include/Game/Entity.hpp
     include/Game/HeroGeometrySpec.hpp
+    include/Game/HeroPerkLookupSeed.hpp
+    include/Game/HeroPerks.hpp
     include/Game/HeroSkills.hpp
     include/Game/InputOrchestrator.hpp
     include/Game/LeadPrediction.hpp
@@ -60,6 +64,7 @@ set(GAME_HEADERS
     include/Utils/Config.hpp
     include/Utils/Diagnostics.hpp
     include/Utils/InputLabels.hpp
+    include/Utils/TestServer.hpp
     include/Utils/Types.hpp
     include/Features/UI.hpp
 )
@@ -72,6 +77,7 @@ set(UNLEASHED_SOURCES
     src/Renderer/Overlay.cpp
     src/Renderer/Renderer.cpp
     src/Utils/Diagnostics.cpp
+    src/Utils/TestServer.cpp
     src/Utils/Types.cpp
     src/Utils/Config.cpp
     src/Features/UI.cpp
@@ -125,6 +131,10 @@ add_executable(HeroSkillConfigSelfTest
     src/Tools/HeroSkillConfigSelfTest.cpp
 )
 
+add_executable(HeroPerkClassifierSelfTest
+    src/Tools/HeroPerkClassifierSelfTest.cpp
+)
+
 add_executable(MockHardwareSelfTest
     src/Tools/MockHardwareSelfTest.cpp
     src/Kmbox/KmBoxMock.cpp
@@ -140,6 +150,7 @@ add_test(NAME AimPresetConfigSelfTest COMMAND AimPresetConfigSelfTest)
 add_test(NAME LeadPredictionSelfTest COMMAND LeadPredictionSelfTest)
 add_test(NAME WeaponSpecDisplaySelfTest COMMAND WeaponSpecDisplaySelfTest)
 add_test(NAME HeroSkillConfigSelfTest COMMAND HeroSkillConfigSelfTest)
+add_test(NAME HeroPerkClassifierSelfTest COMMAND HeroPerkClassifierSelfTest)
 add_test(NAME MockHardwareSelfTest COMMAND MockHardwareSelfTest)
 
 # ============================================================================
@@ -191,6 +202,11 @@ target_include_directories(HeroSkillConfigSelfTest PRIVATE
     include
     vendor/leechcore
     vendor/imgui
+)
+
+target_include_directories(HeroPerkClassifierSelfTest PRIVATE
+    include
+    vendor/leechcore
 )
 
 target_include_directories(MockHardwareSelfTest PRIVATE
@@ -298,6 +314,9 @@ endif()
 
 target_compile_options(Unleashed PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(Unleashed PRIVATE _CRT_SECURE_NO_WARNINGS)
+if(UNLEASHED_TEST_SERVER)
+    target_compile_definitions(Unleashed PRIVATE UNLEASHED_TEST_SERVER=1)
+endif()
 
 target_compile_options(MotionEstimatorSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(MotionEstimatorSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)

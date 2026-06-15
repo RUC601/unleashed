@@ -428,6 +428,12 @@ namespace OW { namespace Config {
             return preset;
         }
 
+        DynamicFovPreset ValidateDynamicFovPresetForConfig(DynamicFovPreset preset, int fallbackIndex = -1)
+        {
+            preset.name = NormalizeAimPresetName(preset.name, "Dynamic FOV", fallbackIndex);
+            return ValidateDynamicFovPresetValue(preset, fallbackIndex);
+        }
+
         int NextCustomPresetId(const std::vector<AimMethodPreset>& presets)
         {
             int nextId = 1;
@@ -440,6 +446,14 @@ namespace OW { namespace Config {
         {
             int nextId = 1;
             for (const AimBehaviorPreset& preset : presets)
+                nextId = (std::max)(nextId, preset.id + 1);
+            return nextId;
+        }
+
+        int NextCustomPresetId(const std::vector<DynamicFovPreset>& presets)
+        {
+            int nextId = 1;
+            for (const DynamicFovPreset& preset : presets)
                 nextId = (std::max)(nextId, preset.id + 1);
             return nextId;
         }
@@ -1642,6 +1656,12 @@ namespace OW { namespace Config {
             if (!std::isfinite(preset.flick2ndInnerSmoothScale)) preset.flick2ndInnerSmoothScale = 0.55f;
 
             preset.fov = ClampFovDeg(preset.fov);
+            preset.fovMode = ClampFovMode(preset.fovMode);
+            preset.dynamicFovPresetId = preset.fovMode == kFovModeDynamicPreset
+                ? ClampDynamicFovPresetId(preset.dynamicFovPresetId)
+                : -1;
+            if (preset.fovMode == kFovModeDynamicPreset && preset.dynamicFovPresetId < 0)
+                preset.fovMode = kFovModeFixed;
             preset.smooth = std::clamp(preset.smooth, 0.0f, 100.0f);
             preset.bone = NormalizeAimBone(preset.bone);
             preset.hitbox = ClampHitboxScalePercent(preset.hitbox);
@@ -2120,9 +2140,24 @@ namespace OW { namespace Config {
                     static_cast<int>(index));
             }
 
+            int nextDynamicFovId = NextCustomPresetId(dynamicFovPresets);
+            if (dynamicFovPresets.size() > static_cast<size_t>(kMaxAimCustomPresets))
+                dynamicFovPresets.resize(static_cast<size_t>(kMaxAimCustomPresets));
+            for (size_t index = 0; index < dynamicFovPresets.size(); ++index) {
+                if (dynamicFovPresets[index].id < 0 || idUsed(dynamicFovPresets, dynamicFovPresets[index].id, index))
+                    dynamicFovPresets[index].id = nextDynamicFovId++;
+                dynamicFovPresets[index] = ValidateDynamicFovPresetForConfig(
+                    dynamicFovPresets[index],
+                    static_cast<int>(index));
+            }
+
             for (int& presetId : aimBehaviorMethodPreset)
                 presetId = ClampAimMethodPresetId(presetId);
             aimBehaviorPresetId = ClampAimBehaviorPresetId(aimBehaviorPresetId);
+            aimbotFovMode = ClampFovMode(aimbotFovMode);
+            aimbotDynamicFovPresetId = aimbotFovMode == kFovModeDynamicPreset
+                ? ClampDynamicFovPresetId(aimbotDynamicFovPresetId)
+                : -1;
         }
 
         void ResetHeroDefaultsUnlocked()
@@ -2319,6 +2354,9 @@ namespace OW { namespace Config {
             aimBehaviorPresetId = -1;
             aimMethodPresets.clear();
             aimBehaviorPresets.clear();
+            dynamicFovPresets.clear();
+            aimbotFovMode = kFovModeFixed;
+            aimbotDynamicFovPresetId = -1;
         }
 
         void ResetGlobalDefaultsUnlocked()
@@ -2416,6 +2454,10 @@ namespace OW { namespace Config {
         {
             HeroPreset preset{};
             preset.fov = Fov;
+            preset.fovMode = ClampFovMode(aimbotFovMode);
+            preset.dynamicFovPresetId = preset.fovMode == kFovModeDynamicPreset
+                ? ClampDynamicFovPresetId(aimbotDynamicFovPresetId)
+                : -1;
             preset.smooth = Smooth;
             if (preset.smooth <= 0.0f)
                 preset.smooth = Tracking_smooth > 0.0f ? Tracking_smooth : Flick_smooth;
@@ -2494,6 +2536,8 @@ namespace OW { namespace Config {
             const HeroPreset preset = ValidateHeroPresetValue(rawPreset);
             Fov = preset.fov;
             minFov1 = preset.fov;
+            aimbotFovMode = preset.fovMode;
+            aimbotDynamicFovPresetId = preset.dynamicFovPresetId;
             Smooth = preset.smooth;
             Tracking_smooth = preset.smooth;
             Flick_smooth = preset.smooth;
@@ -2585,6 +2629,8 @@ namespace OW { namespace Config {
                 ? ReadBool(ini, section, "present", slot.present)
                 : slot.enabled;
             slot.preset.fov = ReadFov2Compat(ini, section, "fov", slot.preset.fov, legacyFovApertureValues);
+            slot.preset.fovMode = ReadInt(ini, section, "fovMode", slot.preset.fovMode);
+            slot.preset.dynamicFovPresetId = ReadInt(ini, section, "dynamicFovPresetId", slot.preset.dynamicFovPresetId);
             slot.preset.smooth = ReadFov2Compat(ini, section, "smooth", slot.preset.smooth);
             slot.preset.bone = ReadInt(ini, section, "bone", slot.preset.bone);
             if (storedBoneUsesLegacyPresetIndex)
@@ -2688,6 +2734,8 @@ namespace OW { namespace Config {
         {
             HeroPreset preset = defaults;
             preset.fov = ReadFov2Compat(ini, section, "FOV", preset.fov, legacyFovApertureValues);
+            preset.fovMode = ReadInt(ini, section, "fovMode", preset.fovMode);
+            preset.dynamicFovPresetId = ReadInt(ini, section, "dynamicFovPresetId", preset.dynamicFovPresetId);
             const int aimMode = std::clamp(ReadInt(ini, section, "Aim Mode", preset.aimMode), 0, 1);
             const float trackingSmooth = ReadFixedFloat(ini, section, "Tracking_smooth", preset.smooth);
             const float flickSmooth = ReadFixedFloat(ini, section, "Flick_smooth", trackingSmooth);
@@ -2773,6 +2821,8 @@ namespace OW { namespace Config {
             WriteStringValue(path, section, "name", name.c_str());
             WriteBoolValue(path, section, "enabled", rawSlot.enabled);
             WritePlainFloatValue(path, section, "fov", preset.fov);
+            WriteIntValue(path, section, "fovMode", preset.fovMode);
+            WriteIntValue(path, section, "dynamicFovPresetId", preset.dynamicFovPresetId);
             WritePlainFloatValue(path, section, "smooth", preset.smooth);
             WriteIntValue(path, section, "bone", preset.bone);
             WriteBoolValue(path, section, "autoBone", preset.autoBone);
@@ -2880,6 +2930,8 @@ namespace OW { namespace Config {
             const HeroPreset preset = ValidateHeroPresetValue(rawPreset);
             rapidjson::Value value(rapidjson::kObjectType);
             AddJsonFloat(value, "fov", preset.fov, allocator);
+            AddJsonInt(value, "fovMode", preset.fovMode, allocator);
+            AddJsonInt(value, "dynamicFovPresetId", preset.dynamicFovPresetId, allocator);
             AddJsonFloat(value, "smooth", preset.smooth, allocator);
             AddJsonInt(value, "bone", preset.bone, allocator);
             AddJsonBool(value, "autoBone", preset.autoBone, allocator);
@@ -3772,6 +3824,8 @@ namespace OW { namespace Config {
                 return ValidateHeroPresetValue(defaults);
 
             defaults.fov = ReadJsonFov(value, "fov", defaults.fov, legacyFovApertureValues);
+            defaults.fovMode = ReadJsonInt(value, "fovMode", defaults.fovMode);
+            defaults.dynamicFovPresetId = ReadJsonInt(value, "dynamicFovPresetId", defaults.dynamicFovPresetId);
             defaults.smooth = ReadJsonFloat(value, "smooth", defaults.smooth);
             defaults.bone = ReadJsonInt(value, "bone", defaults.bone);
             defaults.autoBone = ReadJsonBool(value, "autoBone", defaults.autoBone);
@@ -4548,6 +4602,26 @@ namespace OW { namespace Config {
             return ValidateAimBehaviorPresetValue(preset, fallbackIndex);
         }
 
+        DynamicFovPreset ReadDynamicFovPresetSection(const IniFile& ini, const char* section, int fallbackIndex)
+        {
+            DynamicFovPreset preset{};
+            preset.id = ReadInt(ini, section, "id", fallbackIndex + 1);
+            preset.name = ReadString(ini, section, "name", NormalizeAimPresetName("", "Dynamic FOV", fallbackIndex).c_str());
+            preset.smooth = ReadBool(ini, section, "smooth", preset.smooth);
+            preset.pointCount = ReadInt(ini, section, "pointCount", preset.pointCount);
+            for (int index = 0; index < kMaxDynamicFovPoints; ++index) {
+                char distanceKey[32] = {};
+                char fovKey[32] = {};
+                std::snprintf(distanceKey, sizeof(distanceKey), "point%dDistanceM", index);
+                std::snprintf(fovKey, sizeof(fovKey), "point%dFovDeg", index);
+                preset.points[static_cast<size_t>(index)].distanceM =
+                    ReadFixedFloat(ini, section, distanceKey, preset.points[static_cast<size_t>(index)].distanceM);
+                preset.points[static_cast<size_t>(index)].fovDeg =
+                    ReadFixedFloat(ini, section, fovKey, preset.points[static_cast<size_t>(index)].fovDeg);
+            }
+            return ValidateDynamicFovPresetForConfig(preset, fallbackIndex);
+        }
+
         void LoadAimCustomPresetsUnlocked(const IniFile& ini)
         {
             constexpr const char* section = kAimMethodSection;
@@ -4578,6 +4652,21 @@ namespace OW { namespace Config {
                 if (!SectionExists(ini, presetSection))
                     continue;
                 aimBehaviorPresets.push_back(ReadAimBehaviorPresetSection(ini, presetSection, index));
+            }
+            ValidateAimCustomPresetsUnlocked();
+
+            const int dynamicFovPresetCount = std::clamp(
+                ReadInt(ini, section, "dynamicFovPresetCount", 0),
+                0,
+                kMaxAimCustomPresets);
+            dynamicFovPresets.clear();
+            dynamicFovPresets.reserve(static_cast<size_t>(dynamicFovPresetCount));
+            for (int index = 0; index < dynamicFovPresetCount; ++index) {
+                char presetSection[64] = {};
+                std::snprintf(presetSection, sizeof(presetSection), "DynamicFovPreset.%d", index);
+                if (!SectionExists(ini, presetSection))
+                    continue;
+                dynamicFovPresets.push_back(ReadDynamicFovPresetSection(ini, presetSection, index));
             }
             ValidateAimCustomPresetsUnlocked();
         }
@@ -4806,6 +4895,34 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "moveSplitDelayUs", preset.moveSplitDelayUs);
         }
 
+        void WriteDynamicFovPresetSection(const std::string& path,
+                                          const char* section,
+                                          const DynamicFovPreset& rawPreset,
+                                          int fallbackIndex)
+        {
+            const DynamicFovPreset preset = ValidateDynamicFovPresetForConfig(rawPreset, fallbackIndex);
+            WriteIntValue(path, section, "id", preset.id);
+            WriteStringValue(path, section, "name", preset.name.c_str());
+            WriteBoolValue(path, section, "smooth", preset.smooth);
+            WriteIntValue(path, section, "pointCount", preset.pointCount);
+            for (int index = 0; index < kMaxDynamicFovPoints; ++index) {
+                char distanceKey[32] = {};
+                char fovKey[32] = {};
+                std::snprintf(distanceKey, sizeof(distanceKey), "point%dDistanceM", index);
+                std::snprintf(fovKey, sizeof(fovKey), "point%dFovDeg", index);
+                WriteFixedFloatValue(
+                    path,
+                    section,
+                    distanceKey,
+                    preset.points[static_cast<size_t>(index)].distanceM);
+                WriteFixedFloatValue(
+                    path,
+                    section,
+                    fovKey,
+                    preset.points[static_cast<size_t>(index)].fovDeg);
+            }
+        }
+
         void SaveAimCustomPresetsUnlocked(const std::string& path)
         {
             ValidateAimCustomPresetsUnlocked();
@@ -4822,6 +4939,13 @@ namespace OW { namespace Config {
                 char presetSection[64] = {};
                 std::snprintf(presetSection, sizeof(presetSection), "AimBehaviorPreset.%zu", index);
                 WriteAimBehaviorPresetSection(path, presetSection, aimBehaviorPresets[index], static_cast<int>(index));
+            }
+
+            WriteIntValue(path, section, "dynamicFovPresetCount", static_cast<int>(dynamicFovPresets.size()));
+            for (size_t index = 0; index < dynamicFovPresets.size(); ++index) {
+                char presetSection[64] = {};
+                std::snprintf(presetSection, sizeof(presetSection), "DynamicFovPreset.%zu", index);
+                WriteDynamicFovPresetSection(path, presetSection, dynamicFovPresets[index], static_cast<int>(index));
             }
         }
 

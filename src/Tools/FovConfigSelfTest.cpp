@@ -47,6 +47,41 @@ int main()
         return Fail();
     if (!NearlyEqual(LegacyFovApertureToAngleDeg(360.0f), 180.0f))
         return Fail();
+
+    DynamicFovPreset dynamic{};
+    dynamic.id = 77;
+    dynamic.pointCount = 5;
+    dynamic.smooth = false;
+    dynamic.points[0] = { 0.0f, 180.0f };
+    dynamic.points[1] = { 5.0f, 180.0f };
+    dynamic.points[2] = { 10.0f, 30.0f };
+    dynamic.points[3] = { 20.0f, 8.0f };
+    dynamic.points[4] = { 30.0f, 5.0f };
+    if (!NearlyEqual(EvaluateDynamicFovPreset(dynamic, 0.0f, 100.0f), 180.0f))
+        return Fail();
+    if (!NearlyEqual(EvaluateDynamicFovPreset(dynamic, 4.9f, 100.0f), 180.0f))
+        return Fail();
+    if (!NearlyEqual(EvaluateDynamicFovPreset(dynamic, 7.5f, 100.0f), 105.0f))
+        return Fail();
+    if (!NearlyEqual(EvaluateDynamicFovPreset(dynamic, 35.0f, 100.0f), 5.0f))
+        return Fail();
+
+    dynamicFovPresets.clear();
+    aimbotFovMode = kFovModeFixed;
+    aimbotDynamicFovPresetId = -1;
+    autoscalefov = false;
+    if (!NearlyEqual(ResolveDynamicAimFovForDistance(60.0f, 30.0f), 60.0f))
+        return Fail();
+    dynamicFovPresets.push_back(dynamic);
+    aimbotFovMode = kFovModeDynamicPreset;
+    aimbotDynamicFovPresetId = dynamic.id;
+    if (!NearlyEqual(ResolveDynamicAimFovForDistance(60.0f, 30.0f), 5.0f))
+        return Fail();
+    autoscalefov = true;
+    if (!NearlyEqual(ResolveDynamicAimFovForDistance(60.0f, 30.0f), 60.0f))
+        return Fail();
+    autoscalefov = false;
+
     if (drawhealth)
         return Fail();
     if (!ColorNearlyEqual(EnemyCol, 1.0f, 0.0f, 0.0f, 0.0f))

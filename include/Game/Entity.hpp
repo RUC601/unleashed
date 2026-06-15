@@ -407,10 +407,13 @@ namespace OW {
 
         Vector3 GetBonePos(int index) {
             __try {
+                if (index < 0)
+                    return Vector3{};
+
                 if (index == 83 && cached_bot_chest_bone_valid)
                     return cached_bot_chest_bone;
 
-                const std::array<int, 18> cachedIndices = GetSkel();
+                const std::array<int, 18> cachedIndices = GetRenderSkel();
                 for (size_t i = 0; i < cachedIndices.size(); ++i) {
                     if (cachedIndices[i] == index && skeleton_bone_valid[i])
                         return skeleton_bones[i];
@@ -571,6 +574,11 @@ namespace OW {
             }
         }
 
+        // Overlay rendering uses the current 16-slot skeleton map; GetSkel remains for legacy aim paths.
+        std::array<int, 18> GetRenderSkel() const {
+            return OW::Plexies20260609::ResolveRenderSkeletonMap(this->HeroID);
+        }
+
         void CacheSkeletonBones(uint64_t knownVelocityBoneData = 0) {
             CacheSkeletonBonesCached(nullptr, knownVelocityBoneData);
         }
@@ -587,10 +595,12 @@ namespace OW {
             if (this->pos == Vector3(0, 0, 0) || this->PlayerHealth <= 0.f)
                 return;
 
-            const std::array<int, 18> indices = GetSkel();
+            const std::array<int, 18> indices = GetRenderSkel();
             const bool needsBotChestBone = GameData::IsTrainingBotHeroId(this->HeroID);
             auto fallbackSlowPath = [&]() {
                 for (size_t i = 0; i < indices.size(); ++i) {
+                    if (indices[i] < 0)
+                        continue;
                     Vector3 bone = GetBonePos(indices[i]);
                     skeleton_bones[i] = bone;
                     skeleton_bone_valid[i] = (bone != Vector3(0, 0, 0));
@@ -695,6 +705,8 @@ namespace OW {
                     }
 
                     for (size_t requested = 0; requested < indices.size(); ++requested) {
+                        if (indices[requested] < 0)
+                            continue;
                         for (uint16_t boneIndex = 0; boneIndex < boneCount; ++boneIndex) {
                             if (static_cast<uint16_t>(boneIds[boneIndex]) != static_cast<uint16_t>(indices[requested]))
                                 continue;

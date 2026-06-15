@@ -186,6 +186,9 @@ struct TargetCandidate {
     Vector2 screenPoint{};
     float distance = 0.0f;
     float fovScore = (std::numeric_limits<float>::max)();
+    float effectiveFovDeg = 0.0f;
+    int dynamicFovPresetId = -1;
+    bool dynamicFov = false;
     float effectiveHitWindow = 0.0f;
     EntityMotionState motion{};
     TargetLockPolicy lockPolicy{};

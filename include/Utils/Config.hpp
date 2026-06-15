@@ -31,6 +31,12 @@ namespace OW { namespace Config {
     inline constexpr float kMinHitboxScalePercent = 0.0f;
     inline constexpr float kMaxHitboxScalePercent = 150.0f;
     inline constexpr float kDefaultHitboxScalePercent = 100.0f;
+    inline constexpr int kFovModeFixed = 0;
+    inline constexpr int kFovModeDynamicPreset = 1;
+    inline constexpr int kFovModeCount = 2;
+    inline constexpr int kMaxDynamicFovPoints = 5;
+    inline constexpr float kMinDynamicFovDistanceM = 0.0f;
+    inline constexpr float kMaxDynamicFovDistanceM = 500.0f;
 
     int NormalizeAimBone(int aimBone);
     const char* AimBoneName(int aimBone);
@@ -63,6 +69,18 @@ namespace OW { namespace Config {
     inline float HitboxScaleMultiplier(float scalePercent)
     {
         return ClampHitboxScalePercent(scalePercent) / 100.0f;
+    }
+
+    inline int ClampFovMode(int value)
+    {
+        return std::clamp(value, 0, kFovModeCount - 1);
+    }
+
+    inline float ClampDynamicFovDistanceM(float distanceM)
+    {
+        return std::clamp(std::isfinite(distanceM) ? distanceM : 0.0f,
+                          kMinDynamicFovDistanceM,
+                          kMaxDynamicFovDistanceM);
     }
 
     struct RuntimeDrawFovState {
@@ -303,8 +321,30 @@ namespace OW { namespace Config {
         int moveSplitDelayUs = 800;
     };
 
+    struct DynamicFovPoint {
+        float distanceM = 0.0f;
+        float fovDeg = kDefaultFovDeg;
+    };
+
+    struct DynamicFovPreset {
+        int id = -1;
+        std::string name = "Dynamic FOV";
+        bool smooth = true;
+        int pointCount = 5;
+        std::array<DynamicFovPoint, kMaxDynamicFovPoints> points{{
+            { 0.0f, 180.0f },
+            { 5.0f, 180.0f },
+            { 10.0f, 30.0f },
+            { 20.0f, 8.0f },
+            { 30.0f, 5.0f },
+        }};
+    };
+
     inline std::vector<AimMethodPreset> aimMethodPresets{};
     inline std::vector<AimBehaviorPreset> aimBehaviorPresets{};
+    inline std::vector<DynamicFovPreset> dynamicFovPresets{};
+    inline int   aimbotFovMode = kFovModeFixed;
+    inline int   aimbotDynamicFovPresetId = -1;
     inline float aimbotStickiness = 100.0f;
     inline float aimbotSmoothY = 50.0f;
     inline float aimbotPitchScale = 1.0f;
@@ -471,6 +511,108 @@ namespace OW { namespace Config {
     inline int ClampAimBehaviorPresetId(int presetId)
     {
         return FindAimBehaviorPreset(presetId) ? presetId : -1;
+    }
+
+    inline DynamicFovPreset* FindMutableDynamicFovPreset(int presetId)
+    {
+        if (presetId < 0)
+            return nullptr;
+        auto item = std::find_if(dynamicFovPresets.begin(), dynamicFovPresets.end(),
+            [presetId](const DynamicFovPreset& preset) { return preset.id == presetId; });
+        return item != dynamicFovPresets.end() ? &(*item) : nullptr;
+    }
+
+    inline const DynamicFovPreset* FindDynamicFovPreset(int presetId)
+    {
+        return FindMutableDynamicFovPreset(presetId);
+    }
+
+    inline int ClampDynamicFovPresetId(int presetId)
+    {
+        return FindDynamicFovPreset(presetId) ? presetId : -1;
+    }
+
+    inline DynamicFovPreset ValidateDynamicFovPresetValue(DynamicFovPreset preset, int fallbackIndex = -1)
+    {
+        if (preset.name.empty()) {
+            preset.name = "Dynamic FOV";
+            if (fallbackIndex >= 0) {
+                preset.name += " ";
+                preset.name += std::to_string(fallbackIndex + 1);
+            }
+        }
+        if (preset.name.size() > 63)
+            preset.name.resize(63);
+
+        preset.pointCount = std::clamp(preset.pointCount, 2, kMaxDynamicFovPoints);
+        for (int index = 0; index < preset.pointCount; ++index) {
+            preset.points[static_cast<size_t>(index)].distanceM =
+                ClampDynamicFovDistanceM(preset.points[static_cast<size_t>(index)].distanceM);
+            preset.points[static_cast<size_t>(index)].fovDeg =
+                ClampFovDeg(preset.points[static_cast<size_t>(index)].fovDeg);
+        }
+
+        std::sort(preset.points.begin(), preset.points.begin() + preset.pointCount,
+            [](const DynamicFovPoint& lhs, const DynamicFovPoint& rhs) {
+                return lhs.distanceM < rhs.distanceM;
+            });
+
+        for (int index = 1; index < preset.pointCount; ++index) {
+            DynamicFovPoint& current = preset.points[static_cast<size_t>(index)];
+            const DynamicFovPoint& previous = preset.points[static_cast<size_t>(index - 1)];
+            if (current.distanceM <= previous.distanceM)
+                current.distanceM = ClampDynamicFovDistanceM(previous.distanceM + 0.01f);
+        }
+
+        return preset;
+    }
+
+    inline float EvaluateDynamicFovPreset(const DynamicFovPreset& rawPreset,
+                                          float distanceM,
+                                          float fallbackFovDeg = kDefaultFovDeg)
+    {
+        const DynamicFovPreset preset = ValidateDynamicFovPresetValue(rawPreset);
+        const float distance = ClampDynamicFovDistanceM(distanceM);
+        if (preset.pointCount < 2)
+            return ClampFovDeg(fallbackFovDeg);
+
+        const DynamicFovPoint& first = preset.points[0];
+        if (distance <= first.distanceM)
+            return ClampFovDeg(first.fovDeg);
+
+        for (int index = 1; index < preset.pointCount; ++index) {
+            const DynamicFovPoint& previous = preset.points[static_cast<size_t>(index - 1)];
+            const DynamicFovPoint& current = preset.points[static_cast<size_t>(index)];
+            if (distance > current.distanceM)
+                continue;
+
+            const float span = current.distanceM - previous.distanceM;
+            float t = span > 0.0001f ? (distance - previous.distanceM) / span : 1.0f;
+            t = std::clamp(t, 0.0f, 1.0f);
+            if (preset.smooth)
+                t = t * t * (3.0f - 2.0f * t);
+            return ClampFovDeg(previous.fovDeg + (current.fovDeg - previous.fovDeg) * t);
+        }
+
+        return ClampFovDeg(preset.points[static_cast<size_t>(preset.pointCount - 1)].fovDeg);
+    }
+
+    inline bool IsDynamicAimFovActive()
+    {
+        return !autoscalefov &&
+               ClampFovMode(aimbotFovMode) == kFovModeDynamicPreset &&
+               FindDynamicFovPreset(aimbotDynamicFovPresetId) != nullptr;
+    }
+
+    inline float ResolveDynamicAimFovForDistance(float fixedFovDeg, float distanceM)
+    {
+        const float fallback = ClampFovDeg(fixedFovDeg);
+        if (!IsDynamicAimFovActive())
+            return fallback;
+        return EvaluateDynamicFovPreset(
+            *FindDynamicFovPreset(aimbotDynamicFovPresetId),
+            distanceM,
+            fallback);
     }
 
     inline const AimBehaviorPreset* ActiveAimBehaviorPreset(int behavior)
@@ -962,6 +1104,8 @@ namespace OW { namespace Config {
 
     struct HeroPreset {
         float fov = kDefaultFovDeg; // angular separation from current view direction, in degrees
+        int fovMode = kFovModeFixed; // 0=fixed fov, 1=dynamic preset by distance
+        int dynamicFovPresetId = -1;
         float smooth = 5.0f;     // aim smoothing, 0-100
         int bone = kAimBoneHead;  // aim-bone choice: 0=chest, 1=head, 2=neck
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
@@ -1012,6 +1156,17 @@ namespace OW { namespace Config {
         int flick2ndInnerMethod = 2;
         TriggerPreset trigger{};
     };
+
+    inline float ResolveHeroPresetFovForDistance(const HeroPreset& preset, float distanceM)
+    {
+        const float fallback = ClampFovDeg(preset.fov);
+        if (ClampFovMode(preset.fovMode) != kFovModeDynamicPreset)
+            return fallback;
+        const DynamicFovPreset* dynamicPreset = FindDynamicFovPreset(preset.dynamicFovPresetId);
+        if (!dynamicPreset)
+            return fallback;
+        return EvaluateDynamicFovPreset(*dynamicPreset, distanceM, fallback);
+    }
 
     struct HeroSlotPreset {
         std::string name = "Preset";

@@ -19,6 +19,7 @@
 #include <DirectXMath.h>
 
 #include "Game/AbilityIcons.hpp"
+#include "Game/BoneSlots.hpp"
 #include "Game/HeroSkills.hpp"
 #include "Game/Target.hpp"
 #include "Kmbox/KmBoxMock.h"
@@ -412,6 +413,7 @@ inline void entity_thread() {
     struct RosterEntry {
         OW::c_entity entity{};
         bool seenThisCycle = false;
+        int skippedJumpObservations = 0;
     };
     std::unordered_map<uint64_t, RosterEntry> entityRoster{};
     entityRoster.reserve(128);
@@ -438,6 +440,135 @@ inline void entity_thread() {
         entity.Vis = false;
         entity.Trg = false;
         entity.velocity = Vector3(0, 0, 0);
+    };
+
+    constexpr float kObservationTeleportBaseMeters = 8.0f;
+    constexpr float kObservationMaxSpeedMetersPerSecond = 120.0f;
+    constexpr DWORD kObservationPreviousMaxAgeMs = 250;
+    constexpr int kObservationMaxSkippedJumpFrames = 2;
+    constexpr float kObservationPointJumpBaseMeters = 3.0f;
+    constexpr float kObservationPointJumpAnchorSlackMeters = 2.0f;
+
+    auto isFiniteVector = [](const Vector3& value) {
+        return std::isfinite(value.X) && std::isfinite(value.Y) && std::isfinite(value.Z);
+    };
+
+    auto isUsableVector = [&](const Vector3& value) {
+        return isFiniteVector(value) && value != Vector3(0, 0, 0);
+    };
+
+    auto observationAnchor = [&](const OW::c_entity& entity) {
+        if (isUsableVector(entity.pos))
+            return entity.pos;
+        if (isUsableVector(entity.chest_pos))
+            return entity.chest_pos;
+        if (isUsableVector(entity.neck_pos))
+            return entity.neck_pos;
+        return entity.head_pos;
+    };
+
+    auto observationSampleSeconds = [](DWORD now, DWORD previousTick) {
+        if (previousTick == 0 || now <= previousTick)
+            return OW::kEntityProcessIntervalMs / 1000.0f;
+        return std::clamp((now - previousTick) / 1000.0f, 0.004f, 0.250f);
+    };
+
+    auto maxObservationMovement = [&](DWORD now, const OW::c_entity& previous) {
+        const float sampleSeconds = observationSampleSeconds(now, previous.last_seen_tick_ms);
+        return (std::max)(
+            kObservationTeleportBaseMeters,
+            kObservationMaxSpeedMetersPerSecond * sampleSeconds);
+    };
+
+    auto resetRenderHistory = [](OW::c_entity& entity, DWORD now) {
+        entity.render_sample_tick_ms = now;
+        entity.previous_render_sample_tick_ms = now;
+        entity.has_previous_render_sample = false;
+        entity.previous_head_pos = entity.head_pos;
+        entity.previous_velocity = entity.velocity;
+        entity.previous_pos = entity.pos;
+        entity.previous_neck_pos = entity.neck_pos;
+        entity.previous_chest_pos = entity.chest_pos;
+        entity.previous_skeleton_bones = entity.skeleton_bones;
+        entity.previous_skeleton_bone_valid = entity.skeleton_bone_valid;
+        entity.previous_cached_bot_chest_bone = entity.cached_bot_chest_bone;
+        entity.previous_cached_bot_chest_bone_valid = entity.cached_bot_chest_bone_valid;
+    };
+
+    auto shouldSkipTeleportObservation = [&](const OW::c_entity& current,
+                                             const RosterEntry& rosterEntry,
+                                             DWORD now) {
+        const OW::c_entity& previous = rosterEntry.entity;
+        if (!previous.address || !previous.Alive ||
+            previous.roster_state != OW::EntityRosterState::Fresh) {
+            return false;
+        }
+        if (previous.HeroID != 0 && current.HeroID != 0 && previous.HeroID != current.HeroID)
+            return false;
+        if (previous.last_seen_tick_ms == 0 || now - previous.last_seen_tick_ms > kObservationPreviousMaxAgeMs)
+            return false;
+
+        const Vector3 previousAnchor = observationAnchor(previous);
+        const Vector3 currentAnchor = observationAnchor(current);
+        if (!isUsableVector(previousAnchor) || !isUsableVector(currentAnchor))
+            return false;
+
+        const float movement = previousAnchor.DistTo(currentAnchor);
+        return std::isfinite(movement) && movement > maxObservationMovement(now, previous);
+    };
+
+    auto stabilizeObservationPointOutliers = [&](OW::c_entity& current,
+                                                 const OW::c_entity& previous,
+                                                 DWORD now) {
+        if (!previous.address || previous.last_seen_tick_ms == 0 ||
+            now - previous.last_seen_tick_ms > kObservationPreviousMaxAgeMs) {
+            return static_cast<size_t>(0);
+        }
+
+        const Vector3 previousAnchor = observationAnchor(previous);
+        const Vector3 currentAnchor = observationAnchor(current);
+        if (!isUsableVector(previousAnchor) || !isUsableVector(currentAnchor))
+            return static_cast<size_t>(0);
+
+        const float anchorMovement = previousAnchor.DistTo(currentAnchor);
+        if (!std::isfinite(anchorMovement) || anchorMovement > maxObservationMovement(now, previous))
+            return static_cast<size_t>(0);
+
+        const float maxPointMovement = (std::max)(
+            kObservationPointJumpBaseMeters,
+            anchorMovement + kObservationPointJumpAnchorSlackMeters);
+        size_t suppressed = 0;
+
+        auto suppressPoint = [&](Vector3& point, const Vector3& previousPoint) {
+            if (!isUsableVector(point) || !isUsableVector(previousPoint))
+                return;
+            const float movement = previousPoint.DistTo(point);
+            if (std::isfinite(movement) && movement > maxPointMovement) {
+                point = previousPoint;
+                ++suppressed;
+            }
+        };
+
+        for (size_t boneIndex = 0; boneIndex < current.skeleton_bones.size(); ++boneIndex) {
+            if (!current.skeleton_bone_valid[boneIndex] ||
+                !previous.skeleton_bone_valid[boneIndex]) {
+                continue;
+            }
+            suppressPoint(current.skeleton_bones[boneIndex], previous.skeleton_bones[boneIndex]);
+        }
+
+        if (current.skeleton_bone_valid[0]) current.head_pos = current.skeleton_bones[0];
+        if (current.skeleton_bone_valid[1]) current.neck_pos = current.skeleton_bones[1];
+        if (current.skeleton_bone_valid[2]) current.chest_pos = current.skeleton_bones[2];
+
+        suppressPoint(current.pos, previous.pos);
+        suppressPoint(current.head_pos, previous.head_pos);
+        suppressPoint(current.neck_pos, previous.neck_pos);
+        suppressPoint(current.chest_pos, previous.chest_pos);
+        if (current.cached_bot_chest_bone_valid && previous.cached_bot_chest_bone_valid)
+            suppressPoint(current.cached_bot_chest_bone, previous.cached_bot_chest_bone);
+
+        return suppressed;
     };
 
     auto publishRosterSnapshot = [&](DWORD now, size_t heroChanged, std::vector<OW::c_entity>& published) {
@@ -1422,10 +1553,54 @@ inline void entity_thread() {
                 entity.missing_since_tick_ms = 0;
                 if (entity.roster_state == OW::EntityRosterState::Dead)
                     sanitizeStaleRosterEntity(entity);
-                attachPreviousRenderSample(entity);
                 RosterEntry& rosterEntry = entityRoster[entity.roster_key];
+
+                if (entity.roster_state == OW::EntityRosterState::Fresh &&
+                    shouldSkipTeleportObservation(entity, rosterEntry, processLoopTick)) {
+                    if (rosterEntry.skippedJumpObservations < kObservationMaxSkippedJumpFrames) {
+                        OW::c_entity held = rosterEntry.entity;
+                        held.last_seen_tick_ms = processLoopTick;
+                        held.missing_since_tick_ms = 0;
+                        held.roster_state = OW::EntityRosterState::Fresh;
+                        held.velocity = Vector3(0, 0, 0);
+                        resetRenderHistory(held, processLoopTick);
+                        rosterEntry.entity = held;
+                        rosterEntry.seenThisCycle = true;
+                        rosterEntry.skippedJumpObservations++;
+                        tmp_entities.push_back(held);
+                        if (detailedProcessLog) {
+                            Diagnostics::Info("[PIPELINE] Stage 4 observation_gate skip_jump idx=%zu roster=0x%llX skipped=%d.",
+                                i,
+                                static_cast<unsigned long long>(entity.roster_key),
+                                rosterEntry.skippedJumpObservations);
+                        }
+                        continue;
+                    }
+
+                    resetRenderHistory(entity, processLoopTick);
+                    if (detailedProcessLog) {
+                        Diagnostics::Info("[PIPELINE] Stage 4 observation_gate accept_jump_reset idx=%zu roster=0x%llX skipped=%d.",
+                            i,
+                            static_cast<unsigned long long>(entity.roster_key),
+                            rosterEntry.skippedJumpObservations);
+                    }
+                } else {
+                    const size_t suppressedPoints = stabilizeObservationPointOutliers(
+                        entity,
+                        rosterEntry.entity,
+                        processLoopTick);
+                    if (suppressedPoints > 0 && detailedProcessLog) {
+                        Diagnostics::Info("[PIPELINE] Stage 4 observation_gate suppress_points idx=%zu roster=0x%llX count=%zu.",
+                            i,
+                            static_cast<unsigned long long>(entity.roster_key),
+                            suppressedPoints);
+                    }
+                    attachPreviousRenderSample(entity);
+                }
+
                 rosterEntry.entity = entity;
                 rosterEntry.seenThisCycle = true;
+                rosterEntry.skippedJumpObservations = 0;
                 tmp_entities.push_back(entity);
             } else {
                 if (name == "Unknown")
@@ -2494,8 +2669,10 @@ namespace OverlayRenderDetail {
         Vector2 points[18]{};
         bool projected[18]{};
         const Vector2 windowSize(OW::WX, OW::WY);
+        constexpr int kRenderSkeletonSlots =
+            static_cast<int>(OW::Plexies20260609::kSkeletonSlotCount);
 
-        for (int i = 0; i < 18; ++i) {
+        for (int i = 0; i < kRenderSkeletonSlots; ++i) {
             if (!entity.skeleton_bone_valid[i])
                 continue;
             projected[i] = view.WorldToScreen(entity.skeleton_bones[i], &points[i], windowSize);
@@ -2511,8 +2688,8 @@ namespace OverlayRenderDetail {
             {0, 1}, {1, 2}, {2, 3},
             {1, 4}, {4, 6}, {6, 12},
             {1, 5}, {5, 7}, {7, 13},
-            {3, 8}, {8, 10},
-            {3, 9}, {9, 11},
+            {3, 8}, {8, 10}, {10, 14},
+            {3, 9}, {9, 11}, {11, 15},
         };
 
         for (const auto& link : kBoneConnections)
@@ -3824,7 +4001,7 @@ namespace AimbotDetail {
             originalDrawFov = OW::Config::SnapshotRuntimeDrawFov();
             OW::Config::ApplyHeroAimPresetToGlobals(selection.preset);
             OW::Config::SetRuntimeDrawFov(
-                selection.preset.fov,
+                OW::Config::ResolveHeroPresetFovForDistance(selection.preset, 0.0f),
                 static_cast<int>(OW::Config::FovRingSlotKind::Aim),
                 selection.slotIndex);
             LogRuntimePresetSelection("aim", local.HeroID, selection);

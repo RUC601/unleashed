@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <windows.h>
 #include <chrono>
+#include <optional>
 #include <thread>
 
 #include "Game/Decrypt.hpp"
@@ -137,6 +138,104 @@ namespace OW {
         return success;
     }
 
+    namespace OutputMotionTelemetry {
+
+        struct Sample {
+            uint64_t sequence = 0;
+            uint64_t capturedAtMs = 0;
+            float deltaPitchRad = 0.0f;
+            float deltaYawRad = 0.0f;
+            int pixelX = 0;
+            int pixelY = 0;
+            int automoveRuntimeMs = 0;
+            int status = 0;
+            bool split = false;
+            int steps = 1;
+            float speedDegS = 0.0f;
+            float accelDegS2 = 0.0f;
+            float jerkDegS3 = 0.0f;
+        };
+
+        inline uint64_t TimestampMs() {
+            const auto now = std::chrono::system_clock::now();
+            return static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
+        }
+
+        inline std::mutex& Mutex() {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        inline std::vector<Sample>& Samples() {
+            static std::vector<Sample> samples;
+            return samples;
+        }
+
+        inline uint64_t& Sequence() {
+            static uint64_t sequence = 0;
+            return sequence;
+        }
+
+        inline void RecordMouseMove(
+            const Vector3& delta,
+            int pixelX,
+            int pixelY,
+            int automoveRuntimeMs,
+            int status,
+            bool split,
+            int steps) {
+            constexpr float kRadToDeg = 57.29577951308232f;
+            const uint64_t nowMs = TimestampMs();
+            const float deltaMagnitudeDeg = std::sqrt(delta.X * delta.X + delta.Y * delta.Y) * kRadToDeg;
+
+            std::lock_guard<std::mutex> lock(Mutex());
+            auto& samples = Samples();
+            Sample sample{};
+            sample.sequence = ++Sequence();
+            sample.capturedAtMs = nowMs;
+            sample.deltaPitchRad = delta.X;
+            sample.deltaYawRad = delta.Y;
+            sample.pixelX = pixelX;
+            sample.pixelY = pixelY;
+            sample.automoveRuntimeMs = automoveRuntimeMs;
+            sample.status = status;
+            sample.split = split;
+            sample.steps = (std::max)(1, steps);
+
+            if (!samples.empty()) {
+                const Sample& previous = samples.back();
+                constexpr float kMinTelemetryDtS = 0.008f;
+                float dt = kMinTelemetryDtS;
+                if (nowMs > previous.capturedAtMs)
+                    dt = (std::max)(kMinTelemetryDtS, static_cast<float>(nowMs - previous.capturedAtMs) / 1000.0f);
+                sample.speedDegS = deltaMagnitudeDeg / dt;
+                sample.accelDegS2 = (sample.speedDegS - previous.speedDegS) / dt;
+                sample.jerkDegS3 = (sample.accelDegS2 - previous.accelDegS2) / dt;
+            }
+
+            samples.push_back(sample);
+            constexpr size_t kCapacity = 512;
+            if (samples.size() > kCapacity) {
+                samples.erase(samples.begin(),
+                    samples.begin() + static_cast<std::ptrdiff_t>(samples.size() - kCapacity));
+            }
+        }
+
+        inline std::vector<Sample> SnapshotSince(uint64_t capturedAtMs, uint64_t windowMs) {
+            std::vector<Sample> snapshot;
+            std::lock_guard<std::mutex> lock(Mutex());
+            const auto& samples = Samples();
+            snapshot.reserve(samples.size());
+            for (const Sample& sample : samples) {
+                if (sample.capturedAtMs <= capturedAtMs && capturedAtMs - sample.capturedAtMs <= windowMs)
+                    snapshot.push_back(sample);
+            }
+            return snapshot;
+        }
+
+    } // namespace OutputMotionTelemetry
+
     inline void SendMouseMove(const Vector3& delta, int moveTimeMs = -1) {
         if (moveTimeMs < 0) moveTimeMs = Config::kmboxInputDelayMs;
         const int automoveRuntimeMs = ClampKmboxAutomoveRuntimeMs(moveTimeMs);
@@ -252,6 +351,14 @@ namespace OW {
                     splitBehavior,
                     splitEnabled ? 1 : 0,
                     status);
+                OutputMotionTelemetry::RecordMouseMove(
+                    delta,
+                    pixelX,
+                    pixelY,
+                    automoveRuntimeMs,
+                    status,
+                    false,
+                    1);
             } else {
                 // Split into micro-movements
                 Diagnostics::Aim("mouse.move.split total_pixels=(%d,%d) steps=%d max_pixels_per_step=%d delay_us=%d runtimeMs=%d command=%s behavior=%d",
@@ -265,6 +372,7 @@ namespace OW {
                     splitBehavior);
                 int remainingX = pixelX;
                 int remainingY = pixelY;
+                int lastStatus = 0;
                 for (int i = 0; i < steps; i++) {
                     const int curX = remainingX / (steps - i);
                     const int curY = remainingY / (steps - i);
@@ -272,6 +380,7 @@ namespace OW {
                     remainingY -= curY;
 
                     const int status = EnqueueKmboxPixelMove(curX, curY, automoveRuntimeMs);
+                    lastStatus = status;
                     Diagnostics::Aim("mouse.enqueue.split transport=%s command=%s step=%d/%d cur=(%d,%d) runtimeMs=%d status=%d",
                         KmboxTransportName(),
                         automoveRuntimeMs > 0 ? "automove" : "move",
@@ -288,6 +397,14 @@ namespace OW {
                 }
                 Diagnostics::Aim("mouse.move.split_complete steps=%d total=(%d,%d)",
                     steps, pixelX, pixelY);
+                OutputMotionTelemetry::RecordMouseMove(
+                    delta,
+                    pixelX,
+                    pixelY,
+                    automoveRuntimeMs,
+                    lastStatus,
+                    true,
+                    steps);
             }
             return;
         }
@@ -1004,6 +1121,26 @@ namespace OW {
             return target_lock_runtime;
         }
 
+        inline std::mutex& LastTargetCandidateMutex() {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        inline TargetCandidate& LastTargetCandidateStorage() {
+            static TargetCandidate candidate{};
+            return candidate;
+        }
+
+        inline void StoreLastTargetCandidate(const TargetCandidate& candidate) {
+            std::lock_guard<std::mutex> lock(LastTargetCandidateMutex());
+            LastTargetCandidateStorage() = candidate;
+        }
+
+        inline TargetCandidate SnapshotLastTargetCandidate() {
+            std::lock_guard<std::mutex> lock(LastTargetCandidateMutex());
+            return LastTargetCandidateStorage();
+        }
+
         inline void ResetTargetLockRuntime() {
             std::lock_guard<std::mutex> lock(target_lock_mutex);
             target_lock_runtime = TargetLockRuntime{};
@@ -1412,7 +1549,11 @@ namespace OW {
                 Vector3 aimPosition = ApplyPrediction(entity, rootPosition, predit, secondary);
                 const float score = CandidateScore(aimPosition, fovContext);
                 if (score >= result.score) continue;
-                if (score > FovAngleLimitDeg(fov)) continue;
+                const float distance = fovContext.valid
+                    ? fovContext.camera.DistTo(rootPosition)
+                    : local.pos.DistTo(rootPosition);
+                const float effectiveFov = Config::ResolveDynamicAimFovForDistance(fov, distance);
+                if (score > FovAngleLimitDeg(effectiveFov)) continue;
 
                 result.index = static_cast<int>(i);
                 result.target = aimPosition;
@@ -1606,9 +1747,11 @@ namespace OW {
                         false);
                     PreditPos = lead.finalAimPoint;
                     const Vector3 fovPoint = lead.finalAimPoint;
+                    const float distance = TargetingDetail::CameraPosition().DistTo(RootPos);
+                    const float effectiveFovDeg =
+                        Config::ResolveDynamicAimFovForDistance(Config::Fov, distance);
                     float fovScoreDeg = 0.0f;
-                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov, &fovScoreDeg)) {
-                        const float distance = TargetingDetail::CameraPosition().DistTo(RootPos);
+                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, effectiveFovDeg, &fovScoreDeg)) {
                         if (!TargetingDetail::DistancePassesAimFilter(distance))
                             continue;
 
@@ -1638,6 +1781,9 @@ namespace OW {
                             best.screenPoint = Vec2;
                             best.distance = distance;
                             best.fovScore = fovScoreDeg;
+                            best.effectiveFovDeg = effectiveFovDeg;
+                            best.dynamicFov = Config::IsDynamicAimFovActive();
+                            best.dynamicFovPresetId = best.dynamicFov ? Config::aimbotDynamicFovPresetId : -1;
                             best.motion = TargetingDetail::EstimateMotionState(entities[i], Vec2);
                             best.lockPolicy = lockPolicy;
                             best.weaponSpec = weaponSpec;
@@ -1753,8 +1899,10 @@ namespace OW {
                     const float bobDistance = TargetingDetail::CameraPosition().DistTo(bobPosition);
                     if (!TargetingDetail::DistancePassesAimFilter(bobDistance))
                         break;
+                    const float effectiveFovDeg =
+                        Config::ResolveDynamicAimFovForDistance(Config::Fov, bobDistance);
                     float fovScoreDeg = 0.0f;
-                    if (!TargetingDetail::IsWithinFovDeg(fovContext, bobPosition, Config::Fov, &fovScoreDeg))
+                    if (!TargetingDetail::IsWithinFovDeg(fovContext, bobPosition, effectiveFovDeg, &fovScoreDeg))
                         break;
                     Vector2 Vec2 = CrossHair;
                     aimViewMatrix.WorldToScreen(bobPosition, &Vec2, Vector2(OW::WX, OW::WY));
@@ -1771,6 +1919,9 @@ namespace OW {
                         best.screenPoint = Vec2;
                         best.distance = bobDistance;
                         best.fovScore = fovScoreDeg;
+                        best.effectiveFovDeg = effectiveFovDeg;
+                        best.dynamicFov = Config::IsDynamicAimFovActive();
+                        best.dynamicFovPresetId = best.dynamicFov ? Config::aimbotDynamicFovPresetId : -1;
                         best.lockPolicy = lockPolicy;
                         best.weaponSpec = weaponSpec;
                         best.effectiveHitWindow = ResolveEffectiveHitWindow(
@@ -1785,6 +1936,16 @@ namespace OW {
                     }
                     break;
                 }
+            }
+        }
+        if (best.valid) {
+            best.effectiveFovDeg = Config::ResolveDynamicAimFovForDistance(Config::Fov, best.distance);
+            best.dynamicFov = Config::IsDynamicAimFovActive();
+            best.dynamicFovPresetId = best.dynamicFov ? Config::aimbotDynamicFovPresetId : -1;
+            const Config::RuntimeDrawFovState drawState = Config::SnapshotRuntimeDrawFov();
+            if (drawState.active &&
+                drawState.slotKind == static_cast<int>(Config::FovRingSlotKind::Aim)) {
+                Config::SetRuntimeDrawFov(best.effectiveFovDeg, drawState.slotKind, drawState.slotIndex);
             }
         }
         Config::aimbotEffectiveHitWindow = best.valid
@@ -1823,6 +1984,7 @@ namespace OW {
                 selected.Vis ? 1 : 0,
                 selected.Team ? 1 : 0);
         }
+        TargetingDetail::StoreLastTargetCandidate(best);
         return best;
     }
 
@@ -1869,15 +2031,18 @@ namespace OW {
                         false);
                     PreditPos = lead.finalAimPoint;
                     const Vector3 fovPoint = lead.finalAimPoint;
+                    const float distance = TargetingDetail::CameraPosition().DistTo(RootPos);
+                    const float effectiveFovDeg =
+                        Config::ResolveDynamicAimFovForDistance(Config::Fov, distance);
                     float fovScoreDeg = 0.0f;
-                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov, &fovScoreDeg)) {
+                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, effectiveFovDeg, &fovScoreDeg)) {
                         float score;
                         if (Config::aimbotPriority == 0) {
                             score = fovScoreDeg;
                         } else if (Config::aimbotPriority == 1) {
                             score = entities[i].PlayerHealth;
                         } else {
-                            score = TargetingDetail::CameraPosition().DistTo(PreditPos);
+                            score = distance;
                         }
                         if (score < origin) {
                             target = lead.finalAimPoint;
@@ -2061,9 +2226,11 @@ namespace OW {
                         true);
                     PreditPos = lead.finalAimPoint;
                     const Vector3 fovPoint = lead.finalAimPoint;
+                    const float distance = camera.DistTo(RootPos);
+                    const float effectiveFovDeg =
+                        Config::ResolveDynamicAimFovForDistance(Config::Fov2, distance);
                     float fovScoreDeg = 0.0f;
-                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, Config::Fov2, &fovScoreDeg)) {
-                        const float distance = camera.DistTo(RootPos);
+                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, effectiveFovDeg, &fovScoreDeg)) {
                         if (!TargetingDetail::DistancePassesAimFilter(distance))
                             continue;
                         float score;

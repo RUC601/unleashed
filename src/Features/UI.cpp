@@ -1500,7 +1500,7 @@ static constexpr float kGroupBorderClipInset = 2.0f;
 static constexpr float kControlRightPadding = 10.0f;
 static constexpr int kAimingSubTabCount = 4;
 static constexpr int kThemeSubTabCount = 2;
-static constexpr int kMiscSubTabCount = 6;
+static constexpr int kMiscSubTabCount = 7;
 static constexpr int kVisualsPageKey = kAimingSubTabCount;
 static constexpr int kThemePageKeyBase = kVisualsPageKey + 1;
 static constexpr int kMiscPageKeyBase = kThemePageKeyBase + kThemeSubTabCount;
@@ -2727,6 +2727,13 @@ static int NextAimBehaviorPresetId() {
     return nextId;
 }
 
+static int NextDynamicFovPresetId() {
+    int nextId = 1;
+    for (const OW::Config::DynamicFovPreset& preset : OW::Config::dynamicFovPresets)
+        nextId = (std::max)(nextId, preset.id + 1);
+    return nextId;
+}
+
 static std::string NormalizeUiPresetName(const char* text, const char* fallback, int index) {
     std::string value = text ? text : "";
     while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
@@ -2809,6 +2816,11 @@ static const char* AimMethodPresetPreview(int presetId, const char* noneText) {
     return preset ? preset->name.c_str() : noneText;
 }
 
+static const char* DynamicFovPresetPreview(int presetId, const char* noneText) {
+    const OW::Config::DynamicFovPreset* preset = OW::Config::FindDynamicFovPreset(presetId);
+    return preset ? preset->name.c_str() : noneText;
+}
+
 static bool UISelectAimMethodPreset(const char* label, int* presetId, int filterMethod) {
     if (!OW::Config::FindAimMethodPreset(*presetId))
         *presetId = -1;
@@ -2876,6 +2888,51 @@ static bool UISelectAimBehaviorPreset(const char* label, int* presetId, int filt
             }
             const bool selected = *presetId == preset.id;
             if (ImGui::Selectable(labelText.c_str(), selected)) {
+                *presetId = preset.id;
+                changed = true;
+            }
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+static bool UISelectDynamicFovPreset(const char* label, int* presetId, bool allowNone) {
+    if (!OW::Config::FindDynamicFovPreset(*presetId))
+        *presetId = -1;
+
+    bool changed = false;
+    const char* preview = DynamicFovPresetPreview(*presetId, allowNone ? "Fixed FOV" : "Select Preset");
+    if (ImGui::BeginCombo(label, preview, ImGuiComboFlags_HeightLargest)) {
+        if (allowNone) {
+            const bool noneSelected = *presetId < 0;
+            if (ImGui::Selectable("Fixed FOV", noneSelected)) {
+                *presetId = -1;
+                changed = true;
+            }
+            if (noneSelected)
+                ImGui::SetItemDefaultFocus();
+        }
+
+        for (const OW::Config::DynamicFovPreset& preset : OW::Config::dynamicFovPresets) {
+            const OW::Config::DynamicFovPreset normalized =
+                OW::Config::ValidateDynamicFovPresetValue(preset);
+            char labelText[160] = {};
+            const float nearFov = OW::Config::EvaluateDynamicFovPreset(normalized, 0.0f, OW::Config::kDefaultFovDeg);
+            const float farFov = OW::Config::EvaluateDynamicFovPreset(
+                normalized,
+                normalized.points[static_cast<size_t>(normalized.pointCount - 1)].distanceM,
+                OW::Config::kDefaultFovDeg);
+            std::snprintf(labelText,
+                          sizeof(labelText),
+                          "%s / %.0f->%.0f deg",
+                          normalized.name.c_str(),
+                          nearFov,
+                          farFov);
+            const bool selected = *presetId == preset.id;
+            if (ImGui::Selectable(labelText, selected)) {
                 *presetId = preset.id;
                 changed = true;
             }
@@ -3676,7 +3733,43 @@ void UI::AimbotPage() {
             }
 
             // FOV
-            SettingRow("FOV (deg)", kAimbotLeftLabelWidth);
+            static const char* kFovModeLabels[] = { "Fixed", "Dynamic Preset" };
+            activePreset.fovMode = OW::Config::ClampFovMode(activePreset.fovMode);
+            if (activePreset.fovMode == OW::Config::kFovModeDynamicPreset &&
+                !OW::Config::FindDynamicFovPreset(activePreset.dynamicFovPresetId)) {
+                activePreset.fovMode = OW::Config::kFovModeFixed;
+                activePreset.dynamicFovPresetId = -1;
+            }
+
+            SettingRow("FOV Mode", kAimbotLeftLabelWidth);
+            PushControlWidth();
+            if (UISelect("##aimFovMode", &activePreset.fovMode, kFovModeLabels, IM_ARRAYSIZE(kFovModeLabels))) {
+                activePreset.fovMode = OW::Config::ClampFovMode(activePreset.fovMode);
+                if (activePreset.fovMode == OW::Config::kFovModeFixed) {
+                    activePreset.dynamicFovPresetId = -1;
+                } else if (!OW::Config::dynamicFovPresets.empty()) {
+                    activePreset.dynamicFovPresetId = OW::Config::dynamicFovPresets.front().id;
+                }
+                presetChanged = true;
+            }
+            ImGui::PopItemWidth();
+
+            if (activePreset.fovMode == OW::Config::kFovModeDynamicPreset) {
+                SettingRow("FOV Preset", kAimbotLeftLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISelectDynamicFovPreset("##aimDynamicFovPreset",
+                                                          &activePreset.dynamicFovPresetId,
+                                                          false);
+                ImGui::PopItemWidth();
+                if (!OW::Config::FindDynamicFovPreset(activePreset.dynamicFovPresetId)) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.64f, 0.25f, 1.0f),
+                                       "Create a Dynamic FOV preset in Misc first.");
+                }
+
+                SettingRow("Fallback FOV", kAimbotLeftLabelWidth);
+            } else {
+                SettingRow("FOV (deg)", kAimbotLeftLabelWidth);
+            }
             PushControlWidth();
             presetChanged |= UISlider("##aimFov", &activePreset.fov,
                                       OW::Config::kMinFovDeg, OW::Config::kMaxFovDeg,
@@ -4667,6 +4760,7 @@ static void DrawMiscGeneralPage();
 static void DrawMiscDiagnosticsPage();
 static void DrawMiscBehaviorPage();
 static void DrawMiscMethodPage();
+static void DrawMiscDynamicFovPage();
 static void DrawMiscKmboxPage();
 static void DrawMiscScreenPage();
 
@@ -4688,9 +4782,12 @@ void UI::MiscPage() {
             DrawMiscMethodPage();
             break;
         case 4:
-            DrawMiscKmboxPage();
+            DrawMiscDynamicFovPage();
             break;
         case 5:
+            DrawMiscKmboxPage();
+            break;
+        case 6:
             DrawMiscScreenPage();
             break;
         default:
@@ -5342,6 +5439,156 @@ static void DrawMiscMethodPage() {
                 }
                 selectedMethodPresetId = -1;
                 lastMethodPresetId = -2;
+            }
+        }
+    }
+    CloseGroupBox();
+}
+
+static void DrawMiscDynamicFovPage() {
+    UIGroupBox("Dynamic FOV Presets");
+    {
+        static int selectedPresetId = -1;
+        static int lastPresetId = -2;
+        static char presetName[64] = "Dynamic FOV";
+        static OW::Config::DynamicFovPreset draft{};
+
+        OW::Config::DynamicFovPreset* selectedPreset =
+            OW::Config::FindMutableDynamicFovPreset(selectedPresetId);
+        if (lastPresetId != selectedPresetId) {
+            if (selectedPreset) {
+                CopyPresetNameToBuffer(selectedPreset->name, presetName);
+            } else {
+                draft = OW::Config::DynamicFovPreset{};
+                CopyPresetNameToBuffer("Dynamic FOV", presetName);
+            }
+            lastPresetId = selectedPresetId;
+        }
+
+        SettingRow("Preset");
+        PushControlWidth();
+        if (UISelectDynamicFovPreset("##miscDynamicFovPreset", &selectedPresetId, true)) {
+            selectedPreset = OW::Config::FindMutableDynamicFovPreset(selectedPresetId);
+            if (selectedPreset) {
+                CopyPresetNameToBuffer(selectedPreset->name, presetName);
+            } else {
+                draft = OW::Config::DynamicFovPreset{};
+                CopyPresetNameToBuffer("Dynamic FOV", presetName);
+            }
+            lastPresetId = selectedPresetId;
+        }
+        ImGui::PopItemWidth();
+
+        selectedPreset = OW::Config::FindMutableDynamicFovPreset(selectedPresetId);
+        OW::Config::DynamicFovPreset& editPreset = selectedPreset ? *selectedPreset : draft;
+
+        SettingRow("Preset Name");
+        PushControlWidth();
+        if (ImGui::InputText("##miscDynamicFovName", presetName, IM_ARRAYSIZE(presetName)))
+            editPreset.name = NormalizeUiPresetName(presetName, "Dynamic FOV", -1);
+        ImGui::PopItemWidth();
+
+        SettingRow("Smooth Curve");
+        UICheckbox("##miscDynamicFovSmooth", &editPreset.smooth);
+
+        editPreset.pointCount = std::clamp(editPreset.pointCount, 2, OW::Config::kMaxDynamicFovPoints);
+        SettingRow("Point Count");
+        PushControlWidth();
+        UISlider("##miscDynamicFovPointCount",
+                 &editPreset.pointCount,
+                 2.0f,
+                 static_cast<float>(OW::Config::kMaxDynamicFovPoints),
+                 "5");
+        editPreset.pointCount = std::clamp(editPreset.pointCount, 2, OW::Config::kMaxDynamicFovPoints);
+        ImGui::PopItemWidth();
+
+        for (int index = 0; index < editPreset.pointCount; ++index) {
+            char distanceLabel[32] = {};
+            char distanceId[48] = {};
+            char fovLabel[32] = {};
+            char fovId[48] = {};
+            std::snprintf(distanceLabel, sizeof(distanceLabel), "Point %d Dist", index + 1);
+            std::snprintf(distanceId, sizeof(distanceId), "##dynamicFovPoint%dDistance", index);
+            std::snprintf(fovLabel, sizeof(fovLabel), "Point %d FOV", index + 1);
+            std::snprintf(fovId, sizeof(fovId), "##dynamicFovPoint%dFov", index);
+
+            SettingRow(distanceLabel);
+            PushControlWidth();
+            UISlider(distanceId,
+                     &editPreset.points[static_cast<size_t>(index)].distanceM,
+                     OW::Config::kMinDynamicFovDistanceM,
+                     100.0f,
+                     "0 m");
+            ImGui::PopItemWidth();
+
+            SettingRow(fovLabel);
+            PushControlWidth();
+            UISlider(fovId,
+                     &editPreset.points[static_cast<size_t>(index)].fovDeg,
+                     OW::Config::kMinFovDeg,
+                     OW::Config::kMaxFovDeg,
+                     "100 deg");
+            ImGui::PopItemWidth();
+        }
+
+        editPreset = OW::Config::ValidateDynamicFovPresetValue(editPreset);
+        if (selectedPreset)
+            CopyPresetNameToBuffer(selectedPreset->name, presetName);
+
+        const float preview5 = OW::Config::EvaluateDynamicFovPreset(editPreset, 5.0f, OW::Config::kDefaultFovDeg);
+        const float preview10 = OW::Config::EvaluateDynamicFovPreset(editPreset, 10.0f, OW::Config::kDefaultFovDeg);
+        const float preview20 = OW::Config::EvaluateDynamicFovPreset(editPreset, 20.0f, OW::Config::kDefaultFovDeg);
+        const float preview30 = OW::Config::EvaluateDynamicFovPreset(editPreset, 30.0f, OW::Config::kDefaultFovDeg);
+        char preview[128] = {};
+        std::snprintf(preview,
+                      sizeof(preview),
+                      "5m %.0f deg   10m %.0f deg   20m %.0f deg   30m %.0f deg",
+                      preview5,
+                      preview10,
+                      preview20,
+                      preview30);
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.78f, 0.84f, 0.92f, 1.0f), "%s", preview);
+
+        ImGui::Spacing();
+        if (ImGui::Button(T(UiText::SaveNew), ImVec2(92.0f, kControlHeight))) {
+            OW::Config::DynamicFovPreset preset = editPreset;
+            preset.id = NextDynamicFovPresetId();
+            preset.name = NormalizeUiPresetName(
+                presetName,
+                "Dynamic FOV",
+                static_cast<int>(OW::Config::dynamicFovPresets.size()));
+            preset = OW::Config::ValidateDynamicFovPresetValue(preset);
+            OW::Config::dynamicFovPresets.push_back(preset);
+            selectedPresetId = preset.id;
+            lastPresetId = -2;
+        }
+
+        if (selectedPreset) {
+            ImGui::SameLine(0.0f, 8.0f);
+            if (ImGui::Button(T(UiText::Delete), ImVec2(72.0f, kControlHeight))) {
+                const int deletedId = selectedPresetId;
+                OW::Config::dynamicFovPresets.erase(
+                    std::remove_if(OW::Config::dynamicFovPresets.begin(),
+                                   OW::Config::dynamicFovPresets.end(),
+                                   [deletedId](const OW::Config::DynamicFovPreset& preset) {
+                                       return preset.id == deletedId;
+                                   }),
+                    OW::Config::dynamicFovPresets.end());
+                if (OW::Config::aimbotDynamicFovPresetId == deletedId) {
+                    OW::Config::aimbotFovMode = OW::Config::kFovModeFixed;
+                    OW::Config::aimbotDynamicFovPresetId = -1;
+                }
+                for (auto& heroSlots : OW::Config::heroAimPresets) {
+                    for (OW::Config::HeroSlotPreset& slot : heroSlots.second) {
+                        if (slot.preset.dynamicFovPresetId == deletedId) {
+                            slot.preset.fovMode = OW::Config::kFovModeFixed;
+                            slot.preset.dynamicFovPresetId = -1;
+                        }
+                    }
+                }
+                selectedPresetId = -1;
+                lastPresetId = -2;
             }
         }
     }
@@ -6043,7 +6290,7 @@ void UI::Render() {
     ImGui::SetCursorScreenPos(ImVec2(winPos.x, contentBandY));
 
     // Determine which sub-tabs to show
-    const char* subTabNames[6] = { nullptr };
+    const char* subTabNames[7] = { nullptr };
     int subTabCount = 0;
     int* activeSub  = nullptr;
 
@@ -6074,8 +6321,9 @@ void UI::Render() {
             subTabNames[1] = T(UiText::SubDiagnostics);
             subTabNames[2] = T(UiText::SubBehavior);
             subTabNames[3] = T(UiText::SubMethod);
-            subTabNames[4] = T(UiText::SubKmBox);
-            subTabNames[5] = T(UiText::SubScreen);
+            subTabNames[4] = "Dynamic FOV";
+            subTabNames[5] = T(UiText::SubKmBox);
+            subTabNames[6] = T(UiText::SubScreen);
             subTabCount = kMiscSubTabCount;
             state.miscSubTab = ImClamp(state.miscSubTab, 0, subTabCount - 1);
             activeSub   = &state.miscSubTab;
