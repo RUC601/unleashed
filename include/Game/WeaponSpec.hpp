@@ -22,5 +22,13 @@ const char* AimClassName(AimClass value);
 const char* AimBehaviorName(AimBehaviorType value);
 const char* FirePolicyName(FirePolicyType value);
 const char* PredictionOverrideName(PredictionOverrideMode value);
+const char* RuntimeVariantRequirementName(RuntimeVariantRequirement value);
+
+int MouseButtonForAttackAction(int action);
+uint32_t FireKeyMaskForMouseButton(int button);
+uint32_t FireKeyMaskForAttackAction(int action);
+int ResolveGeneratedFireMouseButton(const WeaponSpec* weapon, int fallbackAction);
+int ResolveTrackingHoldMouseButton(const WeaponSpec* weapon, int fallbackAction);
+uint32_t ResolveGeneratedFireKeyMask(const WeaponSpec* weapon, int fallbackAction);
 
 } // namespace OW

@@ -49,6 +49,7 @@ inline constexpr HeroAbilityIcons kHeroAbilityIcons[] = {
     { "reaper", "wraith-form", "shadow-step", "death-blossom" },
     { "reinhardt", "charge", "fire-strike", "earthshatter" },
     { "roadhog", "take-a-breather", "pig-pen", "whole-hog" },
+    { "shion", "evade", "joyride", "satsuriku-spree" },
     { "sierra", "anchor-drone", "tremor-charge", "trailblazer" },
     { "sigma", "kinetic-grasp", "accretion", "gravitic-flux" },
     { "sojourn", "power-slide", "disruptor-shot", "overclock" },

@@ -4,6 +4,7 @@
 #include <array>
 #include <string_view>
 
+#include "Game/HeroPerkRuntime.hpp"
 #include "Game/Structs.hpp"
 #include "Utils/InputLabels.hpp"
 
@@ -40,6 +41,13 @@ constexpr FirePolicy Policy(FP type)
     return FirePolicy{ type, 0.0f, 0.0f, 0.0f, 100.0f };
 }
 
+constexpr WeaponControlSpec Control(int generatedFireButton = kWeaponControlUseActionButton,
+                                    int trackingHoldButton = kWeaponControlUseActionButton,
+                                    int stanceHoldButton = kWeaponControlNoButton)
+{
+    return WeaponControlSpec{ generatedFireButton, trackingHoldButton, stanceHoldButton };
+}
+
 constexpr WeaponSpec W(uint64_t heroId,
                        std::string_view heroName,
                        std::string_view weaponId,
@@ -51,7 +59,11 @@ constexpr WeaponSpec W(uint64_t heroId,
                        AB behavior,
                        FP firePolicy,
                        float confidence = 0.75f,
-                       std::string_view note = kReviewSource)
+                       std::string_view note = kReviewSource,
+                       RuntimeVariantRequirement variantRequirement = RuntimeVariantRequirement::None,
+                       std::string_view variantId = {},
+                       std::string_view replacesWeaponId = {},
+                       WeaponControlSpec control = {})
 {
     return WeaponSpec{
         heroId,
@@ -64,13 +76,17 @@ constexpr WeaponSpec W(uint64_t heroId,
         projectile,
         Policy(firePolicy),
         behavior,
+        variantRequirement,
+        variantId,
+        replacesWeaponId,
+        control,
         kWikiBase,
         note,
         confidence
     };
 }
 
-constexpr std::array<WeaponSpec, 74> kWeaponSpecs = {
+constexpr std::array<WeaponSpec, 75> kWeaponSpecs = {
     W(eHero::HERO_REAPER, "Reaper", "reaper_hellfire_shotguns", "Hellfire Shotguns", 0, 1, AC::Shotgun, Hitscan(0.04f), AB::FlickClamp, FP::TapOnHitWindow),
     W(eHero::HERO_TRACER, "Tracer", "tracer_pulse_pistols", "Pulse Pistols", 0, 1, AC::HitscanAuto, Hitscan(0.04f), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_MERCY, "Mercy", "mercy_caduceus_staff_heal", "Caduceus Staff", 0, 1, AC::Targeted, Hitscan(0.0f), AB::Tracking, FP::ManualOnly),
@@ -98,6 +114,13 @@ constexpr std::array<WeaponSpec, 74> kWeaponSpecs = {
     W(eHero::HERO_ROADHOG, "Roadhog", "roadhog_scrap_gun_alt", "Scrap Gun Alt Fire", 1, 2, AC::Shotgun, Projectile(80.0f, 0.07f), AB::FlickClamp, FP::TapOnHitWindow),
     W(eHero::HERO_MCCREE, "Cassidy", "cassidy_peacekeeper", "Peacekeeper", 0, 1, AC::HitscanSingle, Hitscan(0.07f), AB::Flick, FP::TapOnHitWindow),
     W(eHero::HERO_MCCREE, "Cassidy", "cassidy_fan_the_hammer", "Fan the Hammer", 1, 2, AC::HitscanAuto, Hitscan(0.07f), AB::Tracking, FP::HoldWhileTracking),
+    W(eHero::HERO_MCCREE, "Cassidy", "cassidy_ads_perk", "Peacekeeper ADS Perk", 1, 3, AC::HitscanSingle, Hitscan(0.07f), AB::Tracking, FP::HoldWhileTracking,
+      0.50f,
+      "Manual perk variant: physical right mouse holds ADS stance; generated fire uses left mouse.",
+      RuntimeVariantRequirement::PerkOn,
+      "cassidy_ads_perk",
+      "cassidy_fan_the_hammer",
+      Control(0, 0, 1)),
     W(eHero::HERO_JUNKRAT, "Junkrat", "junkrat_frag_launcher", "Frag Launcher", 0, 1, AC::ProjectileExplosive, Projectile(30.0f, 0.325f, true), AB::FlickDelay, FP::ReleaseAfterDelay),
     W(eHero::HERO_ZARYA, "Zarya", "zarya_particle_cannon", "Particle Cannon", 0, 1, AC::Beam, Hitscan(0.2f), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_ZARYA, "Zarya", "zarya_particle_cannon_alt", "Particle Cannon Alt Fire", 1, 2, AC::ProjectileExplosive, Projectile(25.0f, 0.32f, true), AB::FlickDelay, FP::ReleaseAfterDelay),
@@ -152,15 +175,40 @@ constexpr std::array<WeaponSpec, 74> kWeaponSpecs = {
 const WeaponSpec* ResolveWeaponSpec(uint64_t heroId, int action)
 {
     const WeaponSpec* firstForHero = nullptr;
+    const WeaponSpec* firstBaseForHero = nullptr;
+    const WeaponSpec* baseForAction = nullptr;
+    const WeaponSpec* variantForAction = nullptr;
+    const bool perkOn = HeroPerkRuntime::IsEffectivePerkOn(heroId);
+
     for (const WeaponSpec& spec : kWeaponSpecs) {
         if (spec.heroId != heroId)
             continue;
+
         if (!firstForHero)
             firstForHero = &spec;
-        if (spec.action == action)
-            return &spec;
+
+        const bool isVariant = spec.variantRequirement != RuntimeVariantRequirement::None;
+        if (!isVariant && !firstBaseForHero)
+            firstBaseForHero = &spec;
+
+        if (spec.action != action)
+            continue;
+
+        if (isVariant) {
+            if (spec.variantRequirement == RuntimeVariantRequirement::PerkOn && perkOn)
+                variantForAction = &spec;
+            continue;
+        }
+
+        if (!baseForAction)
+            baseForAction = &spec;
     }
-    return firstForHero;
+
+    if (variantForAction)
+        return variantForAction;
+    if (baseForAction)
+        return baseForAction;
+    return firstBaseForHero ? firstBaseForHero : firstForHero;
 }
 
 const WeaponSpec* ResolveDefaultWeaponSpec(uint64_t heroId)
@@ -186,8 +234,11 @@ std::size_t WeaponSpecCount()
 bool HeroHasAttackAction(uint64_t heroId, int action)
 {
     for (const WeaponSpec& spec : kWeaponSpecs) {
-        if (spec.heroId == heroId && spec.action == action)
+        if (spec.heroId == heroId &&
+            spec.action == action &&
+            spec.variantRequirement == RuntimeVariantRequirement::None) {
             return true;
+        }
     }
     return false;
 }
@@ -227,6 +278,63 @@ const char* AimClassName(AimClass value)
     case AimClass::Movement: return "Movement";
     default: return "Unknown";
     }
+}
+
+const char* RuntimeVariantRequirementName(RuntimeVariantRequirement value)
+{
+    switch (value) {
+    case RuntimeVariantRequirement::PerkOn: return "PerkOn";
+    case RuntimeVariantRequirement::None:
+    default: return "None";
+    }
+}
+
+int MouseButtonForAttackAction(int action)
+{
+    switch (action) {
+    case 1: // Secondary Fire
+    case 2: // Scoped
+        return 1;
+    case 0: // Primary Fire
+    case 3: // Unscoped
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+uint32_t FireKeyMaskForMouseButton(int button)
+{
+    switch (button) {
+    case 0: return 0x1u;
+    case 1: return 0x2u;
+    case 2: return 0x4u;
+    default: return 0u;
+    }
+}
+
+uint32_t FireKeyMaskForAttackAction(int action)
+{
+    return FireKeyMaskForMouseButton(MouseButtonForAttackAction(action));
+}
+
+int ResolveGeneratedFireMouseButton(const WeaponSpec* weapon, int fallbackAction)
+{
+    if (weapon && weapon->control.generatedFireButton != kWeaponControlUseActionButton)
+        return weapon->control.generatedFireButton;
+    return MouseButtonForAttackAction(fallbackAction);
+}
+
+int ResolveTrackingHoldMouseButton(const WeaponSpec* weapon, int fallbackAction)
+{
+    if (weapon && weapon->control.trackingHoldButton != kWeaponControlUseActionButton)
+        return weapon->control.trackingHoldButton;
+    return ResolveGeneratedFireMouseButton(weapon, fallbackAction);
+}
+
+uint32_t ResolveGeneratedFireKeyMask(const WeaponSpec* weapon, int fallbackAction)
+{
+    return FireKeyMaskForMouseButton(ResolveGeneratedFireMouseButton(weapon, fallbackAction));
 }
 
 const char* AimBehaviorName(AimBehaviorType value)

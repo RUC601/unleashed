@@ -29,6 +29,7 @@ constexpr bool HasHeroIdPrefix(uint64_t heroId) noexcept {
 // Source: D:\Desktop\SenseZen\uc\grap\516727\332.txt, plexies, 2026-05-27 04:18 AM.
 // Live CN probe additions, 2026-06-02: Vendetta/Anran.
 // Local research additions, 2026-06-07: Sierra/Emre.
+// Live entity probe additions, 2026-06-16: Mizuki/Shion.
 inline constexpr NamedU64 kHeroIds[] = {
     { "Reaper", MakeHeroId(0x002) },
     { "Tracer", MakeHeroId(0x003) },
@@ -78,7 +79,9 @@ inline constexpr NamedU64 kHeroIds[] = {
     { "Sierra", MakeHeroId(0x4D2) },
     { "Emre", MakeHeroId(0x4D8) },
     { "Anran", MakeHeroId(0x4DD) },
+    { "Mizuki", MakeHeroId(0x4E3) },
     { "Jetpack Cat", MakeHeroId(0x516) },
+    { "Shion", MakeHeroId(0x52C) },
     { "Standard Bot", MakeHeroId(0x33C) },
     { "Tank Bot", MakeHeroId(0x337) },
     { "Sniper Bot", MakeHeroId(0x35A) },
@@ -226,6 +229,11 @@ constexpr bool IsTrainingBotHeroId(uint64_t heroId) noexcept {
            heroId == MakeHeroId(0x363) ||
            heroId == MakeHeroId(0x349) ||
            heroId == MakeHeroId(0x339);
+}
+
+constexpr bool IsFriendlyTrainingBotHeroId(uint64_t heroId) noexcept {
+    return heroId == MakeHeroId(0x4E7) ||
+           heroId == MakeHeroId(0x363);
 }
 
 } // namespace OW::GameData

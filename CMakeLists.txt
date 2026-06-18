@@ -38,6 +38,7 @@ set(GAME_HEADERS
     include/Game/Entity.hpp
     include/Game/HeroGeometrySpec.hpp
     include/Game/HeroPerkLookupSeed.hpp
+    include/Game/HeroPerkRuntime.hpp
     include/Game/HeroPerks.hpp
     include/Game/HeroSkills.hpp
     include/Game/InputOrchestrator.hpp
@@ -62,6 +63,7 @@ set(GAME_HEADERS
     include/Renderer/Overlay.hpp
     include/Renderer/Renderer.hpp
     include/Utils/Config.hpp
+    include/Utils/CrashDump.hpp
     include/Utils/Diagnostics.hpp
     include/Utils/InputLabels.hpp
     include/Utils/TestServer.hpp
@@ -76,12 +78,14 @@ set(UNLEASHED_SOURCES
     src/Renderer/IconManager.cpp
     src/Renderer/Overlay.cpp
     src/Renderer/Renderer.cpp
+    src/Utils/CrashDump.cpp
     src/Utils/Diagnostics.cpp
     src/Utils/TestServer.cpp
     src/Utils/Types.cpp
     src/Utils/Config.cpp
     src/Features/UI.cpp
     src/Game/HeroGeometrySpec.cpp
+    src/Game/HeroPerkRuntime.cpp
     src/Game/HeroSkills.cpp
     src/Game/Offsets.cpp
     src/Game/WeaponSpec.cpp
@@ -124,7 +128,9 @@ add_executable(LeadPredictionSelfTest
 
 add_executable(WeaponSpecDisplaySelfTest
     src/Tools/WeaponSpecDisplaySelfTest.cpp
+    src/Game/HeroPerkRuntime.cpp
     src/Game/WeaponSpec.cpp
+    src/Utils/Diagnostics.cpp
 )
 
 add_executable(HeroSkillConfigSelfTest
@@ -231,6 +237,7 @@ target_link_libraries(Unleashed PRIVATE
     shell32
     dwmapi
     setupapi
+    dbghelp
 )
 
 target_link_libraries(MockHardwareSelfTest PRIVATE

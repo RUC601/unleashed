@@ -49,7 +49,7 @@ namespace OW { namespace Config {
 
     inline float FovCircleRenderAngleDeg(float fovDeg)
     {
-        return ClampFovDeg(ClampFovDeg(fovDeg) * 2.0f);
+        return ClampFovDeg(fovDeg);
     }
 
     inline float LegacyFovApertureToAngleDeg(float fovApertureDeg)

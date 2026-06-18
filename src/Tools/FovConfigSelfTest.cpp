@@ -1,4 +1,6 @@
 #include "Utils/Config.hpp"
+#include "Game/GameData.hpp"
+#include "Game/Offsets.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -37,9 +39,11 @@ int main()
         return Fail();
     if (!NearlyEqual(ClampFovDeg(60.0f), 60.0f))
         return Fail();
-    if (!NearlyEqual(FovCircleRenderAngleDeg(10.0f), 20.0f))
+    if (!NearlyEqual(FovCircleRenderAngleDeg(10.0f), 10.0f))
         return Fail();
-    if (!NearlyEqual(FovCircleRenderAngleDeg(100.0f), 180.0f))
+    if (!NearlyEqual(FovCircleRenderAngleDeg(100.0f), 100.0f))
+        return Fail();
+    if (!NearlyEqual(FovCircleRenderAngleDeg(103.0f), 103.0f))
         return Fail();
     if (!NearlyEqual(FovCircleRenderAngleDeg(360.0f), 180.0f))
         return Fail();
@@ -93,6 +97,32 @@ int main()
     if (!ColorNearlyEqual(targetargb, 1.0f, 1.0f, 0.0f, 1.0f))
         return Fail();
     if (!ColorNearlyEqual(allyargb, 0.0f, 0.0f, 1.0f, 0.0f))
+        return Fail();
+
+    OW::offset::SetActiveProfile(OW::offset::RuntimeProfile::CnNe);
+    if (OW::offset::TeamComparisonKeyFromFlags(0x208D4041) != 0x8D4041)
+        return Fail();
+    if (OW::offset::TeamComparisonKeyFromFlags(0x210D4041) != 0x0D4041)
+        return Fail();
+    if (OW::offset::TeamRawComparisonKeyFromFlags(0x208D4041) != 0x8D4041)
+        return Fail();
+    if (OW::offset::TeamRawComparisonKeyFromFlags(0x210D4041) != 0x0D4041)
+        return Fail();
+    if (OW::offset::TeamRelationCodeFromFlags(0x208D4041) != 0x41)
+        return Fail();
+    if (OW::offset::TeamRelationCodeFromFlags(0x210D4047) != 0x47)
+        return Fail();
+    if (!OW::GameData::IsFriendlyTrainingBotHeroId(OW::GameData::MakeHeroId(0x4E7)))
+        return Fail();
+    if (!OW::GameData::IsFriendlyTrainingBotHeroId(OW::GameData::MakeHeroId(0x363)))
+        return Fail();
+    if (OW::GameData::IsFriendlyTrainingBotHeroId(OW::GameData::MakeHeroId(0x33C)))
+        return Fail();
+
+    OW::offset::SetActiveProfile(OW::offset::RuntimeProfile::WorldBz);
+    if (OW::offset::TeamComparisonKeyFromFlags(0x208D4041) != 0x00800000)
+        return Fail();
+    if (OW::offset::TeamComparisonKeyFromFlags(0x210D4043) != 0x01000000)
         return Fail();
 
     return EXIT_SUCCESS;

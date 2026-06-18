@@ -904,6 +904,7 @@ static const HeroOption kHeroOptions[] = {
     { "Sierra", OW::eHero::HERO_SIERRA, "Damage" },
     { "Vendetta", OW::eHero::HERO_VENDETTA, "Damage" },
     { "Anran", OW::eHero::HERO_ANRAN, "Damage" },
+    { "Shion", OW::eHero::HERO_SHION, "Damage" },
     { "Mercy", OW::eHero::HERO_MERCY, "Support" },
     { "Lucio", OW::eHero::HERO_LUCIO, "Support" },
     { "Zenyatta", OW::eHero::HERO_ZENYATTA, "Support" },
@@ -914,6 +915,7 @@ static const HeroOption kHeroOptions[] = {
     { "Kiriko", OW::eHero::HERO_KIRIKO, "Support" },
     { "Lifeweaver", OW::eHero::HERO_LIFEWEAVER, "Support" },
     { "Illari", OW::eHero::HERO_ILLARI, "Support" },
+    { "Mizuki", OW::eHero::HERO_MIZUKI, "Support" },
     { "Juno", OW::eHero::HERO_JUNO, "Support" },
     { "Wuyang", OW::eHero::HERO_WUYANG, "Support" },
     { "JetpackCat", OW::eHero::HERO_JETPACKCAT, "Support" },
@@ -4476,7 +4478,7 @@ void UI::SkillsPage() {
     int renderedSkillCount = 0;
     if (selectedHero.heroId != 0) {
         for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
-            if (definition.heroId != selectedHero.heroId)
+            if (!OW::IsHeroSkillDefinitionActiveForRuntime(definition, selectedHero.heroId))
                 continue;
 
             std::string title = selectedHero.label;
@@ -4517,7 +4519,7 @@ void UI::SequencesPage() {
 
     if (selectedHero.heroId != 0) {
         for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
-            if (definition.heroId != selectedHero.heroId)
+            if (!OW::IsHeroSkillDefinitionActiveForRuntime(definition, selectedHero.heroId))
                 continue;
 
             const bool sequenceCombo =
@@ -5735,7 +5737,7 @@ static void DrawMiscKmboxPage() {
             }
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Reads current in-game sensitivity from GlobalAdmin singleton[0x6] + 0x2238 at a low cadence. Manual sensitivity remains the fallback.");
+            ImGui::SetTooltip("Reads current in-game sensitivity from the live singleton path when available, with input.MouseScaleX/Y as the BZ fallback. Manual sensitivity remains the final fallback.");
         ImGui::SameLine();
         if (ImGui::Button(T(UiText::ReadGameSens), ImVec2(64.0f, kControlHeight))) {
             float detectedSensitivity = 0.0f;

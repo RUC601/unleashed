@@ -103,6 +103,8 @@ struct EntityProcessStats {
     size_t nullPair = 0;
     size_t duplicate = 0;
     size_t healthBaseFail = 0;
+    size_t healthBaseMissing = 0;
+    size_t healthReadFail = 0;
     size_t linkBaseFail = 0;
     size_t heroBaseMissing = 0;
     size_t heroFallbackFail = 0;
@@ -130,6 +132,32 @@ struct EntityProcessStats {
     size_t headProbeFarCandidates = 0;
     size_t headProbeFarWorldNonZero = 0;
     uint64_t sampleBoneAddress = 0;
+    uint64_t sampleHealthFailComponentParent = 0;
+    uint64_t sampleHealthFailLinkParent = 0;
+    uint64_t sampleHealthFailHealthBase = 0;
+    uint64_t sampleHealthFailLinkBase = 0;
+    uint64_t sampleHealthFailVelocityBase = 0;
+    uint64_t sampleHealthFailHeroBase = 0;
+    uint64_t sampleHealthFailTeamBase = 0;
+    uint64_t sampleHealthFailBoneBase = 0;
+    int sampleHealthFailReadOk = 0;
+    uint64_t sampleNameUnknownComponentParent = 0;
+    uint64_t sampleNameUnknownLinkParent = 0;
+    uint64_t sampleNameUnknownComponentMatchId = 0;
+    uint64_t sampleNameUnknownLinkMatchId = 0;
+    uint64_t sampleNameUnknownHeroBase = 0;
+    uint64_t sampleNameUnknownHeroId = 0;
+    uint64_t sampleNameUnknownHeroIdCandidate = 0;
+    int sampleNameUnknownHeroIdCandidateOffset = -1;
+    uint64_t sampleNameUnknownComponentHeroBase = 0;
+    uint64_t sampleNameUnknownComponentHeroId = 0;
+    uint64_t sampleNameUnknownComponentHeroIdCandidate = 0;
+    int sampleNameUnknownComponentHeroIdCandidateOffset = -1;
+    uint64_t sampleNameUnknownLinkBase = 0;
+    uint64_t sampleNameUnknownSkillBase = 0;
+    uint64_t sampleNameUnknownTeamBase = 0;
+    uint64_t sampleNameUnknownBoneBase = 0;
+    int sampleNameUnknownKind = 0;
     uint64_t sampleVelocityBase = 0;
     uint64_t sampleBoneBase = 0;
     uint64_t sampleVelocityBoneData = 0;
@@ -176,6 +204,26 @@ struct PlayerInfoStats {
     size_t skippedWorldToScreenHigh = 0;
     size_t skippedBox = 0;
     size_t skippedWindow = 0;
+    bool sampleProjected = false;
+    bool sampleDrawn = false;
+    uint64_t sampleProjectedAddress = 0;
+    uint64_t sampleProjectedHeroId = 0;
+    int sampleProjectedLeft = 0;
+    int sampleProjectedTop = 0;
+    int sampleProjectedWidth = 0;
+    int sampleProjectedHeight = 0;
+    int sampleProjectedCenterX = 0;
+    int sampleProjectedBottom = 0;
+    int sampleProjectedDistanceM = 0;
+    uint64_t sampleDrawnAddress = 0;
+    uint64_t sampleDrawnHeroId = 0;
+    int sampleDrawnLeft = 0;
+    int sampleDrawnTop = 0;
+    int sampleDrawnWidth = 0;
+    int sampleDrawnHeight = 0;
+    int sampleDrawnCenterX = 0;
+    int sampleDrawnBottom = 0;
+    int sampleDrawnDistanceM = 0;
 };
 
 struct LocalEntityStats {
@@ -213,6 +261,42 @@ struct RosterStats {
     size_t heroChanged = 0;
 };
 
+struct EntityScanDetailStats {
+    uint64_t entityList = 0;
+    size_t readableBytes = 0;
+    size_t readableChunks = 0;
+    size_t slotsScanned = 0;
+    size_t nonZeroSlots = 0;
+    size_t plausibleSlots = 0;
+    size_t records = 0;
+    size_t matchIds = 0;
+    size_t linkPresent = 0;
+    size_t linkUidNonZero = 0;
+    size_t linkMatched = 0;
+    size_t linkPairs = 0;
+    size_t selfHealthBase = 0;
+    size_t selfHealthRead = 0;
+    size_t selfHealthPlausible = 0;
+    size_t selfHeroBase = 0;
+    size_t selfHeroRead = 0;
+    size_t selfHeroKnown = 0;
+    size_t selfVelocityBase = 0;
+    size_t selfBoneBase = 0;
+    size_t selfPlayable = 0;
+    size_t dynamicPairs = 0;
+    size_t totalPairs = 0;
+    int sampleRejectReason = 0;
+    uint64_t sampleRejectParent = 0;
+    uint64_t sampleRejectMatchId = 0;
+    uint64_t sampleRejectHealthBase = 0;
+    uint64_t sampleRejectHeroBase = 0;
+    uint64_t sampleRejectHeroId = 0;
+    uint64_t sampleRejectVelocityBase = 0;
+    uint64_t sampleRejectBoneBase = 0;
+    int sampleRejectHealthCm = 0;
+    int sampleRejectHealthMaxCm = 0;
+};
+
 struct StatusSnapshot {
     size_t entityCount = 0;
     size_t lastScanEntityCount = 0;
@@ -242,6 +326,7 @@ struct StatusSnapshot {
     PlayerInfoStats playerInfo{};
     LocalEntityStats localEntity{};
     RosterStats roster{};
+    EntityScanDetailStats entityScanDetail{};
 };
 
 void Initialize(LogLevel minLevel = LogLevel::Info, const char* logPath = "./unleashed_diag.log");
@@ -302,6 +387,7 @@ void SetEntityProcessStats(const EntityProcessStats& stats);
 void SetPlayerInfoStats(const PlayerInfoStats& stats);
 void SetLocalEntityStats(const LocalEntityStats& stats);
 void SetRosterStats(const RosterStats& stats);
+void SetEntityScanDetailStats(const EntityScanDetailStats& stats);
 
 StatusSnapshot Snapshot();
 void DumpStatus();

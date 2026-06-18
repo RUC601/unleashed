@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Game/AimArchitecture.hpp"
+#include "Game/HeroPerkRuntime.hpp"
 #include "Utils/Config.hpp"
 #include "Game/InputOrchestrator.hpp"
 #include "Game/Structs.hpp"
@@ -82,6 +84,9 @@ struct HeroSkillDefinition {
     HeroSkillCategory category;
     HeroSkillControlFlags controls;
     Config::HeroSkillSettings defaultSettings;
+    RuntimeVariantRequirement variantRequirement = RuntimeVariantRequirement::None;
+    const char* variantId = "";
+    const char* replacesSkillId = "";
 };
 
 inline constexpr bool HasHeroSkillControl(const HeroSkillDefinition& definition,
@@ -870,6 +875,7 @@ inline constexpr HeroSkillHeroEntry kHeroSkillAutoMeleeHeroes[] = {
     { OW::eHero::HERO_SIERRA,       "sierra" },
     { OW::eHero::HERO_VENDETTA,     "vendetta" },
     { OW::eHero::HERO_ANRAN,        "anran" },
+    { OW::eHero::HERO_SHION,        "shion" },
     { OW::eHero::HERO_REINHARDT,    "reinhardt" },
     { OW::eHero::HERO_WINSTON,      "winston" },
     { OW::eHero::HERO_ZARYA,        "zarya" },
@@ -893,6 +899,7 @@ inline constexpr HeroSkillHeroEntry kHeroSkillAutoMeleeHeroes[] = {
     { OW::eHero::HERO_KIRIKO,       "kiriko" },
     { OW::eHero::HERO_LIFEWEAVER,   "lifeweaver" },
     { OW::eHero::HERO_ILLARI,       "illari" },
+    { OW::eHero::HERO_MIZUKI,       "mizuki" },
     { OW::eHero::HERO_JUNO,         "juno" },
     { OW::eHero::HERO_WUYANG,       "wuyang" },
     { OW::eHero::HERO_JETPACKCAT,   "jetpackcat" },
@@ -942,11 +949,49 @@ inline size_t HeroSkillDefinitionCount()
     return AllHeroSkillDefinitions().size();
 }
 
+inline bool IsHeroSkillVariantRequirementSatisfied(const HeroSkillDefinition& definition,
+                                                   uint64_t heroId)
+{
+    switch (definition.variantRequirement) {
+    case RuntimeVariantRequirement::PerkOn:
+        return HeroPerkRuntime::IsEffectivePerkOn(heroId);
+    case RuntimeVariantRequirement::None:
+    default:
+        return true;
+    }
+}
+
+inline bool IsHeroSkillDefinitionActiveForRuntime(const HeroSkillDefinition& definition,
+                                                  uint64_t heroId)
+{
+    if (definition.heroId != heroId)
+        return false;
+    if (!IsHeroSkillVariantRequirementSatisfied(definition, heroId))
+        return false;
+
+    if (definition.variantRequirement == RuntimeVariantRequirement::None) {
+        const char* skillId = definition.skillId ? definition.skillId : "";
+        for (const HeroSkillDefinition& candidate : AllHeroSkillDefinitions()) {
+            if (candidate.heroId != heroId ||
+                candidate.variantRequirement == RuntimeVariantRequirement::None ||
+                !candidate.replacesSkillId ||
+                std::string(candidate.replacesSkillId) != skillId) {
+                continue;
+            }
+
+            if (IsHeroSkillVariantRequirementSatisfied(candidate, heroId))
+                return false;
+        }
+    }
+
+    return true;
+}
+
 inline int CountHeroSkillDefinitions(uint64_t heroId)
 {
     int count = 0;
     for (const HeroSkillDefinition& definition : AllHeroSkillDefinitions()) {
-        if (definition.heroId == heroId)
+        if (IsHeroSkillDefinitionActiveForRuntime(definition, heroId))
             ++count;
     }
     return count;

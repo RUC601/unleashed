@@ -52,6 +52,11 @@ enum class FirePolicyType : int {
     ChargeRelease = 5,
 };
 
+enum class RuntimeVariantRequirement : int {
+    None = 0,
+    PerkOn,
+};
+
 enum class TraceMode : int {
     Strict = 0,
     Relaxed = 1,
@@ -98,6 +103,15 @@ struct FirePolicy {
     float maxCharge = 100.0f;
 };
 
+inline constexpr int kWeaponControlUseActionButton = -2;
+inline constexpr int kWeaponControlNoButton = -1;
+
+struct WeaponControlSpec {
+    int generatedFireButton = kWeaponControlUseActionButton;
+    int trackingHoldButton = kWeaponControlUseActionButton;
+    int stanceHoldButton = kWeaponControlNoButton;
+};
+
 struct AimBehavior {
     AimBehaviorType type = AimBehaviorType::Tracking;
     float behaviorTolerance = 0.0f;
@@ -133,6 +147,10 @@ struct WeaponSpec {
     ProjectileSpec projectile{};
     FirePolicy firePolicy{};
     AimBehaviorType defaultBehavior = AimBehaviorType::Tracking;
+    RuntimeVariantRequirement variantRequirement = RuntimeVariantRequirement::None;
+    std::string_view variantId{};
+    std::string_view replacesWeaponId{};
+    WeaponControlSpec control{};
     std::string_view sourceUrl{};
     std::string_view sourceNote{};
     float confidence = 0.0f;

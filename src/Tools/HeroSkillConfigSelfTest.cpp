@@ -40,6 +40,8 @@ int main()
     const OW::HeroSkillDefinition* tracerAutoMelee = nullptr;
     const OW::HeroSkillDefinition* emreAutoMelee = nullptr;
     const OW::HeroSkillDefinition* sierraAutoMelee = nullptr;
+    const OW::HeroSkillDefinition* mizukiAutoMelee = nullptr;
+    const OW::HeroSkillDefinition* shionAutoMelee = nullptr;
     size_t autoMeleeDefinitions = 0;
     for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
         const std::string skillId(definition.skillId ? definition.skillId : "");
@@ -98,6 +100,10 @@ int main()
                 emreAutoMelee = &definition;
             if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_SIERRA))
                 sierraAutoMelee = &definition;
+            if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_MIZUKI))
+                mizukiAutoMelee = &definition;
+            if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_SHION))
+                shionAutoMelee = &definition;
         }
     }
 
@@ -110,11 +116,15 @@ int main()
     if (!tracerRecall || !reaperWraithForm || !zenyattaTranscendence ||
         !zaryaPropelJump || !zaryaLowAmmoRightClick || !genjiDashCombo)
         return Fail();
-    if (!tracerAutoMelee || !emreAutoMelee || !sierraAutoMelee)
+    if (!tracerAutoMelee || !emreAutoMelee || !sierraAutoMelee || !mizukiAutoMelee || !shionAutoMelee)
         return Fail();
     if (std::string(OW::GameData::HeroName(static_cast<uint64_t>(OW::eHero::HERO_EMRE))) != "Emre")
         return Fail();
     if (std::string(OW::GameData::HeroName(static_cast<uint64_t>(OW::eHero::HERO_SIERRA))) != "Sierra")
+        return Fail();
+    if (std::string(OW::GameData::HeroName(static_cast<uint64_t>(OW::eHero::HERO_MIZUKI))) != "Mizuki")
+        return Fail();
+    if (std::string(OW::GameData::HeroName(static_cast<uint64_t>(OW::eHero::HERO_SHION))) != "Shion")
         return Fail();
     if (autoMeleeDefinitions != OW::AutoMeleeHeroDefinitionCount())
         return Fail();

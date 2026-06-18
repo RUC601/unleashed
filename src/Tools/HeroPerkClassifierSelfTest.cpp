@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <initializer_list>
 
 Memory::~Memory() = default;
 
@@ -28,6 +29,77 @@ OW::HeroPerks::PointerTarget MakePointer(
     return target;
 }
 
+OW::HeroPerks::CandidateSlot MakeEmptyCandidateSlot(uint64_t offset)
+{
+    OW::HeroPerks::CandidateSlot slot{};
+    slot.offset = offset;
+    slot.qwordRead = true;
+    slot.qword = 0;
+    slot.pointerPlausible = false;
+    OW::HeroPerks::FinishCandidateSlotDerivedFields(slot);
+    return slot;
+}
+
+OW::HeroPerks::CandidateSlot MakeCandidateSlot(
+    uint64_t offset,
+    uint64_t semantic,
+    uint32_t count,
+    std::initializer_list<uint32_t> values,
+    uint64_t qword = 0x0000010000001000ull)
+{
+    OW::HeroPerks::CandidateSlot slot{};
+    slot.offset = offset;
+    slot.qwordRead = true;
+    slot.qword = qword + offset;
+    slot.pointerPlausible = true;
+    slot.targetSemanticSignature = semantic;
+    slot.targetCompletion.countU32Read = true;
+    slot.targetCompletion.countU32 = count;
+    slot.targetCompletion.countPlausible = true;
+    slot.targetCompletion.valuesRequested = values.size();
+    slot.targetCompletion.valuesRead = values.size();
+    size_t index = 0;
+    for (const uint32_t value : values) {
+        slot.targetCompletion.values[index++] = value;
+        slot.targetCompletion.anyNonZero = slot.targetCompletion.anyNonZero || value != 0;
+    }
+    slot.targetCompletion.allOnes = values.size() > 0;
+    for (size_t i = 0; i < slot.targetCompletion.valuesRead; ++i)
+        slot.targetCompletion.allOnes =
+            slot.targetCompletion.allOnes && slot.targetCompletion.values[i] == 1;
+    return slot;
+}
+
+OW::HeroPerks::State MakeCandidateSlotState(uint64_t heroId)
+{
+    OW::HeroPerks::State state{};
+    state.available = true;
+    state.heroId = heroId;
+    state.e44Read = true;
+    for (size_t index = 0; index < OW::HeroPerks::kCandidateSlotOffsets.size(); ++index) {
+        state.candidateSlots[index] =
+            MakeEmptyCandidateSlot(OW::HeroPerks::kCandidateSlotOffsets[index]);
+    }
+    return state;
+}
+
+void PutCandidateSlot(OW::HeroPerks::State& state, OW::HeroPerks::CandidateSlot slot)
+{
+    for (OW::HeroPerks::CandidateSlot& existing : state.candidateSlots) {
+        if (existing.offset == slot.offset) {
+            existing = slot;
+            return;
+        }
+    }
+}
+
+const OW::HeroPerks::CandidateSlotSelectedBoolean& ClassifyCandidateSlots(
+    OW::HeroPerks::State& state)
+{
+    state.candidateSlotSelected = OW::HeroPerks::ClassifyCandidateSlotSelection(state);
+    return state.candidateSlotSelected;
+}
+
 void FinishDerivedState(OW::HeroPerks::State& state)
 {
     state.lookupReady = state.available &&
@@ -46,6 +118,20 @@ void FinishDerivedState(OW::HeroPerks::State& state)
     OW::HeroPerks::BuildResearchCandidateKeys(state);
     state.classification = OW::HeroPerks::Classify(state);
     OW::HeroPerks::EvaluateResearchSelectedBoolean(state);
+    OW::HeroPerks::EvaluateRawSelectedBoolean(state);
+    state.candidateSlotSelected = OW::HeroPerks::ClassifyCandidateSlotSelection(state);
+    OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+}
+
+OW::HeroPerks::StateScriptEa0cRecordSignal MakeStateScriptSignal(uint64_t qword50, uint64_t qword58)
+{
+    OW::HeroPerks::StateScriptEa0cRecordSignal signal{};
+    signal.found = true;
+    signal.qword50Read = true;
+    signal.qword50 = qword50;
+    signal.qword58Read = true;
+    signal.qword58 = qword58;
+    return signal;
 }
 
 OW::HeroPerks::State MakeBaptisteUltimateRightFixture()
@@ -138,6 +224,467 @@ int main()
     if (unsupportedCandidate.researchSelected.available || unsupportedCandidate.researchSelected.selected)
         return Fail();
 
+    constexpr uint64_t kHeroAna = OW::GameData::MakeHeroId(0x13B);
+    constexpr uint64_t kHeroDVa = OW::GameData::MakeHeroId(0x07A);
+    constexpr uint64_t kHeroHanzo = OW::GameData::MakeHeroId(0x005);
+    constexpr uint64_t kHeroOrisa = OW::GameData::MakeHeroId(0x13E);
+    constexpr uint64_t kHeroPharah = OW::GameData::MakeHeroId(0x008);
+    constexpr uint64_t kHeroReaper = OW::GameData::MakeHeroId(0x002);
+    constexpr uint64_t kHeroReinhardt = OW::GameData::MakeHeroId(0x007);
+    constexpr uint64_t kHeroSymmetra = OW::GameData::MakeHeroId(0x016);
+    constexpr uint64_t kHeroZarya = OW::GameData::MakeHeroId(0x068);
+    constexpr uint64_t kSemanticA = 0x1111222233334444ull;
+    constexpr uint64_t kSemanticB = 0x5555666677778888ull;
+
+    {
+        bool selected = false;
+        const OW::HeroPerks::StateScriptEa0cRecordSignal trueSignal =
+            MakeStateScriptSignal(
+                OW::HeroPerks::kStateScriptSelectedTrue50,
+                OW::HeroPerks::kStateScriptSelectedTrue58);
+        if (!OW::HeroPerks::TryClassifyStateScriptEa0cRecords(trueSignal, trueSignal, selected) ||
+            !selected) {
+            return Fail();
+        }
+
+        const OW::HeroPerks::StateScriptEa0cRecordSignal falseSignal =
+            MakeStateScriptSignal(
+                OW::HeroPerks::kStateScriptSelectedFalse50,
+                OW::HeroPerks::kStateScriptSelectedFalse58);
+        selected = true;
+        if (!OW::HeroPerks::TryClassifyStateScriptEa0cRecords(falseSignal, falseSignal, selected) ||
+            selected) {
+            return Fail();
+        }
+
+        if (OW::HeroPerks::TryClassifyStateScriptEa0cRecords(trueSignal, falseSignal, selected))
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.available = true;
+        state.heroId = kHeroHanzo;
+        state.researchSelected.skill16C2Read = true;
+        state.researchSelected.skill16C2 = 2;
+        OW::HeroPerks::EvaluateRawSelectedBoolean(state);
+        if (!state.rawSelected.available || !state.rawSelected.selected)
+            return Fail();
+        if (std::strcmp(state.rawSelected.rule, "skill_16c2_u16_nonzero") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.available = true;
+        state.heroId = kHeroSymmetra;
+        state.researchSelected.symmetra02E8Read = true;
+        state.researchSelected.symmetra02E8 = 0x8000001800000006ull;
+        OW::HeroPerks::EvaluateRawSelectedBoolean(state);
+        if (!state.rawSelected.available || state.rawSelected.selected)
+            return Fail();
+        if (std::strcmp(state.rawSelected.rule, "symmetra_skill_02e8_high_80000018_low_lt_7") != 0)
+            return Fail();
+
+        state.researchSelected.symmetra02E8 = 0x8000001800000007ull;
+        OW::HeroPerks::EvaluateRawSelectedBoolean(state);
+        if (!state.rawSelected.available || !state.rawSelected.selected)
+            return Fail();
+        if (std::strcmp(state.rawSelected.rule, "symmetra_skill_02e8_high_80000018_low_ge_7") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.available = true;
+        state.heroId = kHeroZarya;
+        state.researchSelected.component55_270Read = true;
+        state.researchSelected.component55_270 = 6;
+        OW::HeroPerks::EvaluateRawSelectedBoolean(state);
+        if (!state.rawSelected.available || !state.rawSelected.selected)
+            return Fail();
+        if (std::strcmp(state.rawSelected.rule, "zarya_component55_270_u32_eq_6") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.rawSelected.supportedHero = true;
+        state.rawSelected.available = true;
+        state.rawSelected.selected = true;
+        state.rawSelected.rule = "raw_true_fixture";
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (!state.mergedSelected.available || !state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "raw") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.candidateSlotSelected.supportedHero = true;
+        state.candidateSlotSelected.available = true;
+        state.candidateSlotSelected.selected = false;
+        state.candidateSlotSelected.family = "candidate_false_fixture";
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (!state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "candidate_slot") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.candidateSlotSelected.supportedHero = true;
+        state.candidateSlotSelected.available = true;
+        state.candidateSlotSelected.selected = true;
+        state.candidateSlotSelected.family = "candidate_true_fixture";
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (!state.mergedSelected.available || !state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "candidate_slot") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.rawSelected.supportedHero = true;
+        state.rawSelected.available = true;
+        state.rawSelected.selected = true;
+        state.rawSelected.rule = "raw_true_fixture";
+        state.candidateSlotSelected.supportedHero = true;
+        state.candidateSlotSelected.available = true;
+        state.candidateSlotSelected.selected = true;
+        state.candidateSlotSelected.family = "candidate_true_fixture";
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (!state.mergedSelected.available || !state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "raw_and_candidate_slot") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.rawSelected.supportedHero = true;
+        state.rawSelected.available = true;
+        state.rawSelected.selected = false;
+        state.rawSelected.rule = "raw_false_fixture";
+        state.candidateSlotSelected.supportedHero = true;
+        state.candidateSlotSelected.available = true;
+        state.candidateSlotSelected.selected = false;
+        state.candidateSlotSelected.family = "candidate_false_fixture";
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (!state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "raw_and_candidate_slot") != 0)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "known_unselected") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.rawSelected.supportedHero = true;
+        state.rawSelected.available = true;
+        state.rawSelected.selected = true;
+        state.rawSelected.rule = "raw_true_fixture";
+        state.candidateSlotSelected.supportedHero = true;
+        state.candidateSlotSelected.available = true;
+        state.candidateSlotSelected.selected = false;
+        state.candidateSlotSelected.family = "candidate_false_fixture";
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "unknown_raw_candidate_conflict_fail_closed") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "unsupported_or_unread") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.heroId = kHeroDVa;
+        state.rawSelected.supportedHero = true;
+        state.rawSelected.available = true;
+        state.rawSelected.selected = true;
+        state.rawSelected.rule = "raw_true_fixture";
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "statescript_ea0c") != 0)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "unknown_statescript_ea0c_unavailable_fail_closed") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.heroId = kHeroDVa;
+        state.rawSelected.supportedHero = true;
+        state.rawSelected.available = true;
+        state.rawSelected.selected = true;
+        state.rawSelected.rule = "raw_true_fixture";
+        state.stateScriptEa0cSelected.available = true;
+        state.stateScriptEa0cSelected.selectedKnown = true;
+        state.stateScriptEa0cSelected.selected = false;
+        state.stateScriptEa0cSelected.sourceFound = true;
+        state.stateScriptEa0cSelected.mapConsistent = true;
+        state.stateScriptEa0cSelected.knownCandidateCount = 1;
+        state.stateScriptEa0cSelected.matchedSourceOffset = 0x01C8;
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (!state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "statescript_ea0c") != 0)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "known_unselected") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.heroId = kHeroDVa;
+        state.stateScriptEa0cSelected.available = true;
+        state.stateScriptEa0cSelected.selectedKnown = true;
+        state.stateScriptEa0cSelected.selected = true;
+        state.stateScriptEa0cSelected.sourceFound = true;
+        state.stateScriptEa0cSelected.mapConsistent = true;
+        state.stateScriptEa0cSelected.knownCandidateCount = 1;
+        state.stateScriptEa0cSelected.matchedSourceOffset = 0x01C8;
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (!state.mergedSelected.available || !state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.rule, "ea0c_10127_support_table_20260616") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.heroId = kHeroDVa;
+        state.rawSelected.supportedHero = true;
+        state.rawSelected.available = true;
+        state.rawSelected.selected = true;
+        state.rawSelected.rule = "raw_true_fixture";
+        state.candidateSlotSelected.supportedHero = true;
+        state.candidateSlotSelected.available = true;
+        state.candidateSlotSelected.selected = true;
+        state.candidateSlotSelected.family = "candidate_true_fixture";
+        state.stateScriptEa0cSelected.available = true;
+        state.stateScriptEa0cSelected.selectedKnown = true;
+        state.stateScriptEa0cSelected.selected = true;
+        state.stateScriptEa0cSelected.sourceFound = true;
+        state.stateScriptEa0cSelected.mapConsistent = true;
+        state.stateScriptEa0cSelected.knownCandidateCount = 1;
+        state.stateScriptEa0cSelected.matchedSourceOffset = 0x01D8;
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "statescript_ea0c") != 0)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "unknown_statescript_ea0c_unavailable_fail_closed") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.heroId = kHeroDVa;
+        state.rawSelected.supportedHero = true;
+        state.rawSelected.available = true;
+        state.rawSelected.selected = true;
+        state.rawSelected.rule = "raw_true_fixture";
+        state.stateScriptEa0cSelected.available = true;
+        state.stateScriptEa0cSelected.selectedKnown = true;
+        state.stateScriptEa0cSelected.selected = true;
+        state.stateScriptEa0cSelected.sourceFound = true;
+        state.stateScriptEa0cSelected.mapConsistent = true;
+        state.stateScriptEa0cSelected.knownCandidateCount = 2;
+        state.stateScriptEa0cSelected.matchedSourceOffset = 0x01C8;
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.source, "statescript_ea0c") != 0)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "unknown_statescript_ea0c_unavailable_fail_closed") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.heroId = kHeroOrisa;
+        state.stateScriptEa0cSelected.available = true;
+        state.stateScriptEa0cSelected.selectedKnown = true;
+        state.stateScriptEa0cSelected.selected = true;
+        state.stateScriptEa0cSelected.sourceFound = true;
+        state.stateScriptEa0cSelected.mapConsistent = true;
+        state.stateScriptEa0cSelected.knownCandidateCount = 1;
+        state.stateScriptEa0cSelected.matchedSourceOffset = 0x01E0;
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "unsupported_or_unread") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.heroId = kHeroReaper;
+        state.stateScriptEa0cSelected.available = true;
+        state.stateScriptEa0cSelected.selectedKnown = true;
+        state.stateScriptEa0cSelected.selected = true;
+        state.stateScriptEa0cSelected.sourceFound = true;
+        state.stateScriptEa0cSelected.mapConsistent = true;
+        state.stateScriptEa0cSelected.knownCandidateCount = 1;
+        state.stateScriptEa0cSelected.matchedSourceOffset = 0x01D8;
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "unsupported_or_unread") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state{};
+        state.heroId = kHeroPharah;
+        state.stateScriptEa0cSelected.available = true;
+        state.stateScriptEa0cSelected.selectedKnown = true;
+        state.stateScriptEa0cSelected.selected = true;
+        state.stateScriptEa0cSelected.sourceFound = true;
+        state.stateScriptEa0cSelected.mapConsistent = true;
+        state.stateScriptEa0cSelected.knownCandidateCount = 1;
+        state.stateScriptEa0cSelected.matchedSourceOffset = 0x01D8;
+        OW::HeroPerks::EvaluateMergedSelectedBoolean(state);
+        if (state.mergedSelected.available || state.mergedSelected.selected)
+            return Fail();
+        if (std::strcmp(state.mergedSelected.result, "unsupported_or_unread") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroOrisa);
+        PutCandidateSlot(state, MakeCandidateSlot(0x0B50, kSemanticA, 0, {}));
+        PutCandidateSlot(state, MakeCandidateSlot(0x0B58, kSemanticA, 0, {}));
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (!selected.available || !selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "b_record_0b50_0b58_nonzero_join") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroOrisa);
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (!selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "b_record_0b50_0b58_empty") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroHanzo);
+        state.e44U32 = 0x1C;
+        PutCandidateSlot(state, MakeCandidateSlot(0x320, kSemanticA, 6, { 1, 1, 1, 0, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x328, kSemanticA, 6, { 1, 1, 1, 0, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x330, kSemanticB, 6, { 0, 0, 0, 0, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x338, kSemanticA, 6, { 1, 1, 1, 0, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x340, kSemanticB, 5, { 1, 1, 0, 1, 1 }));
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (!selected.available || !selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "hanzo_e44_1c_0320_0328_0338_count6_join_0340_count5") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroHanzo);
+        PutCandidateSlot(state, MakeCandidateSlot(0x338, kSemanticA, 6, { 0, 0, 0, 0, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x340, kSemanticB, 5, { 1, 1, 0, 1, 1 }));
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (!selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "front_0340_count5_available") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroZarya);
+        state.e44U32 = 0x06;
+        PutCandidateSlot(state, MakeCandidateSlot(0x0B30, kSemanticA, 0, {}));
+        PutCandidateSlot(state, MakeCandidateSlot(0x0B38, kSemanticB, 0, {}));
+        PutCandidateSlot(state, MakeCandidateSlot(0x338, kSemanticA, 6, { 1, 1, 1, 0, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x340, kSemanticA, 6, { 1, 1, 1, 0, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x348, kSemanticA, 6, { 1, 1, 1, 0, 0, 0 }));
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (!selected.available || !selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "front_0338_0340_0348_count6_join_selected_boolean") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroZarya);
+        state.e44U32 = 0x06;
+        PutCandidateSlot(state, MakeCandidateSlot(0x0B30, kSemanticA, 0, {}));
+        PutCandidateSlot(state, MakeCandidateSlot(0x0B38, kSemanticB, 0, {}));
+        PutCandidateSlot(state, MakeCandidateSlot(0x338, kSemanticA, 3, { 1, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x340, kSemanticB, 6, { 1, 1, 1, 0, 0, 0 }));
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "front_0340_count6_right_swap") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroZarya);
+        state.e44U32 = 0x06;
+        PutCandidateSlot(state, MakeCandidateSlot(0x340, kSemanticA, 6, { 1, 1, 1, 0, 0, 0 }));
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "front_0338_0340_count6_join_without_primary_context") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroReinhardt);
+        PutCandidateSlot(state, MakeCandidateSlot(0x328, kSemanticA, 5, { 1, 1, 0, 1, 1 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x330, kSemanticB, 14, { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x338, kSemanticA, 0x66, {}));
+        PutCandidateSlot(state, MakeCandidateSlot(0x340, kSemanticB, 10, { 0, 1, 0, 0, 1, 0, 1, 1, 0, 0 }));
+        PutCandidateSlot(state, MakeCandidateSlot(0x348, kSemanticA, 6, { 0, 0, 0, 0, 0, 0 }));
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (!selected.available || !selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "front_0328_count5_0330_0338_0340_0348_selected_chain") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroAna);
+        PutCandidateSlot(state, MakeCandidateSlot(0x0B50, kSemanticA, 0, {}));
+        PutCandidateSlot(state, MakeCandidateSlot(0x0B58, kSemanticA, 0, {}));
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(selected.family, "generic_b_record_0b50_0b58_nonzero_join") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::State state = MakeCandidateSlotState(kHeroDVa);
+        const auto& selected = ClassifyCandidateSlots(state);
+        if (selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(selected.result, "unknown_no_family_rule") != 0)
+            return Fail();
+    }
+
     OW::HeroPerks::State fixture = MakeBaptisteUltimateRightFixture();
     if (fixture.uniqueNo338Signature != 0xC565375C7A6B154Dull)
         return Fail();
@@ -206,6 +753,193 @@ int main()
         return Fail();
     if (OW::HeroPerks::IsKnown(collision.classification.result))
         return Fail();
+
+    {
+        OW::HeroPerks::AnaHeadshotSelectedBoolean selected{};
+        selected.supportedHero = true;
+        selected.primaryGateRead = true;
+        selected.primaryGateE44 = 0x00000006u;
+        selected.primaryGateActive = true;
+        selected.majorSelectedKnown = true;
+        selected.majorSelected = true;
+        selected.skill0348TargetRead = true;
+        selected.skill0348Target = 0x0000010000000000ull;
+        selected.skill0348TargetPlausible = true;
+        selected.skill0348Target1D4Read = true;
+        selected.skill0348Target1D4 = 0x00000000u;
+        selected.component21_0228Read = true;
+        selected.component21_0228 = 0x00000002u;
+        selected.component21_02E8Read = true;
+        selected.component21_02E8 = 0x00000002u;
+        OW::HeroPerks::ClassifyAnaHeadshotSelectedBoolean(selected);
+        if (!selected.available || !selected.selected)
+            return Fail();
+        if (std::strcmp(
+                selected.result,
+                "known_selected_statescript_major_component21_02e8_eq_2") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::AnaHeadshotSelectedBoolean selected{};
+        selected.supportedHero = true;
+        selected.primaryGateRead = true;
+        selected.primaryGateE44 = 0x00000001u;
+        selected.primaryGateActive = false;
+        selected.majorSelectedKnown = true;
+        selected.majorSelected = true;
+        selected.skill0348TargetRead = true;
+        selected.skill0348Target = 0x0000010000000000ull;
+        selected.skill0348TargetPlausible = true;
+        selected.skill0348Target1D4Read = true;
+        selected.skill0348Target1D4 = 0x00000002u;
+        selected.component21_0228Read = true;
+        selected.component21_0228 = 0x00000002u;
+        selected.component21_02E8Read = true;
+        selected.component21_02E8 = 0x00000002u;
+        OW::HeroPerks::ClassifyAnaHeadshotSelectedBoolean(selected);
+        if (!selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(
+                selected.result,
+                "known_unselected_primary_gate_e44_no_pri") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::AnaHeadshotSelectedBoolean selected{};
+        selected.supportedHero = true;
+        selected.primaryGateRead = true;
+        selected.primaryGateE44 = 0x00000006u;
+        selected.primaryGateActive = true;
+        selected.majorSelectedKnown = true;
+        selected.majorSelected = true;
+        selected.skill0348TargetRead = true;
+        selected.skill0348Target = 0x0000010000000000ull;
+        selected.skill0348TargetPlausible = true;
+        selected.skill0348Target1D4Read = true;
+        selected.skill0348Target1D4 = 0x00000002u;
+        selected.component21_0228Read = true;
+        selected.component21_0228 = 0x00000000u;
+        selected.component21_02E8Read = true;
+        selected.component21_02E8 = 0x00000000u;
+        OW::HeroPerks::ClassifyAnaHeadshotSelectedBoolean(selected);
+        if (!selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(
+                selected.result,
+                "known_unselected_statescript_major_component21_02e8_eq_0") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::AnaHeadshotSelectedBoolean selected{};
+        selected.supportedHero = true;
+        selected.primaryGateRead = true;
+        selected.primaryGateE44 = 0x00000006u;
+        selected.primaryGateActive = true;
+        selected.majorSelectedKnown = true;
+        selected.majorSelected = true;
+        selected.skill0348TargetRead = true;
+        selected.skill0348Target = 0x0000010000000000ull;
+        selected.skill0348TargetPlausible = true;
+        selected.skill0348Target1D4Read = true;
+        selected.skill0348Target1D4 = 0x00000002u;
+        selected.component21_0228Read = true;
+        selected.component21_0228 = 0x00000000u;
+        selected.component21_02E8Read = true;
+        selected.component21_02E8 = 0x00000002u;
+        OW::HeroPerks::ClassifyAnaHeadshotSelectedBoolean(selected);
+        if (!selected.available || !selected.selected)
+            return Fail();
+        if (std::strcmp(
+                selected.result,
+                "known_selected_statescript_major_component21_02e8_eq_2") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::AnaHeadshotSelectedBoolean selected{};
+        selected.supportedHero = true;
+        selected.primaryGateRead = true;
+        selected.primaryGateE44 = 0x0000005Eu;
+        selected.primaryGateActive = true;
+        selected.majorSelectedKnown = false;
+        selected.majorSelected = false;
+        selected.skill0348TargetRead = true;
+        selected.skill0348Target = 0x0000010000000000ull;
+        selected.skill0348TargetPlausible = true;
+        selected.skill0348Target1D4Read = true;
+        selected.skill0348Target1D4 = 0x00000000u;
+        selected.component21_0228Read = true;
+        selected.component21_0228 = 0x00000000u;
+        selected.component21_02E8Read = true;
+        selected.component21_02E8 = 0x00000002u;
+        OW::HeroPerks::ClassifyAnaHeadshotSelectedBoolean(selected);
+        if (!selected.available || !selected.selected)
+            return Fail();
+        if (std::strcmp(
+                selected.result,
+                "inferred_selected_e44_not_no_pri_component21_02e8_eq_2") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::AnaHeadshotSelectedBoolean selected{};
+        selected.supportedHero = true;
+        selected.primaryGateRead = true;
+        selected.primaryGateE44 = 0x00000006u;
+        selected.primaryGateActive = true;
+        selected.majorSelectedKnown = true;
+        selected.majorSelected = false;
+        selected.component21_0228Read = true;
+        selected.component21_0228 = 0x00000000u;
+        selected.component21_02E8Read = true;
+        selected.component21_02E8 = 0x00000002u;
+        OW::HeroPerks::ClassifyAnaHeadshotSelectedBoolean(selected);
+        if (!selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(
+                selected.result,
+                "known_unselected_statescript_major_not_selected") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::AnaHeadshotSelectedBoolean selected{};
+        selected.supportedHero = true;
+        selected.primaryGateRead = true;
+        selected.primaryGateE44 = 0x0000003Fu;
+        selected.primaryGateActive = true;
+        selected.majorSelectedKnown = true;
+        selected.majorSelected = true;
+        selected.component21_02E8Read = true;
+        selected.component21_02E8 = 0x00000001u;
+        OW::HeroPerks::ClassifyAnaHeadshotSelectedBoolean(selected);
+        if (!selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(
+                selected.result,
+                "known_unselected_statescript_major_component21_02e8_eq_1") != 0)
+            return Fail();
+    }
+
+    {
+        OW::HeroPerks::AnaHeadshotSelectedBoolean selected{};
+        selected.supportedHero = true;
+        selected.primaryGateRead = true;
+        selected.primaryGateE44 = 0x00000006u;
+        selected.primaryGateActive = true;
+        selected.majorSelectedKnown = true;
+        selected.majorSelected = true;
+        selected.component21_02E8Read = true;
+        selected.component21_02E8 = 0x00000003u;
+        OW::HeroPerks::ClassifyAnaHeadshotSelectedBoolean(selected);
+        if (selected.available || selected.selected)
+            return Fail();
+        if (std::strcmp(selected.result, "unknown_component21_02e8_value") != 0)
+            return Fail();
+    }
 
     return EXIT_SUCCESS;
 }

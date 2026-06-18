@@ -24,6 +24,7 @@
 #include "Memory/Memory.h"        // ::mem   (global DMA instance)
 #include "Memory/KeyState.hpp"    // host keyboard/mouse state via DMA
 #include "Game/AbilityIcons.hpp"  // ability icon lookup table
+#include "Game/HeroPerkRuntime.hpp" // manual perk variant runtime
 #include "Game/HeroSkills.hpp"    // generic hero skill primitives
 #include "Game/SDK.hpp"           // OW::SDK
 #include "Game/Decrypt.hpp"       // OW::GetGlobalKey, OW::DecryptComponent
@@ -41,6 +42,7 @@
 #include "Renderer/Overlay.hpp"   // g_Overlay
 #include "Renderer/Renderer.hpp"  // Render:: drawing primitives
 #include "Features/UI.hpp"        // UI::Render
+#include "Utils/CrashDump.hpp"    // crash dump capture for postmortem analysis
 #include "Utils/Diagnostics.hpp"   // lightweight runtime diagnostics
 #include "Utils/TestServer.hpp"    // optional Scenario telemetry server
 
@@ -201,7 +203,7 @@ namespace {
             "Junker Queen", "Junkrat", "Juno", "Kiriko", "LifeWeaver",
             "Lucio", "Mauga", "Mei", "Mercy", "Mizuki", "Moira", "Orisa",
             "Pharah", "Ramattra", "Reaper", "Reinhardt", "Roadhog",
-            "Sierra", "Sigma", "Sojourn", "Soldier 76", "Sombra",
+            "Shion", "Sierra", "Sigma", "Sojourn", "Soldier 76", "Sombra",
             "Symmetra", "Torbjorn", "Tracer", "Vendetta", "Venture",
             "Widowmaker", "Winston", "Wrecking Ball", "Wuyang", "Zarya",
             "Zenyatta"
@@ -994,10 +996,14 @@ namespace {
 void RenderCallback()
 {
     Diagnostics::RecordFrame();
-    if (OW::ProcessConnection::IsConnected())
+    if (OW::ProcessConnection::IsConnected()) {
+        const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
+        OW::HeroPerkRuntime::UpdateContext(localSnapshot.HeroID, true, localSnapshot.Team);
         OW::ProcessHeroSkills();
-    else
+    } else {
+        OW::HeroPerkRuntime::ResetForDisconnect();
         OW::CancelActiveSkill();
+    }
 
     // The menu is rendered by the separate overlay menu window. This callback
     // only draws the transparent full-screen canvas layer.
@@ -1449,6 +1455,8 @@ static void StopProcessConnectionThread()
 
 int main(int argc, char** argv)
 {
+    CrashDump::InstallUnhandledExceptionFilter(L"crash_dumps");
+
     // ---- Console ----
     SetConsoleTitleA("UNLEASHED");
 

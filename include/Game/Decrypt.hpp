@@ -8,6 +8,7 @@
 #include <utility>
 #include <type_traits>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -316,6 +317,21 @@ namespace OW {
             return 0;
         }
 
+        if (activeOffsets.componentTransform == offset::ComponentTransformMode::World150818) {
+            component = static_cast<uint64_t>(component_key_byte) ^
+                ((component_key_material_1 ^
+                    (component + offset::Component150818_Add1)) +
+                    offset::Component150818_Add2) ^
+                offset::Component150818_Xor1;
+            component ^= offset::Component150818_Xor2;
+            component = ROR64(component, offset::Component150818_Ror);
+
+            const uintptr_t decoded = static_cast<uintptr_t>(present_mask & component);
+            if (!decoded)
+                Diagnostics::RecordDecryptFailure();
+            return decoded;
+        }
+
         component ^= component_key_material_1;
         component ^= offset::Component_Xor1;
         component = ROR64(component, offset::Component_Ror1);
@@ -354,7 +370,26 @@ namespace OW {
         }
 
         const uint64_t enc = SDK->RPM<uint64_t>(visBase + activeOffsets.VisibilityValueOffset);
-        const bool visible = cnNeProfile ? (enc == 1) : ((enc & 0x800) == 0);
+        bool visible = false;
+        if (cnNeProfile) {
+            visible = enc == 1;
+        } else {
+            const uint64_t keySource = SDK->RPM<uint64_t>(
+                SDK->dwGameBase + offset::VisibilityGlobalKeyPtr_RVA);
+            const uint64_t xorQword = keySource
+                ? SDK->RPM<uint64_t>(keySource + offset::VisibilityQwordOffset)
+                : 0;
+            const uint8_t xorByte = SDK->RPM<uint8_t>(
+                SDK->dwGameBase + offset::VisibilityMagicByte_RVA);
+            uint64_t value =
+                (static_cast<uint64_t>(xorByte) ^
+                    ((ROR64(enc, offset::Visibility_Ror1) ^
+                        offset::Visibility_Xor1) -
+                        offset::Visibility_Sub1)) +
+                offset::Visibility_Add1;
+            value = ROR64(value + offset::Visibility_Add2, offset::Visibility_Ror2);
+            visible = (xorQword ^ ROL64(value, 1)) == 1;
+        }
         const uint64_t result = visible ? 1 : 0;
         {
             static uint32_t sampleCount = 0;
@@ -384,20 +419,248 @@ namespace OW {
             (value % alignof(void*) == 0);
     }
 
+    inline bool IsAddressInRange(uint64_t value, uint64_t start, uint64_t end) {
+        return start != 0 && end > start && value >= start && value < end;
+    }
+
+    inline bool IsLikelyEntityMatchId(uint32_t value) {
+        return (value & 0x80000000u) != 0;
+    }
+
+    inline bool IsLikelyCnNeEntityParent(
+        uint64_t value,
+        uint64_t entityList,
+        size_t entityListReadSize,
+        uint64_t moduleBase,
+        uint64_t moduleSize) {
+        if (!IsPlausibleUserPointer(value))
+            return false;
+
+        const uint64_t moduleEnd =
+            moduleSize != 0 ? moduleBase + moduleSize : moduleBase + 0x8000000ull;
+        if (IsAddressInRange(value, moduleBase, moduleEnd))
+            return false;
+        if (IsAddressInRange(value, entityList, entityList + entityListReadSize))
+            return false;
+        return true;
+    }
+
+    inline uint64_t ResolveCnNeWrapperMapBase(uint64_t parent) {
+        if (!IsPlausibleUserPointer(parent))
+            return 0;
+
+        const uint32_t id = SDK->RPM<uint32_t>(parent + 0x2F0);
+        if (id == 0)
+            return 0;
+
+        const uint64_t bucketArray = SDK->RPM<uint64_t>(parent + 0x18);
+        if (!IsPlausibleUserPointer(bucketArray))
+            return 0;
+
+        const uint64_t bucket = id & 0xFFFu;
+        const uint64_t entries = SDK->RPM<uint64_t>(bucketArray + 16ull * bucket);
+        const uint32_t count = SDK->RPM<uint32_t>(bucketArray + 16ull * bucket + 8);
+        if (!IsPlausibleUserPointer(entries) || count == 0 || count > 4096)
+            return 0;
+
+        const uint32_t cappedCount = (std::min)(count, 512u);
+        for (uint32_t index = 0; index < cappedCount; ++index) {
+            const uint64_t entry = entries + 16ull * index;
+            if (SDK->RPM<uint32_t>(entry) != id)
+                continue;
+            const uint64_t mapBase = SDK->RPM<uint64_t>(entry + 8);
+            if (IsPlausibleUserPointer(mapBase))
+                return mapBase;
+        }
+        return 0;
+    }
+
+    inline uint64_t ResolveCnNeLinkTargetMapBase(
+        uint64_t linkBase,
+        uint64_t idOffset,
+        uint32_t* resolvedId = nullptr) {
+        if (resolvedId)
+            *resolvedId = 0;
+        if (!IsPlausibleUserPointer(linkBase))
+            return 0;
+
+        const uint32_t id = SDK->RPM<uint32_t>(linkBase + idOffset);
+        if (id == 0)
+            return 0;
+
+        const uint64_t context = SDK->RPM<uint64_t>(linkBase + 0x8);
+        if (!IsPlausibleUserPointer(context))
+            return 0;
+
+        const uint64_t bucketOwner = SDK->RPM<uint64_t>(context + 0x28);
+        if (!IsPlausibleUserPointer(bucketOwner))
+            return 0;
+
+        const uint64_t bucketArray = SDK->RPM<uint64_t>(bucketOwner + 0x18);
+        if (!IsPlausibleUserPointer(bucketArray))
+            return 0;
+
+        const uint64_t bucket = id & 0xFFFu;
+        const uint64_t entries = SDK->RPM<uint64_t>(bucketArray + 16ull * bucket);
+        const uint32_t count = SDK->RPM<uint32_t>(bucketArray + 16ull * bucket + 8);
+        if (!IsPlausibleUserPointer(entries) || count == 0 || count > 4096)
+            return 0;
+
+        const uint32_t cappedCount = (std::min)(count, 512u);
+        for (uint32_t index = 0; index < cappedCount; ++index) {
+            const uint64_t entry = entries + 16ull * index;
+            if (SDK->RPM<uint32_t>(entry) != id)
+                continue;
+            const uint64_t mapBase = SDK->RPM<uint64_t>(entry + 8);
+            if (IsPlausibleUserPointer(mapBase)) {
+                if (resolvedId)
+                    *resolvedId = id;
+                return mapBase;
+            }
+        }
+
+        return 0;
+    }
+
+    inline void AddCnNeMapBaseCandidate(
+        std::vector<uint64_t>& candidates,
+        uint64_t value,
+        uint64_t entityList,
+        size_t entityListReadSize,
+        uint64_t moduleBase,
+        uint64_t moduleSize) {
+        if (!IsLikelyCnNeEntityParent(
+                value,
+                entityList,
+                entityListReadSize,
+                moduleBase,
+                moduleSize)) {
+            return;
+        }
+        if (std::find(candidates.begin(), candidates.end(), value) == candidates.end())
+            candidates.push_back(value);
+    }
+
+    inline std::vector<uint64_t> CollectCnNeMapBaseCandidates(
+        uint64_t parent,
+        uint64_t entityList,
+        size_t entityListReadSize,
+        uint64_t moduleBase,
+        uint64_t moduleSize) {
+        std::vector<uint64_t> candidates;
+        candidates.reserve(3);
+
+        AddCnNeMapBaseCandidate(
+            candidates,
+            parent,
+            entityList,
+            entityListReadSize,
+            moduleBase,
+            moduleSize);
+
+        const uint64_t plus8 = SDK->RPM<uint64_t>(parent + 0x8);
+        AddCnNeMapBaseCandidate(
+            candidates,
+            plus8,
+            entityList,
+            entityListReadSize,
+            moduleBase,
+            moduleSize);
+
+        const uint64_t wrapperMapBase = ResolveCnNeWrapperMapBase(parent);
+        AddCnNeMapBaseCandidate(
+            candidates,
+            wrapperMapBase,
+            entityList,
+            entityListReadSize,
+            moduleBase,
+            moduleSize);
+
+        return candidates;
+    }
+
     inline uint64_t DecryptSingletonList(uint64_t raw) {
         return ROR64(
             (raw ^ offset::Singleton_K1_xor) - offset::Singleton_K2_sub,
             offset::Singleton_Ror) + offset::Singleton_K3_add;
     }
 
+    inline uint64_t DecryptLiveGameAdmin(uint64_t raw) {
+        return ROR64(
+            ((raw + offset::LiveGameAdmin_Add1) ^ offset::LiveGameAdmin_Xor1) +
+                offset::LiveGameAdmin_Add2,
+            offset::LiveGameAdmin_Ror);
+    }
+
+    inline bool TryGetLiveGameAdmin(uint64_t& gameAdmin) {
+        gameAdmin = 0;
+        if (!SDK->dwGameBase)
+            return false;
+
+        const auto& activeOffsets = offset::Active();
+        if (!activeOffsets.GlobalAdmin_RVA)
+            return false;
+
+        const uint64_t clientGame = SDK->RPM<uint64_t>(
+            SDK->dwGameBase + activeOffsets.GlobalAdmin_RVA);
+        if (!IsPlausibleUserPointer(clientGame))
+            return false;
+
+        const uint64_t raw = SDK->RPM<uint64_t>(
+            clientGame + offset::LiveGameAdmin_InputOffset);
+        if (!raw)
+            return false;
+
+        gameAdmin = DecryptLiveGameAdmin(raw);
+        return IsPlausibleUserPointer(gameAdmin);
+    }
+
     inline uint64_t ResolveSingletonList(uint64_t raw) {
         switch (offset::Active().singletonListMode) {
         case offset::SingletonListMode::Plain:
+            return raw;
+        case offset::SingletonListMode::LiveGameAdminWorldBz:
             return raw;
         case offset::SingletonListMode::EncryptedWorldBz:
         default:
             return DecryptSingletonList(raw);
         }
+    }
+
+    inline bool TryGetLiveGameAdminSingleton(uint64_t index, uint64_t& object) {
+        object = 0;
+
+        uint64_t gameAdmin = 0;
+        if (!TryGetLiveGameAdmin(gameAdmin))
+            return false;
+
+        const uint64_t listOffsets[] = {
+            offset::Singleton_InputOffset,
+            0x168,
+            0x2E0,
+            0x300,
+            0x310,
+        };
+
+        for (const uint64_t listOffset : listOffsets) {
+            const uint64_t raw = SDK->RPM<uint64_t>(gameAdmin + listOffset);
+            const uint64_t candidates[] = {
+                raw,
+                DecryptSingletonList(raw),
+                DecryptLiveGameAdmin(raw),
+            };
+            for (const uint64_t list : candidates) {
+                if (!IsPlausibleUserPointer(list))
+                    continue;
+                const uint64_t candidate = SDK->RPM<uint64_t>(list + 8ull * index);
+                if (IsPlausibleUserPointer(candidate)) {
+                    object = candidate;
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     inline bool TryGetGlobalAdminSingleton(uint64_t index, uint64_t& object) {
@@ -408,6 +671,9 @@ namespace OW {
         const auto& activeOffsets = offset::Active();
         if (!activeOffsets.GlobalAdmin_RVA)
             return false;
+
+        if (activeOffsets.singletonListMode == offset::SingletonListMode::LiveGameAdminWorldBz)
+            return TryGetLiveGameAdminSingleton(index, object);
 
         const uint64_t admin = SDK->RPM<uint64_t>(
             SDK->dwGameBase + activeOffsets.GlobalAdmin_RVA);
@@ -424,25 +690,147 @@ namespace OW {
         return IsPlausibleUserPointer(object);
     }
 
+    inline bool TryReadSensitivityFromObject(uint64_t object, float& value) {
+        if (!IsPlausibleUserPointer(object))
+            return false;
+
+        const float sensitivity = SDK->RPM<float>(object + offset::Sensitivity);
+        if (!IsPlausibleSensitivity(sensitivity))
+            return false;
+
+        const float sensX = SDK->RPM<float>(object + offset::SensX_Scale);
+        const float sensY = SDK->RPM<float>(object + offset::SensY_Scale);
+        if (!std::isfinite(sensX) || !std::isfinite(sensY))
+            return false;
+
+        value = sensitivity;
+        return true;
+    }
+
+    inline bool TryReadInputMouseScaleSensitivity(float& value, uint64_t* sourceObject) {
+        value = 0.0f;
+        if (sourceObject)
+            *sourceObject = 0;
+        if (!SDK->dwGameBase)
+            return false;
+
+        const auto& activeOffsets = offset::Active();
+        if (!activeOffsets.InputMouseScaleX_RVA || !activeOffsets.InputMouseScaleY_RVA)
+            return false;
+
+        const uint64_t xAddress = SDK->dwGameBase + activeOffsets.InputMouseScaleX_RVA;
+        const uint64_t yAddress = SDK->dwGameBase + activeOffsets.InputMouseScaleY_RVA;
+        const float sensX = SDK->RPM<float>(xAddress);
+        const float sensY = SDK->RPM<float>(yAddress);
+        if (!IsPlausibleSensitivity(sensX) || !IsPlausibleSensitivity(sensY))
+            return false;
+
+        const float tolerance = (std::max)(0.05f, (std::max)(sensX, sensY) * 0.02f);
+        if (std::fabs(sensX - sensY) > tolerance)
+            return false;
+
+        value = (sensX + sensY) * 0.5f;
+        if (sourceObject)
+            *sourceObject = xAddress;
+        return true;
+    }
+
+    inline bool TryReadNormalizedSensitivityObject(
+        uint64_t object,
+        float& value,
+        uint64_t* sourceObject) {
+        value = 0.0f;
+        if (!IsPlausibleUserPointer(object))
+            return false;
+
+        const float normalized = SDK->RPM<float>(object + offset::Sensitivity);
+        if (!std::isfinite(normalized) || normalized < 0.0001f || normalized > 1.0f)
+            return false;
+
+        value = normalized * offset::Sensitivity_NormalizedToUserScale;
+        if (!IsPlausibleSensitivity(value))
+            return false;
+
+        if (sourceObject)
+            *sourceObject = object;
+        return true;
+    }
+
+    inline bool TryReadWorldBzGlobalAdminSensitivity(
+        float& value,
+        uint64_t* sourceObject) {
+        value = 0.0f;
+        if (sourceObject)
+            *sourceObject = 0;
+        if (!SDK->dwGameBase || !offset::SensitivityAdmin_WorldBz_RVA)
+            return false;
+
+        const uint64_t admin = SDK->RPM<uint64_t>(
+            SDK->dwGameBase + offset::SensitivityAdmin_WorldBz_RVA);
+        if (!IsPlausibleUserPointer(admin))
+            return false;
+
+        const uint64_t raw = SDK->RPM<uint64_t>(admin + offset::Singleton_InputOffset);
+        if (!raw)
+            return false;
+
+        const uint64_t lists[] = {
+            raw,
+            DecryptLiveGameAdmin(raw),
+            DecryptSingletonList(raw),
+        };
+        for (uint64_t list : lists) {
+            if (!IsPlausibleUserPointer(list))
+                continue;
+
+            const uint64_t object = SDK->RPM<uint64_t>(
+                list + 8ull * offset::SensitivitySingletonIndex);
+            if (TryReadNormalizedSensitivityObject(object, value, sourceObject))
+                return true;
+        }
+
+        return false;
+    }
+
+    inline bool TryReadLiveGameAdminSensitivity(float& value, uint64_t* sourceObject) {
+        value = 0.0f;
+        if (sourceObject)
+            *sourceObject = 0;
+
+        if (TryReadWorldBzGlobalAdminSensitivity(value, sourceObject))
+            return true;
+
+        uint64_t gameAdmin = 0;
+        if (!TryGetLiveGameAdmin(gameAdmin))
+            return false;
+
+        uint64_t sensitivityObject = 0;
+        if (TryGetLiveGameAdminSingleton(offset::SensitivitySingletonIndex, sensitivityObject) &&
+            TryReadSensitivityFromObject(sensitivityObject, value)) {
+            if (sourceObject)
+                *sourceObject = sensitivityObject;
+            return true;
+        }
+
+        return false;
+    }
+
     inline bool TryReadGameMouseSensitivity(float& value, uint64_t* sourceObject = nullptr) {
         value = 0.0f;
         if (sourceObject)
             *sourceObject = 0;
 
+        if (offset::Active().singletonListMode == offset::SingletonListMode::LiveGameAdminWorldBz)
+            return TryReadLiveGameAdminSensitivity(value, sourceObject) ||
+                TryReadInputMouseScaleSensitivity(value, sourceObject);
+
         uint64_t sensitivityObject = 0;
         if (!TryGetGlobalAdminSingleton(offset::SensitivitySingletonIndex, sensitivityObject))
             return false;
 
-        const float sensitivity = SDK->RPM<float>(sensitivityObject + offset::Sensitivity);
-        if (!IsPlausibleSensitivity(sensitivity))
+        if (!TryReadSensitivityFromObject(sensitivityObject, value))
             return false;
 
-        const float sensX = SDK->RPM<float>(sensitivityObject + offset::SensX_Scale);
-        const float sensY = SDK->RPM<float>(sensitivityObject + offset::SensY_Scale);
-        if (!std::isfinite(sensX) || !std::isfinite(sensY))
-            return false;
-
-        value = sensitivity;
         if (sourceObject)
             *sourceObject = sensitivityObject;
         return true;
@@ -517,9 +905,41 @@ namespace OW {
         match_index.reserve(4096);
         seen_entities.reserve(4096);
 
+        const size_t kEntityListReadSize =
+            offset::IsCnNeProfile() ? 0x40000 : 0x1E000;
+        const size_t kEntityListChunkSize =
+            offset::IsCnNeProfile() ? 0x10000 : 0x1000;
+        constexpr size_t kEntityListFallbackChunkSize = 0x1000;
+        const bool cnNeProfile = offset::IsCnNeProfile();
+        static uint64_t cachedModuleBase = 0;
+        static uint64_t cachedModuleSize = 0;
+        if (cnNeProfile && cachedModuleBase != SDK->dwGameBase) {
+            cachedModuleBase = SDK->dwGameBase;
+            cachedModuleSize = static_cast<uint64_t>(mem.GetBaseSize("Overwatch.exe"));
+        }
+        const uint64_t moduleSize = cnNeProfile ? cachedModuleSize : 0;
+
         auto addRecord = [&](uint64_t possible_common) {
             if (!possible_common)
                 return;
+            if (cnNeProfile &&
+                !IsLikelyCnNeEntityParent(
+                    possible_common,
+                    entity_list,
+                    kEntityListReadSize,
+                    SDK->dwGameBase,
+                    moduleSize)) {
+                return;
+            }
+
+            uint32_t cnNeUniqueId = 0;
+            if (cnNeProfile) {
+                cnNeUniqueId = SDK->RPM<uint32_t>(
+                    possible_common + offset::Entity_MatchId);
+                if (cnNeUniqueId == 0)
+                    return;
+            }
+
             if (!seen_entities.insert(possible_common).second)
                 return;
 
@@ -527,8 +947,11 @@ namespace OW {
             record.entity = possible_common;
             record.header.Read(possible_common);
 
-            if (!record.header.ReadParentOffset(offset::Entity_MatchId, record.unique_id))
+            if (cnNeProfile) {
+                record.unique_id = cnNeUniqueId;
+            } else if (!record.header.ReadParentOffset(offset::Entity_MatchId, record.unique_id)) {
                 record.unique_id = SDK->RPM<uint32_t>(possible_common + offset::Entity_MatchId);
+            }
 
             uint64_t ptr_value = 0;
             if (!record.header.ReadParentOffset(offset::Entity_PoolPtr, ptr_value))
@@ -543,35 +966,75 @@ namespace OW {
             records.push_back(std::move(record));
         };
 
-        const size_t kEntityListReadSize =
-            offset::IsCnNeProfile() ? 0x40000 : 0x10000;
-        constexpr size_t kEntityListChunkSize = 0x1000;
         std::vector<uint8_t> entity_chunk(kEntityListChunkSize);
         size_t readable_bytes = 0;
         size_t readable_chunks = 0;
+        size_t slots_scanned = 0;
+        size_t nonzero_slots = 0;
+        size_t plausible_slots = 0;
+        Diagnostics::EntityScanDetailStats scanDetail{};
+        scanDetail.entityList = entity_list;
+        auto processEntityChunk = [&](const std::vector<uint8_t>& chunk,
+                                      size_t chunk_size) {
+            for (size_t slot_offset = 0; slot_offset + sizeof(Entity) <= chunk_size;
+                 slot_offset += sizeof(Entity)) {
+                uint64_t possible_common = 0;
+                std::memcpy(&possible_common, chunk.data() + slot_offset, sizeof(possible_common));
+                ++slots_scanned;
+                if (possible_common)
+                    ++nonzero_slots;
+                if (IsPlausibleUserPointer(possible_common))
+                    ++plausible_slots;
+                addRecord(possible_common);
+            }
+        };
 
         for (size_t offset = 0; offset < kEntityListReadSize; offset += kEntityListChunkSize) {
             const size_t remaining = kEntityListReadSize - offset;
             const size_t chunk_size =
                 remaining < kEntityListChunkSize ? remaining : kEntityListChunkSize;
-            if (!mem.Read(entity_list + offset, entity_chunk.data(), chunk_size))
+            if (mem.Read(entity_list + offset, entity_chunk.data(), chunk_size)) {
+                readable_bytes += chunk_size;
+                ++readable_chunks;
+                processEntityChunk(entity_chunk, chunk_size);
+                continue;
+            }
+
+            if (!cnNeProfile || kEntityListFallbackChunkSize >= chunk_size)
                 continue;
 
-            readable_bytes += chunk_size;
-            ++readable_chunks;
-            for (size_t slot_offset = 0; slot_offset + sizeof(Entity) <= chunk_size;
-                 slot_offset += sizeof(Entity)) {
-                uint64_t possible_common = 0;
-                std::memcpy(&possible_common, entity_chunk.data() + slot_offset, sizeof(possible_common));
-                addRecord(possible_common);
+            for (size_t sub_offset = 0; sub_offset < chunk_size;
+                 sub_offset += kEntityListFallbackChunkSize) {
+                const size_t sub_remaining = chunk_size - sub_offset;
+                const size_t sub_size =
+                    sub_remaining < kEntityListFallbackChunkSize
+                        ? sub_remaining
+                        : kEntityListFallbackChunkSize;
+                if (!mem.Read(entity_list + offset + sub_offset,
+                        entity_chunk.data(),
+                        sub_size)) {
+                    continue;
+                }
+                readable_bytes += sub_size;
+                ++readable_chunks;
+                processEntityChunk(entity_chunk, sub_size);
             }
         }
+
+        scanDetail.readableBytes = readable_bytes;
+        scanDetail.readableChunks = readable_chunks;
+        scanDetail.slotsScanned = slots_scanned;
+        scanDetail.nonZeroSlots = nonzero_slots;
+        scanDetail.plausibleSlots = plausible_slots;
+        scanDetail.records = records.size();
+        scanDetail.matchIds = match_index.size();
 
         if (records.empty()) {
             Diagnostics::Trace("Entity scan skipped: no records from list=0x%llX chunks=%zu bytes=%zu.",
                 static_cast<unsigned long long>(entity_list),
                 readable_chunks,
                 readable_bytes);
+            Diagnostics::SetEntityScanDetailStats(scanDetail);
             return result;
         }
 
@@ -583,6 +1046,308 @@ namespace OW {
                 result.push_back(pair);
         };
 
+        auto hasPlayableComponents = [&](uint64_t component_parent) {
+            if (!component_parent)
+                return false;
+            const uint64_t health =
+                DecryptComponent(component_parent, TYPE_HEALTH);
+            if (!health)
+                return false;
+            const uint64_t velocity =
+                DecryptComponent(component_parent, TYPE_VELOCITY);
+            return velocity != 0;
+        };
+
+        auto hasCnNePlayableComponents = [&](const EntityScanRecord& current) {
+            if (!current.entity)
+                return false;
+            const EntityHeaderSnapshot* snapshot =
+                current.header.valid ? &current.header : nullptr;
+            auto rememberReject = [&](int reason,
+                                      uint64_t healthBase,
+                                      uint64_t heroBase,
+                                      uint64_t heroId,
+                                      uint64_t velocityBase,
+                                      uint64_t boneBase,
+                                      float healthValue,
+                                      float healthMaxValue) {
+                if (scanDetail.sampleRejectParent != 0)
+                    return;
+                scanDetail.sampleRejectReason = reason;
+                scanDetail.sampleRejectParent = current.entity;
+                scanDetail.sampleRejectMatchId = current.unique_id;
+                scanDetail.sampleRejectHealthBase = healthBase;
+                scanDetail.sampleRejectHeroBase = heroBase;
+                scanDetail.sampleRejectHeroId = heroId;
+                scanDetail.sampleRejectVelocityBase = velocityBase;
+                scanDetail.sampleRejectBoneBase = boneBase;
+                scanDetail.sampleRejectHealthCm = std::isfinite(healthValue)
+                    ? static_cast<int>(healthValue * 100.0f)
+                    : 0;
+                scanDetail.sampleRejectHealthMaxCm = std::isfinite(healthMaxValue)
+                    ? static_cast<int>(healthMaxValue * 100.0f)
+                    : 0;
+            };
+
+            const uint64_t health =
+                DecryptComponent(current.entity, TYPE_HEALTH, snapshot);
+            if (IsPlausibleUserPointer(health))
+                ++scanDetail.selfHealthBase;
+            if (!IsPlausibleUserPointer(health)) {
+                rememberReject(1, health, 0, 0, 0, 0, 0.0f, 0.0f);
+                return false;
+            }
+
+            health_compo_t health_compo{};
+            if (!SDK->read_range(health, &health_compo, sizeof(health_compo))) {
+                rememberReject(2, health, 0, 0, 0, 0, 0.0f, 0.0f);
+                return false;
+            }
+            ++scanDetail.selfHealthRead;
+
+            const Vector2 health_ext = health_compo.health_ext;
+            const float totalHealth =
+                health_compo.health + health_compo.armor + health_compo.barrier + health_ext.Y;
+            const float totalHealthMax =
+                health_compo.health_max + health_compo.armor_max + health_compo.barrier_max + health_ext.X;
+            if (!std::isfinite(totalHealth) ||
+                !std::isfinite(totalHealthMax) ||
+                totalHealth <= 0.0f ||
+                totalHealthMax <= 0.0f ||
+                totalHealthMax > 10000.0f ||
+                totalHealth > totalHealthMax + 2000.0f) {
+                rememberReject(3, health, 0, 0, 0, 0, totalHealth, totalHealthMax);
+                return false;
+            }
+            ++scanDetail.selfHealthPlausible;
+
+            const uint64_t hero =
+                DecryptComponent(current.entity, TYPE_P_HEROID, snapshot);
+            if (IsPlausibleUserPointer(hero))
+                ++scanDetail.selfHeroBase;
+            if (!IsPlausibleUserPointer(hero)) {
+                rememberReject(4, health, hero, 0, 0, 0, totalHealth, totalHealthMax);
+                return false;
+            }
+            hero_compo_t hero_compo{};
+            if (!SDK->read_range(hero, &hero_compo, sizeof(hero_compo))) {
+                rememberReject(5, health, hero, 0, 0, 0, totalHealth, totalHealthMax);
+                return false;
+            }
+            ++scanDetail.selfHeroRead;
+            if (!GameData::IsKnownHeroId(hero_compo.heroid)) {
+                rememberReject(6, health, hero, hero_compo.heroid, 0, 0, totalHealth, totalHealthMax);
+                return false;
+            }
+            ++scanDetail.selfHeroKnown;
+
+            const uint64_t velocity =
+                DecryptComponent(current.entity, TYPE_VELOCITY, snapshot);
+            const uint64_t bone =
+                DecryptComponent(current.entity, TYPE_BONE, snapshot);
+            if (IsPlausibleUserPointer(velocity))
+                ++scanDetail.selfVelocityBase;
+            if (IsPlausibleUserPointer(bone))
+                ++scanDetail.selfBoneBase;
+            if (!IsPlausibleUserPointer(velocity) && !IsPlausibleUserPointer(bone)) {
+                rememberReject(7, health, hero, hero_compo.heroid, velocity, bone, totalHealth, totalHealthMax);
+                return false;
+            }
+            ++scanDetail.selfPlayable;
+            return true;
+        };
+
+        auto hasCnNeComponentOnlyPlayable = [&](const EntityScanRecord& source,
+                                                uint64_t component_parent) {
+            if (!component_parent)
+                return false;
+
+            EntityHeaderSnapshot componentHeader{};
+            const EntityHeaderSnapshot* snapshot =
+                componentHeader.Read(component_parent) ? &componentHeader : nullptr;
+            auto rememberReject = [&](int reason,
+                                      uint64_t healthBase,
+                                      uint64_t velocityBase,
+                                      uint64_t boneBase,
+                                      float healthValue,
+                                      float healthMaxValue) {
+                if (scanDetail.sampleRejectParent != 0)
+                    return;
+                scanDetail.sampleRejectReason = reason;
+                scanDetail.sampleRejectParent = component_parent;
+                scanDetail.sampleRejectMatchId = source.unique_id;
+                scanDetail.sampleRejectHealthBase = healthBase;
+                scanDetail.sampleRejectVelocityBase = velocityBase;
+                scanDetail.sampleRejectBoneBase = boneBase;
+                scanDetail.sampleRejectHealthCm = std::isfinite(healthValue)
+                    ? static_cast<int>(healthValue * 100.0f)
+                    : 0;
+                scanDetail.sampleRejectHealthMaxCm = std::isfinite(healthMaxValue)
+                    ? static_cast<int>(healthMaxValue * 100.0f)
+                    : 0;
+            };
+
+            const uint64_t health =
+                DecryptComponent(component_parent, TYPE_HEALTH, snapshot);
+            if (IsPlausibleUserPointer(health))
+                ++scanDetail.selfHealthBase;
+            if (!IsPlausibleUserPointer(health)) {
+                rememberReject(11, health, 0, 0, 0.0f, 0.0f);
+                return false;
+            }
+
+            health_compo_t health_compo{};
+            if (!SDK->read_range(health, &health_compo, sizeof(health_compo))) {
+                rememberReject(12, health, 0, 0, 0.0f, 0.0f);
+                return false;
+            }
+            ++scanDetail.selfHealthRead;
+
+            const Vector2 health_ext = health_compo.health_ext;
+            const float totalHealth =
+                health_compo.health + health_compo.armor + health_compo.barrier + health_ext.Y;
+            const float totalHealthMax =
+                health_compo.health_max + health_compo.armor_max + health_compo.barrier_max + health_ext.X;
+            const bool plausibleHealthLayout =
+                std::isfinite(totalHealth) &&
+                std::isfinite(totalHealthMax) &&
+                totalHealth > 0.0f &&
+                totalHealthMax > 0.0f &&
+                totalHealthMax <= 10000.0f &&
+                totalHealth <= totalHealthMax + 2000.0f;
+            if (!plausibleHealthLayout) {
+                rememberReject(13, health, 0, 0, totalHealth, totalHealthMax);
+                return false;
+            }
+            ++scanDetail.selfHealthPlausible;
+
+            const bool trainingBotSized =
+                std::fabs(totalHealthMax - 200.0f) <= 5.0f ||
+                std::fabs(totalHealthMax - 500.0f) <= 10.0f;
+            if (!trainingBotSized) {
+                rememberReject(14, health, 0, 0, totalHealth, totalHealthMax);
+                return false;
+            }
+
+            const uint64_t velocity =
+                DecryptComponent(component_parent, TYPE_VELOCITY, snapshot);
+            const uint64_t team =
+                DecryptComponent(component_parent, TYPE_TEAM, snapshot);
+            const uint64_t bone =
+                DecryptComponent(component_parent, TYPE_BONE, snapshot);
+            if (IsPlausibleUserPointer(velocity))
+                ++scanDetail.selfVelocityBase;
+            if (IsPlausibleUserPointer(bone))
+                ++scanDetail.selfBoneBase;
+            if (!IsPlausibleUserPointer(velocity)) {
+                rememberReject(15, health, velocity, bone, totalHealth, totalHealthMax);
+                return false;
+            }
+
+            velocity_compo_t velocity_compo{};
+            if (!SDK->read_range(velocity, &velocity_compo, sizeof(velocity_compo))) {
+                rememberReject(16, health, velocity, bone, totalHealth, totalHealthMax);
+                return false;
+            }
+            const XMFLOAT3 location = velocity_compo.location;
+            const bool finiteLocation =
+                std::isfinite(location.x) &&
+                std::isfinite(location.y) &&
+                std::isfinite(location.z) &&
+                std::fabs(location.x) < 100000.0f &&
+                std::fabs(location.y) < 100000.0f &&
+                std::fabs(location.z) < 100000.0f &&
+                (std::fabs(location.x) > 0.001f ||
+                 std::fabs(location.y) > 0.001f ||
+                 std::fabs(location.z) > 0.001f);
+            if (!finiteLocation) {
+                rememberReject(17, health, velocity, bone, totalHealth, totalHealthMax);
+                return false;
+            }
+
+            bool teamOk = false;
+            if (IsPlausibleUserPointer(team)) {
+                const uint32_t teamBits =
+                    SDK->RPM<uint32_t>(team + 0x58) & 0x0F800000u;
+                teamOk = teamBits != 0;
+            }
+            if (!teamOk && !IsPlausibleUserPointer(bone)) {
+                rememberReject(18, health, velocity, bone, totalHealth, totalHealthMax);
+                return false;
+            }
+
+            ++scanDetail.selfPlayable;
+            return true;
+        };
+
+        auto hasCnNePlausibleHealth = [&](uint64_t component_parent) {
+            if (!component_parent)
+                return false;
+
+            EntityHeaderSnapshot componentHeader{};
+            const EntityHeaderSnapshot* snapshot =
+                componentHeader.Read(component_parent) ? &componentHeader : nullptr;
+            const uint64_t health =
+                DecryptComponent(component_parent, TYPE_HEALTH, snapshot);
+            if (!IsPlausibleUserPointer(health))
+                return false;
+
+            health_compo_t health_compo{};
+            if (!SDK->read_range(health, &health_compo, sizeof(health_compo)))
+                return false;
+
+            const Vector2 health_ext = health_compo.health_ext;
+            const float totalHealth =
+                health_compo.health + health_compo.armor + health_compo.barrier + health_ext.Y;
+            const float totalHealthMax =
+                health_compo.health_max + health_compo.armor_max + health_compo.barrier_max + health_ext.X;
+            return std::isfinite(totalHealth) &&
+                std::isfinite(totalHealthMax) &&
+                totalHealth > 0.0f &&
+                totalHealthMax > 0.0f &&
+                totalHealthMax <= 10000.0f &&
+                totalHealth <= totalHealthMax + 2000.0f;
+        };
+
+        auto hasCnNeKnownHero = [&](uint64_t link_parent) {
+            if (!link_parent)
+                return false;
+
+            EntityHeaderSnapshot linkHeader{};
+            const EntityHeaderSnapshot* snapshot =
+                linkHeader.Read(link_parent) ? &linkHeader : nullptr;
+            const uint64_t hero =
+                DecryptComponent(link_parent, TYPE_P_HEROID, snapshot);
+            if (!IsPlausibleUserPointer(hero))
+                return false;
+
+            hero_compo_t hero_compo{};
+            return SDK->read_range(hero, &hero_compo, sizeof(hero_compo)) &&
+                GameData::IsKnownHeroId(hero_compo.heroid);
+        };
+
+        auto addPlayableMatches = [&](uint32_t match_id, uint64_t link_parent) {
+            if (match_id == 0)
+                return false;
+            const auto match = match_index.find(match_id);
+            if (match == match_index.end())
+                return false;
+
+            bool added = false;
+            for (uint64_t component_parent : match->second) {
+                if (component_parent == link_parent)
+                    continue;
+                if (!hasPlayableComponents(component_parent))
+                    continue;
+                addPair(component_parent, link_parent);
+                added = true;
+            }
+            return added;
+        };
+
+        const bool worldBzProfile = !offset::IsCnNeProfile();
+        std::unordered_set<uint64_t> cnNeLinkTargetPairs{};
+
         for (const EntityScanRecord& current : records) {
             uint64_t cur_entity = current.entity;
             if (!cur_entity) continue;
@@ -592,25 +1357,135 @@ namespace OW {
                 TYPE_LINK,
                 current.header.valid ? &current.header : nullptr);
             if (!common_linker) {
-                Diagnostics::RecordInvalidEntity();
+                if (worldBzProfile) {
+                    Diagnostics::RecordInvalidEntity();
+                    continue;
+                }
+            } else {
+                ++scanDetail.linkPresent;
+            }
+
+            if (worldBzProfile) {
+                uint32_t unique_id = SDK->RPM<uint32_t>(common_linker + offset::Link_UniqueId);
+                if (unique_id != 0)
+                    ++scanDetail.linkUidNonZero;
+                bool added = false;
+                if (current.unique_id != 0)
+                    added = addPlayableMatches(current.unique_id + 1, cur_entity);
+                if (!added && unique_id != 0)
+                    added = addPlayableMatches(unique_id, cur_entity);
+                if (!added && unique_id != 0 && (unique_id & 0x80000000u) == 0)
+                    addPlayableMatches(unique_id | 0x80000000u, cur_entity);
                 continue;
             }
 
-            uint32_t unique_id = SDK->RPM<uint32_t>(common_linker + offset::Link_UniqueId);
-            if (unique_id == 0)
-                continue;
+            bool processedCnNeLink = false;
+            auto processCnNeLinkParent = [&](uint64_t link_parent,
+                                             const EntityHeaderSnapshot* snapshot) {
+                if (!link_parent)
+                    return;
 
-            const auto match = match_index.find(unique_id);
-            if (match != match_index.end()) {
-                for (uint64_t component_parent : match->second)
-                    addPair(component_parent, cur_entity);
+                const uint64_t linkBase =
+                    link_parent == cur_entity && common_linker
+                        ? common_linker
+                        : DecryptComponent(link_parent, TYPE_LINK, snapshot);
+                if (!linkBase)
+                    return;
+
+                processedCnNeLink = true;
+                ++scanDetail.linkPresent;
+
+                const uint32_t unique_id =
+                    SDK->RPM<uint32_t>(linkBase + offset::Link_UniqueId);
+                if (unique_id != 0) {
+                    ++scanDetail.linkUidNonZero;
+                    const auto match = match_index.find(unique_id);
+                    if (match != match_index.end()) {
+                        ++scanDetail.linkMatched;
+                        for (uint64_t component_parent : match->second) {
+                            addPair(component_parent, link_parent);
+                            ++scanDetail.linkPairs;
+                        }
+                    }
+                }
+
+                const bool linkHeroKnown = hasCnNeKnownHero(link_parent);
+                for (uint64_t idOffset : { offset::Link_TargetId, offset::Link_UniqueId }) {
+                    uint32_t resolvedId = 0;
+                    const uint64_t targetMapBase =
+                        ResolveCnNeLinkTargetMapBase(linkBase, idOffset, &resolvedId);
+                    if (!IsLikelyCnNeEntityParent(
+                            targetMapBase,
+                            entity_list,
+                            kEntityListReadSize,
+                            SDK->dwGameBase,
+                            moduleSize)) {
+                        continue;
+                    }
+
+                    const uint64_t pairKey =
+                        (link_parent >> 4) ^ (targetMapBase << 17) ^ resolvedId;
+                    if (!cnNeLinkTargetPairs.insert(pairKey).second)
+                        continue;
+
+                    if (!linkHeroKnown && !hasCnNePlausibleHealth(targetMapBase))
+                        continue;
+
+                    addPair(targetMapBase, link_parent);
+                    ++scanDetail.linkMatched;
+                    ++scanDetail.linkPairs;
+                }
+            };
+
+            if (common_linker)
+                processCnNeLinkParent(
+                    cur_entity,
+                    current.header.valid ? &current.header : nullptr);
+
+            for (uint64_t link_parent : CollectCnNeMapBaseCandidates(
+                     cur_entity,
+                     entity_list,
+                     kEntityListReadSize,
+                     SDK->dwGameBase,
+                     moduleSize)) {
+                if (link_parent == cur_entity)
+                    continue;
+
+                EntityHeaderSnapshot linkHeader{};
+                const EntityHeaderSnapshot* snapshot =
+                    linkHeader.Read(link_parent) ? &linkHeader : nullptr;
+                processCnNeLinkParent(link_parent, snapshot);
+            }
+
+            if (!processedCnNeLink)
+                Diagnostics::RecordInvalidEntity();
+        }
+
+        if (offset::IsCnNeProfile()) {
+            for (const EntityScanRecord& current : records) {
+                if (hasCnNePlayableComponents(current))
+                    addPair(current.entity, current.entity);
+                for (uint64_t component_parent : CollectCnNeMapBaseCandidates(
+                         current.entity,
+                         entity_list,
+                         kEntityListReadSize,
+                         SDK->dwGameBase,
+                         moduleSize)) {
+                    if (hasCnNeComponentOnlyPlayable(current, component_parent))
+                        addPair(component_parent, component_parent);
+                }
             }
         }
 
         for (const EntityScanRecord& current : records) {
-            if (isDynamicEntityId(current.entity_id))
+            if (isDynamicEntityId(current.entity_id)) {
                 addPair(current.entity, current.entity);
+                ++scanDetail.dynamicPairs;
+            }
         }
+
+        scanDetail.totalPairs = result.size();
+        Diagnostics::SetEntityScanDetailStats(scanDetail);
 
         Diagnostics::Trace("Entity scan list=0x%llX bytes=%zu records=%zu pairs=%zu.",
             static_cast<unsigned long long>(entity_list),
@@ -638,6 +1513,12 @@ namespace OW {
                 if (GameData::HasHeroIdPrefix(HeroID)) {
                     char fallback[16] = {};
                     std::snprintf(fallback, sizeof(fallback), "Hero_%04llX",
+                        static_cast<unsigned long long>(HeroID & 0xFFFFull));
+                    return fallback;
+                }
+                if (!offset::IsCnNeProfile() && HeroID != 0) {
+                    char fallback[24] = {};
+                    std::snprintf(fallback, sizeof(fallback), "BzHero_%04llX",
                         static_cast<unsigned long long>(HeroID & 0xFFFFull));
                     return fallback;
                 }

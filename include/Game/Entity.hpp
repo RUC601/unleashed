@@ -26,6 +26,7 @@ namespace OW {
     public:
         // --- Base addresses ---
         uint64_t address       = 0;
+        uint64_t LinkParent    = 0;
         uint64_t LinkBase      = 0;
         uint64_t HealthBase    = 0;
         uint64_t TeamBase      = 0;
@@ -96,6 +97,7 @@ namespace OW {
         // positions and carries the previous published positions for the renderer.
         uint32_t render_sample_tick_ms = 0;
         uint32_t previous_render_sample_tick_ms = 0;
+        uint32_t position_sample_tick_ms = 0;
         bool has_previous_render_sample = false;
         Vector3 previous_head_pos{};
         Vector3 previous_velocity{};
@@ -141,8 +143,28 @@ namespace OW {
         // =====================================================================
         // Team detection
         // =====================================================================
-        eTeam GetTeam() {
-            uint32_t teamBits = SDK->RPM<uint32_t>(this->TeamBase + 0x58) & 0x0F800000;
+        uint32_t GetTeamFlags() const {
+            if (!this->TeamBase)
+                return 0;
+            return SDK->RPM<uint32_t>(this->TeamBase + OW::offset::Team_FlagsOffset);
+        }
+
+        uint32_t GetTeamComparisonKey() const {
+            return OW::offset::TeamComparisonKeyFromFlags(GetTeamFlags());
+        }
+
+        bool SameTeamAs(const c_entity& other) const {
+            if (OW::offset::IsCnNeProfile()) {
+                const uint32_t selfKey = GetTeamComparisonKey();
+                const uint32_t otherKey = other.GetTeamComparisonKey();
+                if (selfKey != 0 && otherKey != 0)
+                    return selfKey == otherKey;
+            }
+            return GetTeam() == other.GetTeam();
+        }
+
+        eTeam GetTeam() const {
+            uint32_t teamBits = GetTeamFlags() & OW::offset::Team_LegacyMask;
             std::bitset<sizeof(int) * CHAR_BIT> bitTeam(teamBits);
             if (bitTeam[0x17]) return eTeam::TEAM_RED;
             if (bitTeam[0x18]) return eTeam::TEAM_BLUE;

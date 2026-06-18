@@ -3870,7 +3870,7 @@ void ProcessHeroSkills()
 
     bool processedAnyForHero = false;
     for (const HeroSkillDefinition& definition : AllHeroSkillDefinitions()) {
-        if (definition.heroId != heroId)
+        if (!IsHeroSkillDefinitionActiveForRuntime(definition, heroId))
             continue;
         if (forceSelfTestSkill &&
             std::string(definition.skillId ? definition.skillId : "") != selfTest.skillId) {

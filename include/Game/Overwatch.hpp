@@ -20,6 +20,7 @@
 
 #include "Game/AbilityIcons.hpp"
 #include "Game/BoneSlots.hpp"
+#include "Game/HeroPerkRuntime.hpp"
 #include "Game/HeroSkills.hpp"
 #include "Game/Target.hpp"
 #include "Kmbox/KmBoxMock.h"
@@ -128,6 +129,9 @@ namespace OW {
     inline constexpr DWORD kEntityHealthIntervalMs = kEntityProcessIntervalMs;
     inline constexpr DWORD kEntityHeroIntervalMs = 50;
     inline constexpr DWORD kEntityRosterTtlMs = 13000;
+    inline constexpr DWORD kCnNeEntityScanStableHoldMs = kEntityRosterTtlMs;
+    inline constexpr DWORD kCnNeEntityRosterFreshGraceMs = kEntityRosterTtlMs;
+    inline constexpr size_t kCnNeEntityScanStableMaxPairs = 128;
     inline constexpr DWORD kEntityDeadComponentRefreshMs = 250;
     inline constexpr DWORD kEntityLiveComponentRefreshMs = 2000;
     inline constexpr DWORD kEntityFastRescanWindowMs = 2000;
@@ -217,6 +221,72 @@ namespace OW {
         return hasNonZeroValue && differsFromIdentity;
     }
 
+    inline bool IsCameraViewMatrixPlausible(const Matrix& matrix)
+    {
+        if (!IsMatrixNonIdentity(matrix))
+            return false;
+
+        const DirectX::XMFLOAT3 camera = matrix.get_location();
+        const DirectX::XMFLOAT3 forward = matrix.get_rotation();
+        const float cameraLengthSq = camera.x * camera.x + camera.y * camera.y + camera.z * camera.z;
+        const float forwardLengthSq = forward.x * forward.x + forward.y * forward.y + forward.z * forward.z;
+
+        return std::isfinite(camera.x) && std::isfinite(camera.y) && std::isfinite(camera.z) &&
+            std::isfinite(forward.x) && std::isfinite(forward.y) && std::isfinite(forward.z) &&
+            cameraLengthSq > 0.000001f && cameraLengthSq < 1000000000000.0f &&
+            forwardLengthSq > 0.0625f && forwardLengthSq < 4.0f;
+    }
+
+    inline Matrix MultiplyMatrices(const Matrix& a, const Matrix& b)
+    {
+        Matrix result{};
+        result.m11 = a.m11 * b.m11 + a.m12 * b.m21 + a.m13 * b.m31 + a.m14 * b.m41;
+        result.m12 = a.m11 * b.m12 + a.m12 * b.m22 + a.m13 * b.m32 + a.m14 * b.m42;
+        result.m13 = a.m11 * b.m13 + a.m12 * b.m23 + a.m13 * b.m33 + a.m14 * b.m43;
+        result.m14 = a.m11 * b.m14 + a.m12 * b.m24 + a.m13 * b.m34 + a.m14 * b.m44;
+        result.m21 = a.m21 * b.m11 + a.m22 * b.m21 + a.m23 * b.m31 + a.m24 * b.m41;
+        result.m22 = a.m21 * b.m12 + a.m22 * b.m22 + a.m23 * b.m32 + a.m24 * b.m42;
+        result.m23 = a.m21 * b.m13 + a.m22 * b.m23 + a.m23 * b.m33 + a.m24 * b.m43;
+        result.m24 = a.m21 * b.m14 + a.m22 * b.m24 + a.m23 * b.m34 + a.m24 * b.m44;
+        result.m31 = a.m31 * b.m11 + a.m32 * b.m21 + a.m33 * b.m31 + a.m34 * b.m41;
+        result.m32 = a.m31 * b.m12 + a.m32 * b.m22 + a.m33 * b.m32 + a.m34 * b.m42;
+        result.m33 = a.m31 * b.m13 + a.m32 * b.m23 + a.m33 * b.m33 + a.m34 * b.m43;
+        result.m34 = a.m31 * b.m14 + a.m32 * b.m24 + a.m33 * b.m34 + a.m34 * b.m44;
+        result.m41 = a.m41 * b.m11 + a.m42 * b.m21 + a.m43 * b.m31 + a.m44 * b.m41;
+        result.m42 = a.m41 * b.m12 + a.m42 * b.m22 + a.m43 * b.m32 + a.m44 * b.m42;
+        result.m43 = a.m41 * b.m13 + a.m42 * b.m23 + a.m43 * b.m33 + a.m44 * b.m43;
+        result.m44 = a.m41 * b.m14 + a.m42 * b.m24 + a.m43 * b.m34 + a.m44 * b.m44;
+        return result;
+    }
+
+    inline bool ProjectionMatrixNeedsCompositionM14Zero(const Matrix& projection)
+    {
+        return std::isfinite(projection.m11) && std::isfinite(projection.m22) &&
+            std::isfinite(projection.m14) && std::isfinite(projection.m24) &&
+            std::isfinite(projection.m34) && std::isfinite(projection.m43) &&
+            std::isfinite(projection.m44) &&
+            std::fabs(projection.m11) > 0.01f &&
+            std::fabs(projection.m22) > 0.01f &&
+            std::fabs(projection.m14) > 0.5f &&
+            std::fabs(projection.m24) < 0.01f &&
+            std::fabs(projection.m34 - 1.0f) < 0.05f &&
+            std::fabs(projection.m43) > 0.001f &&
+            std::fabs(projection.m44) < 0.01f;
+    }
+
+    inline Matrix NormalizeProjectionMatrixForComposition(const Matrix& projection)
+    {
+        Matrix normalized = projection;
+        if (ProjectionMatrixNeedsCompositionM14Zero(normalized))
+            normalized.m14 = 0.0f;
+        return normalized;
+    }
+
+    inline Matrix ComposeCameraProjection(const Matrix& cameraView, const Matrix& projection)
+    {
+        return MultiplyMatrices(cameraView, NormalizeProjectionMatrixForComposition(projection));
+    }
+
     inline void RecordViewMatrixUnresolved(const char* reason, uint64_t value, DWORD& lastLogTick)
     {
         Diagnostics::SetViewMatrixStatus(false, false);
@@ -274,6 +344,24 @@ inline void entity_scan_thread() {
     DWORD lastScanTick = 0;
     DWORD lastScanCycleTick = 0;
     double entityScanHz = 0.0;
+    std::unordered_map<uint64_t, std::pair<std::pair<uint64_t, uint64_t>, DWORD>> cnNeStableScanPairs{};
+
+    auto scanPairKey = [](const std::pair<uint64_t, uint64_t>& pair) {
+        const uint64_t first = pair.first >> 4;
+        const uint64_t second = pair.second >> 4;
+        return first ^ (second << 17) ^ (second >> 13);
+    };
+
+    auto appendScanPairUnique = [&](std::vector<std::pair<uint64_t, uint64_t>>& pairs,
+                                    const std::pair<uint64_t, uint64_t>& pair) {
+        if (!pair.first || !pair.second)
+            return false;
+        if (std::find(pairs.begin(), pairs.end(), pair) != pairs.end())
+            return false;
+        pairs.push_back(pair);
+        return true;
+    };
+
     while (OW::Config::doingentity == 1) {
         if (!OW::ProcessConnection::IsConnected()) {
             Diagnostics::RecordEntityScanCycle(0, 0.0);
@@ -306,6 +394,42 @@ inline void entity_scan_thread() {
             lastScanTick = now;
 
             std::vector<std::pair<uint64_t, uint64_t>> scanned = OW::get_ow_entities();
+            if (OW::offset::IsCnNeProfile()) {
+                const DWORD stableNow = GetTickCount();
+                for (const auto& pair : scanned) {
+                    if (pair.first && pair.second)
+                        cnNeStableScanPairs[scanPairKey(pair)] = std::make_pair(pair, stableNow);
+                }
+
+                for (auto it = cnNeStableScanPairs.begin(); it != cnNeStableScanPairs.end();) {
+                    const DWORD observedTick = it->second.second;
+                    if (observedTick == 0 ||
+                        stableNow - observedTick > OW::kCnNeEntityScanStableHoldMs) {
+                        it = cnNeStableScanPairs.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+
+                while (cnNeStableScanPairs.size() > OW::kCnNeEntityScanStableMaxPairs) {
+                    auto oldest = cnNeStableScanPairs.begin();
+                    for (auto it = cnNeStableScanPairs.begin(); it != cnNeStableScanPairs.end(); ++it) {
+                        if (it->second.second < oldest->second.second)
+                            oldest = it;
+                    }
+                    cnNeStableScanPairs.erase(oldest);
+                }
+
+                const size_t liveScanCount = scanned.size();
+                for (const auto& stablePair : cnNeStableScanPairs)
+                    appendScanPairUnique(scanned, stablePair.second.first);
+                if (scanned.size() != liveScanCount) {
+                    Diagnostics::Trace("CN/NE entity scan stabilized raw=%zu merged=%zu stable=%zu.",
+                        liveScanCount,
+                        scanned.size(),
+                        cnNeStableScanPairs.size());
+                }
+            }
             Diagnostics::RecordEntityScanCycle(scanned.size(), entityScanHz);
             Diagnostics::Trace("Entity scan cycle found %zu raw entities.", scanned.size());
             if (OW::PipelineDebugEnabled()) {
@@ -358,6 +482,7 @@ inline void entity_thread() {
         uint64_t health = 0;
         uint64_t link = 0;
         uint64_t team = 0;
+        uint64_t transform = 0;
         uint64_t velocity = 0;
         uint64_t hero = 0;
         uint64_t bone = 0;
@@ -467,6 +592,24 @@ inline void entity_thread() {
         return entity.head_pos;
     };
 
+    auto hasRenderableAnchor = [&](const OW::c_entity& entity) {
+        if (isUsableVector(entity.pos) ||
+            isUsableVector(entity.head_pos) ||
+            isUsableVector(entity.neck_pos) ||
+            isUsableVector(entity.chest_pos) ||
+            (entity.cached_bot_chest_bone_valid && isUsableVector(entity.cached_bot_chest_bone))) {
+            return true;
+        }
+
+        for (size_t boneIndex = 0; boneIndex < entity.skeleton_bones.size(); ++boneIndex) {
+            if (entity.skeleton_bone_valid[boneIndex] &&
+                isUsableVector(entity.skeleton_bones[boneIndex])) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     auto observationSampleSeconds = [](DWORD now, DWORD previousTick) {
         if (previousTick == 0 || now <= previousTick)
             return OW::kEntityProcessIntervalMs / 1000.0f;
@@ -483,6 +626,7 @@ inline void entity_thread() {
     auto resetRenderHistory = [](OW::c_entity& entity, DWORD now) {
         entity.render_sample_tick_ms = now;
         entity.previous_render_sample_tick_ms = now;
+        entity.position_sample_tick_ms = now;
         entity.has_previous_render_sample = false;
         entity.previous_head_pos = entity.head_pos;
         entity.previous_velocity = entity.velocity;
@@ -589,7 +733,19 @@ inline void entity_thread() {
                 continue;
             }
 
-            if (!seen && rosterEntity.roster_state != OW::EntityRosterState::Dead) {
+            const bool keepFreshDuringCnNeGrace =
+                OW::offset::IsCnNeProfile() &&
+                !seen &&
+                rosterEntity.roster_state == OW::EntityRosterState::Fresh &&
+                rosterEntity.Alive &&
+                rosterEntity.PlayerHealth > 0.0f &&
+                hasRenderableAnchor(rosterEntity) &&
+                lastSeen != 0 &&
+                unseenAge <= OW::kCnNeEntityRosterFreshGraceMs;
+
+            if (!seen &&
+                !keepFreshDuringCnNeGrace &&
+                rosterEntity.roster_state != OW::EntityRosterState::Dead) {
                 if (rosterEntity.missing_since_tick_ms == 0)
                     rosterEntity.missing_since_tick_ms = now;
                 rosterEntity.roster_state = OW::EntityRosterState::Missing;
@@ -598,6 +754,14 @@ inline void entity_thread() {
             if (rosterEntity.roster_state == OW::EntityRosterState::Missing ||
                 rosterEntity.roster_state == OW::EntityRosterState::Dead) {
                 sanitizeStaleRosterEntity(rosterEntity);
+            }
+
+            if (OW::offset::IsCnNeProfile() &&
+                rosterEntity.roster_state == OW::EntityRosterState::Fresh &&
+                !hasRenderableAnchor(rosterEntity)) {
+                it = entityRoster.erase(it);
+                rosterStats.expired++;
+                continue;
             }
 
             switch (rosterEntity.roster_state) {
@@ -739,6 +903,84 @@ inline void entity_thread() {
         localStats.cameraYCm = std::isfinite(cameraLocation.Y) ? static_cast<int>(cameraLocation.Y * 100.0f) : 0;
         localStats.cameraZCm = std::isfinite(cameraLocation.Z) ? static_cast<int>(cameraLocation.Z * 100.0f) : 0;
 
+        auto recordHealthFailureSample = [&](const OW::c_entity& failedEntity,
+                                             uint64_t componentParent,
+                                             uint64_t linkParent,
+                                             bool healthReadOk) {
+            if (processStats.sampleHealthFailComponentParent)
+                return;
+            processStats.sampleHealthFailComponentParent = componentParent;
+            processStats.sampleHealthFailLinkParent = linkParent;
+            processStats.sampleHealthFailHealthBase = failedEntity.HealthBase;
+            processStats.sampleHealthFailLinkBase = failedEntity.LinkBase;
+            processStats.sampleHealthFailVelocityBase = failedEntity.VelocityBase;
+            processStats.sampleHealthFailHeroBase = failedEntity.HeroBase;
+            processStats.sampleHealthFailTeamBase = failedEntity.TeamBase;
+            processStats.sampleHealthFailBoneBase = failedEntity.BoneBase;
+            processStats.sampleHealthFailReadOk = healthReadOk ? 1 : 0;
+        };
+        auto recordNameUnknownSample = [&](const OW::c_entity& unknownEntity,
+                                           uint64_t componentParent,
+                                           uint64_t linkParent,
+                                           const std::string& resolvedName) {
+            if (processStats.sampleNameUnknownComponentParent)
+                return;
+            const auto scanHeroIdCandidate = [](uint64_t heroBase, uint64_t& candidate, int& offset) {
+                candidate = 0;
+                offset = -1;
+                if (!heroBase)
+                    return;
+                std::array<uint64_t, 0x100> qwords{};
+                if (!SDK->read_range(heroBase, qwords.data(), qwords.size() * sizeof(uint64_t)))
+                    return;
+                for (size_t qwordIndex = 0; qwordIndex < qwords.size(); ++qwordIndex) {
+                    const uint64_t value = qwords[qwordIndex];
+                    if (OW::GameData::HasHeroIdPrefix(value)) {
+                        candidate = value;
+                        offset = static_cast<int>(qwordIndex * sizeof(uint64_t));
+                        return;
+                    }
+                }
+            };
+            auto readHeroId = [](uint64_t heroBase) -> uint64_t {
+                if (!heroBase)
+                    return 0;
+                OW::hero_compo_t heroCompo{};
+                if (!SDK->read_range(heroBase, &heroCompo, sizeof(heroCompo)))
+                    return 0;
+                return heroCompo.heroid;
+            };
+            uint64_t linkHeroCandidate = 0;
+            int linkHeroCandidateOffset = -1;
+            scanHeroIdCandidate(unknownEntity.HeroBase, linkHeroCandidate, linkHeroCandidateOffset);
+            const uint64_t componentHeroBase =
+                OW::DecryptComponent(componentParent, OW::TYPE_P_HEROID);
+            const uint64_t componentHeroId = readHeroId(componentHeroBase);
+            uint64_t componentHeroCandidate = 0;
+            int componentHeroCandidateOffset = -1;
+            scanHeroIdCandidate(componentHeroBase, componentHeroCandidate, componentHeroCandidateOffset);
+
+            processStats.sampleNameUnknownComponentParent = componentParent;
+            processStats.sampleNameUnknownLinkParent = linkParent;
+            processStats.sampleNameUnknownComponentMatchId = unknownEntity.match_id;
+            processStats.sampleNameUnknownLinkMatchId = linkParent
+                ? SDK->RPM<uint32_t>(linkParent + offset::Entity_MatchId)
+                : 0;
+            processStats.sampleNameUnknownHeroBase = unknownEntity.HeroBase;
+            processStats.sampleNameUnknownHeroId = unknownEntity.HeroID;
+            processStats.sampleNameUnknownHeroIdCandidate = linkHeroCandidate;
+            processStats.sampleNameUnknownHeroIdCandidateOffset = linkHeroCandidateOffset;
+            processStats.sampleNameUnknownComponentHeroBase = componentHeroBase;
+            processStats.sampleNameUnknownComponentHeroId = componentHeroId;
+            processStats.sampleNameUnknownComponentHeroIdCandidate = componentHeroCandidate;
+            processStats.sampleNameUnknownComponentHeroIdCandidateOffset = componentHeroCandidateOffset;
+            processStats.sampleNameUnknownLinkBase = unknownEntity.LinkBase;
+            processStats.sampleNameUnknownSkillBase = unknownEntity.SkillBase;
+            processStats.sampleNameUnknownTeamBase = unknownEntity.TeamBase;
+            processStats.sampleNameUnknownBoneBase = unknownEntity.BoneBase;
+            processStats.sampleNameUnknownKind = resolvedName.rfind("Hero_", 0) == 0 ? 2 : 1;
+        };
+
         // Also log entity MatchIds for cross-reference on first detailed cycle
         static bool matchIdLogEnabled = true;
 
@@ -768,6 +1010,7 @@ inline void entity_thread() {
 
             if (!previousEntity) {
                 entity.previous_render_sample_tick_ms = processLoopTick;
+                entity.position_sample_tick_ms = processLoopTick;
                 entity.has_previous_render_sample = false;
                 entity.previous_head_pos = entity.head_pos;
                 entity.previous_velocity = entity.velocity;
@@ -784,6 +1027,13 @@ inline void entity_thread() {
             const OW::c_entity& previous = *previousEntity;
             entity.previous_render_sample_tick_ms =
                 previous.render_sample_tick_ms ? previous.render_sample_tick_ms : processLoopTick;
+            const bool positionChanged =
+                isUsableVector(entity.pos) &&
+                isUsableVector(previous.pos) &&
+                entity.pos.DistTo(previous.pos) > 0.03f;
+            entity.position_sample_tick_ms = positionChanged
+                ? processLoopTick
+                : (previous.position_sample_tick_ms ? previous.position_sample_tick_ms : processLoopTick);
             entity.has_previous_render_sample =
                 previous.render_sample_tick_ms != 0 &&
                 previous.render_sample_tick_ms != processLoopTick;
@@ -817,6 +1067,7 @@ inline void entity_thread() {
 
             const auto& [ComponentParent, LinkParent] = raw_entities[i];
             entity.address = ComponentParent;
+            entity.LinkParent = LinkParent;
             if (!entity.address || !LinkParent) {
                 processStats.nullPair++;
                 Diagnostics::RecordInvalidEntity();
@@ -951,6 +1202,7 @@ inline void entity_thread() {
                 cache.health     = OW::DecryptComponent(ComponentParent, OW::TYPE_HEALTH, componentSnapshot);
                 cache.link       = OW::DecryptComponent(LinkParent, OW::TYPE_LINK, linkSnapshot);
                 cache.team       = OW::DecryptComponent(ComponentParent, OW::TYPE_TEAM, componentSnapshot);
+                cache.transform  = OW::DecryptComponent(ComponentParent, OW::TYPE_TRANSFORM, componentSnapshot);
                 cache.velocity   = OW::DecryptComponent(ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
                 cache.hero       = OW::DecryptComponent(LinkParent, OW::TYPE_P_HEROID, linkSnapshot);
                 cache.bone       = OW::DecryptComponent(ComponentParent, OW::TYPE_BONE, componentSnapshot);
@@ -959,6 +1211,24 @@ inline void entity_thread() {
                 cache.visibility = OW::DecryptComponent(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
                 cache.angle      = OW::DecryptComponent(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
                 cache.enemyAngle = OW::DecryptComponent(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
+                if (LinkParent != ComponentParent) {
+                    if (!cache.health)
+                        cache.health = OW::DecryptComponent(LinkParent, OW::TYPE_HEALTH, linkSnapshot);
+                    if (!cache.team)
+                        cache.team = OW::DecryptComponent(LinkParent, OW::TYPE_TEAM, linkSnapshot);
+                    if (!cache.transform)
+                        cache.transform = OW::DecryptComponent(LinkParent, OW::TYPE_TRANSFORM, linkSnapshot);
+                    if (!cache.velocity)
+                        cache.velocity = OW::DecryptComponent(LinkParent, OW::TYPE_VELOCITY, linkSnapshot);
+                    if (!cache.bone)
+                        cache.bone = OW::DecryptComponent(LinkParent, OW::TYPE_BONE, linkSnapshot);
+                    if (!cache.rotation)
+                        cache.rotation = OW::DecryptComponent(LinkParent, OW::TYPE_ROTATION, linkSnapshot);
+                    if (!cache.skill)
+                        cache.skill = OW::DecryptComponent(LinkParent, OW::TYPE_SKILL, linkSnapshot);
+                    if (!cache.enemyAngle)
+                        cache.enemyAngle = OW::DecryptComponent(LinkParent, OW::TYPE_ANGLE, linkSnapshot);
+                }
                 cacheIt = componentBaseCache.insert_or_assign(ComponentParent, cache).first;
             }
 
@@ -984,7 +1254,7 @@ inline void entity_thread() {
                     static_cast<unsigned long long>(entity.AngleBase));
             }
             if (!entity.LinkBase) {
-                componentBaseCache.erase(ComponentParent);
+                cacheIt->second.baseUpdateTick = 0;
                 processStats.linkBaseFail++;
             }
 
@@ -1010,21 +1280,52 @@ inline void entity_thread() {
                     if (!SDK->read_range(entity.HealthBase, &health_compo, sizeof(health_compo))) {
                         componentBaseCache.erase(ComponentParent);
                         processStats.healthBaseFail++;
+                        processStats.healthReadFail++;
+                        recordHealthFailureSample(entity, ComponentParent, LinkParent, false);
                         Diagnostics::RecordInvalidEntity();
                         continue;
                     }
                     const Vector2 healthext = health_compo.health_ext;
-                    componentCache.playerHealth =
+                    const float totalHealth =
                         health_compo.health + health_compo.armor + health_compo.barrier + healthext.Y;
-                    componentCache.playerHealthMax =
+                    const float totalHealthMax =
                         health_compo.health_max + health_compo.armor_max + health_compo.barrier_max + healthext.X;
-                    componentCache.minHealth = health_compo.health;
-                    componentCache.maxHealth = health_compo.health_max;
-                    componentCache.minArmorHealth = health_compo.armor;
-                    componentCache.maxArmorHealth = health_compo.armor_max;
-                    componentCache.minBarrierHealth = health_compo.barrier;
-                    componentCache.maxBarrierHealth = health_compo.barrier_max;
-                    componentCache.alive = componentCache.playerHealth > 0.f;
+                    const bool plausibleHealthLayout =
+                        std::isfinite(totalHealth) &&
+                        std::isfinite(totalHealthMax) &&
+                        totalHealthMax > 0.0f &&
+                        totalHealthMax <= 10000.0f &&
+                        totalHealth >= 0.0f &&
+                        totalHealth <= totalHealthMax + 2000.0f;
+                    if (offset::IsCnNeProfile() && !plausibleHealthLayout) {
+                        componentBaseCache.erase(ComponentParent);
+                        processStats.healthBaseFail++;
+                        processStats.healthReadFail++;
+                        recordHealthFailureSample(entity, ComponentParent, LinkParent, true);
+                        Diagnostics::RecordInvalidEntity();
+                        continue;
+                    }
+                    if (!offset::IsCnNeProfile() && !plausibleHealthLayout) {
+                        componentCache.playerHealth = 1.0f;
+                        componentCache.playerHealthMax = 1.0f;
+                        componentCache.minHealth = 1.0f;
+                        componentCache.maxHealth = 1.0f;
+                        componentCache.minArmorHealth = 0.0f;
+                        componentCache.maxArmorHealth = 0.0f;
+                        componentCache.minBarrierHealth = 0.0f;
+                        componentCache.maxBarrierHealth = 0.0f;
+                        componentCache.alive = true;
+                    } else {
+                        componentCache.playerHealth = totalHealth;
+                        componentCache.playerHealthMax = totalHealthMax;
+                        componentCache.minHealth = health_compo.health;
+                        componentCache.maxHealth = health_compo.health_max;
+                        componentCache.minArmorHealth = health_compo.armor;
+                        componentCache.maxArmorHealth = health_compo.armor_max;
+                        componentCache.minBarrierHealth = health_compo.barrier;
+                        componentCache.maxBarrierHealth = health_compo.barrier_max;
+                        componentCache.alive = componentCache.playerHealth > 0.f;
+                    }
                     componentCache.imort = health_compo.isImmortal;
                     componentCache.barrprot = health_compo.isBarrierProjected;
                     componentCache.healthUpdateTick = processLoopTick;
@@ -1043,6 +1344,8 @@ inline void entity_thread() {
                 entity.barrprot = componentCache.barrprot;
             } else {
                 processStats.healthBaseFail++;
+                processStats.healthBaseMissing++;
+                recordHealthFailureSample(entity, ComponentParent, LinkParent, false);
                 Diagnostics::RecordInvalidEntity();
                 continue;
             }
@@ -1056,14 +1359,39 @@ inline void entity_thread() {
 
             // ---- Rotation ----
             if (entity.RotationBase) {
-                uint64_t rotPtr = SDK->RPM<uint64_t>(entity.RotationBase + 0x7C0 + 0x10);
-                entity.Rot = SDK->RPM<Vector3>(rotPtr + 0x8FC);
+                uint64_t rotPtr = SDK->RPM<uint64_t>(entity.RotationBase + offset::RotationBase_Sub1);
+                entity.Rot = SDK->RPM<Vector3>(rotPtr + offset::RotationBase_Sub2);
             }
 
             // ---- Velocity / position / bones ----
+            auto isPlausibleBzPosition = [](const OW::Vector3& position) {
+                return std::isfinite(position.X) &&
+                       std::isfinite(position.Y) &&
+                       std::isfinite(position.Z) &&
+                       std::fabs(position.X) < 5000.0f &&
+                       std::fabs(position.Y) < 5000.0f &&
+                       std::fabs(position.Z) < 5000.0f &&
+                       position.DistTo(OW::Vector3(0, 0, 0)) > 1.0f;
+            };
             if (velocityRead) {
                 entity.pos      = Vector3(velo_compo.location.x, velo_compo.location.y - 1.f, velo_compo.location.z);
                 entity.velocity = Vector3(velo_compo.velocity.x, velo_compo.velocity.y, velo_compo.velocity.z);
+            }
+            if (!offset::IsCnNeProfile()) {
+                XMFLOAT3 transformPosition{};
+                if (cacheIt->second.transform &&
+                    SDK->read_range(cacheIt->second.transform + 0x3D0, &transformPosition, sizeof(transformPosition))) {
+                    const OW::Vector3 candidate(
+                        transformPosition.x,
+                        transformPosition.y,
+                        transformPosition.z);
+                    if (isPlausibleBzPosition(candidate))
+                        entity.pos = candidate;
+                }
+                if (!isPlausibleBzPosition(entity.pos)) {
+                    Diagnostics::RecordInvalidEntity();
+                    continue;
+                }
             }
 
             // ---- Hero ID ----
@@ -1142,6 +1470,32 @@ inline void entity_thread() {
                     entity.pos = entity.neck_pos;
                 } else if (entity.MaxHealth == 1000) {
                     entity.HeroID = 0x16bb; // Bob
+                } else if (offset::IsCnNeProfile() &&
+                           std::fabs(entity.PlayerHealthMax - 200.0f) <= 5.0f) {
+                    XMFLOAT3 temppos = velocityRead
+                        ? velo_compo.location
+                        : SDK->RPM<XMFLOAT3>(entity.VelocityBase + 0x380 + 0x50);
+                    entity.HeroID = OW::eHero::HERO_TRAININGBOT4;
+                    const float baseY = temppos.y - OW::offset::Velocity_LocationYBias;
+                    entity.pos = Vector3(temppos.x, baseY, temppos.z);
+                    entity.head_pos = Vector3(temppos.x, baseY + 1.45f, temppos.z);
+                    entity.neck_pos = Vector3(temppos.x, baseY + 1.10f, temppos.z);
+                    entity.chest_pos = Vector3(temppos.x, baseY + 0.75f, temppos.z);
+                    entity.cached_bot_chest_bone = entity.chest_pos;
+                    entity.cached_bot_chest_bone_valid = true;
+                } else if (offset::IsCnNeProfile() &&
+                           std::fabs(entity.PlayerHealthMax - 500.0f) <= 10.0f) {
+                    XMFLOAT3 temppos = velocityRead
+                        ? velo_compo.location
+                        : SDK->RPM<XMFLOAT3>(entity.VelocityBase + 0x380 + 0x50);
+                    entity.HeroID = OW::eHero::HERO_TRAININGBOT5;
+                    const float baseY = temppos.y - OW::offset::Velocity_LocationYBias;
+                    entity.pos = Vector3(temppos.x, baseY, temppos.z);
+                    entity.head_pos = Vector3(temppos.x, baseY + 2.00f, temppos.z);
+                    entity.neck_pos = Vector3(temppos.x, baseY + 1.55f, temppos.z);
+                    entity.chest_pos = Vector3(temppos.x, baseY + 1.05f, temppos.z);
+                    entity.cached_bot_chest_bone = entity.chest_pos;
+                    entity.cached_bot_chest_bone_valid = true;
                 } else {
                     processStats.heroFallbackFail++;
                     Diagnostics::RecordInvalidEntity();
@@ -1158,7 +1512,15 @@ inline void entity_thread() {
                     entity.pos.Z);
             }
 
-            if (entity.VelocityBase && entity.HeroID != 0x16dd && entity.HeroID != 0x16ee) {
+            const bool syntheticCnNeTrainingBot =
+                offset::IsCnNeProfile() &&
+                !entity.HeroBase &&
+                OW::GameData::IsTrainingBotHeroId(entity.HeroID);
+
+            if (entity.VelocityBase &&
+                entity.HeroID != 0x16dd &&
+                entity.HeroID != 0x16ee &&
+                !syntheticCnNeTrainingBot) {
                 processStats.boneCandidates++;
                 if (entity.BoneBase)
                     processStats.boneBaseNonZero++;
@@ -1293,6 +1655,13 @@ inline void entity_thread() {
                 if (entity.skeleton_bone_valid[0])
                     processStats.skeletonHeadValid++;
             }
+            if (!offset::IsCnNeProfile() &&
+                entity.head_pos == OW::Vector3(0, 0, 0) &&
+                isPlausibleBzPosition(entity.pos)) {
+                entity.head_pos = entity.pos + OW::Vector3(0.0f, 1.65f, 0.0f);
+                entity.neck_pos = entity.pos + OW::Vector3(0.0f, 1.35f, 0.0f);
+                entity.chest_pos = entity.pos + OW::Vector3(0.0f, 1.05f, 0.0f);
+            }
 
             if (entity.HeroID == OW::eHero::HERO_WRECKINGBALL) {
                 entity.head_pos.Y += 0.02f;
@@ -1352,7 +1721,9 @@ inline void entity_thread() {
                         static_cast<unsigned long long>(localCycleSnapshot.TeamBase));
                 }
                 auto team = entity.GetTeam();
-                entity.Team = (team == OW::eTeam::TEAM_DEATHMATCH || team != localCycleSnapshot.GetTeam());
+                entity.Team = (team == OW::eTeam::TEAM_DEATHMATCH || !entity.SameTeamAs(localCycleSnapshot));
+                if (OW::offset::IsCnNeProfile() && OW::GameData::IsFriendlyTrainingBotHeroId(entity.HeroID))
+                    entity.Team = false;
                 slowCache.isEnemy = entity.Team;
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu team_done team=%d enemy=%d.",
@@ -1376,6 +1747,9 @@ inline void entity_thread() {
                         static_cast<unsigned long long>(entity.HeroID),
                         static_cast<unsigned long long>(entity.VisBase));
                 }
+            } else if (syntheticCnNeTrainingBot) {
+                entity.Vis = true;
+                slowCache.vis = true;
             }
 
             // ---- Skills ----
@@ -1543,9 +1917,13 @@ inline void entity_thread() {
             if (detailedProcessLog && processStats.boneCandidates > 0) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu name_done name=%s.", i, name.c_str());
             }
-            if (name.rfind("Hero_", 0) == 0)
+            if (name.rfind("Hero_", 0) == 0) {
                 processStats.nameUnknown++;
-            if (ComponentParent && LinkParent && name != "Unknown") {
+                recordNameUnknownSample(entity, ComponentParent, LinkParent, name);
+            }
+            const bool hasRenderablePosition =
+                !OW::offset::IsCnNeProfile() || hasRenderableAnchor(entity);
+            if (ComponentParent && LinkParent && name != "Unknown" && hasRenderablePosition) {
                 entity.roster_state = entity.Alive
                     ? OW::EntityRosterState::Fresh
                     : OW::EntityRosterState::Dead;
@@ -1603,8 +1981,10 @@ inline void entity_thread() {
                 rosterEntry.skippedJumpObservations = 0;
                 tmp_entities.push_back(entity);
             } else {
-                if (name == "Unknown")
+                if (name == "Unknown") {
                     processStats.nameUnknown++;
+                    recordNameUnknownSample(entity, ComponentParent, LinkParent, name);
+                }
                 Diagnostics::RecordInvalidEntity();
             }
         }
@@ -1779,10 +2159,9 @@ inline void viewmatrix_thread() {
                 continue;
             }
 
-            // VM12 (2026-05-27): world/BZ uses a two-key add-XOR root.
-            // CN/NE (2026-06-01): the root pointer is read directly.
-            // Both profiles use p2 -> +0x6C8 -> +0x8 -> +0xC0 as the
-            // pre-composed view-projection matrix source.
+            // World/BZ uses a two-key add-XOR root with a direct render
+            // view-projection candidate. CN/NE reads the root pointer directly
+            // and still follows the camera/projection chain.
             const auto& activeOffsets = OW::offset::Active();
             if (!activeOffsets.Address_viewmatrix_base) {
                 OW::RecordViewMatrixUnresolved("profile viewmatrix unresolved", 0, lastViewMatrixLogTick);
@@ -1790,8 +2169,11 @@ inline void viewmatrix_thread() {
                 continue;
             }
 
+            const auto viewMatrixMode = activeOffsets.viewMatrixMode;
             const bool directViewMatrixRoot =
-                OW::offset::ActiveProfile() == OW::offset::RuntimeProfile::CnNe;
+                viewMatrixMode == OW::offset::ViewMatrixMode::DirectChain;
+            const bool subXorSubEncryptedRoot =
+                viewMatrixMode == OW::offset::ViewMatrixMode::EncryptedChainSubXorSub;
             uint64_t root = SDK->RPM<uint64_t>(SDK->dwGameBase + activeOffsets.Address_viewmatrix_base);
             if (!root) {
                 OW::RecordViewMatrixUnresolved(
@@ -1803,10 +2185,58 @@ inline void viewmatrix_thread() {
             }
             uint64_t dec = directViewMatrixRoot
                 ? root
-                : ((root + activeOffsets.offset_viewmatrix_xor_key)
-                    ^ activeOffsets.offset_viewmatrix_xor_key2);
+                : (subXorSubEncryptedRoot
+                    ? ((root - activeOffsets.offset_viewmatrix_xor_key)
+                        ^ activeOffsets.offset_viewmatrix_xor_key2) -
+                        activeOffsets.offset_viewmatrix_xor_key3
+                    : ((root + activeOffsets.offset_viewmatrix_xor_key)
+                        ^ activeOffsets.offset_viewmatrix_xor_key2));
             if (!dec) {
                 OW::RecordViewMatrixUnresolved("decoded base pointer", dec, lastViewMatrixLogTick);
+                Sleep(5);
+                continue;
+            }
+
+            OW::RefreshScreenSizeFromConfig();
+
+            if (viewMatrixMode == OW::offset::ViewMatrixMode::EncryptedDirectMatrix) {
+                viewMatrixPtr = dec + activeOffsets.VM_DirectMatrix;
+                const uint64_t cameraViewCandidatePtr = activeOffsets.VM_ViewMatrix
+                    ? dec + activeOffsets.VM_ViewMatrix
+                    : 0;
+
+                OW::Matrix renderViewProjection = SDK->RPM<OW::Matrix>(viewMatrixPtr);
+                const bool renderViewProjectionValid = OW::IsMatrixNonIdentity(renderViewProjection);
+                if (!renderViewProjectionValid) {
+                    OW::RecordViewMatrixUnresolved("direct render view-projection", viewMatrixPtr, lastViewMatrixLogTick);
+                    Sleep(5);
+                    continue;
+                }
+
+                OW::Matrix cameraViewMatrix{};
+                bool cameraViewValid = false;
+                if (cameraViewCandidatePtr) {
+                    cameraViewMatrix = SDK->RPM<OW::Matrix>(cameraViewCandidatePtr);
+                    cameraViewValid = OW::IsCameraViewMatrixPlausible(cameraViewMatrix);
+                }
+                viewMatrix_xor_ptr = cameraViewValid ? cameraViewCandidatePtr : 0;
+
+                OW::Matrix publishedCameraView{};
+                OW::g_viewMatrixMutex.lock();
+                OW::viewMatrix = renderViewProjection;
+                OW::viewMatrix_xor = cameraViewValid ? cameraViewMatrix : OW::Matrix{};
+                publishedCameraView = OW::viewMatrix_xor;
+                OW::g_viewMatrixMutex.unlock();
+
+                const bool cameraAvailable = OW::IsCameraViewMatrixPlausible(publishedCameraView);
+                OW::RecordViewMatrixResolved(
+                    viewMatrixPtr,
+                    cameraAvailable ? viewMatrix_xor_ptr : 0,
+                    renderViewProjectionValid,
+                    hasLastViewMatrixStatus,
+                    lastViewMatrixValid,
+                    lastViewMatrixLogTick);
+
                 Sleep(5);
                 continue;
             }
@@ -1842,12 +2272,24 @@ inline void viewmatrix_thread() {
 
             viewMatrixPtr = p4 + activeOffsets.VM_ViewProjectionMatrix;
             viewMatrix_xor_ptr = p2 + activeOffsets.VM_ViewMatrix;
+            const uint64_t projectionMatrixPtr = p2 + activeOffsets.VM_ProjMatrix;
 
             OW::Matrix renderViewProjection = SDK->RPM<OW::Matrix>(viewMatrixPtr);
             OW::Matrix cameraViewMatrix = SDK->RPM<OW::Matrix>(viewMatrix_xor_ptr);
+            OW::Matrix projectionMatrix = SDK->RPM<OW::Matrix>(projectionMatrixPtr);
 
-            const bool renderViewProjectionValid = OW::IsMatrixNonIdentity(renderViewProjection);
-            const bool cameraViewValid = OW::IsMatrixNonIdentity(cameraViewMatrix);
+            bool renderViewProjectionValid = OW::IsMatrixNonIdentity(renderViewProjection);
+            const bool cameraViewValid = OW::IsCameraViewMatrixPlausible(cameraViewMatrix);
+            const bool projectionValid = OW::IsMatrixNonIdentity(projectionMatrix);
+            if (!renderViewProjectionValid &&
+                (directViewMatrixRoot || OW::offset::ActiveProfile() == OW::offset::RuntimeProfile::WorldBz) &&
+                cameraViewValid &&
+                projectionValid) {
+                renderViewProjection = OW::ComposeCameraProjection(cameraViewMatrix, projectionMatrix);
+                renderViewProjectionValid = OW::IsMatrixNonIdentity(renderViewProjection);
+                if (renderViewProjectionValid)
+                    viewMatrixPtr = projectionMatrixPtr;
+            }
             OW::Matrix publishedCameraView{};
             OW::g_viewMatrixMutex.lock();
             OW::viewMatrix = renderViewProjection;
@@ -1865,7 +2307,7 @@ inline void viewmatrix_thread() {
 
             const bool viewMatrixValid =
                 renderViewProjectionValid &&
-                OW::IsMatrixNonIdentity(publishedCameraView);
+                OW::IsCameraViewMatrixPlausible(publishedCameraView);
             OW::RecordViewMatrixResolved(
                 viewMatrixPtr,
                 viewMatrix_xor_ptr,
@@ -1980,12 +2422,63 @@ namespace OverlayRenderDetail {
         return static_cast<float>(renderTick - previousTick) / static_cast<float>(interval);
     }
 
+    inline bool IsReasonableRenderVelocity(const Vector3& velocity, float* speedOut = nullptr) {
+        if (!IsFiniteVector(velocity)) {
+            if (speedOut) *speedOut = 0.0f;
+            return false;
+        }
+
+        const float speed = velocity.Size();
+        if (speedOut) *speedOut = speed;
+        return std::isfinite(speed) && speed >= 0.75f && speed <= 80.0f;
+    }
+
+    inline void OffsetRenderPoint(Vector3& point, const Vector3& offset) {
+        if (IsFiniteVector(point) && IsNonZeroVector(point))
+            point += offset;
+    }
+
+    inline void ApplyTrainingBotRenderPrediction(OW::c_entity& entity, DWORD now) {
+        if (!OW::GameData::IsTrainingBotHeroId(entity.HeroID))
+            return;
+        if (entity.position_sample_tick_ms == 0 || now <= entity.position_sample_tick_ms)
+            return;
+
+        float speed = 0.0f;
+        if (!IsReasonableRenderVelocity(entity.velocity, &speed))
+            return;
+
+        const DWORD ageMs = now - entity.position_sample_tick_ms;
+        if (ageMs < 20)
+            return;
+
+        constexpr float kMaxTrainingBotRenderLeadSeconds = 0.22f;
+        const float leadSeconds = (std::min)(
+            static_cast<float>(ageMs) / 1000.0f,
+            kMaxTrainingBotRenderLeadSeconds);
+        const Vector3 offset = entity.velocity * leadSeconds;
+
+        OffsetRenderPoint(entity.pos, offset);
+        OffsetRenderPoint(entity.head_pos, offset);
+        OffsetRenderPoint(entity.neck_pos, offset);
+        OffsetRenderPoint(entity.chest_pos, offset);
+        if (entity.cached_bot_chest_bone_valid)
+            OffsetRenderPoint(entity.cached_bot_chest_bone, offset);
+
+        for (size_t i = 0; i < entity.skeleton_bones.size(); ++i) {
+            if (entity.skeleton_bone_valid[i])
+                OffsetRenderPoint(entity.skeleton_bones[i], offset);
+        }
+    }
+
     inline OW::c_entity InterpolateEntityForRender(const OW::c_entity& source, DWORD now) {
         const float alpha = EntityInterpolationAlpha(source, now);
-        if (alpha >= 0.999f)
-            return source;
-
         OW::c_entity entity = source;
+        if (alpha >= 0.999f) {
+            ApplyTrainingBotRenderPrediction(entity, now);
+            return entity;
+        }
+
         entity.head_pos = LerpWorldPosition(source.previous_head_pos, source.head_pos, alpha);
         entity.velocity = LerpFiniteVector(source.previous_velocity, source.velocity, alpha);
         entity.pos = LerpWorldPosition(source.previous_pos, source.pos, alpha);
@@ -2006,6 +2499,7 @@ namespace OverlayRenderDetail {
             entity.cached_bot_chest_bone_valid = true;
         }
 
+        ApplyTrainingBotRenderPrediction(entity, now);
         return entity;
     }
 
@@ -2750,6 +3244,26 @@ namespace OverlayRenderDetail {
             13.5f
         });
 
+        const OW::HeroPerkRuntime::Snapshot perkSnapshot = OW::HeroPerkRuntime::CurrentSnapshot();
+        if (perkSnapshot.supported && perkSnapshot.heroId == heroId) {
+            std::string perkLine = "Perk: ";
+            perkLine += perkSnapshot.effectivePerkOn ? "On" : "Off";
+            perkLine += " | ";
+            perkLine += OW::HeroPerkRuntime::EffectiveSourceName(perkSnapshot.source);
+            if (perkSnapshot.variantId && perkSnapshot.variantId[0] != '\0') {
+                perkLine += " | ";
+                perkLine += perkSnapshot.variantId;
+            }
+
+            rows.push_back({
+                perkLine,
+                perkSnapshot.effectivePerkOn
+                    ? ImU32WithAlpha(166, 255, 199, 0.96f)
+                    : ImU32WithAlpha(226, 232, 240, 0.72f),
+                11.5f
+            });
+        }
+
         std::vector<std::pair<int, OW::Config::HeroSlotPreset>> aimSlots;
         std::vector<std::pair<int, OW::Config::HeroSlotPreset>> triggerSlots;
         aimSlots.reserve(OW::Config::kMaxHeroPresetSlots);
@@ -2988,6 +3502,38 @@ inline void PlayerInfo() {
         return;
     }
 
+    auto captureProjectedSample = [&](const OW::c_entity& entity, float left, float top,
+        float width, float height, float centerX, float bottom, float distance) {
+        if (renderStats.sampleProjected)
+            return;
+        renderStats.sampleProjected = true;
+        renderStats.sampleProjectedAddress = entity.address;
+        renderStats.sampleProjectedHeroId = entity.HeroID;
+        renderStats.sampleProjectedLeft = static_cast<int>(std::lround(left));
+        renderStats.sampleProjectedTop = static_cast<int>(std::lround(top));
+        renderStats.sampleProjectedWidth = static_cast<int>(std::lround(width));
+        renderStats.sampleProjectedHeight = static_cast<int>(std::lround(height));
+        renderStats.sampleProjectedCenterX = static_cast<int>(std::lround(centerX));
+        renderStats.sampleProjectedBottom = static_cast<int>(std::lround(bottom));
+        renderStats.sampleProjectedDistanceM = static_cast<int>(std::lround(distance));
+    };
+
+    auto captureDrawnSample = [&](const OW::c_entity& entity, float left, float top,
+        float width, float height, float centerX, float bottom, float distance) {
+        if (renderStats.sampleDrawn)
+            return;
+        renderStats.sampleDrawn = true;
+        renderStats.sampleDrawnAddress = entity.address;
+        renderStats.sampleDrawnHeroId = entity.HeroID;
+        renderStats.sampleDrawnLeft = static_cast<int>(std::lround(left));
+        renderStats.sampleDrawnTop = static_cast<int>(std::lround(top));
+        renderStats.sampleDrawnWidth = static_cast<int>(std::lround(width));
+        renderStats.sampleDrawnHeight = static_cast<int>(std::lround(height));
+        renderStats.sampleDrawnCenterX = static_cast<int>(std::lround(centerX));
+        renderStats.sampleDrawnBottom = static_cast<int>(std::lround(bottom));
+        renderStats.sampleDrawnDistanceM = static_cast<int>(std::lround(distance));
+    };
+
     for (size_t index = 0; index < entity_snapshot.size(); ++index) {
         OW::c_entity entity = OverlayRenderDetail::InterpolateEntityForRender(entity_snapshot[index], renderTick);
         if (entity.roster_state != OW::EntityRosterState::Fresh || !entity.Alive) {
@@ -3036,6 +3582,7 @@ inline void PlayerInfo() {
         float bottom = bounds.bottom;
         float centerX = bounds.centerX;
         float left = bounds.left;
+        captureProjectedSample(entity, left, top, width, height, centerX, bottom, dist);
 
         ImU32 color = OverlayRenderDetail::EntityColor(
             entity, index, selectedTargetKey, selectedTargetIndex, distanceOpacity);
@@ -3156,8 +3703,10 @@ inline void PlayerInfo() {
             drewAny = true;
         }
 
-        if (drewAny)
+        if (drewAny) {
+            captureDrawnSample(entity, left, top, width, height, centerX, bottom, dist);
             renderStats.drawn++;
+        }
     }
     OverlayRenderDetail::PruneProjectedBoundsStates(projectedBoundsStates, renderTick);
     publishStats();
@@ -4404,19 +4953,6 @@ namespace AimbotDetail {
         OW::SendMouseButton(button, false);
     }
 
-    inline constexpr int MouseButtonForAttackAction(int action) {
-        switch (action) {
-        case 1: // Secondary Fire
-        case 2: // Scoped
-            return 1;
-        case 0: // Primary Fire
-        case 3: // Unscoped
-            return 0;
-        default:
-            return -1;
-        }
-    }
-
     inline constexpr uint32_t PhysicalMouseMaskForButton(int button) {
         switch (button) {
         case 0: return 0x01u;
@@ -4434,23 +4970,6 @@ namespace AimbotDetail {
         default: return 0;
         }
     }
-
-    inline constexpr uint32_t FireKeyMaskForAttackAction(int action) {
-        switch (action) {
-        case 1: // Secondary Fire
-            return 0x2u;
-        case 0: // Primary Fire
-        case 2: // Scoped
-        case 3: // Unscoped
-        default:
-            return 0x1u;
-        }
-    }
-
-    static_assert(MouseButtonForAttackAction(0) == 0);
-    static_assert(MouseButtonForAttackAction(1) == 1);
-    static_assert(FireKeyMaskForAttackAction(0) == 0x1u);
-    static_assert(FireKeyMaskForAttackAction(1) == 0x2u);
 
     inline bool ShouldHoldFireWhileTracking() {
         return ClampFirePolicy(OW::Config::aimbotFirePolicy) == FirePolicyType::HoldWhileTracking ||
@@ -4539,8 +5058,11 @@ namespace AimbotDetail {
     }
 
     inline void FireConfiguredAction(const OW::c_entity& local, DWORD sleep_ms = 10) {
-        const uint32_t fireKey = FireKeyMaskForAttackAction(OW::Config::aimbotAttack);
         const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
+        const uint32_t fireKey = OW::ResolveGeneratedFireKeyMask(weapon, OW::Config::aimbotAttack);
+        if (fireKey == 0)
+            return;
+
         if (ShouldReleaseChargedFire(local, weapon)) {
             Diagnostics::Aim("fire.configured mode=charge_release hero=0x%llX action=%d weapon=%s keyMask=0x%X",
                 static_cast<unsigned long long>(local.HeroID),
@@ -4555,6 +5077,8 @@ namespace AimbotDetail {
     }
 
     inline void PressWithSensitivity(uint32_t key, float origin_sens, DWORD sleep_ms = 1) {
+        if (key == 0)
+            return;
         SetSensitivityLocked(true, origin_sens);
         ClickDmaMouseKey(key, sleep_ms);
         SetSensitivityLocked(false, origin_sens);
@@ -4583,7 +5107,7 @@ namespace AimbotDetail {
         c_entity local = LocalEntity();
         if (target.skill2act &&
             target.HeroID == OW::eHero::HERO_GENJI &&
-            target.GetTeam() != local.GetTeam()) {
+            !target.SameTeamAs(local)) {
             return false;
         }
         return true;
@@ -5243,8 +5767,11 @@ namespace AimbotDetail {
             return;
         }
 
-        const uint32_t fireKey = FireKeyMaskForAttackAction(OW::Config::aimbotAttack);
         const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
+        const uint32_t fireKey = OW::ResolveGeneratedFireKeyMask(weapon, OW::Config::aimbotAttack);
+        if (fireKey == 0)
+            return;
+
         if (ShouldReleaseChargedFire(local, weapon)) {
             Diagnostics::Aim("fire.primary mode=charge_release hero=0x%llX action=%d weapon=%s keyMask=0x%X",
                 static_cast<unsigned long long>(local.HeroID),
@@ -5436,7 +5963,8 @@ namespace AimbotDetail {
             FireHanzo();
             SetSensitivityLocked(false, origin_sens);
         } else {
-            PressWithSensitivity(FireKeyMaskForAttackAction(OW::Config::aimbotAttack), origin_sens, 2);
+            const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
+            PressWithSensitivity(OW::ResolveGeneratedFireKeyMask(weapon, OW::Config::aimbotAttack), origin_sens, 2);
         }
         lastFireTick = GetTickCount();
     }
@@ -5533,7 +6061,9 @@ namespace AimbotDetail {
         }
 
         bool fireHeld = false;
-        const int holdFireButton = MouseButtonForAttackAction(OW::Config::aimbotAttack);
+        const OW::c_entity localForWeapon = LocalEntity();
+        const OW::WeaponSpec* trackingWeapon = OW::ResolveWeaponSpec(localForWeapon.HeroID, OW::Config::aimbotAttack);
+        const int holdFireButton = OW::ResolveTrackingHoldMouseButton(trackingWeapon, OW::Config::aimbotAttack);
         const DWORD sessionStartedTick = state.trackingSessionStartedTick != 0
             ? state.trackingSessionStartedTick
             : GetTickCount();
@@ -6360,9 +6890,11 @@ namespace AimbotDetail {
                     if (OW::Config::Flick2 &&
                         OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::aimbotEffectiveHitWindow2)) {
                         if (OW::Config::aimVerboseLog) {
+                            const OW::c_entity local = LocalEntity();
+                            const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
                             Diagnostics::Aim("secondaim.fire action=%d keyMask=0x%X",
                                 OW::Config::aimbotAttack,
-                                FireKeyMaskForAttackAction(OW::Config::aimbotAttack));
+                                OW::ResolveGeneratedFireKeyMask(weapon, OW::Config::aimbotAttack));
                         }
                         ClickConfiguredFire();
                         Sleep(1);

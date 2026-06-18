@@ -188,6 +188,8 @@ std::atomic<uint64_t> g_entityProcessDynamic{ 0 };
 std::atomic<uint64_t> g_entityProcessNullPair{ 0 };
 std::atomic<uint64_t> g_entityProcessDuplicate{ 0 };
 std::atomic<uint64_t> g_entityProcessHealthBaseFail{ 0 };
+std::atomic<uint64_t> g_entityProcessHealthBaseMissing{ 0 };
+std::atomic<uint64_t> g_entityProcessHealthReadFail{ 0 };
 std::atomic<uint64_t> g_entityProcessLinkBaseFail{ 0 };
 std::atomic<uint64_t> g_entityProcessHeroBaseMissing{ 0 };
 std::atomic<uint64_t> g_entityProcessHeroFallbackFail{ 0 };
@@ -215,6 +217,32 @@ std::atomic<uint64_t> g_entityProcessHeadProbeNearWorldNonZero{ 0 };
 std::atomic<uint64_t> g_entityProcessHeadProbeFarCandidates{ 0 };
 std::atomic<uint64_t> g_entityProcessHeadProbeFarWorldNonZero{ 0 };
 std::atomic<uint64_t> g_entityProcessSampleBoneAddress{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleHealthFailComponentParent{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleHealthFailLinkParent{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleHealthFailHealthBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleHealthFailLinkBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleHealthFailVelocityBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleHealthFailHeroBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleHealthFailTeamBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleHealthFailBoneBase{ 0 };
+std::atomic<int> g_entityProcessSampleHealthFailReadOk{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownComponentParent{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownLinkParent{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownComponentMatchId{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownLinkMatchId{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownHeroBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownHeroId{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownHeroIdCandidate{ 0 };
+std::atomic<int> g_entityProcessSampleNameUnknownHeroIdCandidateOffset{ -1 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownComponentHeroBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownComponentHeroId{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownComponentHeroIdCandidate{ 0 };
+std::atomic<int> g_entityProcessSampleNameUnknownComponentHeroIdCandidateOffset{ -1 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownLinkBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownSkillBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownTeamBase{ 0 };
+std::atomic<uint64_t> g_entityProcessSampleNameUnknownBoneBase{ 0 };
+std::atomic<int> g_entityProcessSampleNameUnknownKind{ 0 };
 std::atomic<uint64_t> g_entityProcessSampleVelocityBase{ 0 };
 std::atomic<uint64_t> g_entityProcessSampleBoneBase{ 0 };
 std::atomic<uint64_t> g_entityProcessSampleVelocityBoneData{ 0 };
@@ -237,6 +265,26 @@ std::atomic<uint64_t> g_playerInfoSkippedWorldToScreenLow{ 0 };
 std::atomic<uint64_t> g_playerInfoSkippedWorldToScreenHigh{ 0 };
 std::atomic<uint64_t> g_playerInfoSkippedBox{ 0 };
 std::atomic<uint64_t> g_playerInfoSkippedWindow{ 0 };
+std::atomic<bool> g_playerInfoSampleProjected{ false };
+std::atomic<bool> g_playerInfoSampleDrawn{ false };
+std::atomic<uint64_t> g_playerInfoSampleProjectedAddress{ 0 };
+std::atomic<uint64_t> g_playerInfoSampleProjectedHeroId{ 0 };
+std::atomic<int> g_playerInfoSampleProjectedLeft{ 0 };
+std::atomic<int> g_playerInfoSampleProjectedTop{ 0 };
+std::atomic<int> g_playerInfoSampleProjectedWidth{ 0 };
+std::atomic<int> g_playerInfoSampleProjectedHeight{ 0 };
+std::atomic<int> g_playerInfoSampleProjectedCenterX{ 0 };
+std::atomic<int> g_playerInfoSampleProjectedBottom{ 0 };
+std::atomic<int> g_playerInfoSampleProjectedDistanceM{ 0 };
+std::atomic<uint64_t> g_playerInfoSampleDrawnAddress{ 0 };
+std::atomic<uint64_t> g_playerInfoSampleDrawnHeroId{ 0 };
+std::atomic<int> g_playerInfoSampleDrawnLeft{ 0 };
+std::atomic<int> g_playerInfoSampleDrawnTop{ 0 };
+std::atomic<int> g_playerInfoSampleDrawnWidth{ 0 };
+std::atomic<int> g_playerInfoSampleDrawnHeight{ 0 };
+std::atomic<int> g_playerInfoSampleDrawnCenterX{ 0 };
+std::atomic<int> g_playerInfoSampleDrawnBottom{ 0 };
+std::atomic<int> g_playerInfoSampleDrawnDistanceM{ 0 };
 std::atomic<uint64_t> g_localAngleCandidates{ 0 };
 std::atomic<uint64_t> g_localNearCameraCandidates{ 0 };
 std::atomic<uint64_t> g_localNamedCandidates{ 0 };
@@ -261,6 +309,9 @@ std::atomic<int> g_localBestPosZCm{ 0 };
 std::atomic<int> g_localCameraXCm{ 0 };
 std::atomic<int> g_localCameraYCm{ 0 };
 std::atomic<int> g_localCameraZCm{ 0 };
+
+std::mutex g_entityScanDetailMutex;
+EntityScanDetailStats g_entityScanDetail{};
 
 std::mutex g_fpsMutex;
 std::chrono::steady_clock::time_point g_lastFpsTime = std::chrono::steady_clock::now();
@@ -695,6 +746,8 @@ void SetEntityProcessStats(const EntityProcessStats& stats)
     g_entityProcessNullPair.store(static_cast<uint64_t>(stats.nullPair), std::memory_order_relaxed);
     g_entityProcessDuplicate.store(static_cast<uint64_t>(stats.duplicate), std::memory_order_relaxed);
     g_entityProcessHealthBaseFail.store(static_cast<uint64_t>(stats.healthBaseFail), std::memory_order_relaxed);
+    g_entityProcessHealthBaseMissing.store(static_cast<uint64_t>(stats.healthBaseMissing), std::memory_order_relaxed);
+    g_entityProcessHealthReadFail.store(static_cast<uint64_t>(stats.healthReadFail), std::memory_order_relaxed);
     g_entityProcessLinkBaseFail.store(static_cast<uint64_t>(stats.linkBaseFail), std::memory_order_relaxed);
     g_entityProcessHeroBaseMissing.store(static_cast<uint64_t>(stats.heroBaseMissing), std::memory_order_relaxed);
     g_entityProcessHeroFallbackFail.store(static_cast<uint64_t>(stats.heroFallbackFail), std::memory_order_relaxed);
@@ -722,6 +775,32 @@ void SetEntityProcessStats(const EntityProcessStats& stats)
     g_entityProcessHeadProbeFarCandidates.store(static_cast<uint64_t>(stats.headProbeFarCandidates), std::memory_order_relaxed);
     g_entityProcessHeadProbeFarWorldNonZero.store(static_cast<uint64_t>(stats.headProbeFarWorldNonZero), std::memory_order_relaxed);
     g_entityProcessSampleBoneAddress.store(stats.sampleBoneAddress, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailComponentParent.store(stats.sampleHealthFailComponentParent, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailLinkParent.store(stats.sampleHealthFailLinkParent, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailHealthBase.store(stats.sampleHealthFailHealthBase, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailLinkBase.store(stats.sampleHealthFailLinkBase, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailVelocityBase.store(stats.sampleHealthFailVelocityBase, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailHeroBase.store(stats.sampleHealthFailHeroBase, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailTeamBase.store(stats.sampleHealthFailTeamBase, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailBoneBase.store(stats.sampleHealthFailBoneBase, std::memory_order_relaxed);
+    g_entityProcessSampleHealthFailReadOk.store(stats.sampleHealthFailReadOk, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownComponentParent.store(stats.sampleNameUnknownComponentParent, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownLinkParent.store(stats.sampleNameUnknownLinkParent, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownComponentMatchId.store(stats.sampleNameUnknownComponentMatchId, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownLinkMatchId.store(stats.sampleNameUnknownLinkMatchId, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownHeroBase.store(stats.sampleNameUnknownHeroBase, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownHeroId.store(stats.sampleNameUnknownHeroId, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownHeroIdCandidate.store(stats.sampleNameUnknownHeroIdCandidate, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownHeroIdCandidateOffset.store(stats.sampleNameUnknownHeroIdCandidateOffset, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownComponentHeroBase.store(stats.sampleNameUnknownComponentHeroBase, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownComponentHeroId.store(stats.sampleNameUnknownComponentHeroId, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownComponentHeroIdCandidate.store(stats.sampleNameUnknownComponentHeroIdCandidate, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownComponentHeroIdCandidateOffset.store(stats.sampleNameUnknownComponentHeroIdCandidateOffset, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownLinkBase.store(stats.sampleNameUnknownLinkBase, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownSkillBase.store(stats.sampleNameUnknownSkillBase, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownTeamBase.store(stats.sampleNameUnknownTeamBase, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownBoneBase.store(stats.sampleNameUnknownBoneBase, std::memory_order_relaxed);
+    g_entityProcessSampleNameUnknownKind.store(stats.sampleNameUnknownKind, std::memory_order_relaxed);
     g_entityProcessSampleVelocityBase.store(stats.sampleVelocityBase, std::memory_order_relaxed);
     g_entityProcessSampleBoneBase.store(stats.sampleBoneBase, std::memory_order_relaxed);
     g_entityProcessSampleVelocityBoneData.store(stats.sampleVelocityBoneData, std::memory_order_relaxed);
@@ -742,6 +821,12 @@ void SetRosterStats(const RosterStats& stats)
     g_rosterHeroChanged.store(static_cast<uint64_t>(stats.heroChanged), std::memory_order_relaxed);
 }
 
+void SetEntityScanDetailStats(const EntityScanDetailStats& stats)
+{
+    std::lock_guard<std::mutex> lock(g_entityScanDetailMutex);
+    g_entityScanDetail = stats;
+}
+
 void SetPlayerInfoStats(const PlayerInfoStats& stats)
 {
     g_playerInfoInput.store(static_cast<uint64_t>(stats.input), std::memory_order_relaxed);
@@ -757,6 +842,26 @@ void SetPlayerInfoStats(const PlayerInfoStats& stats)
     g_playerInfoSkippedWorldToScreenHigh.store(static_cast<uint64_t>(stats.skippedWorldToScreenHigh), std::memory_order_relaxed);
     g_playerInfoSkippedBox.store(static_cast<uint64_t>(stats.skippedBox), std::memory_order_relaxed);
     g_playerInfoSkippedWindow.store(static_cast<uint64_t>(stats.skippedWindow), std::memory_order_relaxed);
+    g_playerInfoSampleProjected.store(stats.sampleProjected, std::memory_order_relaxed);
+    g_playerInfoSampleDrawn.store(stats.sampleDrawn, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedAddress.store(stats.sampleProjectedAddress, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedHeroId.store(stats.sampleProjectedHeroId, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedLeft.store(stats.sampleProjectedLeft, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedTop.store(stats.sampleProjectedTop, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedWidth.store(stats.sampleProjectedWidth, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedHeight.store(stats.sampleProjectedHeight, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedCenterX.store(stats.sampleProjectedCenterX, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedBottom.store(stats.sampleProjectedBottom, std::memory_order_relaxed);
+    g_playerInfoSampleProjectedDistanceM.store(stats.sampleProjectedDistanceM, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnAddress.store(stats.sampleDrawnAddress, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnHeroId.store(stats.sampleDrawnHeroId, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnLeft.store(stats.sampleDrawnLeft, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnTop.store(stats.sampleDrawnTop, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnWidth.store(stats.sampleDrawnWidth, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnHeight.store(stats.sampleDrawnHeight, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnCenterX.store(stats.sampleDrawnCenterX, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnBottom.store(stats.sampleDrawnBottom, std::memory_order_relaxed);
+    g_playerInfoSampleDrawnDistanceM.store(stats.sampleDrawnDistanceM, std::memory_order_relaxed);
 }
 
 void SetLocalEntityStats(const LocalEntityStats& stats)
@@ -849,6 +954,8 @@ StatusSnapshot Snapshot()
     snapshot.entityProcess.nullPair = static_cast<size_t>(g_entityProcessNullPair.load(std::memory_order_relaxed));
     snapshot.entityProcess.duplicate = static_cast<size_t>(g_entityProcessDuplicate.load(std::memory_order_relaxed));
     snapshot.entityProcess.healthBaseFail = static_cast<size_t>(g_entityProcessHealthBaseFail.load(std::memory_order_relaxed));
+    snapshot.entityProcess.healthBaseMissing = static_cast<size_t>(g_entityProcessHealthBaseMissing.load(std::memory_order_relaxed));
+    snapshot.entityProcess.healthReadFail = static_cast<size_t>(g_entityProcessHealthReadFail.load(std::memory_order_relaxed));
     snapshot.entityProcess.linkBaseFail = static_cast<size_t>(g_entityProcessLinkBaseFail.load(std::memory_order_relaxed));
     snapshot.entityProcess.heroBaseMissing = static_cast<size_t>(g_entityProcessHeroBaseMissing.load(std::memory_order_relaxed));
     snapshot.entityProcess.heroFallbackFail = static_cast<size_t>(g_entityProcessHeroFallbackFail.load(std::memory_order_relaxed));
@@ -876,6 +983,32 @@ StatusSnapshot Snapshot()
     snapshot.entityProcess.headProbeFarCandidates = static_cast<size_t>(g_entityProcessHeadProbeFarCandidates.load(std::memory_order_relaxed));
     snapshot.entityProcess.headProbeFarWorldNonZero = static_cast<size_t>(g_entityProcessHeadProbeFarWorldNonZero.load(std::memory_order_relaxed));
     snapshot.entityProcess.sampleBoneAddress = g_entityProcessSampleBoneAddress.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailComponentParent = g_entityProcessSampleHealthFailComponentParent.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailLinkParent = g_entityProcessSampleHealthFailLinkParent.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailHealthBase = g_entityProcessSampleHealthFailHealthBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailLinkBase = g_entityProcessSampleHealthFailLinkBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailVelocityBase = g_entityProcessSampleHealthFailVelocityBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailHeroBase = g_entityProcessSampleHealthFailHeroBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailTeamBase = g_entityProcessSampleHealthFailTeamBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailBoneBase = g_entityProcessSampleHealthFailBoneBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleHealthFailReadOk = g_entityProcessSampleHealthFailReadOk.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownComponentParent = g_entityProcessSampleNameUnknownComponentParent.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownLinkParent = g_entityProcessSampleNameUnknownLinkParent.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownComponentMatchId = g_entityProcessSampleNameUnknownComponentMatchId.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownLinkMatchId = g_entityProcessSampleNameUnknownLinkMatchId.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownHeroBase = g_entityProcessSampleNameUnknownHeroBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownHeroId = g_entityProcessSampleNameUnknownHeroId.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownHeroIdCandidate = g_entityProcessSampleNameUnknownHeroIdCandidate.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownHeroIdCandidateOffset = g_entityProcessSampleNameUnknownHeroIdCandidateOffset.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownComponentHeroBase = g_entityProcessSampleNameUnknownComponentHeroBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownComponentHeroId = g_entityProcessSampleNameUnknownComponentHeroId.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownComponentHeroIdCandidate = g_entityProcessSampleNameUnknownComponentHeroIdCandidate.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownComponentHeroIdCandidateOffset = g_entityProcessSampleNameUnknownComponentHeroIdCandidateOffset.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownLinkBase = g_entityProcessSampleNameUnknownLinkBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownSkillBase = g_entityProcessSampleNameUnknownSkillBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownTeamBase = g_entityProcessSampleNameUnknownTeamBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownBoneBase = g_entityProcessSampleNameUnknownBoneBase.load(std::memory_order_relaxed);
+    snapshot.entityProcess.sampleNameUnknownKind = g_entityProcessSampleNameUnknownKind.load(std::memory_order_relaxed);
     snapshot.entityProcess.sampleVelocityBase = g_entityProcessSampleVelocityBase.load(std::memory_order_relaxed);
     snapshot.entityProcess.sampleBoneBase = g_entityProcessSampleBoneBase.load(std::memory_order_relaxed);
     snapshot.entityProcess.sampleVelocityBoneData = g_entityProcessSampleVelocityBoneData.load(std::memory_order_relaxed);
@@ -898,6 +1031,26 @@ StatusSnapshot Snapshot()
     snapshot.playerInfo.skippedWorldToScreenHigh = static_cast<size_t>(g_playerInfoSkippedWorldToScreenHigh.load(std::memory_order_relaxed));
     snapshot.playerInfo.skippedBox = static_cast<size_t>(g_playerInfoSkippedBox.load(std::memory_order_relaxed));
     snapshot.playerInfo.skippedWindow = static_cast<size_t>(g_playerInfoSkippedWindow.load(std::memory_order_relaxed));
+    snapshot.playerInfo.sampleProjected = g_playerInfoSampleProjected.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawn = g_playerInfoSampleDrawn.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedAddress = g_playerInfoSampleProjectedAddress.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedHeroId = g_playerInfoSampleProjectedHeroId.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedLeft = g_playerInfoSampleProjectedLeft.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedTop = g_playerInfoSampleProjectedTop.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedWidth = g_playerInfoSampleProjectedWidth.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedHeight = g_playerInfoSampleProjectedHeight.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedCenterX = g_playerInfoSampleProjectedCenterX.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedBottom = g_playerInfoSampleProjectedBottom.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleProjectedDistanceM = g_playerInfoSampleProjectedDistanceM.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnAddress = g_playerInfoSampleDrawnAddress.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnHeroId = g_playerInfoSampleDrawnHeroId.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnLeft = g_playerInfoSampleDrawnLeft.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnTop = g_playerInfoSampleDrawnTop.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnWidth = g_playerInfoSampleDrawnWidth.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnHeight = g_playerInfoSampleDrawnHeight.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnCenterX = g_playerInfoSampleDrawnCenterX.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnBottom = g_playerInfoSampleDrawnBottom.load(std::memory_order_relaxed);
+    snapshot.playerInfo.sampleDrawnDistanceM = g_playerInfoSampleDrawnDistanceM.load(std::memory_order_relaxed);
     snapshot.localEntity.angleCandidates = static_cast<size_t>(g_localAngleCandidates.load(std::memory_order_relaxed));
     snapshot.localEntity.nearCameraCandidates = static_cast<size_t>(g_localNearCameraCandidates.load(std::memory_order_relaxed));
     snapshot.localEntity.namedCandidates = static_cast<size_t>(g_localNamedCandidates.load(std::memory_order_relaxed));
@@ -922,6 +1075,10 @@ StatusSnapshot Snapshot()
     snapshot.localEntity.cameraXCm = g_localCameraXCm.load(std::memory_order_relaxed);
     snapshot.localEntity.cameraYCm = g_localCameraYCm.load(std::memory_order_relaxed);
     snapshot.localEntity.cameraZCm = g_localCameraZCm.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_entityScanDetailMutex);
+        snapshot.entityScanDetail = g_entityScanDetail;
+    }
     return snapshot;
 }
 
