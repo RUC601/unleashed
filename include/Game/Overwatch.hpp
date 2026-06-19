@@ -8,6 +8,7 @@
 #include <cstring>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cctype>
 #include <cstdio>
@@ -491,7 +492,9 @@ inline void entity_thread() {
         uint64_t visibility = 0;
         uint64_t angle = 0;
         uint64_t enemyAngle = 0;
+        uint32_t matchId = 0;
         DWORD baseUpdateTick = 0;
+        bool matchIdValid = false;
         DWORD healthUpdateTick = 0;
         bool healthValid = false;
         float playerHealth = 0.0f;
@@ -903,6 +906,86 @@ inline void entity_thread() {
         localStats.cameraYCm = std::isfinite(cameraLocation.Y) ? static_cast<int>(cameraLocation.Y * 100.0f) : 0;
         localStats.cameraZCm = std::isfinite(cameraLocation.Z) ? static_cast<int>(cameraLocation.Z * 100.0f) : 0;
 
+        struct EntityHotFieldReads {
+            OW::velocity_compo_t velocity{};
+            OW::health_compo_t health{};
+            OW::hero_compo_t hero{};
+            DWORD velocityBytes = 0;
+            DWORD healthBytes = 0;
+            DWORD heroBytes = 0;
+            bool velocityRequested = false;
+            bool healthRequested = false;
+            bool heroRequested = false;
+            bool scatterOk = false;
+
+            bool VelocityRead() const {
+                return scatterOk &&
+                    velocityRequested &&
+                    velocityBytes == sizeof(OW::velocity_compo_t);
+            }
+
+            bool HealthRead() const {
+                return scatterOk &&
+                    healthRequested &&
+                    healthBytes == sizeof(OW::health_compo_t);
+            }
+
+            bool HeroRead() const {
+                return scatterOk &&
+                    heroRequested &&
+                    heroBytes == sizeof(OW::hero_compo_t);
+            }
+        };
+
+        auto readHotFields = [](VMMDLL_SCATTER_HANDLE handle,
+                                uint64_t velocityBase,
+                                bool readVelocity,
+                                uint64_t healthBase,
+                                bool readHealth,
+                                uint64_t heroBase,
+                                bool readHero) {
+            EntityHotFieldReads reads{};
+            if (!handle)
+                return reads;
+
+            if (readVelocity && velocityBase) {
+                reads.velocityRequested = true;
+                mem.AddScatterReadRequest(
+                    handle,
+                    velocityBase,
+                    &reads.velocity,
+                    sizeof(reads.velocity),
+                    &reads.velocityBytes);
+            }
+            if (readHealth && healthBase) {
+                reads.healthRequested = true;
+                mem.AddScatterReadRequest(
+                    handle,
+                    healthBase,
+                    &reads.health,
+                    sizeof(reads.health),
+                    &reads.healthBytes);
+            }
+            if (readHero && heroBase) {
+                reads.heroRequested = true;
+                mem.AddScatterReadRequest(
+                    handle,
+                    heroBase,
+                    &reads.hero,
+                    sizeof(reads.hero),
+                    &reads.heroBytes);
+            }
+
+            if (!reads.velocityRequested &&
+                !reads.healthRequested &&
+                !reads.heroRequested) {
+                return reads;
+            }
+
+            reads.scatterOk = mem.ExecuteReadScatter(handle);
+            return reads;
+        };
+
         auto recordHealthFailureSample = [&](const OW::c_entity& failedEntity,
                                              uint64_t componentParent,
                                              uint64_t linkParent,
@@ -995,6 +1078,8 @@ inline void entity_thread() {
                 previousEntityByRosterKey.emplace(previous.roster_key, &previous);
         }
 
+        VMMDLL_SCATTER_HANDLE hotFieldScatter = mem.CreateScatterHandle();
+
         auto attachPreviousRenderSample = [&](OW::c_entity& entity) {
             entity.render_sample_tick_ms = processLoopTick;
 
@@ -1073,9 +1158,6 @@ inline void entity_thread() {
                 Diagnostics::RecordInvalidEntity();
                 continue;
             }
-            entity.match_id = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
-            entity.roster_key = makeRosterKey(entity.match_id, LinkParent, ComponentParent);
-
             auto dynamicCacheIt = dynamicEntityCache.find(ComponentParent);
             if (dynamicCacheIt != dynamicEntityCache.end() &&
                 dynamicCacheIt->second.linkParent != LinkParent) {
@@ -1232,6 +1314,15 @@ inline void entity_thread() {
                 cacheIt = componentBaseCache.insert_or_assign(ComponentParent, cache).first;
             }
 
+            if (cacheIt->second.matchIdValid) {
+                entity.match_id = cacheIt->second.matchId;
+            } else {
+                entity.match_id = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
+                cacheIt->second.matchId = entity.match_id;
+                cacheIt->second.matchIdValid = true;
+            }
+            entity.roster_key = makeRosterKey(entity.match_id, LinkParent, ComponentParent);
+
             entity.HealthBase     = cacheIt->second.health;
             entity.LinkBase       = cacheIt->second.link;
             entity.TeamBase       = cacheIt->second.team;
@@ -1265,19 +1356,42 @@ inline void entity_thread() {
             }
             lastentity = entity;
 
-            OW::velocity_compo_t velo_compo{};
-            const bool velocityRead = entity.VelocityBase &&
-                SDK->read_range(entity.VelocityBase, &velo_compo, sizeof(velo_compo));
+            ComponentBaseCache& componentCache = cacheIt->second;
+            const bool refreshHealth =
+                entity.HealthBase &&
+                (!componentCache.healthValid ||
+                 processLoopTick - componentCache.healthUpdateTick >= OW::kEntityHealthIntervalMs);
+            const bool refreshHero =
+                entity.HeroBase &&
+                (!componentCache.heroValid ||
+                 componentCache.heroUpdateTick == 0 ||
+                 processLoopTick - componentCache.heroUpdateTick >= OW::kEntityHeroIntervalMs);
+            EntityHotFieldReads hotReads = readHotFields(
+                hotFieldScatter,
+                entity.VelocityBase,
+                entity.VelocityBase != 0,
+                entity.HealthBase,
+                refreshHealth,
+                entity.HeroBase,
+                refreshHero);
+
+            OW::velocity_compo_t velo_compo = hotReads.velocity;
+            bool velocityRead = hotReads.VelocityRead();
+            if (entity.VelocityBase && !velocityRead) {
+                velocityRead =
+                    SDK->read_range(entity.VelocityBase, &velo_compo, sizeof(velo_compo));
+            }
 
             // ---- Health ----
             if (entity.HealthBase) {
-                ComponentBaseCache& componentCache = cacheIt->second;
-                const bool refreshHealth =
-                    !componentCache.healthValid ||
-                    processLoopTick - componentCache.healthUpdateTick >= OW::kEntityHealthIntervalMs;
                 if (refreshHealth) {
-                    OW::health_compo_t health_compo{};
-                    if (!SDK->read_range(entity.HealthBase, &health_compo, sizeof(health_compo))) {
+                    OW::health_compo_t health_compo = hotReads.health;
+                    bool healthRead = hotReads.HealthRead();
+                    if (!healthRead) {
+                        healthRead =
+                            SDK->read_range(entity.HealthBase, &health_compo, sizeof(health_compo));
+                    }
+                    if (!healthRead) {
                         componentBaseCache.erase(ComponentParent);
                         processStats.healthBaseFail++;
                         processStats.healthReadFail++;
@@ -1396,14 +1510,14 @@ inline void entity_thread() {
 
             // ---- Hero ID ----
             if (entity.HeroBase) {
-                ComponentBaseCache& componentCache = cacheIt->second;
-                const bool refreshHero =
-                    !componentCache.heroValid ||
-                    componentCache.heroUpdateTick == 0 ||
-                    processLoopTick - componentCache.heroUpdateTick >= OW::kEntityHeroIntervalMs;
                 if (refreshHero) {
-                    OW::hero_compo_t hero_compo{};
-                    if (SDK->read_range(entity.HeroBase, &hero_compo, sizeof(hero_compo))) {
+                    OW::hero_compo_t hero_compo = hotReads.hero;
+                    bool heroRead = hotReads.HeroRead();
+                    if (!heroRead) {
+                        heroRead =
+                            SDK->read_range(entity.HeroBase, &hero_compo, sizeof(hero_compo));
+                    }
+                    if (heroRead) {
                         const uint64_t newHeroId = hero_compo.heroid;
                         if (newHeroId != 0) {
                             uint64_t previousHeroId = componentCache.heroValid
@@ -1988,6 +2102,9 @@ inline void entity_thread() {
                 Diagnostics::RecordInvalidEntity();
             }
         }
+
+        if (hotFieldScatter)
+            mem.CloseScatterHandle(hotFieldScatter);
 
         // Swap processed entities
         const size_t valid_count = tmp_entities.size();
@@ -3443,11 +3560,14 @@ inline float DrawAimTriggerStatusPanel() {
     return OverlayRenderDetail::DrawAimTriggerStatusPanel();
 }
 
-inline void PlayerInfo() {
+inline void PlayerInfo(bool boxPerfMode = false) {
+    const auto playerInfoStart = std::chrono::steady_clock::now();
     auto entity_snapshot = OW::TargetingDetail::SnapshotEntities();
     auto local_snapshot = OW::TargetingDetail::SnapshotLocalEntity();
 
     Diagnostics::PlayerInfoStats renderStats{};
+    renderStats.boxPerfMode = boxPerfMode;
+    renderStats.fastBoxPath = boxPerfMode && OW::Config::boxPerfFastRect;
     renderStats.input = entity_snapshot.size();
     static DWORD lastPlayerInfoLogTick = 0;
     static std::unordered_map<uint64_t, OverlayRenderDetail::ProjectedBoundsState> projectedBoundsStates;
@@ -3461,6 +3581,9 @@ inline void PlayerInfo() {
     OW::GetViewMatricesSnapshot(renderViewMatrix, renderViewMatrixXor);
 
     auto publishStats = [&]() {
+        const auto playerInfoEnd = std::chrono::steady_clock::now();
+        renderStats.elapsedMs = std::chrono::duration<double, std::milli>(
+            playerInfoEnd - playerInfoStart).count();
         Diagnostics::SetPlayerInfoStats(renderStats);
         if (!OW::PipelineDebugEnabled())
             return;
@@ -3584,9 +3707,21 @@ inline void PlayerInfo() {
         float left = bounds.left;
         captureProjectedSample(entity, left, top, width, height, centerX, bottom, dist);
 
-        ImU32 color = OverlayRenderDetail::EntityColor(
+        const ImU32 boxColor = OverlayRenderDetail::EntityBoxColor(
             entity, index, selectedTargetKey, selectedTargetIndex, distanceOpacity);
-        ImU32 boxColor = OverlayRenderDetail::EntityBoxColor(
+        if (boxPerfMode) {
+            const float perfThickness = entity.Vis ? 1.5f : 1.0f;
+            if (OW::Config::boxPerfFastRect) {
+                Render::DrawFastRectBox(left, top, width, bottom - top, boxColor, perfThickness);
+            } else {
+                Render::DrawCorneredBox(left, top, width, bottom - top, boxColor, perfThickness, 0);
+            }
+            captureDrawnSample(entity, left, top, width, height, centerX, bottom, dist);
+            renderStats.drawn++;
+            continue;
+        }
+
+        ImU32 color = OverlayRenderDetail::EntityColor(
             entity, index, selectedTargetKey, selectedTargetIndex, distanceOpacity);
         ImU32 boxOutlineColor = OverlayRenderDetail::BoxOutlineColor(distanceOpacity);
         Render::Color lineColor = OverlayRenderDetail::EntityRenderColor(
@@ -6448,6 +6583,255 @@ namespace AimbotDetail {
             ResetHanzoCustomFlickState(state, "sequence_block_after_loop");
     }
 
+    inline void RunAssistFlick(RuntimeState& state, float origin_sens) {
+        if (InputSequenceBlocksAim("assist_flick"))
+            return;
+        MaintainHanzoCustomFlickState(state);
+        UpdateFlickShotCooldown(state);
+        if (FlickPostFireLockoutActive(state))
+            return;
+        if (!IsAimKeyPressed()) {
+            ResetTrackingSession(state);
+            return;
+        }
+        if (OW::Config::shooted || OW::Config::reloading)
+            return;
+
+        const TrackingSessionIdentity sessionIdentity = CurrentTrackingSessionIdentity();
+        EnsureTrackingSession(state, sessionIdentity);
+        if (state.trackingSessionTimedOut) {
+            static DWORD lastAssistTimeoutLogTick = 0;
+            const DWORD now = GetTickCount();
+            if (lastAssistTimeoutLogTick == 0 || now - lastAssistTimeoutLogTick >= 250) {
+                Diagnostics::Aim("assist_flick skipped reason=session_timeout_held hero=0x%llX slot=%d key=%d",
+                    static_cast<unsigned long long>(sessionIdentity.heroId),
+                    sessionIdentity.slotIndex + 1,
+                    sessionIdentity.aimKey);
+                lastAssistTimeoutLogTick = now;
+            }
+            OW::TargetingDetail::ResetTargetLockRuntime();
+            return;
+        }
+
+        g_flickAttempts++;
+        const int behavior = OW::Config::ClampAimBehaviorIndex(OW::Config::aimBehavior);
+        const c_entity localAtEntry = LocalEntity();
+        Diagnostics::Aim("assist_flick.enter originSens=%.6f shooted=%d reloading=%d trackingScale=%.6f baseSpeed=%.6f method=%d acceleration=%.6f prediction=%d targetDelay=%d",
+            origin_sens,
+            OW::Config::shooted ? 1 : 0,
+            OW::Config::reloading ? 1 : 0,
+            OW::Config::Tracking_smooth,
+            OW::Config::AimBehaviorBaseSpeed(behavior),
+            OW::Config::AimBehaviorMethod(behavior),
+            OW::Config::AimBehaviorAcceleration(behavior),
+            OW::Config::Prediction ? 1 : 0,
+            OW::Config::targetdelay ? 1 : 0);
+
+        if (!OW::Config::aimDryRun &&
+            localAtEntry.HeroID == OW::eHero::HERO_HANJO &&
+            !localAtEntry.skill2act) {
+            Diagnostics::Aim("hanzo.custom route=assist_flick");
+            RunHanzoCustomFlick(state, origin_sens);
+            return;
+        }
+
+        if (OW::Config::aimDryRun) {
+            static DWORD lastDryRunLog = 0;
+            const DWORD now = GetTickCount();
+            if (now - lastDryRunLog >= static_cast<DWORD>(OW::Config::aimDryRunLogIntervalMs)) {
+                lastDryRunLog = now;
+                const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
+                if (!IsZeroVector(vec)) {
+                    float deadzoneDistance = 0.0f;
+                    const float deadzoneDampingScale = TrackingDeadzoneDampingScale(vec, &deadzoneDistance);
+                    AimData aim = BuildAimData(
+                        vec,
+                        false,
+                        OW::Config::AimBehaviorSmoothInput(behavior, OW::Config::Tracking_smooth, deadzoneDampingScale),
+                        OW::Config::AimBehaviorAcceleration(behavior));
+                    const float hitWindow = OW::Config::aimbotEffectiveHitWindow;
+                    const bool hitBeforeMove = OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
+                    const bool hitAfterMove = deadzoneDampingScale > 0.0f &&
+                        OW::in_range(aim.smoothed_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
+                    Diagnostics::Aim("dryrun.assist_flick local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) hitbox=%.4f would_fire=%d deadzoneDistance=%.3f deadzoneScale=%.3f target_pos=(%.1f,%.1f,%.1f)",
+                        RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
+                        RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
+                        RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
+                        hitWindow,
+                        (hitBeforeMove || hitAfterMove) ? 1 : 0,
+                        deadzoneDistance,
+                        deadzoneDampingScale,
+                        vec.X, vec.Y, vec.Z);
+                } else {
+                    Diagnostics::Aim("dryrun.assist_flick no_target_vector targetIndex=%d entities=%zu",
+                        OW::Config::Targetenemyi,
+                        OW::TargetingDetail::SnapshotEntities().size());
+                }
+            }
+            Sleep(1);
+            return;
+        }
+
+        ArmDelayedShot(state);
+        const DWORD sessionStartedTick = state.trackingSessionStartedTick != 0
+            ? state.trackingSessionStartedTick
+            : GetTickCount();
+
+        while (IsAimKeyPressed() &&
+               !OW::Config::shooted &&
+               !OW::Config::reloading &&
+               !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
+            if (AimSessionTimedOut(sessionStartedTick, "assist_flick")) {
+                state.trackingSessionTimedOut = true;
+                break;
+            }
+
+            const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
+            if (IsZeroVector(vec)) {
+                Diagnostics::Aim("assist_flick no_move reason=no_target_vector targetIndex=%d entities=%zu",
+                    OW::Config::Targetenemyi,
+                    OW::TargetingDetail::SnapshotEntities().size());
+                Sleep(1);
+                RunAutoScaleFov();
+                if (ShouldYieldToSecondaryAim()) break;
+                continue;
+            }
+
+            c_entity target{};
+            if (!IsPrimaryTargetActionable(target)) {
+                Diagnostics::Aim("assist_flick no_move reason=target_not_actionable targetIndex=%d vec=(%.9f,%.9f,%.9f)",
+                    OW::Config::Targetenemyi,
+                    vec.X,
+                    vec.Y,
+                    vec.Z);
+                Sleep(1);
+                RunAutoScaleFov();
+                if (ShouldYieldToSecondaryAim()) break;
+                continue;
+            }
+
+            if (!TargetDelayReady(&state, true, true))
+                continue;
+            if (!FlickTrajectoryWaitReady(state, target)) {
+                Sleep(1);
+                continue;
+            }
+            PrimeDelayedShot(state);
+
+            const Vector3 aimTarget = vec;
+            float deadzoneDistance = 0.0f;
+            const float deadzoneDampingScale = TrackingDeadzoneDampingScale(aimTarget, &deadzoneDistance);
+            const float smoothInput = OW::Config::AimBehaviorSmoothInput(
+                behavior,
+                OW::Config::Tracking_smooth,
+                deadzoneDampingScale);
+            AimData aim = BuildAimData(
+                aimTarget,
+                false,
+                smoothInput,
+                OW::Config::AimBehaviorAcceleration(behavior));
+            ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
+            const float hitWindow = OW::Config::aimbotEffectiveHitWindow;
+            const bool hitBeforeMove = OW::in_range(
+                aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow);
+            bool hitAfterMove = hitBeforeMove;
+
+            if (DelayedShotTimedOut(state)) {
+                const c_entity local = LocalEntity();
+                Diagnostics::Aim("assist_flick delayed_shot timeout target=%d localHero=0x%llX",
+                    OW::Config::Targetenemyi,
+                    static_cast<unsigned long long>(local.HeroID));
+                if (local.HeroID == OW::eHero::HERO_HANJO) {
+                    FireHanzo();
+                } else {
+                    ClickConfiguredFire();
+                }
+                StampFlickFire(state);
+                OW::Config::shooted = true;
+                continue;
+            }
+
+            if (deadzoneDampingScale <= 0.0f) {
+                OW::ResetAimSmoothingState();
+                if (OW::Config::aimVerboseLog) {
+                    Diagnostics::Aim("assist_flick.deadzone_hold distancePx=%.3f radiusPx=%.3f hitBefore=%d",
+                        deadzoneDistance,
+                        OW::Config::ClampTrackingDeadzonePixels(OW::Config::aimbotTrackingDeadzone),
+                        hitBeforeMove ? 1 : 0);
+                }
+            } else if (!IsZeroVector(aim.smoothed_angle)) {
+                MoveAimDelta(aim.local_angle, aim.smoothed_angle);
+                g_trackingMoves++;
+                hitAfterMove = OW::in_range(
+                    aim.smoothed_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow);
+                if (OW::Config::aimVerboseLog) {
+                    const float deltaDegX = RAD2DEG(aim.target_angle.X - aim.local_angle.X);
+                    const float deltaDegY = RAD2DEG(aim.target_angle.Y - aim.local_angle.Y);
+                    Diagnostics::Aim("assist_flick.tick delta_deg=(%.4f,%.4f) hitbox=%.4f deadzoneDistance=%.3f deadzoneScale=%.3f hitBefore=%d hitAfter=%d",
+                        deltaDegX,
+                        deltaDegY,
+                        hitWindow,
+                        deadzoneDistance,
+                        deadzoneDampingScale,
+                        hitBeforeMove ? 1 : 0,
+                        hitAfterMove ? 1 : 0);
+                }
+                RunCloseRangeActions(aimTarget);
+            } else {
+                Diagnostics::Aim("assist_flick no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
+                    aim.local_angle.X,
+                    aim.local_angle.Y,
+                    aim.local_angle.Z,
+                    aim.target_angle.X,
+                    aim.target_angle.Y,
+                    aim.target_angle.Z);
+            }
+
+            if (hitBeforeMove || hitAfterMove) {
+                if (OW::Config::aimVerboseLog) {
+                    Diagnostics::Aim("assist_flick.fire hitbox_check=passed before=%d after=%d",
+                        hitBeforeMove ? 1 : 0,
+                        hitAfterMove ? 1 : 0);
+                }
+                SetSensitivityLocked(true, origin_sens);
+                FirePrimaryNormal();
+                StampFlickFire(state);
+                ++g_flickFires;
+                SetSensitivityLocked(false, origin_sens);
+                OW::Config::shooted = true;
+                if (OW::Config::dontshot)
+                    OW::Config::shotcount++;
+                break;
+            }
+
+            if (OW::Config::dontshot &&
+                OW::Config::shotcount >= OW::Config::shotmanydont &&
+                OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, OW::Config::missbox)) {
+                const int previousShotCount = OW::Config::shotcount;
+                OW::Config::shotcount = 0;
+                const c_entity local = LocalEntity();
+                Diagnostics::Aim("assist_flick dontshot forced_fire target=%d previousShotCount=%d missbox=%.6f",
+                    OW::Config::Targetenemyi,
+                    previousShotCount,
+                    OW::Config::missbox);
+                if (local.HeroID == OW::eHero::HERO_HANJO) {
+                    FireHanzo();
+                } else {
+                    ClickConfiguredFire();
+                }
+                StampFlickFire(state);
+                OW::Config::shooted = true;
+                continue;
+            }
+
+            if (LocalEntity().PlayerHealth < OW::Config::SkillHealth) break;
+
+            Sleep(1);
+            RunAutoScaleFov();
+            if (ShouldYieldToSecondaryAim()) break;
+        }
+    }
+
     inline void RunFlick(RuntimeState& state, float origin_sens) {
         if (InputSequenceBlocksAim("flick"))
             return;
@@ -6946,7 +7330,12 @@ namespace AimbotDetail {
         }
 
         if (OW::Config::Tracking) RunTracking(state, origin_sens);
-        else if (OW::Config::Flick) RunFlick(state, origin_sens);
+        else if (OW::Config::Flick) {
+            if (OW::Config::IsAssistFlickBehavior(OW::Config::aimBehavior))
+                RunAssistFlick(state, origin_sens);
+            else
+                RunFlick(state, origin_sens);
+        }
 
         RunGenjiBlade();
         RunAutoScaleFov();
@@ -7165,6 +7554,8 @@ inline void configsavenloadthread() {
                 saveHero("Global", "radarline",      OW::Config::radarline);
                 saveHero("Global", "drawline",       OW::Config::drawline);
                 saveHero("Global", "draw_fov",       OW::Config::draw_fov);
+                saveHero("Global", "boxPerfMode",    OW::Config::boxPerfMode);
+                saveHero("Global", "boxPerfFastRect", OW::Config::boxPerfFastRect);
                 saveHero("Global", "MenuToggleKey",  OW::Config::MenuToggleKey);
 
                 // Save colors
@@ -7308,6 +7699,8 @@ inline void configsavenloadthread() {
             OW::Config::radarline       = loadHero("Global", "radarline", 0);
             OW::Config::drawline        = loadHero("Global", "drawline", 0);
             OW::Config::draw_fov        = loadHero("Global", "draw_fov", 0);
+            OW::Config::boxPerfMode     = loadHero("Global", "boxPerfMode", 0);
+            OW::Config::boxPerfFastRect = loadHero("Global", "boxPerfFastRect", 1);
             OW::Config::MenuToggleKey   = loadHero("Global", "MenuToggleKey", VK_HOME);
             OW::Config::eyeray          = loadHero("Global", "eyeray", 0);
             OW::Config::crosscircle     = loadHero("Global", "crosscircle", 0);

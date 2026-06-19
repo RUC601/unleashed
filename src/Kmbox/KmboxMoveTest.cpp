@@ -125,6 +125,10 @@ void RunKmboxMoveTest()
         PrintLine("KMBox output is disabled in config; aborting move test.");
         return;
     }
+    if (OW::Config::KmboxOutputSuppressedByMenu()) {
+        PrintLine("KMBox output is blocked while the menu is open; aborting move test.");
+        return;
+    }
 
     const int deviceType = OW::Config::kmboxDeviceType;
     if (deviceType != 0 && deviceType != 1 && deviceType != 2) {

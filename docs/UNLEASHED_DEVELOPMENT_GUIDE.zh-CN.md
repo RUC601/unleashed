@@ -4,7 +4,7 @@
 build, and run the live offset validator from `D:\Desktop\SenseZen\downp\vertifytool`;
 `Unleashed` keeps only runtime-required offset profile behavior.
 
-版本：2026-06-07
+版本：2026-06-19
 覆盖范围：当前工作树 `D:\Desktop\SenseZen\ClaudeCodexCoding\Unleashed`
 面向读者：从未打开过 IDE、没有读过本项目代码，但准备参与需求、调试、验收和后续开发沟通的人。
 
@@ -31,29 +31,28 @@ build, and run the live offset validator from `D:\Desktop\SenseZen\downp\vertify
 当前 Git 基线：
 
 ```text
-1852e74 Add aim preset configuration support
+6387dbf Update NE runtime diagnostics and Shion assets
 ```
 
-当前工作树已有未提交修改：
+文档刷新时的源码基线：
 
 ```text
-告警：下面这些是当前工作树里的代码变更，本文档会按这些源码事实更新说明，但不会回退或改动它们。
-
-include/Utils/Config.hpp
-src/Features/UI.cpp
-src/Kmbox/KmBoxNetManager.cpp
-src/Tools/MockHardwareSelfTest.cpp
-src/Utils/Config.cpp
-src/main.cpp
+main...origin/main
+刷新前没有未提交源码修改；本次刷新只改 docs 下的 Markdown 文档。
 ```
 
-这份文档内容基于当前工作树读取到的代码，而不只基于最后一次提交。也就是说，如果你打开 IDE 看到未提交 diff，不要惊讶：本文会把它们当成“当前真实工程状态”解释。
+这份文档内容基于当前工作树读取到的代码。后续如果工作树再次变脏，先以真实源码和 `git diff` 为准，再按本文的文件地图追链路。
 
 ### 最近改动速览
 
-从上次文档基线 `697f6c7` 到当前 HEAD，以及当前未提交 diff，最值得你先知道的变化是：
+从 2026-06-07 文档基线到当前 HEAD，最值得你先知道的变化是：
 
 ```text
+仓库状态：
+  当前 HEAD 是 6387dbf；刷新前源码工作树干净并与 origin/main 对齐。
+  本次文档刷新只产生 docs/UNLEASHED_DEVELOPMENT_GUIDE.zh-CN.md 和 docs/code-reading/README.zh-CN.md 改动。
+  CMakePresets.json 仍以 vs2026 preset 和 build/ 为唯一推荐构建树。
+
 进程连接：
   启动时不再阻塞等待目标进程；main.cpp 启动 ProcessConnection 后台线程，Overlay 可以先打开。
   目标进程缺失、退出或 PID 变化时，连接线程会清空运行时快照、DetachProcess，并自动/手动重连。
@@ -123,19 +122,33 @@ Mock hardware：
   新增 Kmbox/KmBoxMock.* 和 inputSource=4/mock 运行路径，用来离线验证输出移动、按钮状态、键盘输出、mouse mask、mock input 和故障模式。
   MockHardwareSelfTest 覆盖 Move/Button/ButtonStateMask/Keyboard/MaskMouse/Unmask、InputJitter、StuckButtons 和 KMBox monitor port 推荐值。
 
+UI 语言：
+  Misc > Menu 里新增 Language，当前支持 English / 简体中文。
+  翻译表在 UI.cpp 的 UiText/kUiText/T(...)，配置项是 Config::uiLanguage。
+
 Hanzo / charged fire：
   Hanzo 新增 custom charged flick 状态，按 charge percent 或 fallback charge time 决定释放，并在状态变化、secondary aim、sequence block 等场景重置。
   tracking session identity 会在目标、按键、行为切换时重置运行时平滑状态，避免旧 session 状态串到新目标。
 
-当前未提交源码状态：
+Hero Perk / weapon variant：
+  HeroPerkRuntime 当前提供手动 perk override，F8 切换、Shift+F8 清除；现阶段主要驱动 Cassidy cassidy_ads_perk 这类武器 spec 变体。
+  RenderCallback 会更新 HeroPerkRuntime context；状态行会显示 Perk On/Off、来源和 variantId。
+  /api/local 的 ultimate_perk 来自 HeroPerks::ReadCurrent(...)，这是现场读数/分类，不等同于 F8 手动 override。
+
+Scenario/TestServer：
+  CMake 默认编译 UNLEASHED_TEST_SERVER。
+  启动参数 --test-server 会在 127.0.0.1:19550 暴露只读 JSON API；--test-server-port 可换端口，--test-server-cors 可允许 wildcard CORS。
+  当前端点包括 /api/health、/api/diagnostics、/api/bz-offset-probe、/api/local、/api/entities、/api/projection-debug、/api/target、/api/target/history。
+
+当前源码状态：
   KMBox command port 与 monitor port 相同时会自动改成推荐 monitor port；NormalizeKmboxPorts() 会在 UI 连接和 main 初始化前运行。
   UDP command/monitor socket 会尝试禁用 SIO_UDP_CONNRESET；monitor 启动改为先开 listener，再发 cmd_monitor，失败会 EndMonitor 清理。
   MockHardwareSelfTest 已把 monitor port 推荐值纳入自检。
 
 工具目标：
-  CMake 除 Unleashed 外还有 MotionEstimatorSelfTest、FovConfigSelfTest、TrackingDeadzoneDampingSelfTest、AimPresetConfigSelfTest、LeadPredictionSelfTest、HeroSkillConfigSelfTest、MockHardwareSelfTest。
+  CMake 除 Unleashed 外还有 MotionEstimatorSelfTest、FovConfigSelfTest、TrackingDeadzoneDampingSelfTest、AimPresetConfigSelfTest、LeadPredictionSelfTest、WeaponSpecDisplaySelfTest、HeroSkillConfigSelfTest、HeroPerkClassifierSelfTest、MockHardwareSelfTest。
   CnOffsetProbe 已迁到 D:\Desktop\SenseZen\downp\vertifytool。
-  这 7 个轻量自检都已接入 ctest。
+  这 9 个轻量自检都已接入 ctest。
 ```
 
 ## 你应该如何读这份文档
@@ -215,11 +228,15 @@ TrackingDeadzoneDampingSelfTest
                          Tracking deadzone 边界阻尼曲线自检
 AimPresetConfigSelfTest  Aim method/behavior preset 解析与 fallback 自检
 LeadPredictionSelfTest   lead prediction、settle/pre-fire timing 自检
+WeaponSpecDisplaySelfTest
+                         weapon spec 显示名、stance action、manual perk 变体自检
 HeroSkillConfigSelfTest  Hero skill 默认值、Skill Aim/projectile 配置自检
+HeroPerkClassifierSelfTest
+                         ultimate perk 读数分类、候选槽、signature/key fallback 自检
 MockHardwareSelfTest     Mock hardware 输入/输出/mask/fault mode 自检
 ```
 
-其中 7 个轻量自检已经接入 CTest：
+其中 9 个轻量自检已经接入 CTest：
 
 ```text
 MotionEstimatorSelfTest
@@ -227,7 +244,9 @@ FovConfigSelfTest
 TrackingDeadzoneDampingSelfTest
 AimPresetConfigSelfTest
 LeadPredictionSelfTest
+WeaponSpecDisplaySelfTest
 HeroSkillConfigSelfTest
+HeroPerkClassifierSelfTest
 MockHardwareSelfTest
 ```
 
@@ -555,6 +574,9 @@ LoadHeroConfig()
 SaveConfigForHero()
 LoadConfigForHero()
 NormalizeHeroPresets()
+NormalizeKmboxPorts()
+uiLanguage                         -> 0 English / 1 简体中文
+inputSource                        -> 0 Auto / 1 KMBox / 2 Local / 3 DMA / 4 Mock
 ```
 
 当前配置迁移里最重要的是这几层：
@@ -612,6 +634,31 @@ projectileSpeed / projectileRadius / projectileGravity / preFireDelayMs
 ```
 
 旧配置没有 `skillKey` 时会默认继承 `key`，但 Zarya `propel-jump` 会迁移为右键输出。Ana `sleep-dart` 和 Roadhog `chain-hook` 如果缺少新的 Skill Aim/projectile 字段，会恢复当前默认值。
+
+### include/Game/HeroPerks.hpp、include/Game/HeroPerkRuntime.hpp 与 src/Game/HeroPerkRuntime.cpp
+
+职责：Hero Perk 有两条不同链路，排查时不要混在一起。
+
+```text
+HeroPerks.hpp
+  从本地英雄 SkillBase/local entity 读取 ultimate perk 相关结构，构建 signature/key，
+  判断 KnownTrue / KnownFalse / UnknownMissing / UnknownCollision，并提供研究候选。
+
+HeroPerkRuntime.hpp/.cpp
+  运行时手动 override 层。RenderCallback() 每帧调用 UpdateContext()，
+  F8 在支持英雄上 ForceOn/ForceOff，Shift+F8 清除 override。
+
+WeaponSpec.cpp / HeroSkills.hpp
+  消费 HeroPerkRuntime::IsEffectivePerkOn(heroId)，决定是否启用 RuntimeVariantRequirement::PerkOn 的 spec/skill。
+```
+
+现阶段手动 override 的主要实用例子是 Cassidy：
+
+```text
+cassidy_fan_the_hammer -> cassidy_ads_perk
+```
+
+Overlay 状态行里的 `Perk: On/Off | Manual | cassidy_ads_perk` 来自 `HeroPerkRuntime::CurrentSnapshot()`。TestServer 的 `/api/local` 里 `ultimate_perk` 字段来自 `HeroPerks::ReadCurrent(...)`，用于现场读数和分类调试，不代表 F8 手动 override 已经打开。
 
 ### include/Utils/ProcessConnection.hpp
 
@@ -857,6 +904,16 @@ mem.CloseDma()
 ```
 
 这些模式不会完整进入 Overlay 消息循环。比如 `--config-check` 只加载配置并打印路径；`--kmbox-calibrate` 会初始化 DMA/KMBox、启动 headless runtime，等待 player controller 后做采样并写回配置。
+
+另有一组不会提前返回的只读测试服务器参数：
+
+```text
+--test-server
+--test-server-port <1..65535>
+--test-server-cors
+```
+
+`--test-server` 会在常规 DMA、配置、KMBox 初始化之后启动 `127.0.0.1:<port>` 的 HTTP JSON API，然后继续启动 ProcessConnection 和 Overlay。端口默认 `19550`；端口非法会直接返回 fatal；`--test-server-cors` 只在需要浏览器跨源读取时打开 wildcard CORS。
 
 ## 后台线程分工
 
@@ -1362,6 +1419,8 @@ unleashed_aim_diag.log 里的 main.config_loaded configPath=...
 [KMBox]
 [Global]
 ```
+
+`[Global]` 里也保存 `uiLanguage`、`inputSource`、当前 profile 等跨页面状态；如果 UI 显示语言或输入源“重启后不对”，先从这里和 `ValidateUnlocked()` 的 clamp 逻辑查起。
 
 当前 config version：
 
@@ -1911,7 +1970,7 @@ MockFaultMode                         OutputTimeout / DropOutput / InputJitter /
 
 当前 UI 的 key probe 会同时显示 `KMBox Monitor`、`DMA KeyState`、`Mock` 和 `Local`；Mock 页还能手动切换 L/R/M/X1/X2 输入、设置 fault mode、查看 event/button/key 计数。
 
-网络 KMBox 有一个容易踩的端口边界：command port 和 monitor port 必须分开。当前未提交源码里新增了：
+网络 KMBox 有一个容易踩的端口边界：command port 和 monitor port 必须分开。当前源码里有：
 
 ```cpp
 Config::RecommendedKmboxMonitorPort(commandPort)
@@ -2361,8 +2420,14 @@ AimPresetConfigSelfTest
 LeadPredictionSelfTest
   纯本地自检，不需要 DMA/Overlay。验证 prediction override、aim settle time、input delay 和 pre-fire 位移。
 
+WeaponSpecDisplaySelfTest
+  纯本地自检，不需要 DMA/Overlay。验证 scoped/secondary action 名称、generated fire key mask、Cassidy manual perk weapon variant。
+
 HeroSkillConfigSelfTest
   纯本地自检，不需要 DMA/Overlay。验证 hero skill 默认配置、Skill Aim、projectile 参数、Auto Melee 和 control flags。
+
+HeroPerkClassifierSelfTest
+  纯本地自检，不需要 DMA/Overlay。验证 HeroPerks 候选槽、signature/key 分类、Known/Unknown/Collision fallback、Ana headshot selected boolean。
 
 MockHardwareSelfTest
   纯本地自检，不需要 DMA/Overlay/真实 KMBox。验证 mock 输入输出、按钮状态、keyboard、mouse mask、fault mode 和 monitor port 推荐值。
@@ -2399,9 +2464,59 @@ CN/NE 或 world/BZ offset 语义变化：
   TrackingDeadzoneDampingSelfTest / AimPresetConfigSelfTest / LeadPredictionSelfTest /
   HeroSkillConfigSelfTest 过。
 
+只改 WeaponSpec、stance action、manual perk variant 或 HeroPerks 分类：
+  跑 WeaponSpecDisplaySelfTest / HeroPerkClassifierSelfTest；如果改到 Target/HeroSkills runtime 选择链路，跑完整 ctest。
+
 只改 Mock hardware 或 input source/mock UI：
   跑 MockHardwareSelfTest；如果也碰了 KMBox 网络端口/monitor，仍然跑 build-release.ps1 和完整 ctest。
 ```
+
+## TestServer 只读 JSON API
+
+`UNLEASHED_TEST_SERVER` 在 CMake 里默认开启。启动主程序时加：
+
+```powershell
+.\build\Release\Unleashed.exe --test-server
+```
+
+默认监听：
+
+```text
+http://127.0.0.1:19550
+```
+
+可选参数：
+
+```text
+--test-server-port <1..65535>
+--test-server-cors
+```
+
+当前端点：
+
+```text
+GET /api/health
+GET /api/diagnostics
+GET /api/bz-offset-probe
+GET /api/local
+GET /api/entities
+GET /api/projection-debug
+GET /api/target
+GET /api/target/history
+```
+
+重要边界：
+
+```text
+只接受 GET；非 GET 会返回 405 和 Allow: GET。
+响应都是 application/json; charset=utf-8。
+所有响应带 schema_version=1。
+服务器只绑定 127.0.0.1，不对外网监听。
+/api/local 会把本地英雄、视角、link/skill base 和 ultimate_perk 一起导出。
+/api/target/history 有独立 sampler，默认约 125 Hz、最多保留 1024 条。
+```
+
+这套 API 是 Scenario、投影调试和读数对照用的只读入口。它不能替代 overlay 视觉验收：判断框、目标和投影是否真的对齐时，仍然要把 `/api/entities`、`/api/target` 或 `/api/projection-debug` 与实际画面/overlay 输出一起看。
 
 ## 资源系统
 
@@ -3028,7 +3143,11 @@ include/Game/Entity.hpp
 include/Game/Target.hpp 的 TargetingDetail
 include/Game/LeadPrediction.hpp
 include/Game/Overwatch.hpp 的 entity_scan_thread / entity_thread
+include/Game/HeroPerks.hpp
+src/Game/HeroPerkRuntime.cpp
+src/Game/WeaponSpec.cpp 的 RuntimeVariantRequirement / ResolveWeaponSpec
 src/Utils/Diagnostics.cpp 的 Snapshot / DumpStatus
+src/Utils/TestServer.cpp 的 /api/local / /api/entities / /api/target
 ```
 
 第三天：
@@ -3071,6 +3190,8 @@ rg -n "AimPresetConfigSelfTest|aimMethodPresets|aimBehaviorPresets|aimBehaviorPr
 rg -n "MockHardware|MockHardwareSelfTest|inputSource == 4|MockFaultMode" include src
 rg -n "auto-melee|QuickMelee|kAimBoneClosest|EnemyHealthAbsolute" include src
 rg -n "RecommendedKmboxMonitorPort|NormalizeKmboxPorts|config.kmbox_monitor_port_adjusted" include src
+rg -n "HeroPerkRuntime|HeroPerks|ultimate_perk|cassidy_ads_perk|RuntimeVariantRequirement" include src
+rg -n "TestServer|--test-server|/api/local|/api/entities|/api/target" include src
 ```
 
 看当前未提交文件：
@@ -3112,6 +3233,20 @@ cd D:\Desktop\SenseZen\downp\vertifytool
 cd D:\Desktop\SenseZen\ClaudeCodexCoding\Unleashed
 .\build\Release\Unleashed.exe --kmbox-move-test
 .\build\Release\Unleashed.exe --kmbox-calibrate --kmbox-reference-sens 15
+```
+
+启动只读测试服务器：
+
+```powershell
+.\build\Release\Unleashed.exe --test-server --test-server-port 19550
+```
+
+烟测只读端点：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:19550/api/health
+Invoke-RestMethod http://127.0.0.1:19550/api/local
+Invoke-RestMethod "http://127.0.0.1:19550/api/entities?team=enemy&include_dead=0"
 ```
 
 看日志尾部：

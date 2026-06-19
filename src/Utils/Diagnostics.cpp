@@ -252,6 +252,9 @@ std::atomic<uint64_t> g_entityProcessSampleBoneIdTable{ 0 };
 std::atomic<int> g_entityProcessSampleBoneCount{ 0 };
 std::atomic<int> g_entityProcessSampleBoneIdTableReadable{ 0 };
 std::atomic<int> g_entityProcessSampleBoneHeadIndex{ -1 };
+std::atomic<bool> g_playerInfoBoxPerfMode{ false };
+std::atomic<bool> g_playerInfoFastBoxPath{ false };
+std::atomic<uint64_t> g_playerInfoElapsedUs{ 0 };
 std::atomic<uint64_t> g_playerInfoInput{ 0 };
 std::atomic<uint64_t> g_playerInfoProjected{ 0 };
 std::atomic<uint64_t> g_playerInfoDrawn{ 0 };
@@ -317,6 +320,17 @@ std::mutex g_fpsMutex;
 std::chrono::steady_clock::time_point g_lastFpsTime = std::chrono::steady_clock::now();
 uint64_t g_lastFpsFrameCount = 0;
 double g_lastFps = 0.0;
+
+std::atomic<bool> g_renderWorkloadBoxPerfMode{ false };
+std::atomic<uint64_t> g_renderWorkloadLinePrimitives{ 0 };
+std::atomic<uint64_t> g_renderWorkloadRectPrimitives{ 0 };
+std::atomic<uint64_t> g_renderWorkloadFilledRectPrimitives{ 0 };
+std::atomic<uint64_t> g_renderWorkloadTextCalls{ 0 };
+std::atomic<uint64_t> g_renderWorkloadIconCalls{ 0 };
+std::atomic<uint64_t> g_renderWorkloadCornerBoxes{ 0 };
+std::atomic<uint64_t> g_renderWorkloadFastBoxes{ 0 };
+std::mutex g_renderWorkloadMutex;
+RenderWorkloadStats g_lastRenderWorkload{};
 
 bool ShouldLog(LogLevel level)
 {
@@ -638,6 +652,50 @@ void RecordFrame()
     g_framesRendered.fetch_add(1, std::memory_order_relaxed);
 }
 
+void BeginRenderWorkloadFrame(bool boxPerfMode)
+{
+    g_renderWorkloadBoxPerfMode.store(boxPerfMode, std::memory_order_relaxed);
+    g_renderWorkloadLinePrimitives.store(0, std::memory_order_relaxed);
+    g_renderWorkloadRectPrimitives.store(0, std::memory_order_relaxed);
+    g_renderWorkloadFilledRectPrimitives.store(0, std::memory_order_relaxed);
+    g_renderWorkloadTextCalls.store(0, std::memory_order_relaxed);
+    g_renderWorkloadIconCalls.store(0, std::memory_order_relaxed);
+    g_renderWorkloadCornerBoxes.store(0, std::memory_order_relaxed);
+    g_renderWorkloadFastBoxes.store(0, std::memory_order_relaxed);
+}
+
+void RecordRenderPrimitive(RenderPrimitiveKind kind, uint64_t count)
+{
+    if (count == 0)
+        return;
+
+    switch (kind) {
+    case RenderPrimitiveKind::Line:
+        g_renderWorkloadLinePrimitives.fetch_add(count, std::memory_order_relaxed);
+        break;
+    case RenderPrimitiveKind::Rect:
+        g_renderWorkloadRectPrimitives.fetch_add(count, std::memory_order_relaxed);
+        break;
+    case RenderPrimitiveKind::FilledRect:
+        g_renderWorkloadFilledRectPrimitives.fetch_add(count, std::memory_order_relaxed);
+        break;
+    case RenderPrimitiveKind::Text:
+        g_renderWorkloadTextCalls.fetch_add(count, std::memory_order_relaxed);
+        break;
+    case RenderPrimitiveKind::Icon:
+        g_renderWorkloadIconCalls.fetch_add(count, std::memory_order_relaxed);
+        break;
+    }
+}
+
+void RecordRenderBox(bool fastPath)
+{
+    if (fastPath)
+        g_renderWorkloadFastBoxes.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_renderWorkloadCornerBoxes.fetch_add(1, std::memory_order_relaxed);
+}
+
 void RecordDmaRead(bool success, std::chrono::steady_clock::duration latency)
 {
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(latency).count();
@@ -829,6 +887,9 @@ void SetEntityScanDetailStats(const EntityScanDetailStats& stats)
 
 void SetPlayerInfoStats(const PlayerInfoStats& stats)
 {
+    g_playerInfoBoxPerfMode.store(stats.boxPerfMode, std::memory_order_relaxed);
+    g_playerInfoFastBoxPath.store(stats.fastBoxPath, std::memory_order_relaxed);
+    g_playerInfoElapsedUs.store(static_cast<uint64_t>(stats.elapsedMs * 1000.0 + 0.5), std::memory_order_relaxed);
     g_playerInfoInput.store(static_cast<uint64_t>(stats.input), std::memory_order_relaxed);
     g_playerInfoProjected.store(static_cast<uint64_t>(stats.projected), std::memory_order_relaxed);
     g_playerInfoDrawn.store(static_cast<uint64_t>(stats.drawn), std::memory_order_relaxed);
@@ -948,6 +1009,10 @@ StatusSnapshot Snapshot()
     snapshot.renderPlayerInfoCalled = g_renderPlayerInfoCalled.load(std::memory_order_relaxed);
     snapshot.renderSkillInfoCalled = g_renderSkillInfoCalled.load(std::memory_order_relaxed);
     snapshot.renderEntityListEmpty = g_renderEntityListEmpty.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_renderWorkloadMutex);
+        snapshot.renderWorkload = g_lastRenderWorkload;
+    }
     snapshot.entityProcess.raw = static_cast<size_t>(g_entityProcessRaw.load(std::memory_order_relaxed));
     snapshot.entityProcess.validated = static_cast<size_t>(g_entityProcessValidated.load(std::memory_order_relaxed));
     snapshot.entityProcess.dynamic = static_cast<size_t>(g_entityProcessDynamic.load(std::memory_order_relaxed));
@@ -1018,6 +1083,10 @@ StatusSnapshot Snapshot()
     snapshot.entityProcess.sampleBoneCount = g_entityProcessSampleBoneCount.load(std::memory_order_relaxed);
     snapshot.entityProcess.sampleBoneIdTableReadable = g_entityProcessSampleBoneIdTableReadable.load(std::memory_order_relaxed);
     snapshot.entityProcess.sampleBoneHeadIndex = g_entityProcessSampleBoneHeadIndex.load(std::memory_order_relaxed);
+    snapshot.playerInfo.boxPerfMode = g_playerInfoBoxPerfMode.load(std::memory_order_relaxed);
+    snapshot.playerInfo.fastBoxPath = g_playerInfoFastBoxPath.load(std::memory_order_relaxed);
+    snapshot.playerInfo.elapsedMs =
+        static_cast<double>(g_playerInfoElapsedUs.load(std::memory_order_relaxed)) / 1000.0;
     snapshot.playerInfo.input = static_cast<size_t>(g_playerInfoInput.load(std::memory_order_relaxed));
     snapshot.playerInfo.projected = static_cast<size_t>(g_playerInfoProjected.load(std::memory_order_relaxed));
     snapshot.playerInfo.drawn = static_cast<size_t>(g_playerInfoDrawn.load(std::memory_order_relaxed));
@@ -1130,6 +1199,23 @@ void RecordFrameTiming(const FrameTiming& timing, double slowThresholdMs)
     const uint64_t frameDmaTotalUs = g_frameDmaTotalUs.load(std::memory_order_relaxed);
     const uint64_t frameDmaMaxUs = g_frameDmaMaxUs.load(std::memory_order_relaxed);
     ResetFrameDmaCounters();
+
+    RenderWorkloadStats workload{};
+    workload.boxPerfMode = g_renderWorkloadBoxPerfMode.load(std::memory_order_relaxed);
+    workload.totalMs = timing.totalMs;
+    workload.renderCallbackMs = timing.renderCallbackMs;
+    workload.presentMs = timing.presentMs;
+    workload.linePrimitives = g_renderWorkloadLinePrimitives.load(std::memory_order_relaxed);
+    workload.rectPrimitives = g_renderWorkloadRectPrimitives.load(std::memory_order_relaxed);
+    workload.filledRectPrimitives = g_renderWorkloadFilledRectPrimitives.load(std::memory_order_relaxed);
+    workload.textCalls = g_renderWorkloadTextCalls.load(std::memory_order_relaxed);
+    workload.iconCalls = g_renderWorkloadIconCalls.load(std::memory_order_relaxed);
+    workload.cornerBoxes = g_renderWorkloadCornerBoxes.load(std::memory_order_relaxed);
+    workload.fastBoxes = g_renderWorkloadFastBoxes.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_renderWorkloadMutex);
+        g_lastRenderWorkload = workload;
+    }
 
     if (timing.totalMs <= slowThresholdMs)
         return;

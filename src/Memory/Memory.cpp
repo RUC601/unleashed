@@ -1553,8 +1553,16 @@ void Memory::CloseScatterHandle(VMMDLL_SCATTER_HANDLE handle)
 void Memory::AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle,
 	uint64_t address, void* buffer, size_t size)
 {
+	AddScatterReadRequest(handle, address, buffer, size, nullptr);
+}
+
+void Memory::AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle,
+	uint64_t address, void* buffer, size_t size, DWORD* bytesRead)
+{
+	if (bytesRead)
+		*bytesRead = 0;
 	VMMDLL_Scatter_PrepareEx(handle, address, size,
-		static_cast<PBYTE>(buffer), NULL);
+		static_cast<PBYTE>(buffer), bytesRead);
 }
 
 bool Memory::ExecuteReadScatter(VMMDLL_SCATTER_HANDLE handle, int pid)

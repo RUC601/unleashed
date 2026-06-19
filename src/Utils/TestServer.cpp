@@ -2548,11 +2548,31 @@ std::string BuildDiagnosticsJson()
     AppendHexOrNull(out, snapshot.entityScanDetail.sampleRejectBoneBase);
     out << ",\"health_cm\":" << snapshot.entityScanDetail.sampleRejectHealthCm
         << ",\"health_max_cm\":" << snapshot.entityScanDetail.sampleRejectHealthMaxCm
-        << "}},\"render\":{\"draw_radar_called\":" << (snapshot.renderDrawRadarCalled ? "true" : "false")
+        << "}},\"render\":{\"mode\":";
+    AppendJsonString(out, snapshot.renderWorkload.boxPerfMode ? "box_perf" : "normal");
+    out << ",\"box_perf_mode\":" << (snapshot.renderWorkload.boxPerfMode ? "true" : "false")
+        << ",\"draw_radar_called\":" << (snapshot.renderDrawRadarCalled ? "true" : "false")
         << ",\"player_info_called\":" << (snapshot.renderPlayerInfoCalled ? "true" : "false")
         << ",\"skill_info_called\":" << (snapshot.renderSkillInfoCalled ? "true" : "false")
         << ",\"entity_list_empty\":" << (snapshot.renderEntityListEmpty ? "true" : "false")
-        << "},\"player_info\":{\"input\":" << snapshot.playerInfo.input
+        << ",\"frame_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.renderWorkload.totalMs));
+    out << ",\"render_callback_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.renderWorkload.renderCallbackMs));
+    out << ",\"present_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.renderWorkload.presentMs));
+    out << ",\"line_primitives\":" << snapshot.renderWorkload.linePrimitives
+        << ",\"rect_primitives\":" << snapshot.renderWorkload.rectPrimitives
+        << ",\"filled_rect_primitives\":" << snapshot.renderWorkload.filledRectPrimitives
+        << ",\"text_calls\":" << snapshot.renderWorkload.textCalls
+        << ",\"icon_calls\":" << snapshot.renderWorkload.iconCalls
+        << ",\"corner_boxes\":" << snapshot.renderWorkload.cornerBoxes
+        << ",\"fast_boxes\":" << snapshot.renderWorkload.fastBoxes
+        << "},\"player_info\":{\"box_perf_mode\":" << (snapshot.playerInfo.boxPerfMode ? "true" : "false")
+        << ",\"fast_box_path\":" << (snapshot.playerInfo.fastBoxPath ? "true" : "false")
+        << ",\"elapsed_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.playerInfo.elapsedMs));
+    out << ",\"input\":" << snapshot.playerInfo.input
         << ",\"projected\":" << snapshot.playerInfo.projected
         << ",\"drawn\":" << snapshot.playerInfo.drawn
         << ",\"skipped_dead\":" << snapshot.playerInfo.skippedDead

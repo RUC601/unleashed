@@ -941,7 +941,7 @@ static constexpr int kBonePreferenceAimBones[] = {
     OW::Config::kAimBoneChest
 };
 static constexpr int kBonePreferenceClosestIndex = 3;
-static const char* kAimBehavior[]  = { "Tracking", "Flick", "Flick2nd", "Reacquire" };
+static const char* kAimBehavior[]  = { "Tracking", "Flick", "Flick2nd", "Reacquire", "AssistFlick" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPredictionMode[] = { "Auto", "Force On", "Force Off" };
@@ -1078,6 +1078,7 @@ enum class UiText : size_t {
     UseCurrent,
     AutoSensScale,
     InputDelayMs,
+    BlockOutputWhenMenuOpen,
     DebugLogging,
     MockFault,
     MockInput,
@@ -1230,6 +1231,7 @@ static constexpr UiTextPair kUiText[] = {
     { "Use Current", "用当前值" },
     { "Auto Sens Scale", "自动灵敏度缩放" },
     { "Input Delay (ms)", "输入延迟(ms)" },
+    { "Block Output When Menu Open", "菜单打开时阻断输出" },
     { "Debug Logging", "调试日志" },
     { "Mock Fault", "模拟故障" },
     { "Mock Input", "模拟输入" },
@@ -3700,14 +3702,14 @@ void UI::AimbotPage() {
             presetChanged |= UISlider("##aimSmooth", &activePreset.smooth, 0.0f, 100.0f, "50.00 %");
             ImGui::PopItemWidth();
 
-            if (OW::Config::IsTrackingBehavior(activePreset.aimBehavior)) {
+            if (OW::Config::UsesTrackingDeadzone(activePreset.aimBehavior)) {
                 SettingRow("Deadzone", kAimbotLeftLabelWidth);
                 PushControlWidth();
                 presetChanged |= UISlider("##aimTrackingDeadzone", &activePreset.trackingDeadzone, 0.0f, 250.0f, "0 px");
                 ImGui::PopItemWidth();
             }
 
-            if (OW::Config::IsFlickBehavior(activePreset.aimBehavior)) {
+            if (OW::Config::UsesFlickFireControls(activePreset.aimBehavior)) {
                 SettingRow("Shot Clamp", kAimbotLeftLabelWidth);
                 PushControlWidth();
                 presetChanged |= UISlider("##aimFlickShotClamp", &activePreset.flickShotClampMs, 0.0f, 1000.0f, "0 ms");
@@ -5830,6 +5832,13 @@ static void DrawMiscKmboxPage() {
         kmboxSaveRequested |= UISlider("##InputDelay", &OW::Config::kmboxInputDelayMs,
                                        0.0f, 20.0f, "0 ms");
         ImGui::PopItemWidth();
+
+        SettingRow(T(UiText::BlockOutputWhenMenuOpen));
+        kmboxSaveRequested |= UICheckbox(
+            "##SuppressOutputWhileMenuOpen",
+            &OW::Config::kmboxSuppressOutputWhileMenuOpen);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("When enabled, KMBox mouse and keyboard output commands are skipped while this menu is open.");
 
         SettingRow(T(UiText::DebugLogging));
         kmboxSaveRequested |= ImGui::Checkbox("##Debug", &OW::Config::kmboxDebugLog);

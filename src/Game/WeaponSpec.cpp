@@ -344,6 +344,7 @@ const char* AimBehaviorName(AimBehaviorType value)
     case AimBehaviorType::Flick: return "Flick";
     case AimBehaviorType::Flick2nd: return "Flick2nd";
     case AimBehaviorType::Reacquire: return "Reacquire";
+    case AimBehaviorType::AssistFlick: return "AssistFlick";
     default: return "Tracking";
     }
 }

@@ -1,5 +1,6 @@
 #include "Renderer/Renderer.hpp"
 #include "Renderer/IconManager.hpp"
+#include "Utils/Diagnostics.hpp"
 
 #include <memory>
 
@@ -95,6 +96,7 @@ namespace Render {
         ImDrawList* d = DL();
         if (!d) return;
         d->AddLine(ToCanvas(from), ToCanvas(to), color.ToImU32(), thickness * ScaleUniform());
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Line);
     }
 
     // ---- DrawRect ----
@@ -104,6 +106,7 @@ namespace Render {
         if (!d) return;
         const ImVec2 p = ToCanvas(pos);
         d->AddRect(p, ImVec2(p.x + width * ScaleX(), p.y + height * ScaleY()), color.ToImU32(), 0.0f, 0, thickness * ScaleUniform());
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Rect);
     }
 
     // ---- DrawFilledRect ----
@@ -113,6 +116,7 @@ namespace Render {
         if (!d) return;
         const ImVec2 p = ToCanvas(pos);
         d->AddRectFilled(p, ImVec2(p.x + width * ScaleX(), p.y + height * ScaleY()), color);
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::FilledRect);
     }
 
     // ---- DrawCorneredBox ----
@@ -131,6 +135,7 @@ namespace Render {
         float lineW = w / 3.0f;
         float lineH = h / 3.0f;
 
+        uint64_t lineCount = 8;
         if (((outlineColor >> IM_COL32_A_SHIFT) & 0xFF) != 0) {
             d->AddLine(ImVec2(x, y), ImVec2(x, y + lineH), outlineColor, 3.0f);
             d->AddLine(ImVec2(x, y), ImVec2(x + lineW, y), outlineColor, 3.0f);
@@ -140,6 +145,7 @@ namespace Render {
             d->AddLine(ImVec2(x, y + h), ImVec2(x + lineW, y + h), outlineColor, 3.0f);
             d->AddLine(ImVec2(x + w - lineW, y + h), ImVec2(x + w, y + h), outlineColor, 3.0f);
             d->AddLine(ImVec2(x + w, y + h - lineH), ImVec2(x + w, y + h), outlineColor, 3.0f);
+            lineCount += 8;
         }
 
         // Colour corners
@@ -151,6 +157,29 @@ namespace Render {
         d->AddLine(ImVec2(x, y + h), ImVec2(x + lineW, y + h), color, thickness);
         d->AddLine(ImVec2(x + w - lineW, y + h), ImVec2(x + w, y + h), color, thickness);
         d->AddLine(ImVec2(x + w, y + h - lineH), ImVec2(x + w, y + h), color, thickness);
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Line, lineCount);
+        Diagnostics::RecordRenderBox(false);
+    }
+
+    void DrawFastRectBox(float x, float y, float w, float h, ImU32 color, float thickness, ImU32 fillColor) {
+        ImDrawList* d = DL();
+        if (!d) return;
+
+        x *= ScaleX();
+        y *= ScaleY();
+        w *= ScaleX();
+        h *= ScaleY();
+        thickness *= ScaleUniform();
+
+        const ImVec2 boxMin(x, y);
+        const ImVec2 boxMax(x + w, y + h);
+        if (((fillColor >> IM_COL32_A_SHIFT) & 0xFF) != 0) {
+            d->AddRectFilled(boxMin, boxMax, fillColor);
+            Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::FilledRect);
+        }
+        d->AddRect(boxMin, boxMax, color, 0.0f, 0, thickness);
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Rect);
+        Diagnostics::RecordRenderBox(true);
     }
 
     // ---- DrawCircle ----
@@ -179,6 +208,7 @@ namespace Render {
         const ImVec2 p = ToCanvas(pos);
         const float scaledFontSize = fontSize * ScaleUniform();
         d->AddText(nullptr, scaledFontSize, p, color, text);
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Text);
     }
 
     void DrawText(const ImVec2& pos, ImU32 color, const char* text, float fontSize) {
@@ -188,6 +218,7 @@ namespace Render {
         const ImVec2 p = ToCanvas(pos);
         const float scaledFontSize = fontSize * ScaleUniform();
         d->AddText(nullptr, scaledFontSize, p, color, text);
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Text);
     }
 
     // ---- DrawString ----
@@ -197,6 +228,7 @@ namespace Render {
         ImDrawList* d = DL();
         if (!d || !text) return;
         d->AddText(ToCanvas(pos), color.ToImU32(), text);
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Text);
     }
 
     // ---- DrawHealthBar ----
@@ -267,6 +299,7 @@ namespace Render {
                          ImVec2(barMax.x + 1.0f * sx, barMax.y + 1.0f * sy),
                          IM_COL32(0x00, 0x00, 0x00, 0xB8), rounding);
         d->AddRectFilled(barMin, barMax, IM_COL32(0x13, 0x16, 0x1C, 0xE8), rounding);
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::FilledRect, 2);
 
         float cursor = left;
         auto drawSegment = [&](float current, ImU32 color) {
@@ -276,6 +309,7 @@ namespace Render {
             const ImVec2 segMin = ToCanvas(ImVec2(cursor, top));
             const ImVec2 segMax(segMin.x + width * sx, segMin.y + barHeight * sy);
             d->AddRectFilled(segMin, segMax, color, rounding);
+            Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::FilledRect);
             cursor += width;
         };
 
@@ -289,9 +323,11 @@ namespace Render {
             const ImVec2 tickTop = ToCanvas(ImVec2(tickX, top + 1.0f));
             const ImVec2 tickBottom = ToCanvas(ImVec2(tickX, top + barHeight - 1.0f));
             d->AddLine(tickTop, tickBottom, IM_COL32(0x00, 0x00, 0x00, 0x70), 1.0f * ScaleUniform());
+            Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Line);
         }
 
         d->AddRect(barMin, barMax, IM_COL32(0xFF, 0xFF, 0xFF, 0x28), rounding, 0, 1.0f * ScaleUniform());
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Rect);
     }
 
     // ---- DrawInfo ----
@@ -318,17 +354,20 @@ namespace Render {
             d->AddRectFilled(ImVec2(p.x - scaledHalfW, p.y + scaledFontSize * 0.5f),
                              ImVec2(p.x + scaledHalfW + 35.0f * sx, p.y - scaledFontSize * 0.5f),
                              panelColor);
+            Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::FilledRect);
 
             // Tag colour bar on the left edge
             d->AddRectFilled(ImVec2(p.x - scaledHalfW, p.y + scaledFontSize * 0.5f),
                              ImVec2(p.x - scaledHalfW + 5.0f * sx, p.y - scaledFontSize * 0.5f),
                              tagColor);
+            Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::FilledRect);
 
             // Health bar
             float healthWidth = (maxHp > 0.0f) ? (hp / maxHp) * halfW * 2.0f : 0.0f;
             d->AddRectFilled(ImVec2(p.x - scaledHalfW + 7.0f * sx, p.y + scaledFontSize * 0.5f - 6.0f * sy),
                              ImVec2(p.x - scaledHalfW + (7.0f + healthWidth) * sx, p.y + scaledFontSize * 0.5f - 2.0f * sy),
                              healthColor);
+            Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::FilledRect);
 
             DrawStrokeText(ImVec2(pos.x - halfW + 10.0f, pos.y - fontSize * 0.5f),
                            textColor, text, fontSize);
@@ -358,6 +397,7 @@ namespace Render {
             ImVec2(1.0f, 1.0f),
             tint
         );
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Icon);
     }
 
     // ---- RenderLine ----
@@ -375,6 +415,7 @@ namespace Render {
         d->AddLine(ToCanvas(from), ToCanvas(to),
                    ImGui::GetColorU32(ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f)),
                    thickness * ScaleUniform());
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Line);
     }
 
 } // namespace Render

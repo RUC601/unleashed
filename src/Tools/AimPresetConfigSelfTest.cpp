@@ -25,12 +25,12 @@ void ResetAimPresetState()
     aimBehavior = kAimBehaviorTracking;
     aimbotFovMode = kFovModeFixed;
     aimbotDynamicFovPresetId = -1;
-    aimBehaviorMethod = { 0, 0, 0, 0 };
-    aimBehaviorMethodPreset = { -1, -1, -1, -1 };
-    aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
-    aimBehaviorMoveSplitEnabled = { true, false, false, true };
-    aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4 };
-    aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800 };
+    aimBehaviorMethod = { 0, 0, 0, 0, 0 };
+    aimBehaviorMethodPreset = { -1, -1, -1, -1, -1 };
+    aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+    aimBehaviorMoveSplitEnabled = { true, false, false, true, true };
+    aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4, 4 };
+    aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800, 800 };
     aimConstantAngularSpeedDeg = 30.0f;
 }
 
@@ -87,6 +87,19 @@ int main()
     if (AimBehaviorMethod(kAimBehaviorFlick) != 0)
         return Fail();
     if (!NearlyEqual(RuntimeAimConstantAngularSpeedDeg(), 30.0f))
+        return Fail();
+
+    if (!IsAssistFlickBehavior(kAimBehaviorAssistFlick))
+        return Fail();
+    if (!UsesTrackingDeadzone(kAimBehaviorAssistFlick))
+        return Fail();
+    if (!UsesFlickFireControls(kAimBehaviorAssistFlick))
+        return Fail();
+    if (IsTrackingBehavior(kAimBehaviorAssistFlick))
+        return Fail();
+    if (IsFlickBehavior(kAimBehaviorAssistFlick))
+        return Fail();
+    if (!AimBehaviorMoveSplitEnabled(kAimBehaviorAssistFlick))
         return Fail();
 
     DynamicFovPreset dynamic{};

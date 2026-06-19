@@ -32,6 +32,8 @@ namespace
         OW::Config::gameMouseSensitivity = 15.0f;
         OW::Config::referenceGameSensitivity = 15.0f;
         OW::Config::kmboxInputDelayMs = 0;
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
+        OW::Config::Menu = false;
     }
 
     int VerifyKmboxMonitorPortNormalization()
@@ -45,6 +47,45 @@ namespace
         if (OW::Config::RecommendedKmboxMonitorPort(0) != 8809)
             return Fail("recommended KMBox monitor port did not fall back for invalid command port");
 
+        return EXIT_SUCCESS;
+    }
+
+    int VerifyKmboxOutputSuppressionWhileMenuOpen()
+    {
+        kmbox::MockHardwareMgr.Reset();
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = true;
+        OW::Config::Menu = true;
+
+        const kmbox::MockHardwareSnapshot before = kmbox::MockHardwareMgr.Snapshot();
+        OW::SendMouseMove(OW::Vector3(0.01f, -0.01f, 0.0f), 0);
+        OW::SendMouseButton(0, true);
+        if (OW::SendMouseButtonStateMask(0x3u, true))
+            return Fail("button state mask reported success while menu suppression was active");
+
+        const kmbox::MockHardwareSnapshot after = kmbox::MockHardwareMgr.Snapshot();
+        if (after.moveEvents != before.moveEvents)
+            return Fail("menu suppression did not block mock mouse move");
+        if (after.buttonEvents != before.buttonEvents)
+            return Fail("menu suppression did not block mock mouse button");
+        if (after.outputMouseButtons != before.outputMouseButtons)
+            return Fail("menu suppression changed mock button state");
+
+        if (kmbox::MockHardwareMgr.RecordButton(0, true) != success)
+            return Fail("failed to seed mock button state for force-release suppression");
+        const kmbox::MockHardwareSnapshot held = kmbox::MockHardwareMgr.Snapshot();
+        OW::ForceReleaseMouseButtons();
+        if (kmbox::MockHardwareMgr.Snapshot().outputMouseButtons != held.outputMouseButtons)
+            return Fail("menu suppression did not block force-release output");
+
+        OW::Config::Menu = false;
+        kmbox::MockHardwareMgr.Reset();
+        const kmbox::MockHardwareSnapshot unsuppressedBefore = kmbox::MockHardwareMgr.Snapshot();
+        OW::SendMouseMove(OW::Vector3(0.01f, -0.01f, 0.0f), 0);
+        const kmbox::MockHardwareSnapshot unsuppressedAfter = kmbox::MockHardwareMgr.Snapshot();
+        if (unsuppressedAfter.moveEvents <= unsuppressedBefore.moveEvents)
+            return Fail("KMBox output stayed blocked after menu closed");
+
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
         return EXIT_SUCCESS;
     }
 }
@@ -95,6 +136,9 @@ int main()
         return Fail("OW::UnmaskPhysicalMouseButtons failed in mock mode");
     if (kmbox::MockHardwareMgr.Snapshot().maskedButtons != 0)
         return Fail("mock unmask state did not clear");
+
+    if (VerifyKmboxOutputSuppressionWhileMenuOpen() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
 
     if (kmbox::MockHardwareMgr.RecordKeyboardKey(0x09, true) != success)
         return Fail("keyboard output record failed");

@@ -243,11 +243,12 @@ namespace OW { namespace Config {
     inline constexpr int kAimBehaviorFlick = 1;
     inline constexpr int kAimBehaviorFlick2nd = 2;
     inline constexpr int kAimBehaviorReacquire = 3;
-    inline constexpr int kAimBehaviorCount = 4;
+    inline constexpr int kAimBehaviorAssistFlick = 4;
+    inline constexpr int kAimBehaviorCount = 5;
     inline bool  aimbotAutoshot = false;
     inline bool  aimbotKeepFiring = true;
     inline int   aimbotPredictionMode = 0; // 0=Auto, 1=Force On, 2=Force Off
-    inline int   aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire
+    inline int   aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=AssistFlick
     inline int   aimbotFirePolicy = 1;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
     inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
     inline float aimbotMaxHead = 100.0f;
@@ -255,15 +256,15 @@ namespace OW { namespace Config {
     inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
     inline constexpr int kAimMethodCount = 6;
     inline constexpr float kAimConstantAngularSpeedMaxDeg = 3600.0f;
-    inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0 };
-    inline std::array<int, kAimBehaviorCount> aimBehaviorMethodPreset = { -1, -1, -1, -1 };
-    inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0, 0 };
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMethodPreset = { -1, -1, -1, -1, -1 };
+    inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
     // Legacy behavior acceleration is kept for config compatibility; method-level
     // acceleration now owns the Accel Limited controller tuning.
-    inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f };
-    inline std::array<bool, kAimBehaviorCount> aimBehaviorMoveSplitEnabled = { true, false, false, true };
-    inline std::array<int, kAimBehaviorCount> aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4 };
-    inline std::array<int, kAimBehaviorCount> aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800 };
+    inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
+    inline std::array<bool, kAimBehaviorCount> aimBehaviorMoveSplitEnabled = { true, false, false, true, true };
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4, 4 };
+    inline std::array<int, kAimBehaviorCount> aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800, 800 };
     inline std::array<float, kAimMethodCount> aimMethodAngularSpeedScale = {
         100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f
     };
@@ -402,6 +403,23 @@ namespace OW { namespace Config {
     inline bool IsFlick2ndBehavior(int behavior)
     {
         return ClampAimBehaviorIndex(behavior) == kAimBehaviorFlick2nd;
+    }
+
+    inline bool IsAssistFlickBehavior(int behavior)
+    {
+        return ClampAimBehaviorIndex(behavior) == kAimBehaviorAssistFlick;
+    }
+
+    inline bool UsesTrackingDeadzone(int behavior)
+    {
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        return normalized == kAimBehaviorTracking ||
+               normalized == kAimBehaviorAssistFlick;
+    }
+
+    inline bool UsesFlickFireControls(int behavior)
+    {
+        return IsFlickBehavior(behavior) || IsAssistFlickBehavior(behavior);
     }
 
     inline float ClampTrackingDeadzonePixels(float value)
@@ -870,6 +888,8 @@ namespace OW { namespace Config {
     inline bool draw_hp_pack    = false;
     inline bool crosscircle     = false;
     inline bool eyeray          = false;
+    inline bool boxPerfMode     = false;
+    inline bool boxPerfFastRect = true;
 
     // Legacy compile shims for untouched Overwatch.hpp references. Not persisted.
     extern bool draw_edge;
@@ -1006,6 +1026,13 @@ namespace OW { namespace Config {
     inline bool  hostMouseDpiAutoDetected = false;
     inline int   kmboxInputDelayMs = 0;
     inline bool kmboxDebugLog = false;
+    inline bool kmboxSuppressOutputWhileMenuOpen = false;
+    inline constexpr int kKmboxOutputSuppressedStatus = -9010;
+
+    inline bool KmboxOutputSuppressedByMenu()
+    {
+        return kmboxSuppressOutputWhileMenuOpen && Menu;
+    }
 
     inline int RecommendedKmboxMonitorPort(int commandPort)
     {
@@ -1111,7 +1138,7 @@ namespace OW { namespace Config {
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         float hitbox = kDefaultHitboxScalePercent; // percentage of resolved bone+projectile window
         int aimMode = 0;         // 0=Tracking, 1=Flick
-        int aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire
+        int aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=AssistFlick
         int aimBehaviorPresetId = -1;
         int aimMethod = 0;       // legacy: smoothing method now comes from Misc behavior profiles
         int smoothType = 0;      // legacy

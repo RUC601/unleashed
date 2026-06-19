@@ -9,6 +9,7 @@
 #endif
 
 #include "Kmbox/KmBoxNetManager.h"
+#include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
 
 #include <algorithm>
@@ -725,6 +726,12 @@ void KmBoxNetManager::QueueWorkerLoop()
         if (elapsed < flushInterval)
             std::this_thread::sleep_for(flushInterval - elapsed);
 
+        if (OW::Config::KmboxOutputSuppressedByMenu() && IsOutputCommand(command.type)) {
+            Diagnostics::Aim("udp.queue drop reason=menu_open_suppressed type=%s",
+                ToString(command.type));
+            continue;
+        }
+
         if (!EnsureConnected()) {
             Diagnostics::Error("[KMBOX-NET] Dropping %s command; device is not connected.",
                 ToString(command.type));
@@ -779,6 +786,9 @@ void KmBoxNetManager::HeartbeatLoop()
         std::this_thread::sleep_for(std::chrono::milliseconds(KmBoxRuntimeConfig::HeartbeatIntervalMs));
         if (!heartbeatRunning.load(std::memory_order_acquire))
             break;
+
+        if (OW::Config::KmboxOutputSuppressedByMenu())
+            continue;
 
         if (!EnsureConnected())
             continue;

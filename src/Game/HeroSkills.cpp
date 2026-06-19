@@ -588,6 +588,9 @@ namespace {
         if (hidCode == 0)
             return false;
 
+        if (Config::kmboxEnabled && ShouldSuppressKmboxOutput("keyboard"))
+            return false;
+
         if (Config::kmboxEnabled && Config::kmboxDeviceType == 2) {
             return kmbox::MockHardwareMgr.RecordKeyboardKey(hidCode, down) == success;
         }
@@ -1178,6 +1181,9 @@ namespace {
         const int py = static_cast<int>(std::lround(pitchDeg * kViewpointPixelsPerDegree));
 
         if (Config::kmboxEnabled) {
+            if (ShouldSuppressKmboxOutput("fast_raw_mouse_move"))
+                return;
+
             if (Config::kmboxDeviceType == 2) {
                 if (px != 0 || py != 0)
                     kmbox::MockHardwareMgr.RecordMove(px, py, 0);

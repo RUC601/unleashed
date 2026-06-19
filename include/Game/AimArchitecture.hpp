@@ -38,6 +38,7 @@ enum class AimBehaviorType : int {
     Flick = 1,
     Flick2nd = 2,
     Reacquire = 3,
+    AssistFlick = 4,
     FlickClamp = Flick,
     FlickDelay = Flick,
     ReacquireAtApex = Reacquire,
@@ -220,7 +221,7 @@ inline PredictionOverrideMode ClampPredictionOverride(int value)
 
 inline AimBehaviorType ClampAimBehavior(int value)
 {
-    return static_cast<AimBehaviorType>(std::clamp(value, 0, 3));
+    return static_cast<AimBehaviorType>(std::clamp(value, 0, 4));
 }
 
 inline FirePolicyType ClampFirePolicy(int value)
@@ -272,6 +273,7 @@ inline FirePolicyType DefaultFirePolicyForBehavior(AimBehaviorType behavior)
         return FirePolicyType::ReleaseAfterDelay;
     case AimBehaviorType::Flick:
     case AimBehaviorType::Flick2nd:
+    case AimBehaviorType::AssistFlick:
     default:
         return FirePolicyType::TapOnHitWindow;
     }

@@ -1,8 +1,10 @@
 # Unleashed Code Reading Notes
 
 Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed
-Snapshot: Git HEAD 10e87de + dirty working tree on 2026-06-10. The dirty files included CMakeLists.txt, include/Game/Overwatch.hpp, include/Game/Structs.hpp, include/Game/WeaponSpec.hpp, include/Utils/Config.hpp, src/Features/UI.cpp, src/Game/WeaponSpec.cpp, src/Utils/Config.cpp, and src/Tools/WeaponSpecDisplaySelfTest.cpp.
+Snapshot: Git HEAD 6387dbf; source working tree was clean before the 2026-06-19 documentation refresh.
 Purpose: reading notes only, not runtime source of truth.
+
+Refresh note: the top-level development guide was refreshed on 2026-06-19 for current build targets, TestServer, Hero Perk runtime/classifier, UI language, and KMBox/mock details. The deeper annotated notes in this folder are still slow-reading companions; verify exact control flow against the real source before editing code.
 
 EN: This folder is a bilingual reading layer for understanding the current Unleashed codebase without modifying compilable source files.
 中文：这个目录是一个中英文双语的源码阅读层，用来理解当前 Unleashed 代码，不修改真正参与编译的源码。
@@ -36,8 +38,8 @@ EN: The files intentionally use `.md` names, including the annotated-source note
 EN: Each note uses `EN:` and `中文：` pairs. Code snippets stay close to the real code, while explanations focus on inputs, outputs, state dependencies, and common mistakes.
 中文：每篇文档都使用 `EN:` 和 `中文：` 成对说明。代码片段尽量贴近真实源码，解释重点放在输入、输出、状态依赖和常见误解。
 
-EN: When a conclusion says "current snapshot", it means the dirty working tree captured above, not a permanent architectural rule.
-中文：如果结论写着“当前快照”，它指的是上面记录的 dirty working tree，不代表永久架构规则。
+EN: When a conclusion says "current snapshot", it means the snapshot recorded at the top of this README or inside that note, not a permanent architectural rule.
+中文：如果结论写着“当前快照”，它指的是本 README 顶部或对应笔记内记录的快照，不代表永久架构规则。
 
 ## Companion Map
 

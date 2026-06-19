@@ -1562,6 +1562,8 @@ namespace OW { namespace Config {
         {
             if (IsTrackingBehavior(behavior))
                 return static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
+            if (IsAssistFlickBehavior(behavior))
+                return static_cast<int>(OW::FirePolicyType::TapOnHitWindow);
 
             const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(heroId, action);
             if (weapon)
@@ -1585,7 +1587,7 @@ namespace OW { namespace Config {
             preset.autoshot = preset.firePolicy != static_cast<int>(OW::FirePolicyType::ManualOnly) &&
                 preset.firePolicy != static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
             preset.targetTeam = spec.targetTeam;
-            preset.trackingDeadzone = IsTrackingBehavior(preset.aimBehavior)
+            preset.trackingDeadzone = UsesTrackingDeadzone(preset.aimBehavior)
                 ? kTrackingDefaultDeadzonePx
                 : basePreset.trackingDeadzone;
             if (spec.minDistance >= 0.0f)
@@ -2328,13 +2330,13 @@ namespace OW { namespace Config {
         void ResetAimMethodDefaultsUnlocked()
         {
             aimMethod = 0;
-            aimBehaviorMethod = { 0, 0, 0, 0 };
-            aimBehaviorMethodPreset = { -1, -1, -1, -1 };
-            aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f };
-            aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f };
-            aimBehaviorMoveSplitEnabled = { true, false, false, true };
-            aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4 };
-            aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800 };
+            aimBehaviorMethod = { 0, 0, 0, 0, 0 };
+            aimBehaviorMethodPreset = { -1, -1, -1, -1, -1 };
+            aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+            aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
+            aimBehaviorMoveSplitEnabled = { true, false, false, true, true };
+            aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4, 4 };
+            aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800, 800 };
             aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             secondaryAimMethodOverride = { -1, -1 };
             aimPidP = 0.5f;
@@ -2422,6 +2424,7 @@ namespace OW { namespace Config {
             hostMouseDpiAutoDetected = false;
             kmboxInputDelayMs = kDefaultKmboxInputDelayMs;
             kmboxDebugLog = false;        // default: off
+            kmboxSuppressOutputWhileMenuOpen = false;
 
             manualScreenWidth = 1920;      // default: 1920 px
             manualScreenHeight = 1080;     // default: 1080 px
@@ -4680,43 +4683,50 @@ namespace OW { namespace Config {
                 "trackingMethod",
                 "flickMethod",
                 "flick2ndMethod",
-                "reacquireMethod"
+                "reacquireMethod",
+                "assistFlickMethod"
             };
             constexpr std::array<const char*, kAimBehaviorCount> speedKeys = {
                 "trackingBaseSpeed",
                 "flickBaseSpeed",
                 "flick2ndBaseSpeed",
-                "reacquireBaseSpeed"
+                "reacquireBaseSpeed",
+                "assistFlickBaseSpeed"
             };
             constexpr std::array<const char*, kAimBehaviorCount> methodPresetKeys = {
                 "trackingMethodPresetId",
                 "flickMethodPresetId",
                 "flick2ndMethodPresetId",
-                "reacquireMethodPresetId"
+                "reacquireMethodPresetId",
+                "assistFlickMethodPresetId"
             };
             constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
                 "trackingAcceleration",
                 "flickAcceleration",
                 "flick2ndAcceleration",
-                "reacquireAcceleration"
+                "reacquireAcceleration",
+                "assistFlickAcceleration"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitEnabledKeys = {
                 "trackingMoveSplitEnabled",
                 "flickMoveSplitEnabled",
                 "flick2ndMoveSplitEnabled",
-                "reacquireMoveSplitEnabled"
+                "reacquireMoveSplitEnabled",
+                "assistFlickMoveSplitEnabled"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitMaxPixelsKeys = {
                 "trackingMoveSplitMaxPixels",
                 "flickMoveSplitMaxPixels",
                 "flick2ndMoveSplitMaxPixels",
-                "reacquireMoveSplitMaxPixels"
+                "reacquireMoveSplitMaxPixels",
+                "assistFlickMoveSplitMaxPixels"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitDelayUsKeys = {
                 "trackingMoveSplitDelayUs",
                 "flickMoveSplitDelayUs",
                 "flick2ndMoveSplitDelayUs",
-                "reacquireMoveSplitDelayUs"
+                "reacquireMoveSplitDelayUs",
+                "assistFlickMoveSplitDelayUs"
             };
             constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
                 "linearAngularSpeedScale",
@@ -4958,43 +4968,50 @@ namespace OW { namespace Config {
                 "trackingMethod",
                 "flickMethod",
                 "flick2ndMethod",
-                "reacquireMethod"
+                "reacquireMethod",
+                "assistFlickMethod"
             };
             constexpr std::array<const char*, kAimBehaviorCount> speedKeys = {
                 "trackingBaseSpeed",
                 "flickBaseSpeed",
                 "flick2ndBaseSpeed",
-                "reacquireBaseSpeed"
+                "reacquireBaseSpeed",
+                "assistFlickBaseSpeed"
             };
             constexpr std::array<const char*, kAimBehaviorCount> methodPresetKeys = {
                 "trackingMethodPresetId",
                 "flickMethodPresetId",
                 "flick2ndMethodPresetId",
-                "reacquireMethodPresetId"
+                "reacquireMethodPresetId",
+                "assistFlickMethodPresetId"
             };
             constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
                 "trackingAcceleration",
                 "flickAcceleration",
                 "flick2ndAcceleration",
-                "reacquireAcceleration"
+                "reacquireAcceleration",
+                "assistFlickAcceleration"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitEnabledKeys = {
                 "trackingMoveSplitEnabled",
                 "flickMoveSplitEnabled",
                 "flick2ndMoveSplitEnabled",
-                "reacquireMoveSplitEnabled"
+                "reacquireMoveSplitEnabled",
+                "assistFlickMoveSplitEnabled"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitMaxPixelsKeys = {
                 "trackingMoveSplitMaxPixels",
                 "flickMoveSplitMaxPixels",
                 "flick2ndMoveSplitMaxPixels",
-                "reacquireMoveSplitMaxPixels"
+                "reacquireMoveSplitMaxPixels",
+                "assistFlickMoveSplitMaxPixels"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitDelayUsKeys = {
                 "trackingMoveSplitDelayUs",
                 "flickMoveSplitDelayUs",
                 "flick2ndMoveSplitDelayUs",
-                "reacquireMoveSplitDelayUs"
+                "reacquireMoveSplitDelayUs",
+                "assistFlickMoveSplitDelayUs"
             };
             constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
                 "linearAngularSpeedScale",
@@ -5074,6 +5091,8 @@ namespace OW { namespace Config {
             drawline = ReadBool(ini, section, "drawline", drawline);
             draw_fov = ReadBool(ini, section, "draw_fov", draw_fov);
             drawTrackingDeadzones = ReadBool(ini, section, "drawTrackingDeadzones", drawTrackingDeadzones);
+            boxPerfMode = ReadBool(ini, section, "boxPerfMode", boxPerfMode);
+            boxPerfFastRect = ReadBool(ini, section, "boxPerfFastRect", boxPerfFastRect);
             targetPriority = ReadInt(ini, section, "targetPriority", targetPriority);
             MenuToggleKey = ReadInt(ini, section, "MenuToggleKey", MenuToggleKey);
             gafAsyncKeyStateOffset = ReadUInt64(ini, section, "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
@@ -5142,6 +5161,11 @@ namespace OW { namespace Config {
             hostMouseDpiAutoDetected = false;
             kmboxInputDelayMs = ReadInt(ini, section, "kmboxInputDelayMs", kmboxInputDelayMs);
             kmboxDebugLog = ReadBool(ini, section, "kmboxDebugLog", kmboxDebugLog);
+            kmboxSuppressOutputWhileMenuOpen = ReadBool(
+                ini,
+                section,
+                "kmboxSuppressOutputWhileMenuOpen",
+                kmboxSuppressOutputWhileMenuOpen);
         }
 
         void SaveKmboxSettingsUnlocked(const std::string& path)
@@ -5166,6 +5190,11 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, "KMBox", "hostMouseDpi", hostMouseDpi);
             WriteIntValue(path, "KMBox", "kmboxInputDelayMs", kmboxInputDelayMs);
             WriteBoolValue(path, "KMBox", "kmboxDebugLog", kmboxDebugLog);
+            WriteBoolValue(
+                path,
+                "KMBox",
+                "kmboxSuppressOutputWhileMenuOpen",
+                kmboxSuppressOutputWhileMenuOpen);
         }
 
         template <typename T>
@@ -5432,7 +5461,7 @@ namespace OW { namespace Config {
             const float baseCountsPerRadian = KmboxBaseCountsPerRadian();
             const float yawCountsPerRadian = KmboxYawCountsPerRadian();
             const float pitchCountsPerRadian = KmboxPitchCountsPerRadian();
-            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f calibratedPitchCountsPerRadian=%.6f baseCountsPerRadian=%.6f gameMouseSensitivity=%.6f effectiveGameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d autoReadGameMouseSensitivity=%d autoDetected=%d hostMouseDpi=%.6f yawCountsPerRadian=%.6f pitchCountsPerRadian=%.6f inputDelayMs=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
+            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f calibratedPitchCountsPerRadian=%.6f baseCountsPerRadian=%.6f gameMouseSensitivity=%.6f effectiveGameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d autoReadGameMouseSensitivity=%d autoDetected=%d hostMouseDpi=%.6f yawCountsPerRadian=%.6f pitchCountsPerRadian=%.6f inputDelayMs=%d suppressWhileMenuOpen=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
                 kmboxEnabled ? 1 : 0,
                 kmboxDeviceType,
                 kmboxIp,
@@ -5452,6 +5481,7 @@ namespace OW { namespace Config {
                 yawCountsPerRadian,
                 pitchCountsPerRadian,
                 kmboxInputDelayMs,
+                kmboxSuppressOutputWhileMenuOpen ? 1 : 0,
                 aim_key,
                 aim_key2,
                 Tracking_smooth,
@@ -5565,7 +5595,7 @@ namespace OW { namespace Config {
                 AutoRMBdistance, ToText(AutoSkill).c_str(), SkillHealth, ToText(AntiAFK).c_str());
             LogConfig(level, "Dump: secondary secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
-            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d monitorPort=%d mac=%s comPort=%s countsPerRadian=%.3f calibratedCountsPerRadian=%.3f calibratedPitchCountsPerRadian=%.3f gameMouseSensitivity=%.3f effectiveGameMouseSensitivity=%.3f referenceGameSensitivity=%.3f autoScaleByGameSensitivity=%s autoReadGameMouseSensitivity=%s autoDetectedGameSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s",
+            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d monitorPort=%d mac=%s comPort=%s countsPerRadian=%.3f calibratedCountsPerRadian=%.3f calibratedPitchCountsPerRadian=%.3f gameMouseSensitivity=%.3f effectiveGameMouseSensitivity=%.3f referenceGameSensitivity=%.3f autoScaleByGameSensitivity=%s autoReadGameMouseSensitivity=%s autoDetectedGameSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s suppressWhileMenuOpen=%s",
                 ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMonitorPort, kmboxMac,
                 kmboxComPort, kmboxCountsPerRadian, calibratedCountsPerRadian, calibratedPitchCountsPerRadian,
                 gameMouseSensitivity, EffectiveGameMouseSensitivity(), referenceGameSensitivity,
@@ -5574,7 +5604,8 @@ namespace OW { namespace Config {
                 ToText(gameMouseSensitivityAutoDetected).c_str(),
                 hostMouseDpi, detectedHostMouseDpi,
                 ToText(hostMouseDpiAutoDetected).c_str(), kmboxInputDelayMs,
-                ToText(kmboxDebugLog).c_str());
+                ToText(kmboxDebugLog).c_str(),
+                ToText(kmboxSuppressOutputWhileMenuOpen).c_str());
             LogConfig(level, "Dump: keystate offset=%s size=%d sessionId=%d",
                 ToText(gafAsyncKeyStateOffset).c_str(), gafAsyncKeyStateSize,
                 gafAsyncKeyStateSessionId);
@@ -5584,10 +5615,11 @@ namespace OW { namespace Config {
                 ToText(draw_info).c_str(), ToText(drawbattletag).c_str(), ToText(drawhealth).c_str(), ToText(healthbar).c_str(),
                 ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), visualMaxDist, ToText(name).c_str(), ToText(ult).c_str(),
                 ToText(draw_skel).c_str(), ToText(skillinfo).c_str());
-            LogConfig(level, "Dump: overlays radar=%s radarline=%s drawline=%s draw_fov=%s drawTrackingDeadzones=%s draw_hp_pack=%s crosscircle=%s eyeray=%s",
+            LogConfig(level, "Dump: overlays radar=%s radarline=%s drawline=%s draw_fov=%s drawTrackingDeadzones=%s draw_hp_pack=%s crosscircle=%s eyeray=%s boxPerfMode=%s boxPerfFastRect=%s",
                 ToText(radar).c_str(), ToText(radarline).c_str(),
                 ToText(drawline).c_str(), ToText(draw_fov).c_str(), ToText(drawTrackingDeadzones).c_str(), ToText(draw_hp_pack).c_str(),
-                ToText(crosscircle).c_str(), ToText(eyeray).c_str());
+                ToText(crosscircle).c_str(), ToText(eyeray).c_str(),
+                ToText(boxPerfMode).c_str(), ToText(boxPerfFastRect).c_str());
             LogConfig(level, "Dump: colors EnemyCol=%s fovcol=%s enargb=%s invisnenargb=%s targetargb=%s allyargb=%s",
                 ColorText(EnemyCol).c_str(), ColorText(fovcol).c_str(),
                 ColorText(enargb).c_str(), ColorText(invisnenargb).c_str(), ColorText(targetargb).c_str(),
@@ -6081,6 +6113,8 @@ namespace OW { namespace Config {
             WriteBoolValue(path, "Global", "radarline", radarline);
             WriteBoolValue(path, "Global", "drawline", drawline);
             WriteBoolValue(path, "Global", "draw_fov", draw_fov);
+            WriteBoolValue(path, "Global", "boxPerfMode", boxPerfMode);
+            WriteBoolValue(path, "Global", "boxPerfFastRect", boxPerfFastRect);
             WriteBoolValue(path, "Global", "drawTrackingDeadzones", drawTrackingDeadzones);
             WriteIntValue(path, "Global", "targetPriority", targetPriority);
             WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);

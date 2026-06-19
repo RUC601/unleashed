@@ -69,6 +69,28 @@ struct FrameTiming {
     uint64_t renderThreadDmaMaxUs = 0;
 };
 
+enum class RenderPrimitiveKind {
+    Line,
+    Rect,
+    FilledRect,
+    Text,
+    Icon,
+};
+
+struct RenderWorkloadStats {
+    bool boxPerfMode = false;
+    double totalMs = 0.0;
+    double renderCallbackMs = 0.0;
+    double presentMs = 0.0;
+    uint64_t linePrimitives = 0;
+    uint64_t rectPrimitives = 0;
+    uint64_t filledRectPrimitives = 0;
+    uint64_t textCalls = 0;
+    uint64_t iconCalls = 0;
+    uint64_t cornerBoxes = 0;
+    uint64_t fastBoxes = 0;
+};
+
 // ---- Ring-buffer DMA window stats (lightweight) ----
 
 struct DmaWindowStats {
@@ -191,6 +213,9 @@ struct EntityProcessStats {
 };
 
 struct PlayerInfoStats {
+    bool boxPerfMode = false;
+    bool fastBoxPath = false;
+    double elapsedMs = 0.0;
     size_t input = 0;
     size_t projected = 0;
     size_t drawn = 0;
@@ -322,6 +347,7 @@ struct StatusSnapshot {
     bool renderPlayerInfoCalled = false;
     bool renderSkillInfoCalled = false;
     bool renderEntityListEmpty = true;
+    RenderWorkloadStats renderWorkload{};
     EntityProcessStats entityProcess{};
     PlayerInfoStats playerInfo{};
     LocalEntityStats localEntity{};
@@ -356,6 +382,9 @@ void Debug(const char* fmt, ...);
 void Trace(const char* fmt, ...);
 
 void RecordFrame();
+void BeginRenderWorkloadFrame(bool boxPerfMode);
+void RecordRenderPrimitive(RenderPrimitiveKind kind, uint64_t count = 1);
+void RecordRenderBox(bool fastPath);
 void RecordDmaRead(bool success, std::chrono::steady_clock::duration latency);
 void RecordDmaRead(bool success, uint64_t latencyUs);
 void RecordDmaRead(bool success, uint64_t latencyUs, DmaCallsite callsite);

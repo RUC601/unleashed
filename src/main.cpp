@@ -732,7 +732,7 @@ namespace {
             OW::Config::HeroSlotPreset slot{};
             const bool found = OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot);
             if (!found || !slot.enabled ||
-                !OW::Config::IsTrackingBehavior(slot.preset.aimBehavior)) {
+                !OW::Config::UsesTrackingDeadzone(slot.preset.aimBehavior)) {
                 continue;
             }
 
@@ -996,10 +996,14 @@ namespace {
 void RenderCallback()
 {
     Diagnostics::RecordFrame();
+    const bool boxPerfMode = OW::Config::boxPerfMode;
+    Diagnostics::BeginRenderWorkloadFrame(boxPerfMode);
     if (OW::ProcessConnection::IsConnected()) {
-        const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
-        OW::HeroPerkRuntime::UpdateContext(localSnapshot.HeroID, true, localSnapshot.Team);
-        OW::ProcessHeroSkills();
+        if (!boxPerfMode) {
+            const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
+            OW::HeroPerkRuntime::UpdateContext(localSnapshot.HeroID, true, localSnapshot.Team);
+            OW::ProcessHeroSkills();
+        }
     } else {
         OW::HeroPerkRuntime::ResetForDisconnect();
         OW::CancelActiveSkill();
@@ -1010,11 +1014,27 @@ void RenderCallback()
     const bool entityListEmpty = OW::TargetingDetail::SnapshotEntities().empty();
     bool playerInfoCalled = false;
     bool skillInfoCalled = false;
+
+    if (boxPerfMode) {
+        if (!entityListEmpty) {
+            playerInfoCalled = true;
+            PlayerInfo(true);
+        } else {
+            Diagnostics::PlayerInfoStats emptyPlayerInfoStats{};
+            emptyPlayerInfoStats.boxPerfMode = true;
+            emptyPlayerInfoStats.fastBoxPath = OW::Config::boxPerfFastRect;
+            Diagnostics::SetPlayerInfoStats(emptyPlayerInfoStats);
+        }
+
+        Diagnostics::SetRenderPipelineStatus(false, playerInfoCalled, false, entityListEmpty);
+        return;
+    }
+
     DrawRadar();
 
     if (!entityListEmpty) {
         playerInfoCalled = true;
-        PlayerInfo();
+        PlayerInfo(false);
         if (OW::Config::skillDisplayMode != 0 || OW::Config::ultimateDisplayMode != 0) {
             skillInfoCalled = true;
             skillinfo();
@@ -1035,7 +1055,7 @@ void RenderCallback()
     if (OW::Config::kmboxDebugLog) {
         const DWORD now = GetTickCount();
         if (lastRenderPipelineLogTick == 0 || now - lastRenderPipelineLogTick >= 1000) {
-            Diagnostics::Info("[PIPELINE] Stage 5 render callback DrawRadar=1 PlayerInfo=%d skillinfo=%d entities_empty=%d.",
+            Diagnostics::Info("[PIPELINE] Stage 5 render callback mode=normal DrawRadar=1 PlayerInfo=%d skillinfo=%d entities_empty=%d.",
                 playerInfoCalled ? 1 : 0,
                 skillInfoCalled ? 1 : 0,
                 entityListEmpty ? 1 : 0);
@@ -1188,6 +1208,7 @@ static int RunKmboxMoveTestCli()
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
     Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
     LoadRuntimeConfigForDiagnostics();
+    OW::Config::Menu = false;
     InitializeKmBoxFromConfig();
     RunKmboxMoveTest();
     kmbox::ReleaseTimerResolution();
@@ -1208,6 +1229,7 @@ static int RunKmboxCalibrationCli(float referenceGameSensitivityOverride = 0.0f)
     Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
     Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
     LoadRuntimeConfigForDiagnostics();
+    OW::Config::Menu = false;
     InitializeKmBoxFromConfig();
     Diagnostics::SetDmaReady(true);
     StartProcessConnectionThread();
@@ -1481,6 +1503,7 @@ int main(int argc, char** argv)
 
     const bool testServerRequested = HasCommandLineFlag(argc, argv, "--test-server");
     const bool testServerCorsRequested = HasCommandLineFlag(argc, argv, "--test-server-cors");
+    const bool boxPerfModeRequested = HasCommandLineFlag(argc, argv, "--box-perf-mode");
     int testServerPortValue = 19550;
     if (HasCommandLineFlag(argc, argv, "--test-server-port")) {
         if (!TryGetCommandLineInt(argc, argv, "--test-server-port", testServerPortValue) ||
@@ -1508,6 +1531,10 @@ int main(int argc, char** argv)
     const std::string configPath = OW::Config::ConfigPath();
     const std::string configPathForLog = AbsolutePathForLog(configPath);
     OW::Config::LoadConfig(configPath);
+    if (boxPerfModeRequested) {
+        OW::Config::boxPerfMode = true;
+        OW::Config::boxPerfFastRect = true;
+    }
     OW::RefreshHostMouseDpi();
     OW::RefreshScreenSizeFromConfig();
     Diagnostics::Aim("main.config_loaded configPath=%s screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f hostDpiDetected=%d",
@@ -1527,6 +1554,14 @@ int main(int argc, char** argv)
         OW::Config::hostMouseDpi,
         OW::Config::hostMouseDpiAutoDetected ? 1 : 0);
     std::printf("[MAIN] Screen size: %.0fx%.0f\n", OW::WX, OW::WY);
+    if (OW::Config::boxPerfMode) {
+        std::printf("[MAIN] Box performance mode enabled (%s box path).\n",
+            OW::Config::boxPerfFastRect ? "fast rect" : "corner");
+    }
+    Diagnostics::Info("Overlay box performance mode: enabled=%d fast_rect=%d cli=%d.",
+        OW::Config::boxPerfMode ? 1 : 0,
+        OW::Config::boxPerfFastRect ? 1 : 0,
+        boxPerfModeRequested ? 1 : 0);
     InitializeKmBoxFromConfig();
     Diagnostics::SetDmaReady(true);
     Diagnostics::Info("DMA subsystem ready. device=%s",

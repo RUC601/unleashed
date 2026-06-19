@@ -9,6 +9,7 @@
 #include <limits>
 #include <mutex>
 #include <cstdio>
+#include <atomic>
 #include <unordered_map>
 #include <windows.h>
 #include <chrono>
@@ -120,7 +121,22 @@ namespace OW {
         return Config::kmboxDeviceType == 0 ? "network" : "serial";
     }
 
+    inline bool ShouldSuppressKmboxOutput(const char* action) {
+        if (!Config::KmboxOutputSuppressedByMenu())
+            return false;
+
+        static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+        if (!logged.test_and_set(std::memory_order_relaxed)) {
+            Diagnostics::Aim("kmbox.output suppressed action=%s reason=menu_open",
+                action ? action : "unknown");
+        }
+        return true;
+    }
+
     inline int EnqueueKmboxPixelMove(int pixelX, int pixelY, int automoveRuntimeMs) {
+        if (ShouldSuppressKmboxOutput("mouse_move"))
+            return Config::kKmboxOutputSuppressedStatus;
+
         if (Config::kmboxDeviceType == 2)
             return kmbox::MockHardwareMgr.RecordMove(pixelX, pixelY, automoveRuntimeMs);
 
@@ -254,6 +270,10 @@ namespace OW {
                 once = true;
             }
             Diagnostics::Aim("mouse.move early_return reason=kmbox_disabled");
+            return;
+        }
+        if (ShouldSuppressKmboxOutput("mouse_move")) {
+            Diagnostics::Aim("mouse.move early_return reason=menu_open_suppressed");
             return;
         }
 
@@ -428,6 +448,11 @@ namespace OW {
 
     inline float CalibrateSensitivity(bool calibrateBothAxes = true,
                                       float referenceGameSensitivityOverride = 0.0f) {
+        if (ShouldSuppressKmboxOutput("calibration_move")) {
+            Diagnostics::Aim("kmbox.calibration skipped reason=menu_open_suppressed");
+            return 0.0f;
+        }
+
         // 1. Set calibration flag
         Config::calibrationInProgress = true;
 
@@ -558,6 +583,9 @@ namespace OW {
 
     inline void SendMouseButton(int button, bool down) {
         if (Config::kmboxEnabled) {
+            if (ShouldSuppressKmboxOutput("mouse_button"))
+                return;
+
             if (Config::kmboxDebugLog) {
                 std::printf("[KMBOX] mouse.button button=%d down=%d type=%d\n",
                     button, down ? 1 : 0, Config::kmboxDeviceType);
@@ -581,6 +609,8 @@ namespace OW {
     inline void ForceReleaseMouseButtons() {
         if (!Config::kmboxEnabled)
             return;
+        if (ShouldSuppressKmboxOutput("force_release_buttons"))
+            return;
 
         if (Config::kmboxDeviceType == 2) {
             kmbox::MockHardwareMgr.ForceReleaseMouseButtons();
@@ -595,6 +625,8 @@ namespace OW {
 
     inline void ForceReleaseMouseButton(int button) {
         if (!Config::kmboxEnabled)
+            return;
+        if (ShouldSuppressKmboxOutput("force_release_button"))
             return;
 
         if (Config::kmboxDeviceType == 2) {
@@ -621,6 +653,8 @@ namespace OW {
     inline bool SendMouseButtonStateMask(uint32_t stateMask, bool force = false) {
         if (!Config::kmboxEnabled)
             return false;
+        if (ShouldSuppressKmboxOutput("mouse_button_state"))
+            return false;
 
         if (Config::kmboxDeviceType == 2)
             return kmbox::MockHardwareMgr.SetMouseButtonStateMask(stateMask & 0x7u, force) == success;
@@ -631,6 +665,8 @@ namespace OW {
 
     inline bool MaskPhysicalMouseButtons(uint32_t mask) {
         if (!Config::kmboxEnabled)
+            return false;
+        if (ShouldSuppressKmboxOutput("mouse_mask"))
             return false;
 
         if (Config::kmboxDeviceType == 2)
@@ -643,6 +679,8 @@ namespace OW {
     inline bool UnmaskPhysicalMouseButtons() {
         if (!Config::kmboxEnabled)
             return false;
+        if (ShouldSuppressKmboxOutput("mouse_unmask"))
+            return false;
 
         if (Config::kmboxDeviceType == 2)
             return kmbox::MockHardwareMgr.UnmaskAll() == success;
@@ -653,6 +691,8 @@ namespace OW {
 
     inline bool SendMouseButtonMask(uint32_t keyMask, bool down) {
         if (!Config::kmboxEnabled || keyMask == 0 || (keyMask & ~0x7u) != 0)
+            return false;
+        if (ShouldSuppressKmboxOutput("mouse_button_mask"))
             return false;
 
         bool sent = false;
