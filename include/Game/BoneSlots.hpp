@@ -159,4 +159,33 @@ namespace OW::Plexies20260609 {
         return ToRenderSkeletonMap(ResolveSkeletonMap(heroId));
     }
 
+    inline constexpr RenderSkeletonMap ToCoreRenderSkeletonMap(const SkeletonMap& map)
+    {
+        return {
+            map[static_cast<std::size_t>(SkeletonSlot::Forehead)],
+            map[static_cast<std::size_t>(SkeletonSlot::Neck)],
+            map[static_cast<std::size_t>(SkeletonSlot::Chest)],
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+            kUnusedRenderSkeletonBone,
+        };
+    }
+
+    inline RenderSkeletonMap ResolveCoreRenderSkeletonMap(uint64_t heroId)
+    {
+        return ToCoreRenderSkeletonMap(ResolveSkeletonMap(heroId));
+    }
+
 } // namespace OW::Plexies20260609

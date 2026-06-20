@@ -596,9 +596,9 @@ namespace OW {
             }
         }
 
-        // Overlay rendering uses the current 16-slot skeleton map; GetSkel remains for legacy aim paths.
+        // Runtime caching reads only the core aim/hitbox bones. Full maps stay in BoneSlots as reference data.
         std::array<int, 18> GetRenderSkel() const {
-            return OW::Plexies20260609::ResolveRenderSkeletonMap(this->HeroID);
+            return OW::Plexies20260609::ResolveCoreRenderSkeletonMap(this->HeroID);
         }
 
         void CacheSkeletonBones(uint64_t knownVelocityBoneData = 0) {

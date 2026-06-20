@@ -156,6 +156,9 @@ public:
 		return Write<T>(address, value);
 	}
 
+	// -- Cache prefetch --
+	bool PrefetchPages(const std::vector<uint64_t>& pageAddresses, int pid = 0) const;
+
 	// -- Scatter read --
 	VMMDLL_SCATTER_HANDLE CreateScatterHandle() const;
 	VMMDLL_SCATTER_HANDLE CreateScatterHandle(int pid) const;

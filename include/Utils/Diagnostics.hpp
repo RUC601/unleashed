@@ -35,6 +35,7 @@ enum class DmaCallsite : uint8_t {
     KeyState,
     Aimbot,
     RenderCanvas,
+    EntityPrefetch,
     Count
 };
 

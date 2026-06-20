@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+
+#include <DirectXMath.h>
 
 #include "Game/Structs.hpp"
 #include "Utils/Config.hpp"
@@ -9,30 +12,20 @@
 namespace OW {
 namespace {
 
-constexpr std::string_view kGeometryDataNote =
-    "Fallback geometry from aim_public_hero_geometry_0530.tsv plus limb extrapolation; replace with measured per-hero data.";
-constexpr std::string_view kGeometryLimbDataNote =
-    "Temporary limb fallback derived from adjacent fallback bones; public sources did not expose a current per-bone radius table.";
+using DirectX::XMFLOAT3;
+using DirectX::XMMATRIX;
+using DirectX::XMMatrixRotationY;
+using DirectX::XMLoadFloat3;
+using DirectX::XMStoreFloat3;
+using DirectX::XMVector3Transform;
 
-constexpr std::array<BoneHitboxSpec, 18> kFallbackBones = {
-    BoneHitboxSpec{ BONE_HEAD, "head", 0.16f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_NECK, "neck", 0.14f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_CHEST, "chest", 0.22f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_BODY, "body", 0.22f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_BODY_BOT, "lower_body", 0.20f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_PELVIS, "pelvis", 0.20f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_R_SHOULDER, "right_shoulder", 0.13f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_L_SHOULDER, "left_shoulder", 0.13f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_R_ELBOW, "right_elbow", 0.11f, "sphere", "", kGeometryLimbDataNote, 0.15f },
-    BoneHitboxSpec{ BONE_L_ELBOW, "left_elbow", 0.11f, "sphere", "", kGeometryLimbDataNote, 0.15f },
-    BoneHitboxSpec{ BONE_R_HAND, "right_hand", 0.10f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_L_HAND, "left_hand", 0.10f, "sphere", "", kGeometryDataNote, 0.20f },
-    BoneHitboxSpec{ BONE_R_KNEE, "right_knee", 0.12f, "sphere", "", kGeometryLimbDataNote, 0.15f },
-    BoneHitboxSpec{ BONE_L_KNEE, "left_knee", 0.12f, "sphere", "", kGeometryLimbDataNote, 0.15f },
-    BoneHitboxSpec{ BONE_R_SHANK, "right_shank", 0.11f, "sphere", "", kGeometryLimbDataNote, 0.15f },
-    BoneHitboxSpec{ BONE_L_SHANK, "left_shank", 0.11f, "sphere", "", kGeometryLimbDataNote, 0.15f },
-    BoneHitboxSpec{ BONE_R_ANKLE, "right_ankle", 0.10f, "sphere", "", kGeometryLimbDataNote, 0.15f },
-    BoneHitboxSpec{ BONE_L_ANKLE, "left_ankle", 0.10f, "sphere", "", kGeometryLimbDataNote, 0.15f },
+constexpr std::string_view kGeometryDataNote =
+    "Runtime core geometry from aim_public_hero_geometry_0530.tsv; full skeleton IDs are retained separately as reference data.";
+
+constexpr std::array<BoneHitboxSpec, 3> kFallbackBones = {
+    BoneHitboxSpec{ BONE_HEAD, "head", 0.16f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_NECK, "neck", 0.14f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_CHEST, "chest", 0.22f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
 };
 
 constexpr HeroGeometrySpec kFallbackGeometry{
@@ -41,6 +34,16 @@ constexpr HeroGeometrySpec kFallbackGeometry{
     kFallbackBones.data(),
     static_cast<int>(kFallbackBones.size())
 };
+
+bool IsZeroOffset(const Vector3& value)
+{
+    return value.X == 0.0f && value.Y == 0.0f && value.Z == 0.0f;
+}
+
+bool IsFiniteVector(const Vector3& value)
+{
+    return std::isfinite(value.X) && std::isfinite(value.Y) && std::isfinite(value.Z);
+}
 
 } // namespace
 
@@ -87,15 +90,42 @@ float ResolveEffectiveHitWindow(uint64_t heroId,
 
 int AimBoneToSkeletonBoneId(int aimBone)
 {
-    switch (Config::NormalizeAimBone(aimBone)) {
+    switch (aimBone) {
     case Config::kAimBoneHead:
         return BONE_HEAD;
     case Config::kAimBoneNeck:
         return BONE_NECK;
     case Config::kAimBoneChest:
+    case Config::kAimBoneClosest:
     default:
         return BONE_CHEST;
     }
+}
+
+bool IsCoreHitboxBoneId(int boneId)
+{
+    return boneId == BONE_HEAD || boneId == BONE_NECK || boneId == BONE_CHEST;
+}
+
+Vector3 ResolveBoneHitboxOffsetLocal(uint64_t heroId, int boneId)
+{
+    const BoneHitboxSpec* spec = ResolveBoneHitboxSpec(heroId, boneId);
+    return spec ? spec->centerOffsetLocal : Vector3{};
+}
+
+Vector3 ResolveBoneHitboxCenter(const c_entity& entity, int boneId, const Vector3& bonePoint)
+{
+    const Vector3 offset = ResolveBoneHitboxOffsetLocal(entity.HeroID, boneId);
+    if (IsZeroOffset(offset) || !IsFiniteVector(bonePoint))
+        return bonePoint;
+
+    XMFLOAT3 localOffset(offset.X, offset.Y, offset.Z);
+    XMFLOAT3 rotatedOffset{};
+    const XMMATRIX rotMatrix = XMMatrixRotationY(entity.Rot.X);
+    XMStoreFloat3(
+        &rotatedOffset,
+        XMVector3Transform(XMLoadFloat3(&localOffset), rotMatrix));
+    return bonePoint + Vector3(rotatedOffset.x, rotatedOffset.y, rotatedOffset.z);
 }
 
 } // namespace OW

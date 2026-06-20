@@ -268,6 +268,9 @@ namespace OW { namespace Config {
 
     const char* AimBoneName(int aimBone)
     {
+        if (aimBone == kAimBoneClosest)
+            return "Closest";
+
         switch (NormalizeAimBone(aimBone)) {
         case kAimBoneChest: return "Chest";
         case kAimBoneNeck:  return "Neck";

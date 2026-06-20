@@ -133,6 +133,11 @@ add_executable(WeaponSpecDisplaySelfTest
     src/Utils/Diagnostics.cpp
 )
 
+add_executable(HeroGeometrySpecSelfTest
+    src/Tools/HeroGeometrySpecSelfTest.cpp
+    src/Game/HeroGeometrySpec.cpp
+)
+
 add_executable(HeroSkillConfigSelfTest
     src/Tools/HeroSkillConfigSelfTest.cpp
 )
@@ -155,6 +160,7 @@ add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSel
 add_test(NAME AimPresetConfigSelfTest COMMAND AimPresetConfigSelfTest)
 add_test(NAME LeadPredictionSelfTest COMMAND LeadPredictionSelfTest)
 add_test(NAME WeaponSpecDisplaySelfTest COMMAND WeaponSpecDisplaySelfTest)
+add_test(NAME HeroGeometrySpecSelfTest COMMAND HeroGeometrySpecSelfTest)
 add_test(NAME HeroSkillConfigSelfTest COMMAND HeroSkillConfigSelfTest)
 add_test(NAME HeroPerkClassifierSelfTest COMMAND HeroPerkClassifierSelfTest)
 add_test(NAME MockHardwareSelfTest COMMAND MockHardwareSelfTest)
@@ -199,6 +205,12 @@ target_include_directories(LeadPredictionSelfTest PRIVATE
 )
 
 target_include_directories(WeaponSpecDisplaySelfTest PRIVATE
+    include
+    vendor/leechcore
+    vendor/imgui
+)
+
+target_include_directories(HeroGeometrySpecSelfTest PRIVATE
     include
     vendor/leechcore
     vendor/imgui
@@ -337,6 +349,8 @@ target_compile_options(LeadPredictionSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd430
 target_compile_definitions(LeadPredictionSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(WeaponSpecDisplaySelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(WeaponSpecDisplaySelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(HeroGeometrySpecSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(HeroGeometrySpecSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(HeroSkillConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(HeroSkillConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(MockHardwareSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)

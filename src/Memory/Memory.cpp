@@ -1524,6 +1524,42 @@ bool Memory::Write(uintptr_t address, const void* buffer, size_t size, int pid) 
 }
 
 /* ------------------------------------------------------------------ */
+/*  Cache prefetch                                                     */
+/* ------------------------------------------------------------------ */
+
+bool Memory::PrefetchPages(const std::vector<uint64_t>& pageAddresses, int pid) const
+{
+	if (pageAddresses.empty())
+		return true;
+
+	const auto start = std::chrono::steady_clock::now();
+	if (!vHandle)
+	{
+		Diagnostics::RecordDmaRead(false, std::chrono::steady_clock::duration::zero());
+		return false;
+	}
+
+	if (pid == 0)
+		pid = current_process.PID;
+	if (pid == 0)
+	{
+		Diagnostics::RecordDmaRead(false, std::chrono::steady_clock::duration::zero());
+		return false;
+	}
+
+	const DWORD count = static_cast<DWORD>((std::min)(
+		pageAddresses.size(),
+		static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
+	const bool ok = VMMDLL_MemPrefetchPages(
+		this->vHandle,
+		pid,
+		const_cast<PULONG64>(pageAddresses.data()),
+		count) != FALSE;
+	Diagnostics::RecordDmaRead(ok, std::chrono::steady_clock::now() - start);
+	return ok;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Scatter read                                                       */
 /* ------------------------------------------------------------------ */
 

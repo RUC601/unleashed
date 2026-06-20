@@ -11,6 +11,7 @@
 #include "Utils/ProcessConnection.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -1253,6 +1254,7 @@ namespace {
             Config::HeroPreset overlay = originalPreset;
             overlay.aimBehavior = Config::ClampAimBehaviorIndex(params.aimBehavior);
             overlay.aimBehaviorPresetId = Config::ClampAimBehaviorPresetId(params.aimBehaviorPresetId);
+            overlay.aimMethod = Config::ClampAimMethodIndex(params.method);
             overlay.aimMode = Config::IsTrackingBehavior(overlay.aimBehavior) ? 0 : 1;
             overlay.fov = params.fov;
             overlay.smooth = params.speedScale;
@@ -1280,6 +1282,9 @@ namespace {
             return;
 
         ScopedTrackingConfig trackingOverride(params);
+        const int method = Config::ActiveAimBehaviorPreset(behavior)
+            ? Config::AimBehaviorMethod(behavior)
+            : Config::ClampAimMethodIndex(params.method);
         const Vector3 targetVector = GetVector3(prediction);
         c_entity target{};
         if (AimbotDetail::IsZeroVector(targetVector) ||
@@ -1293,13 +1298,14 @@ namespace {
             Config::IsFlickBehavior(behavior),
             smoothInput,
             Config::AimBehaviorAcceleration(behavior),
-            Config::AimBehaviorMethod(behavior));
+            method);
         if (!AimbotDetail::IsZeroVector(aim.smoothed_angle)) {
             AimbotDetail::MoveAimDelta(aim.local_angle, aim.smoothed_angle);
             if (Config::aimVerboseLog) {
-                Diagnostics::Aim("sequence.aim_tick skill=%s behavior=%d speedScale=%.3f fov=%.3f prediction=%d targetIndex=%d",
+                Diagnostics::Aim("sequence.aim_tick skill=%s behavior=%d method=%d speedScale=%.3f fov=%.3f prediction=%d targetIndex=%d",
                     skillId.c_str(),
                     behavior,
+                    method,
                     params.speedScale,
                     params.fov,
                     prediction ? 1 : 0,
@@ -1493,6 +1499,32 @@ namespace {
         return CandidatePositionForAction(entity);
     }
 
+    bool ResolveSkillAimPointForEntity(c_entity& entity,
+                                       int boneSetting,
+                                       const TargetingDetail::FovRuntimeContext& fovContext,
+                                       int& outBoneId,
+                                       Vector3& outPoint)
+    {
+        if (boneSetting == Config::kAimBoneClosest) {
+            const Matrix view = OW::SnapshotViewMatrix();
+            const Vector2 crosshair = TargetingDetail::CrosshairCenter();
+            if (TargetingDetail::TrySelectClosestCoreAimPoint(
+                    entity,
+                    fovContext,
+                    view,
+                    crosshair,
+                    outBoneId,
+                    outPoint)) {
+                return true;
+            }
+        }
+
+        const int normalizedBone = Config::NormalizeAimBone(boneSetting);
+        outBoneId = AimBoneToSkeletonBoneId(normalizedBone);
+        outPoint = SkillAimPointForEntity(entity, normalizedBone);
+        return IsUsablePosition(outPoint);
+    }
+
     float ResolveSkillHitWindow(const c_entity& entity,
                                 int boneId,
                                 const SkillProjectileRuntime& projectile,
@@ -1548,9 +1580,13 @@ namespace {
         };
 
         if (boneSetting == Config::kAimBoneClosest) {
-            const auto skeleton = entity.GetSkel();
-            for (int boneId : skeleton)
-                considerBone(boneId, entity.GetBonePos(boneId));
+            static constexpr std::array<int, 3> kCoreBones{
+                BONE_HEAD,
+                BONE_NECK,
+                BONE_CHEST,
+            };
+            for (int boneId : kCoreBones)
+                considerBone(boneId, TargetingDetail::CoreBoneHitboxCenter(entity, boneId));
             if (found)
                 return true;
         }
@@ -1698,8 +1734,9 @@ namespace {
 
         const std::vector<c_entity> snapshot = TargetingDetail::SnapshotEntities();
         const int requiredTargets = (std::max)(1, settings.minTargets);
-        const int boneSetting = Config::NormalizeAimBone(settings.tracking.bone);
-        const int boneId = AimBoneToSkeletonBoneId(boneSetting);
+        const int boneSetting = settings.tracking.bone == Config::kAimBoneClosest
+            ? Config::kAimBoneClosest
+            : Config::NormalizeAimBone(settings.tracking.bone);
         const TargetingDetail::FovRuntimeContext fovContext =
             TargetingDetail::SnapshotFovRuntimeContext();
         const ProjectileRuntimeSpec projectileSpec{
@@ -1725,9 +1762,16 @@ namespace {
             if (vitality > settings.enemyHealthThreshold)
                 continue;
 
-            const Vector3 rawAimPoint = SkillAimPointForEntity(entity, boneSetting);
-            if (!IsUsablePosition(rawAimPoint))
+            int selectedBoneId = BONE_CHEST;
+            Vector3 rawAimPoint{};
+            if (!ResolveSkillAimPointForEntity(
+                    entity,
+                    boneSetting,
+                    fovContext,
+                    selectedBoneId,
+                    rawAimPoint)) {
                 continue;
+            }
 
             const float rawDistance = source.DistTo(rawAimPoint);
             if (!std::isfinite(rawDistance) ||
@@ -1774,7 +1818,7 @@ namespace {
                 best.entity = entity;
                 best.entityIndex = static_cast<int>(index);
                 best.entityKey = entity.address ? entity.address : entity.LinkBase;
-                best.boneId = boneId;
+                best.boneId = selectedBoneId;
                 best.distance = aimedDistance;
                 best.vitalityPercent = vitality;
                 best.fovScore = fovScore;
@@ -1782,7 +1826,7 @@ namespace {
                 best.aimPoint = aimPoint;
                 best.hitWindow = ResolveSkillHitWindow(
                     entity,
-                    boneId,
+                    selectedBoneId,
                     projectile,
                     settings.tracking.hitbox);
                 bestScore = fovScore;
@@ -2066,11 +2110,21 @@ namespace {
         if (!IsUsablePosition(source))
             return false;
 
-        const int boneSetting = Config::NormalizeAimBone(settings.tracking.bone);
-        const int boneId = AimBoneToSkeletonBoneId(boneSetting);
-        const Vector3 rawAimPoint = SkillAimPointForEntity(entity, boneSetting);
-        if (!IsUsablePosition(rawAimPoint))
+        const int boneSetting = settings.tracking.bone == Config::kAimBoneClosest
+            ? Config::kAimBoneClosest
+            : Config::NormalizeAimBone(settings.tracking.bone);
+        const TargetingDetail::FovRuntimeContext fovContext =
+            TargetingDetail::SnapshotFovRuntimeContext();
+        int selectedBoneId = BONE_CHEST;
+        Vector3 rawAimPoint{};
+        if (!ResolveSkillAimPointForEntity(
+                entity,
+                boneSetting,
+                fovContext,
+                selectedBoneId,
+                rawAimPoint)) {
             return false;
+        }
 
         const float rawDistance = source.DistTo(rawAimPoint);
         if (!std::isfinite(rawDistance) || rawDistance > maxRange)
@@ -2105,14 +2159,14 @@ namespace {
         outCandidate.entity = entity;
         outCandidate.entityIndex = entityIndex;
         outCandidate.entityKey = EntityRuntimeKey(entity);
-        outCandidate.boneId = boneId;
+        outCandidate.boneId = selectedBoneId;
         outCandidate.distance = aimedDistance;
         outCandidate.vitalityPercent = VitalityPercent(entity);
         outCandidate.rawAimPoint = rawAimPoint;
         outCandidate.aimPoint = aimPoint;
         outCandidate.hitWindow = ResolveSkillHitWindow(
             entity,
-            boneId,
+            selectedBoneId,
             projectile,
             settings.tracking.hitbox);
         return true;

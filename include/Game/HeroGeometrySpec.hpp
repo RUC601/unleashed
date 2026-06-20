@@ -15,5 +15,8 @@ float ResolveEffectiveHitWindow(uint64_t heroId,
                                 float hitboxScalePercent,
                                 float fallbackBoneRadius);
 int AimBoneToSkeletonBoneId(int aimBone);
+bool IsCoreHitboxBoneId(int boneId);
+Vector3 ResolveBoneHitboxOffsetLocal(uint64_t heroId, int boneId);
+Vector3 ResolveBoneHitboxCenter(const c_entity& entity, int boneId, const Vector3& bonePoint);
 
 } // namespace OW

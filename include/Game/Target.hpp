@@ -1110,10 +1110,20 @@ namespace OW {
             return IsRuntimeTargetValid(entity, false) && TargetTeamMatches(entity, teamMode, local);
         }
 
-        inline Vector3 ConfiguredBonePosition(c_entity& entity, int boneSetting) {
-            if (boneSetting == 1) return entity.head_pos;
-            if (boneSetting == 2) return entity.neck_pos;
+        inline Vector3 CoreBoneRawPosition(const c_entity& entity, int boneId) {
+            if (boneId == BONE_HEAD) return entity.head_pos;
+            if (boneId == BONE_NECK) return entity.neck_pos;
             return entity.chest_pos;
+        }
+
+        inline Vector3 CoreBoneHitboxCenter(const c_entity& entity, int boneId) {
+            return ResolveBoneHitboxCenter(entity, boneId, CoreBoneRawPosition(entity, boneId));
+        }
+
+        inline Vector3 ConfiguredBonePosition(const c_entity& entity, int boneSetting) {
+            const int normalized = Config::NormalizeAimBone(boneSetting);
+            const int boneId = AimBoneToSkeletonBoneId(normalized);
+            return CoreBoneHitboxCenter(entity, boneId);
         }
 
         inline int ResolveAimBoneForDistance(int configuredBone, float distance) {
@@ -1123,6 +1133,45 @@ namespace OW {
             if (headRequested && headGate > 0.0f && distance > headGate)
                 return Config::kAimBoneNeck;
             return normalized;
+        }
+
+        inline bool TrySelectClosestCoreAimPoint(const c_entity& entity,
+                                                 const FovRuntimeContext& fovContext,
+                                                 const Matrix& view,
+                                                 const Vector2& crosshair,
+                                                 int& outBoneId,
+                                                 Vector3& outPoint,
+                                                 float* outScore = nullptr) {
+            static constexpr std::array<int, 3> kCoreBones{
+                BONE_HEAD,
+                BONE_NECK,
+                BONE_CHEST,
+            };
+
+            bool found = false;
+            float bestScore = (std::numeric_limits<float>::max)();
+            for (int boneId : kCoreBones) {
+                const Vector3 point = CoreBoneHitboxCenter(entity, boneId);
+                if (IsZeroVector(point) || point == entity.pos || !IsFiniteVector(point))
+                    continue;
+
+                const float score = fovContext.valid
+                    ? FovScoreDeg(fovContext, point)
+                    : crosshair.Distance(view.WorldToScreen(point));
+                if (!std::isfinite(score))
+                    continue;
+
+                if (!found || score < bestScore) {
+                    found = true;
+                    bestScore = score;
+                    outBoneId = boneId;
+                    outPoint = point;
+                }
+            }
+
+            if (found && outScore)
+                *outScore = bestScore;
+            return found;
         }
 
         inline bool DistancePassesAimFilter(float distance) {
@@ -1605,40 +1654,13 @@ namespace OW {
         }
 
         inline Vector3 SelectAutoBone(c_entity entity, const Vector2& crosshair, bool predit, bool secondary, size_t maxSkeletonBones) {
-            float bestDistance = (std::numeric_limits<float>::max)();
-            Vector3 bestRoot{};
+            (void)maxSkeletonBones;
             const Matrix view = OW::SnapshotViewMatrix();
             const FovRuntimeContext fovContext = SnapshotFovRuntimeContext();
-
-            if (IsTrainingBot(entity.HeroID)) {
-                const int botBones[] = { 17, 16, 3, 13, 54 };
-                for (int bone : botBones) {
-                    Vector3 bonePosition = entity.GetBonePos(bone);
-                    if (IsZeroVector(bonePosition) || bonePosition == entity.pos) continue;
-                    const float distance = fovContext.valid
-                        ? FovScoreDeg(fovContext, bonePosition)
-                        : crosshair.Distance(view.WorldToScreen(bonePosition));
-                    if (distance < bestDistance) {
-                        bestDistance = distance;
-                        bestRoot = bonePosition;
-                    }
-                }
-            } else {
-                const auto skeleton = entity.GetSkel();
-                const size_t limit = (std::min)(maxSkeletonBones, skeleton.size());
-                for (size_t i = 0; i < limit; ++i) {
-                    Vector3 bonePosition = entity.GetBonePos(skeleton[i]);
-                    if (IsZeroVector(bonePosition) || bonePosition == entity.pos) continue;
-                    const float distance = fovContext.valid
-                        ? FovScoreDeg(fovContext, bonePosition)
-                        : crosshair.Distance(view.WorldToScreen(bonePosition));
-                    if (distance < bestDistance) {
-                        bestDistance = distance;
-                        bestRoot = bonePosition;
-                    }
-                }
-            }
-
+            int bestBoneId = BONE_CHEST;
+            Vector3 bestRoot{};
+            if (!TrySelectClosestCoreAimPoint(entity, fovContext, view, crosshair, bestBoneId, bestRoot))
+                return Vector3{};
             return ApplyPrediction(entity, bestRoot, predit, secondary);
         }
 
@@ -1841,65 +1863,18 @@ namespace OW {
                 Config::health = entities[TarGetIndex].PlayerHealth;
                 Config::Targetenemyi = TarGetIndex;
                 if (Config::autobone && entities[TarGetIndex].HeroID != 0x16dd && entities[TarGetIndex].HeroID != 0x16ee) {
-                    bool isBot = GameData::IsTrainingBotHeroId(entities[TarGetIndex].HeroID);
-                    if (isBot) {
-                        float distbone[5] = { 0 };
-                        int index[] = { 17, 16, 3, 13, 54 };
-                        Vector3 bonerootpos{};
-                        Vector2 bonecrosspos{};
-                        for (int iii = 0; iii < 5; iii++) {
-                            bonerootpos = entities[TarGetIndex].GetBonePos(index[iii]);
-                            if (bonerootpos == entities[TarGetIndex].pos) distbone[iii] = 100000;
-                            else {
-                                bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                                distbone[iii] = fovContext.valid
-                                    ? TargetingDetail::FovScoreDeg(fovContext, bonerootpos)
-                                    : CrossHair.Distance(bonecrosspos);
-                            }
-                        }
-                        int m = (int)(std::min_element(distbone, distbone + 5) - distbone);
-                        RootPos = entities[TarGetIndex].GetBonePos(index[m]);
+                    int closestBoneId = BONE_CHEST;
+                    Vector3 closestRoot{};
+                    if (TargetingDetail::TrySelectClosestCoreAimPoint(
+                            entities[TarGetIndex],
+                            fovContext,
+                            aimViewMatrix,
+                            CrossHair,
+                            closestBoneId,
+                            closestRoot)) {
+                        RootPos = closestRoot;
                         PreditPos = RootPos;
-                        best.boneId = index[m];
-                        best.rawAimPoint = RootPos;
-                        best.aimPoint = RootPos;
-                        if (resolvedPrediction) {
-                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
-                                entities[TarGetIndex],
-                                RootPos,
-                                projectileSpec,
-                                true,
-                                false);
-                            PreditPos = lead.finalAimPoint;
-                            best.predictedAimPoint = lead.finalAimPoint;
-                            best.aimPoint = lead.finalAimPoint;
-                        }
-                        best.screenPoint = CrossHair;
-                        aimViewMatrix.WorldToScreen(best.aimPoint, &best.screenPoint, Vector2(OW::WX, OW::WY));
-                        best.fovScore = TargetingDetail::FovScoreDeg(fovContext, best.aimPoint);
-                        selectedFovScoreDeg = best.fovScore;
-                        best.distance = TargetingDetail::CameraPosition().DistTo(RootPos);
-                        best.effectiveHitWindow = ResolveEffectiveHitWindow(
-                            entities[TarGetIndex].HeroID,
-                            best.boneId,
-                            weaponSpec,
-                            Config::hitbox,
-                            Config::kLegacyDefaultHitboxRadius);
-                    } else {
-                        float distbone[12] = { 0 };
-                        Vector3 bonerootpos{};
-                        Vector2 bonecrosspos{};
-                        for (int iii = 0; iii < 12; iii++) {
-                            bonerootpos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[iii]);
-                            bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                            distbone[iii] = fovContext.valid
-                                ? TargetingDetail::FovScoreDeg(fovContext, bonerootpos)
-                                : CrossHair.Distance(bonecrosspos);
-                        }
-                        int m = (int)(std::min_element(distbone, distbone + 12) - distbone);
-                        RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
-                        PreditPos = RootPos;
-                        best.boneId = entities[TarGetIndex].GetSkel()[m];
+                        best.boneId = closestBoneId;
                         best.rawAimPoint = RootPos;
                         best.aimPoint = RootPos;
                         if (resolvedPrediction) {
@@ -2094,49 +2069,16 @@ namespace OW {
             }
             if (TarGetIndex != -1) {
                 if ((Config::autobone || Config::autobone2) && entities[TarGetIndex].HeroID != 0x16dd && entities[TarGetIndex].HeroID != 0x16ee) {
-                    bool isBot = GameData::IsTrainingBotHeroId(entities[TarGetIndex].HeroID);
-                    if (isBot) {
-                        float distbone[5] = { 0 };
-                        int index[] = { 17, 16, 3, 13, 54 };
-                        Vector3 bonerootpos{};
-                        Vector2 bonecrosspos{};
-                        for (int iii = 0; iii < 5; iii++) {
-                            bonerootpos = entities[TarGetIndex].GetBonePos(index[iii]);
-                            if (bonerootpos == entities[TarGetIndex].pos) distbone[iii] = 100000;
-                            else {
-                                bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                                distbone[iii] = fovContext.valid
-                                    ? TargetingDetail::FovScoreDeg(fovContext, bonerootpos)
-                                    : CrossHair.Distance(bonecrosspos);
-                            }
-                        }
-                        int m = (int)(std::min_element(distbone, distbone + 5) - distbone);
-                        RootPos = entities[TarGetIndex].GetBonePos(index[m]);
-                        PreditPos = RootPos;
-                        target = RootPos;
-                        if (resolvedPrediction) {
-                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
-                                entities[TarGetIndex],
-                                RootPos,
-                                projectileSpec,
-                                true,
-                                false);
-                            PreditPos = lead.finalAimPoint;
-                            target = lead.finalAimPoint;
-                        }
-                    } else {
-                        float distbone[12] = { 0 };
-                        Vector3 bonerootpos{};
-                        Vector2 bonecrosspos{};
-                        for (int iii = 0; iii < 12; iii++) {
-                            bonerootpos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[iii]);
-                            bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                            distbone[iii] = fovContext.valid
-                                ? TargetingDetail::FovScoreDeg(fovContext, bonerootpos)
-                                : CrossHair.Distance(bonecrosspos);
-                        }
-                        int m = (int)(std::min_element(distbone, distbone + 12) - distbone);
-                        RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
+                    int closestBoneId = BONE_CHEST;
+                    Vector3 closestRoot{};
+                    if (TargetingDetail::TrySelectClosestCoreAimPoint(
+                            entities[TarGetIndex],
+                            fovContext,
+                            aimViewMatrix,
+                            CrossHair,
+                            closestBoneId,
+                            closestRoot)) {
+                        RootPos = closestRoot;
                         PreditPos = RootPos;
                         target = RootPos;
                         if (resolvedPrediction) {
@@ -2294,47 +2236,17 @@ namespace OW {
                 Config::health = entities[TarGetIndex].PlayerHealth;
                 Config::Targetenemyi = TarGetIndex;
                 if (Config::autobone2 && entities[TarGetIndex].HeroID != 0x16dd && entities[TarGetIndex].HeroID != 0x16ee) {
-                    bool isBot = GameData::IsTrainingBotHeroId(entities[TarGetIndex].HeroID);
-                    if (isBot) {
-                        float distbone[5] = { 0 };
-                        int index[] = { 17, 16, 3, 13, 54 };
-                        Vector3 bonerootpos{};
-                        Vector2 bonecrosspos{};
-                        for (int iii = 0; iii < 5; iii++) {
-                            bonerootpos = entities[TarGetIndex].GetBonePos(index[iii]);
-                            if (bonerootpos == entities[TarGetIndex].pos) distbone[iii] = 100000;
-                            else {
-                                bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                                distbone[iii] = CrossHair.Distance(bonecrosspos);
-                            }
-                        }
-                        int m = (int)(std::min_element(distbone, distbone + 5) - distbone);
-                        selectedBoneId = index[m];
-                        RootPos = entities[TarGetIndex].GetBonePos(index[m]);
-                        PreditPos = RootPos;
-                        target = RootPos;
-                        if (resolvedPrediction) {
-                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
-                                entities[TarGetIndex],
-                                RootPos,
-                                projectileSpec,
-                                true,
-                                true);
-                            PreditPos = lead.finalAimPoint;
-                            target = lead.finalAimPoint;
-                        }
-                    } else {
-                        float distbone[10] = { 0 };
-                        Vector3 bonerootpos{};
-                        Vector2 bonecrosspos{};
-                        for (int iii = 0; iii < 10; iii++) {
-                            bonerootpos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[iii]);
-                            bonecrosspos = aimViewMatrix.WorldToScreen(bonerootpos);
-                            distbone[iii] = CrossHair.Distance(bonecrosspos);
-                        }
-                        int m = (int)(std::min_element(distbone, distbone + 10) - distbone);
-                        selectedBoneId = entities[TarGetIndex].GetSkel()[m];
-                        RootPos = entities[TarGetIndex].GetBonePos(entities[TarGetIndex].GetSkel()[m]);
+                    int closestBoneId = BONE_CHEST;
+                    Vector3 closestRoot{};
+                    if (TargetingDetail::TrySelectClosestCoreAimPoint(
+                            entities[TarGetIndex],
+                            fovContext,
+                            aimViewMatrix,
+                            CrossHair,
+                            closestBoneId,
+                            closestRoot)) {
+                        selectedBoneId = closestBoneId;
+                        RootPos = closestRoot;
                         PreditPos = RootPos;
                         target = RootPos;
                         if (resolvedPrediction) {

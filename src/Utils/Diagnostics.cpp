@@ -139,6 +139,7 @@ std::atomic<bool> g_aimLogInitialized{ false };
 std::mutex g_aimLogMutex;
 std::ofstream g_aimLogFile;
 std::string g_aimLogPath = "./unleashed_aim_diag.log";
+uint64_t g_aimLogLastFlushMs = 0;
 
 std::mutex g_ringLogMutex;
 std::deque<std::string> g_ringLogLines;
@@ -410,7 +411,11 @@ void AimLogV(const char* fmt, va_list args)
 
     if (g_aimLogFile.is_open()) {
         g_aimLogFile << line << '\n';
-        g_aimLogFile.flush();
+        const uint64_t nowMs = GetTickCount64();
+        if (g_aimLogLastFlushMs == 0 || nowMs - g_aimLogLastFlushMs >= 250) {
+            g_aimLogFile.flush();
+            g_aimLogLastFlushMs = nowMs;
+        }
     }
 }
 
@@ -454,6 +459,7 @@ const char* ToString(DmaCallsite cs)
     case DmaCallsite::KeyState:     return "KeyState";
     case DmaCallsite::Aimbot:       return "Aimbot";
     case DmaCallsite::RenderCanvas: return "RenderCanvas";
+    case DmaCallsite::EntityPrefetch: return "EntityPrefetch";
     default:                        return "Unknown";
     }
 }
@@ -523,6 +529,7 @@ void InitializeAimLog(const char* logPath)
 
     g_aimLogFile.open(g_aimLogPath, std::ios::out | std::ios::trunc);
     g_aimLogInitialized.store(true, std::memory_order_release);
+    g_aimLogLastFlushMs = GetTickCount64();
 
     if (g_aimLogFile.is_open()) {
         g_aimLogFile << "[" << BuildTimestamp() << "] [AIM] Aim diagnostics initialized. log="

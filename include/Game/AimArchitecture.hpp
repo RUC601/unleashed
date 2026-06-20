@@ -161,6 +161,7 @@ struct BoneHitboxSpec {
     int boneId = 0;
     std::string_view boneName{};
     float radiusWorld = 0.0f;
+    Vector3 centerOffsetLocal{};
     std::string_view shape{"sphere"};
     std::string_view sourceUrl{};
     std::string_view sourceNote{};
