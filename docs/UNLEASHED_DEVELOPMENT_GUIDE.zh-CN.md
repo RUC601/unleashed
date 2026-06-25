@@ -1,11 +1,11 @@
 # Unleashed 开发文档
 
 2026-06-02 note: `CnOffsetProbe` has moved out of this runtime tree. Edit,
-build, and run the live offset validator from `D:\Desktop\SenseZen\downp\vertifytool`;
+build, and run the live offset validator from `D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool`;
 `Unleashed` keeps only runtime-required offset profile behavior.
 
 版本：2026-06-19
-覆盖范围：当前工作树 `D:\Desktop\SenseZen\ClaudeCodexCoding\Unleashed`
+覆盖范围：当前工作树 `D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma`
 面向读者：从未打开过 IDE、没有读过本项目代码，但准备参与需求、调试、验收和后续开发沟通的人。
 
 ## 先说结论
@@ -147,7 +147,7 @@ Scenario/TestServer：
 
 工具目标：
   CMake 除 Unleashed 外还有 MotionEstimatorSelfTest、FovConfigSelfTest、TrackingDeadzoneDampingSelfTest、AimPresetConfigSelfTest、LeadPredictionSelfTest、WeaponSpecDisplaySelfTest、HeroSkillConfigSelfTest、HeroPerkClassifierSelfTest、MockHardwareSelfTest。
-  CnOffsetProbe 已迁到 D:\Desktop\SenseZen\downp\vertifytool。
+  CnOffsetProbe 已迁到 D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool。
   这 9 个轻量自检都已接入 ctest。
 ```
 
@@ -195,14 +195,14 @@ flowchart LR
 唯一推荐构建入口：
 
 ```powershell
-cd D:\Desktop\SenseZen\ClaudeCodexCoding\Unleashed
+cd D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma
 .\build-release.ps1
 ```
 
 不要新建 `build-vs2026`、`out`、`cmake-build-*` 之类平行构建目录。当前项目约定的构建树只有：
 
 ```text
-D:\Desktop\SenseZen\ClaudeCodexCoding\Unleashed\build
+D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma\build
 ```
 
 构建脚本做两件事：
@@ -283,7 +283,7 @@ Unleashed/
   config/dma_device.cfg       DMA 设备类型配置
   include/                    头文件、核心 inline 实现、共享类型
   src/                        .cpp 实现、main、UI、Renderer、Memory、Kmbox、Tools
-  src/Tools/                  轻量 self-test 工具；动态验证探针在 D:\Desktop\SenseZen\downp\vertifytool
+  src/Tools/                  轻量 self-test 工具；动态验证探针在 D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool
   vendor/                     imgui、leechcore、rapidjson、stb
   assets/                     图标、英雄头像、技能图标
   data/                       研究/校验数据
@@ -2436,7 +2436,7 @@ MockHardwareSelfTest
 常用命令：
 
 ```powershell
-cd D:\Desktop\SenseZen\ClaudeCodexCoding\Unleashed
+cd D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma
 .\build-release.ps1
 .\build\Release\Unleashed.exe --config-check
 .\build\Release\Unleashed.exe --kmbox-move-test
@@ -2457,7 +2457,7 @@ KMBox counts-per-radian 需要重标定：
   用 --kmbox-calibrate，必要时加 --kmbox-reference-sens。
 
 CN/NE 或 world/BZ offset 语义变化：
-  到 D:\Desktop\SenseZen\downp\vertifytool 用 CnOffsetProbe 做现场读数，再把 VERIFIED/CANDIDATE/UNRESOLVED 写清楚。
+  到 D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool 用 CnOffsetProbe 做现场读数，再把 VERIFIED/CANDIDATE/UNRESOLVED 写清楚。
 
 只改 Motion.hpp、FOV、tracking deadzone、lead prediction、aim preset 或 hero skill 默认配置：
   跑 ctest，至少让对应的 MotionEstimatorSelfTest / FovConfigSelfTest /
@@ -2678,7 +2678,7 @@ skill.aim_tick 与 lead.solve 日志
 1. include/Game/Offsets.hpp 改 RuntimeOffsetProfile 或常量
 2. 如果是 CN/NE，明确哪些是 live-verified，哪些仍是 unresolved
 3. include/Game/Decrypt.hpp / Overwatch.hpp / Entity.hpp / Target.hpp 查实际消费者
-4. D:\Desktop\SenseZen\downp\vertifytool\src\CnOffsetProbe.cpp 同步或确认探针仍能验证该字段
+4. D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool\src\CnOffsetProbe.cpp 同步或确认探针仍能验证该字段
 5. 日志里确认 Offset profile selected: world/bz 或 cn/ne
 6. 不要把 diagnostic-only / OLD 注释值写成 live 使用值
 ```
@@ -2725,7 +2725,7 @@ runtime 是否读另一个 primary/secondary 变量？
 ### 构建失败
 
 ```powershell
-cd D:\Desktop\SenseZen\ClaudeCodexCoding\Unleashed
+cd D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma
 .\build-release.ps1
 ```
 
@@ -3227,10 +3227,10 @@ ctest --test-dir .\build -C Release --output-on-failure
 运行探针/工具：
 
 ```powershell
-cd D:\Desktop\SenseZen\downp\vertifytool
+cd D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool
 .\build-release.ps1
 .\build\Release\CnOffsetProbe.exe
-cd D:\Desktop\SenseZen\ClaudeCodexCoding\Unleashed
+cd D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma
 .\build\Release\Unleashed.exe --kmbox-move-test
 .\build\Release\Unleashed.exe --kmbox-calibrate --kmbox-reference-sens 15
 ```

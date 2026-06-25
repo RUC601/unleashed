@@ -6,10 +6,10 @@
 // =============================================================================
 // Overwatch Offsets - BZ 2.23.0.0.150818 / NE 2.23.0.0.150818 refresh
 //
-// BZ dump: D:\Desktop\SenseZen\downp\2.23.0.0.150818\bz\_dump.exe
-// Diaphora export: D:\Desktop\SenseZen\downp\2.23.0.0.150818\bz\_dump.exe.sqlite
-// NE dump: D:\Desktop\SenseZen\downp\2.23.0.0.150818\ne\_dump.exe
-// Diaphora export: D:\Desktop\SenseZen\downp\2.23.0.0.150818\ne\_dump.exe.sqlite
+// BZ dump: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.0.0.150818\bz\_dump.exe
+// Diaphora export: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.0.0.150818\bz\_dump.exe.sqlite
+// NE dump: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.0.0.150818\ne\_dump.exe
+// Diaphora export: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.0.0.150818\ne\_dump.exe.sqlite
 //
 // Changes from 0521/0525:
 //   - Component key source RVAs changed; key qword offset moved 0x10C -> 0x1D4.

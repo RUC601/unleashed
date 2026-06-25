@@ -250,6 +250,15 @@ struct PlayerInfoStats {
     int sampleDrawnCenterX = 0;
     int sampleDrawnBottom = 0;
     int sampleDrawnDistanceM = 0;
+    size_t trainingBotPredictionCandidates = 0;
+    size_t trainingBotPredictionApplied = 0;
+    size_t trainingBotPredictionLeadDrops = 0;
+    int trainingBotPredictionMaxLeadMs = 0;
+    int trainingBotPredictionMaxOffsetCm = 0;
+    uint64_t trainingBotPredictionLastDropAddress = 0;
+    int trainingBotPredictionLastDropFromMs = 0;
+    int trainingBotPredictionLastDropToMs = 0;
+    int trainingBotPredictionLastDropOffsetCm = 0;
 };
 
 struct LocalEntityStats {
@@ -285,6 +294,44 @@ struct RosterStats {
     size_t missing = 0;
     size_t expired = 0;
     size_t heroChanged = 0;
+};
+
+struct ViewMatrixStabilityStats {
+    uint64_t rejected = 0;
+    uint64_t transientRejected = 0;
+    uint64_t acceptedLargeJump = 0;
+    uint64_t lastRejectAgeMs = 0;
+    uint64_t lastRejectDeltaMilli = 0;
+    uint64_t maxRejectDeltaMilli = 0;
+    uint64_t lastAcceptedJumpDeltaMilli = 0;
+};
+
+struct ProjectionStabilityStats {
+    uint64_t globalJumpFrames = 0;
+    uint64_t lastGlobalJumpAgeMs = 0;
+    uint64_t lastGlobalJumpMatched = 0;
+    int64_t lastGlobalJumpMedianDxPx = 0;
+    int64_t lastGlobalJumpMedianDyPx = 0;
+    uint64_t lastGlobalJumpDeltaPx = 0;
+    uint64_t maxGlobalJumpDeltaPx = 0;
+};
+
+struct OverlayCanvasStats {
+    int x = 0;
+    int y = 0;
+    uint32_t windowWidth = 0;
+    uint32_t windowHeight = 0;
+    uint32_t clientWidth = 0;
+    uint32_t clientHeight = 0;
+    uint32_t swapchainWidth = 0;
+    uint32_t swapchainHeight = 0;
+    int displayWidth = 0;
+    int displayHeight = 0;
+    bool visible = false;
+    uint64_t boundsChanges = 0;
+    uint64_t swapchainResizes = 0;
+    uint64_t lastBoundsChangeAgeMs = 0;
+    uint64_t lastSwapchainResizeAgeMs = 0;
 };
 
 struct EntityScanDetailStats {
@@ -344,6 +391,9 @@ struct StatusSnapshot {
     uint16_t dmaProbeMagic = 0;
     bool viewMatrixResolved = false;
     bool viewMatrixValid = false;
+    ViewMatrixStabilityStats viewMatrixStability{};
+    ProjectionStabilityStats projectionStability{};
+    OverlayCanvasStats overlayCanvas{};
     bool renderDrawRadarCalled = false;
     bool renderPlayerInfoCalled = false;
     bool renderSkillInfoCalled = false;
@@ -412,6 +462,14 @@ void SetProcessAttached(bool attached);
 void SetKeyStatus(KeyStatus status, uint64_t key1 = 0, uint64_t key2 = 0);
 void SetDmaProbeResult(bool attempted, bool succeeded, uint64_t address = 0, uint16_t magic = 0);
 void SetViewMatrixStatus(bool resolved, bool valid);
+void RecordViewMatrixStability(bool acceptedLargeJump, bool transientRejected, float elementDelta);
+void RecordProjectionGlobalJump(size_t matchedCount, float medianDxPx, float medianDyPx, float medianDeltaPx);
+void RecordOverlayCanvasBounds(int x, int y, uint32_t windowWidth, uint32_t windowHeight,
+                               uint32_t clientWidth, uint32_t clientHeight,
+                               bool visible, bool boundsChanged);
+void RecordOverlayCanvasFrame(uint32_t swapchainWidth, uint32_t swapchainHeight,
+                              float displayWidth, float displayHeight,
+                              bool swapchainResized);
 void SetRenderPipelineStatus(bool drawRadarCalled, bool playerInfoCalled, bool skillInfoCalled, bool entityListEmpty);
 void SetEntityProcessStats(const EntityProcessStats& stats);
 void SetPlayerInfoStats(const PlayerInfoStats& stats);

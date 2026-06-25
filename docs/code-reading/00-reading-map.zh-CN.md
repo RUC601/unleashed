@@ -1,6 +1,6 @@
 # 00 Reading Map
 
-Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/include and D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/src
+Source: D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/include and D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/src
 Snapshot: Git HEAD 10e87de + dirty working tree on 2026-06-10.
 Purpose: reading notes only, not runtime source of truth.
 

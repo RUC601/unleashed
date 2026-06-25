@@ -1,6 +1,6 @@
 # Unleashed Code Reading Notes
 
-Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed
+Source: D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma
 Snapshot: Git HEAD 6387dbf; source working tree was clean before the 2026-06-19 documentation refresh.
 Purpose: reading notes only, not runtime source of truth.
 

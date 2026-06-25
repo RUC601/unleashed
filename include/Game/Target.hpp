@@ -928,6 +928,7 @@ namespace OW {
     namespace TargetingDetail {
 
         constexpr float kNoTargetScore = 100000.f;
+        inline std::atomic<size_t> published_entity_count{0};
 
         struct SelectionResult {
             int index = -1;
@@ -1062,6 +1063,18 @@ namespace OW {
             return heroId == 0x16dd || heroId == 0x16ee;
         }
 
+        inline void SetPublishedEntityCount(size_t count) {
+            published_entity_count.store(count, std::memory_order_release);
+        }
+
+        inline size_t PublishedEntityCount() {
+            return published_entity_count.load(std::memory_order_acquire);
+        }
+
+        inline bool HasPublishedEntities() {
+            return PublishedEntityCount() > 0;
+        }
+
         inline std::vector<c_entity> SnapshotEntities() {
             std::lock_guard<std::mutex> lock(::g_mutex);
             return entities;
@@ -1165,6 +1178,47 @@ namespace OW {
                     found = true;
                     bestScore = score;
                     outBoneId = boneId;
+                    outPoint = point;
+                }
+            }
+
+            if (found && outScore)
+                *outScore = bestScore;
+            return found;
+        }
+
+        inline bool TrySelectClosestSkeletonAimPoint(const c_entity& entity,
+                                                     const FovRuntimeContext& fovContext,
+                                                     const Matrix& view,
+                                                     const Vector2& crosshair,
+                                                     size_t maxSkeletonBones,
+                                                     Vector3& outPoint,
+                                                     float* outScore = nullptr) {
+            const size_t limit = (std::min)(
+                maxSkeletonBones,
+                (std::min)(entity.skeleton_bones.size(), entity.skeleton_bone_valid.size()));
+            if (limit == 0)
+                return false;
+
+            bool found = false;
+            float bestScore = (std::numeric_limits<float>::max)();
+            for (size_t i = 0; i < limit; ++i) {
+                if (!entity.skeleton_bone_valid[i])
+                    continue;
+
+                const Vector3 point = entity.skeleton_bones[i];
+                if (IsZeroVector(point) || point == entity.pos || !IsFiniteVector(point))
+                    continue;
+
+                const float score = fovContext.valid
+                    ? FovScoreDeg(fovContext, point)
+                    : crosshair.Distance(view.WorldToScreen(point));
+                if (!std::isfinite(score))
+                    continue;
+
+                if (!found || score < bestScore) {
+                    found = true;
+                    bestScore = score;
                     outPoint = point;
                 }
             }
@@ -1654,13 +1708,22 @@ namespace OW {
         }
 
         inline Vector3 SelectAutoBone(c_entity entity, const Vector2& crosshair, bool predit, bool secondary, size_t maxSkeletonBones) {
-            (void)maxSkeletonBones;
             const Matrix view = OW::SnapshotViewMatrix();
             const FovRuntimeContext fovContext = SnapshotFovRuntimeContext();
             int bestBoneId = BONE_CHEST;
             Vector3 bestRoot{};
-            if (!TrySelectClosestCoreAimPoint(entity, fovContext, view, crosshair, bestBoneId, bestRoot))
-                return Vector3{};
+            if (!TrySelectClosestCoreAimPoint(entity, fovContext, view, crosshair, bestBoneId, bestRoot)) {
+                const Vector3 configuredRoot =
+                    ConfiguredBonePosition(entity, secondary ? Config::Bone2 : Config::Bone);
+                if (!IsZeroVector(configuredRoot) &&
+                    configuredRoot != entity.pos &&
+                    IsFiniteVector(configuredRoot)) {
+                    bestRoot = configuredRoot;
+                } else if (!TrySelectClosestSkeletonAimPoint(
+                    entity, fovContext, view, crosshair, maxSkeletonBones, bestRoot)) {
+                    return Vector3{};
+                }
+            }
             return ApplyPrediction(entity, bestRoot, predit, secondary);
         }
 

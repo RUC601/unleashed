@@ -1,6 +1,6 @@
 # Annotated Source: src/Game/WeaponSpec.cpp
 
-Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/src/Game/WeaponSpec.cpp
+Source: D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/src/Game/WeaponSpec.cpp
 Snapshot: Git HEAD 10e87de + dirty working tree on 2026-06-10.
 Purpose: reading notes only, not runtime source of truth.
 

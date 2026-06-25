@@ -2493,6 +2493,47 @@ std::string BuildDiagnosticsJson()
         << ",\"view_matrix_ok\":" << (snapshot.viewMatrixResolved && snapshot.viewMatrixValid ? "true" : "false")
         << ",\"view_matrix_resolved\":" << (snapshot.viewMatrixResolved ? "true" : "false")
         << ",\"view_matrix_valid\":" << (snapshot.viewMatrixValid ? "true" : "false")
+        << ",\"view_matrix_stability\":{\"rejected\":" << snapshot.viewMatrixStability.rejected
+        << ",\"transient_rejected\":" << snapshot.viewMatrixStability.transientRejected
+        << ",\"accepted_large_jump\":" << snapshot.viewMatrixStability.acceptedLargeJump
+        << ",\"last_reject_age_ms\":" << snapshot.viewMatrixStability.lastRejectAgeMs
+        << ",\"last_reject_delta_milli\":" << snapshot.viewMatrixStability.lastRejectDeltaMilli
+        << ",\"max_reject_delta_milli\":" << snapshot.viewMatrixStability.maxRejectDeltaMilli
+        << ",\"last_accepted_jump_delta_milli\":" << snapshot.viewMatrixStability.lastAcceptedJumpDeltaMilli
+        << "}"
+        << ",\"projection_stability\":{\"global_jump_frames\":" << snapshot.projectionStability.globalJumpFrames
+        << ",\"last_global_jump_age_ms\":" << snapshot.projectionStability.lastGlobalJumpAgeMs
+        << ",\"last_global_jump_matched\":" << snapshot.projectionStability.lastGlobalJumpMatched
+        << ",\"last_global_jump_median_dx_px\":" << snapshot.projectionStability.lastGlobalJumpMedianDxPx
+        << ",\"last_global_jump_median_dy_px\":" << snapshot.projectionStability.lastGlobalJumpMedianDyPx
+        << ",\"last_global_jump_delta_px\":" << snapshot.projectionStability.lastGlobalJumpDeltaPx
+        << ",\"max_global_jump_delta_px\":" << snapshot.projectionStability.maxGlobalJumpDeltaPx
+        << "}"
+        << ",\"screen\":{\"manual_width\":" << OW::Config::manualScreenWidth
+        << ",\"manual_height\":" << OW::Config::manualScreenHeight
+        << ",\"detected_width\":" << OW::detectedScreenWidth
+        << ",\"detected_height\":" << OW::detectedScreenHeight
+        << ",\"resolved_wx\":";
+    AppendNumberOrNull(out, OW::WX);
+    out << ",\"resolved_wy\":";
+    AppendNumberOrNull(out, OW::WY);
+    out << "}"
+        << ",\"overlay_canvas\":{\"x\":" << snapshot.overlayCanvas.x
+        << ",\"y\":" << snapshot.overlayCanvas.y
+        << ",\"window_width\":" << snapshot.overlayCanvas.windowWidth
+        << ",\"window_height\":" << snapshot.overlayCanvas.windowHeight
+        << ",\"client_width\":" << snapshot.overlayCanvas.clientWidth
+        << ",\"client_height\":" << snapshot.overlayCanvas.clientHeight
+        << ",\"swapchain_width\":" << snapshot.overlayCanvas.swapchainWidth
+        << ",\"swapchain_height\":" << snapshot.overlayCanvas.swapchainHeight
+        << ",\"display_width\":" << snapshot.overlayCanvas.displayWidth
+        << ",\"display_height\":" << snapshot.overlayCanvas.displayHeight
+        << ",\"visible\":" << (snapshot.overlayCanvas.visible ? "true" : "false")
+        << ",\"bounds_changes\":" << snapshot.overlayCanvas.boundsChanges
+        << ",\"swapchain_resizes\":" << snapshot.overlayCanvas.swapchainResizes
+        << ",\"last_bounds_change_age_ms\":" << snapshot.overlayCanvas.lastBoundsChangeAgeMs
+        << ",\"last_swapchain_resize_age_ms\":" << snapshot.overlayCanvas.lastSwapchainResizeAgeMs
+        << "}"
         << ",\"key_status\":";
     AppendJsonString(out, Diagnostics::ToString(snapshot.keyStatus));
     out << ",\"fps\":";
@@ -2609,7 +2650,18 @@ std::string BuildDiagnosticsJson()
         << ",\"center_x\":" << snapshot.playerInfo.sampleDrawnCenterX
         << ",\"bottom\":" << snapshot.playerInfo.sampleDrawnBottom
         << ",\"distance_m\":" << snapshot.playerInfo.sampleDrawnDistanceM
-        << "}},\"entity_process\":{\"raw\":" << snapshot.entityProcess.raw
+        << "},\"training_bot_prediction\":{\"candidates\":"
+        << snapshot.playerInfo.trainingBotPredictionCandidates
+        << ",\"applied\":" << snapshot.playerInfo.trainingBotPredictionApplied
+        << ",\"lead_drops\":" << snapshot.playerInfo.trainingBotPredictionLeadDrops
+        << ",\"max_lead_ms\":" << snapshot.playerInfo.trainingBotPredictionMaxLeadMs
+        << ",\"max_offset_cm\":" << snapshot.playerInfo.trainingBotPredictionMaxOffsetCm
+        << ",\"last_drop\":{\"address\":";
+    AppendHexOrNull(out, snapshot.playerInfo.trainingBotPredictionLastDropAddress);
+    out << ",\"from_ms\":" << snapshot.playerInfo.trainingBotPredictionLastDropFromMs
+        << ",\"to_ms\":" << snapshot.playerInfo.trainingBotPredictionLastDropToMs
+        << ",\"offset_cm\":" << snapshot.playerInfo.trainingBotPredictionLastDropOffsetCm
+        << "}}},\"entity_process\":{\"raw\":" << snapshot.entityProcess.raw
         << ",\"validated\":" << snapshot.entityProcess.validated
         << ",\"dynamic\":" << snapshot.entityProcess.dynamic
         << ",\"null_pair\":" << snapshot.entityProcess.nullPair

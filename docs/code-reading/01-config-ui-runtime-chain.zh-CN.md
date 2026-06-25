@@ -1,6 +1,6 @@
 # 01 Config, UI, And Runtime Chain
 
-Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/src/Features/UI.cpp; D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/include/Utils/Config.hpp; D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/src/Utils/Config.cpp
+Source: D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/src/Features/UI.cpp; D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/include/Utils/Config.hpp; D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/src/Utils/Config.cpp
 Snapshot: Git HEAD 10e87de + dirty working tree on 2026-06-10.
 Purpose: reading notes only, not runtime source of truth.
 

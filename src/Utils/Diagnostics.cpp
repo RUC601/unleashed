@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <cstdarg>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <deque>
@@ -75,6 +76,15 @@ std::atomic<uint64_t> g_frameDmaReads{ 0 };
 std::atomic<uint64_t> g_frameDmaFailures{ 0 };
 std::atomic<uint64_t> g_frameDmaTotalUs{ 0 };
 std::atomic<uint64_t> g_frameDmaMaxUs{ 0 };
+
+constexpr uint64_t kSlowFrameLogIntervalMs = 1000;
+uint64_t g_slowFrameLastLogMs = 0;
+uint64_t g_slowFrameWindowCount = 0;
+double g_slowFrameWindowMaxTotalMs = 0.0;
+double g_slowFrameWindowMaxRenderMs = 0.0;
+double g_slowFrameWindowMaxPresentMs = 0.0;
+uint64_t g_slowFrameWindowMaxRtDmaReads = 0;
+uint64_t g_slowFrameWindowMaxRtDmaUs = 0;
 
 } // anonymous namespace
 
@@ -179,6 +189,35 @@ std::atomic<uint64_t> g_dmaProbeAddress{ 0 };
 std::atomic<uint32_t> g_dmaProbeMagic{ 0 };
 std::atomic<bool> g_viewMatrixResolved{ false };
 std::atomic<bool> g_viewMatrixValid{ false };
+std::atomic<uint64_t> g_viewMatrixRejected{ 0 };
+std::atomic<uint64_t> g_viewMatrixTransientRejected{ 0 };
+std::atomic<uint64_t> g_viewMatrixAcceptedLargeJump{ 0 };
+std::atomic<uint64_t> g_viewMatrixLastRejectTickMs{ 0 };
+std::atomic<uint64_t> g_viewMatrixLastRejectDeltaMilli{ 0 };
+std::atomic<uint64_t> g_viewMatrixMaxRejectDeltaMilli{ 0 };
+std::atomic<uint64_t> g_viewMatrixLastAcceptedJumpDeltaMilli{ 0 };
+std::atomic<uint64_t> g_projectionGlobalJumpFrames{ 0 };
+std::atomic<uint64_t> g_projectionLastGlobalJumpTickMs{ 0 };
+std::atomic<uint64_t> g_projectionLastGlobalJumpMatched{ 0 };
+std::atomic<int64_t> g_projectionLastGlobalJumpMedianDxPx{ 0 };
+std::atomic<int64_t> g_projectionLastGlobalJumpMedianDyPx{ 0 };
+std::atomic<uint64_t> g_projectionLastGlobalJumpDeltaPx{ 0 };
+std::atomic<uint64_t> g_projectionMaxGlobalJumpDeltaPx{ 0 };
+std::atomic<int> g_overlayCanvasX{ 0 };
+std::atomic<int> g_overlayCanvasY{ 0 };
+std::atomic<uint64_t> g_overlayCanvasWindowWidth{ 0 };
+std::atomic<uint64_t> g_overlayCanvasWindowHeight{ 0 };
+std::atomic<uint64_t> g_overlayCanvasClientWidth{ 0 };
+std::atomic<uint64_t> g_overlayCanvasClientHeight{ 0 };
+std::atomic<uint64_t> g_overlayCanvasSwapchainWidth{ 0 };
+std::atomic<uint64_t> g_overlayCanvasSwapchainHeight{ 0 };
+std::atomic<int> g_overlayCanvasDisplayWidth{ 0 };
+std::atomic<int> g_overlayCanvasDisplayHeight{ 0 };
+std::atomic<bool> g_overlayCanvasVisible{ false };
+std::atomic<uint64_t> g_overlayCanvasBoundsChanges{ 0 };
+std::atomic<uint64_t> g_overlayCanvasSwapchainResizes{ 0 };
+std::atomic<uint64_t> g_overlayCanvasLastBoundsChangeTickMs{ 0 };
+std::atomic<uint64_t> g_overlayCanvasLastSwapchainResizeTickMs{ 0 };
 std::atomic<bool> g_renderDrawRadarCalled{ false };
 std::atomic<bool> g_renderPlayerInfoCalled{ false };
 std::atomic<bool> g_renderSkillInfoCalled{ false };
@@ -289,6 +328,15 @@ std::atomic<int> g_playerInfoSampleDrawnHeight{ 0 };
 std::atomic<int> g_playerInfoSampleDrawnCenterX{ 0 };
 std::atomic<int> g_playerInfoSampleDrawnBottom{ 0 };
 std::atomic<int> g_playerInfoSampleDrawnDistanceM{ 0 };
+std::atomic<uint64_t> g_playerInfoTrainingBotPredictionCandidates{ 0 };
+std::atomic<uint64_t> g_playerInfoTrainingBotPredictionApplied{ 0 };
+std::atomic<uint64_t> g_playerInfoTrainingBotPredictionLeadDrops{ 0 };
+std::atomic<int> g_playerInfoTrainingBotPredictionMaxLeadMs{ 0 };
+std::atomic<int> g_playerInfoTrainingBotPredictionMaxOffsetCm{ 0 };
+std::atomic<uint64_t> g_playerInfoTrainingBotPredictionLastDropAddress{ 0 };
+std::atomic<int> g_playerInfoTrainingBotPredictionLastDropFromMs{ 0 };
+std::atomic<int> g_playerInfoTrainingBotPredictionLastDropToMs{ 0 };
+std::atomic<int> g_playerInfoTrainingBotPredictionLastDropOffsetCm{ 0 };
 std::atomic<uint64_t> g_localAngleCandidates{ 0 };
 std::atomic<uint64_t> g_localNearCameraCandidates{ 0 };
 std::atomic<uint64_t> g_localNamedCandidates{ 0 };
@@ -795,6 +843,76 @@ void SetViewMatrixStatus(bool resolved, bool valid)
     g_viewMatrixValid.store(valid, std::memory_order_relaxed);
 }
 
+void RecordViewMatrixStability(bool acceptedLargeJump, bool transientRejected, float elementDelta)
+{
+    const float safeDelta = std::isfinite(elementDelta) ? std::fabs(elementDelta) : 0.0f;
+    const uint64_t deltaMilli = static_cast<uint64_t>(safeDelta * 1000.0f + 0.5f);
+    if (acceptedLargeJump) {
+        g_viewMatrixAcceptedLargeJump.fetch_add(1, std::memory_order_relaxed);
+        g_viewMatrixLastAcceptedJumpDeltaMilli.store(deltaMilli, std::memory_order_relaxed);
+        return;
+    }
+
+    g_viewMatrixRejected.fetch_add(1, std::memory_order_relaxed);
+    if (transientRejected)
+        g_viewMatrixTransientRejected.fetch_add(1, std::memory_order_relaxed);
+    g_viewMatrixLastRejectTickMs.store(GetTickCount64(), std::memory_order_relaxed);
+    g_viewMatrixLastRejectDeltaMilli.store(deltaMilli, std::memory_order_relaxed);
+    UpdateAtomicMax(g_viewMatrixMaxRejectDeltaMilli, deltaMilli);
+}
+
+void RecordProjectionGlobalJump(size_t matchedCount, float medianDxPx, float medianDyPx, float medianDeltaPx)
+{
+    const float safeDx = std::isfinite(medianDxPx) ? medianDxPx : 0.0f;
+    const float safeDy = std::isfinite(medianDyPx) ? medianDyPx : 0.0f;
+    const float safeDelta = std::isfinite(medianDeltaPx) ? std::fabs(medianDeltaPx) : 0.0f;
+    const uint64_t deltaPx = static_cast<uint64_t>(safeDelta + 0.5f);
+
+    g_projectionGlobalJumpFrames.fetch_add(1, std::memory_order_relaxed);
+    g_projectionLastGlobalJumpTickMs.store(GetTickCount64(), std::memory_order_relaxed);
+    g_projectionLastGlobalJumpMatched.store(static_cast<uint64_t>(matchedCount), std::memory_order_relaxed);
+    g_projectionLastGlobalJumpMedianDxPx.store(static_cast<int64_t>(safeDx + (safeDx >= 0.0f ? 0.5f : -0.5f)), std::memory_order_relaxed);
+    g_projectionLastGlobalJumpMedianDyPx.store(static_cast<int64_t>(safeDy + (safeDy >= 0.0f ? 0.5f : -0.5f)), std::memory_order_relaxed);
+    g_projectionLastGlobalJumpDeltaPx.store(deltaPx, std::memory_order_relaxed);
+    UpdateAtomicMax(g_projectionMaxGlobalJumpDeltaPx, deltaPx);
+}
+
+void RecordOverlayCanvasBounds(int x, int y, uint32_t windowWidth, uint32_t windowHeight,
+                               uint32_t clientWidth, uint32_t clientHeight,
+                               bool visible, bool boundsChanged)
+{
+    g_overlayCanvasX.store(x, std::memory_order_relaxed);
+    g_overlayCanvasY.store(y, std::memory_order_relaxed);
+    g_overlayCanvasWindowWidth.store(windowWidth, std::memory_order_relaxed);
+    g_overlayCanvasWindowHeight.store(windowHeight, std::memory_order_relaxed);
+    g_overlayCanvasClientWidth.store(clientWidth, std::memory_order_relaxed);
+    g_overlayCanvasClientHeight.store(clientHeight, std::memory_order_relaxed);
+    g_overlayCanvasVisible.store(visible, std::memory_order_relaxed);
+
+    if (boundsChanged) {
+        g_overlayCanvasBoundsChanges.fetch_add(1, std::memory_order_relaxed);
+        g_overlayCanvasLastBoundsChangeTickMs.store(GetTickCount64(), std::memory_order_relaxed);
+    }
+}
+
+void RecordOverlayCanvasFrame(uint32_t swapchainWidth, uint32_t swapchainHeight,
+                              float displayWidth, float displayHeight,
+                              bool swapchainResized)
+{
+    const int displayW = std::isfinite(displayWidth) ? static_cast<int>(displayWidth + 0.5f) : 0;
+    const int displayH = std::isfinite(displayHeight) ? static_cast<int>(displayHeight + 0.5f) : 0;
+
+    g_overlayCanvasSwapchainWidth.store(swapchainWidth, std::memory_order_relaxed);
+    g_overlayCanvasSwapchainHeight.store(swapchainHeight, std::memory_order_relaxed);
+    g_overlayCanvasDisplayWidth.store(displayW, std::memory_order_relaxed);
+    g_overlayCanvasDisplayHeight.store(displayH, std::memory_order_relaxed);
+
+    if (swapchainResized) {
+        g_overlayCanvasSwapchainResizes.fetch_add(1, std::memory_order_relaxed);
+        g_overlayCanvasLastSwapchainResizeTickMs.store(GetTickCount64(), std::memory_order_relaxed);
+    }
+}
+
 void SetRenderPipelineStatus(bool drawRadarCalled, bool playerInfoCalled, bool skillInfoCalled, bool entityListEmpty)
 {
     g_renderDrawRadarCalled.store(drawRadarCalled, std::memory_order_relaxed);
@@ -930,6 +1048,24 @@ void SetPlayerInfoStats(const PlayerInfoStats& stats)
     g_playerInfoSampleDrawnCenterX.store(stats.sampleDrawnCenterX, std::memory_order_relaxed);
     g_playerInfoSampleDrawnBottom.store(stats.sampleDrawnBottom, std::memory_order_relaxed);
     g_playerInfoSampleDrawnDistanceM.store(stats.sampleDrawnDistanceM, std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionCandidates.store(
+        static_cast<uint64_t>(stats.trainingBotPredictionCandidates), std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionApplied.store(
+        static_cast<uint64_t>(stats.trainingBotPredictionApplied), std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionLeadDrops.store(
+        static_cast<uint64_t>(stats.trainingBotPredictionLeadDrops), std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionMaxLeadMs.store(
+        stats.trainingBotPredictionMaxLeadMs, std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionMaxOffsetCm.store(
+        stats.trainingBotPredictionMaxOffsetCm, std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionLastDropAddress.store(
+        stats.trainingBotPredictionLastDropAddress, std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionLastDropFromMs.store(
+        stats.trainingBotPredictionLastDropFromMs, std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionLastDropToMs.store(
+        stats.trainingBotPredictionLastDropToMs, std::memory_order_relaxed);
+    g_playerInfoTrainingBotPredictionLastDropOffsetCm.store(
+        stats.trainingBotPredictionLastDropOffsetCm, std::memory_order_relaxed);
 }
 
 void SetLocalEntityStats(const LocalEntityStats& stats)
@@ -1012,6 +1148,66 @@ StatusSnapshot Snapshot()
     snapshot.dmaProbeMagic = static_cast<uint16_t>(g_dmaProbeMagic.load(std::memory_order_relaxed));
     snapshot.viewMatrixResolved = g_viewMatrixResolved.load(std::memory_order_relaxed);
     snapshot.viewMatrixValid = g_viewMatrixValid.load(std::memory_order_relaxed);
+    snapshot.viewMatrixStability.rejected = g_viewMatrixRejected.load(std::memory_order_relaxed);
+    snapshot.viewMatrixStability.transientRejected = g_viewMatrixTransientRejected.load(std::memory_order_relaxed);
+    snapshot.viewMatrixStability.acceptedLargeJump = g_viewMatrixAcceptedLargeJump.load(std::memory_order_relaxed);
+    const uint64_t lastRejectTick = g_viewMatrixLastRejectTickMs.load(std::memory_order_relaxed);
+    snapshot.viewMatrixStability.lastRejectAgeMs =
+        lastRejectTick == 0 ? 0 : GetTickCount64() - lastRejectTick;
+    snapshot.viewMatrixStability.lastRejectDeltaMilli =
+        g_viewMatrixLastRejectDeltaMilli.load(std::memory_order_relaxed);
+    snapshot.viewMatrixStability.maxRejectDeltaMilli =
+        g_viewMatrixMaxRejectDeltaMilli.load(std::memory_order_relaxed);
+    snapshot.viewMatrixStability.lastAcceptedJumpDeltaMilli =
+        g_viewMatrixLastAcceptedJumpDeltaMilli.load(std::memory_order_relaxed);
+
+    snapshot.projectionStability.globalJumpFrames =
+        g_projectionGlobalJumpFrames.load(std::memory_order_relaxed);
+    const uint64_t lastProjectionJumpTick =
+        g_projectionLastGlobalJumpTickMs.load(std::memory_order_relaxed);
+    snapshot.projectionStability.lastGlobalJumpAgeMs =
+        lastProjectionJumpTick == 0 ? 0 : GetTickCount64() - lastProjectionJumpTick;
+    snapshot.projectionStability.lastGlobalJumpMatched =
+        g_projectionLastGlobalJumpMatched.load(std::memory_order_relaxed);
+    snapshot.projectionStability.lastGlobalJumpMedianDxPx =
+        g_projectionLastGlobalJumpMedianDxPx.load(std::memory_order_relaxed);
+    snapshot.projectionStability.lastGlobalJumpMedianDyPx =
+        g_projectionLastGlobalJumpMedianDyPx.load(std::memory_order_relaxed);
+    snapshot.projectionStability.lastGlobalJumpDeltaPx =
+        g_projectionLastGlobalJumpDeltaPx.load(std::memory_order_relaxed);
+    snapshot.projectionStability.maxGlobalJumpDeltaPx =
+        g_projectionMaxGlobalJumpDeltaPx.load(std::memory_order_relaxed);
+
+    snapshot.overlayCanvas.x = g_overlayCanvasX.load(std::memory_order_relaxed);
+    snapshot.overlayCanvas.y = g_overlayCanvasY.load(std::memory_order_relaxed);
+    snapshot.overlayCanvas.windowWidth =
+        static_cast<uint32_t>(g_overlayCanvasWindowWidth.load(std::memory_order_relaxed));
+    snapshot.overlayCanvas.windowHeight =
+        static_cast<uint32_t>(g_overlayCanvasWindowHeight.load(std::memory_order_relaxed));
+    snapshot.overlayCanvas.clientWidth =
+        static_cast<uint32_t>(g_overlayCanvasClientWidth.load(std::memory_order_relaxed));
+    snapshot.overlayCanvas.clientHeight =
+        static_cast<uint32_t>(g_overlayCanvasClientHeight.load(std::memory_order_relaxed));
+    snapshot.overlayCanvas.swapchainWidth =
+        static_cast<uint32_t>(g_overlayCanvasSwapchainWidth.load(std::memory_order_relaxed));
+    snapshot.overlayCanvas.swapchainHeight =
+        static_cast<uint32_t>(g_overlayCanvasSwapchainHeight.load(std::memory_order_relaxed));
+    snapshot.overlayCanvas.displayWidth = g_overlayCanvasDisplayWidth.load(std::memory_order_relaxed);
+    snapshot.overlayCanvas.displayHeight = g_overlayCanvasDisplayHeight.load(std::memory_order_relaxed);
+    snapshot.overlayCanvas.visible = g_overlayCanvasVisible.load(std::memory_order_relaxed);
+    snapshot.overlayCanvas.boundsChanges =
+        g_overlayCanvasBoundsChanges.load(std::memory_order_relaxed);
+    snapshot.overlayCanvas.swapchainResizes =
+        g_overlayCanvasSwapchainResizes.load(std::memory_order_relaxed);
+    const uint64_t lastBoundsChangeTick =
+        g_overlayCanvasLastBoundsChangeTickMs.load(std::memory_order_relaxed);
+    snapshot.overlayCanvas.lastBoundsChangeAgeMs =
+        lastBoundsChangeTick == 0 ? 0 : GetTickCount64() - lastBoundsChangeTick;
+    const uint64_t lastSwapchainResizeTick =
+        g_overlayCanvasLastSwapchainResizeTickMs.load(std::memory_order_relaxed);
+    snapshot.overlayCanvas.lastSwapchainResizeAgeMs =
+        lastSwapchainResizeTick == 0 ? 0 : GetTickCount64() - lastSwapchainResizeTick;
+
     snapshot.renderDrawRadarCalled = g_renderDrawRadarCalled.load(std::memory_order_relaxed);
     snapshot.renderPlayerInfoCalled = g_renderPlayerInfoCalled.load(std::memory_order_relaxed);
     snapshot.renderSkillInfoCalled = g_renderSkillInfoCalled.load(std::memory_order_relaxed);
@@ -1127,6 +1323,24 @@ StatusSnapshot Snapshot()
     snapshot.playerInfo.sampleDrawnCenterX = g_playerInfoSampleDrawnCenterX.load(std::memory_order_relaxed);
     snapshot.playerInfo.sampleDrawnBottom = g_playerInfoSampleDrawnBottom.load(std::memory_order_relaxed);
     snapshot.playerInfo.sampleDrawnDistanceM = g_playerInfoSampleDrawnDistanceM.load(std::memory_order_relaxed);
+    snapshot.playerInfo.trainingBotPredictionCandidates =
+        static_cast<size_t>(g_playerInfoTrainingBotPredictionCandidates.load(std::memory_order_relaxed));
+    snapshot.playerInfo.trainingBotPredictionApplied =
+        static_cast<size_t>(g_playerInfoTrainingBotPredictionApplied.load(std::memory_order_relaxed));
+    snapshot.playerInfo.trainingBotPredictionLeadDrops =
+        static_cast<size_t>(g_playerInfoTrainingBotPredictionLeadDrops.load(std::memory_order_relaxed));
+    snapshot.playerInfo.trainingBotPredictionMaxLeadMs =
+        g_playerInfoTrainingBotPredictionMaxLeadMs.load(std::memory_order_relaxed);
+    snapshot.playerInfo.trainingBotPredictionMaxOffsetCm =
+        g_playerInfoTrainingBotPredictionMaxOffsetCm.load(std::memory_order_relaxed);
+    snapshot.playerInfo.trainingBotPredictionLastDropAddress =
+        g_playerInfoTrainingBotPredictionLastDropAddress.load(std::memory_order_relaxed);
+    snapshot.playerInfo.trainingBotPredictionLastDropFromMs =
+        g_playerInfoTrainingBotPredictionLastDropFromMs.load(std::memory_order_relaxed);
+    snapshot.playerInfo.trainingBotPredictionLastDropToMs =
+        g_playerInfoTrainingBotPredictionLastDropToMs.load(std::memory_order_relaxed);
+    snapshot.playerInfo.trainingBotPredictionLastDropOffsetCm =
+        g_playerInfoTrainingBotPredictionLastDropOffsetCm.load(std::memory_order_relaxed);
     snapshot.localEntity.angleCandidates = static_cast<size_t>(g_localAngleCandidates.load(std::memory_order_relaxed));
     snapshot.localEntity.nearCameraCandidates = static_cast<size_t>(g_localNearCameraCandidates.load(std::memory_order_relaxed));
     snapshot.localEntity.namedCandidates = static_cast<size_t>(g_localNamedCandidates.load(std::memory_order_relaxed));
@@ -1227,7 +1441,36 @@ void RecordFrameTiming(const FrameTiming& timing, double slowThresholdMs)
     if (timing.totalMs <= slowThresholdMs)
         return;
 
-    // Slow frame — grab a recent DMA window for correlation
+    const uint64_t nowMs = GetTickCount64();
+    ++g_slowFrameWindowCount;
+    g_slowFrameWindowMaxTotalMs = (std::max)(g_slowFrameWindowMaxTotalMs, timing.totalMs);
+    g_slowFrameWindowMaxRenderMs = (std::max)(g_slowFrameWindowMaxRenderMs, timing.renderCallbackMs);
+    g_slowFrameWindowMaxPresentMs = (std::max)(g_slowFrameWindowMaxPresentMs, timing.presentMs);
+    g_slowFrameWindowMaxRtDmaReads =
+        (std::max)(g_slowFrameWindowMaxRtDmaReads, frameDmaReads);
+    g_slowFrameWindowMaxRtDmaUs =
+        (std::max)(g_slowFrameWindowMaxRtDmaUs, frameDmaMaxUs);
+
+    if (g_slowFrameLastLogMs != 0 &&
+        nowMs - g_slowFrameLastLogMs < kSlowFrameLogIntervalMs) {
+        return;
+    }
+
+    const uint64_t slowFrameCount = g_slowFrameWindowCount;
+    const double maxTotalMs = g_slowFrameWindowMaxTotalMs;
+    const double maxRenderMs = g_slowFrameWindowMaxRenderMs;
+    const double maxPresentMs = g_slowFrameWindowMaxPresentMs;
+    const uint64_t maxRtDmaReads = g_slowFrameWindowMaxRtDmaReads;
+    const uint64_t maxRtDmaUs = g_slowFrameWindowMaxRtDmaUs;
+    g_slowFrameWindowCount = 0;
+    g_slowFrameWindowMaxTotalMs = 0.0;
+    g_slowFrameWindowMaxRenderMs = 0.0;
+    g_slowFrameWindowMaxPresentMs = 0.0;
+    g_slowFrameWindowMaxRtDmaReads = 0;
+    g_slowFrameWindowMaxRtDmaUs = 0;
+    g_slowFrameLastLogMs = nowMs;
+
+    // Slow frame -- grab a recent DMA window for correlation only when logging.
     const DmaWindowStats dmaWindow = GetDmaWindowStats(100);
 
     // Build per-callsite breakdown string
@@ -1247,11 +1490,18 @@ void RecordFrameTiming(const FrameTiming& timing, double slowThresholdMs)
     }
 
     Warn("SLOW_FRAME total=%.1fms render=%.1fms present=%.1fms "
+         "slowCount=%llu max[total=%.1fms render=%.1fms present=%.1fms rtDmaReads=%llu rtDmaMax=%lluus] "
          "rtDma[reads=%llu fail=%llu total=%lluus max=%lluus] "
          "dma100ms[reads=%llu fail=%llu max=%lluus] %s",
          timing.totalMs,
          timing.renderCallbackMs,
          timing.presentMs,
+         static_cast<unsigned long long>(slowFrameCount),
+         maxTotalMs,
+         maxRenderMs,
+         maxPresentMs,
+         static_cast<unsigned long long>(maxRtDmaReads),
+         static_cast<unsigned long long>(maxRtDmaUs),
          static_cast<unsigned long long>(frameDmaReads),
          static_cast<unsigned long long>(frameDmaFailures),
          static_cast<unsigned long long>(frameDmaTotalUs),

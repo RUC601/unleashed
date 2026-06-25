@@ -58,8 +58,11 @@ namespace {
 
     std::atomic<bool> g_DiagnosticsThreadRunning{ false };
     std::atomic<bool> g_ProcessConnectionThreadRunning{ false };
+    std::atomic<bool> g_HeroSkillRuntimeThreadRunning{ false };
     std::atomic<bool> g_BackgroundThreadsStarted{ false };
+    std::thread g_HeroSkillRuntimeThread;
     std::mutex g_ProcessConnectionMutex;
+    constexpr DWORD kHeroSkillRuntimeIntervalMs = 16;
 
     static float CanvasWidth()
     {
@@ -750,7 +753,7 @@ namespace {
         return drewAny;
     }
 
-    static void DrawFovCircle()
+    static void DrawFovCircle(const OW::c_entity& localSnapshot)
     {
         if (!OW::Config::draw_fov)
             return;
@@ -767,7 +770,6 @@ namespace {
         const OW::TargetingDetail::FovRuntimeContext fovContext =
             BuildFovRuntimeContext(renderViewMatrixXor);
 
-        const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
         const OW::Config::RuntimeDrawFovState activeState = OW::Config::SnapshotRuntimeDrawFov();
         bool drewAny = false;
         if (localSnapshot.HeroID != 0) {
@@ -799,7 +801,7 @@ namespace {
                           nullptr);
     }
 
-    static void DrawTrackingDeadzoneCircles()
+    static void DrawTrackingDeadzoneCircles(const OW::c_entity& localSnapshot)
     {
         if (!OW::Config::drawTrackingDeadzones)
             return;
@@ -809,7 +811,6 @@ namespace {
         if (width <= 0.0f || height <= 0.0f)
             return;
 
-        const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
         if (localSnapshot.HeroID == 0)
             return;
 
@@ -837,13 +838,12 @@ namespace {
         Render::DrawCircle(center, radius, color, 48, 1.0f);
     }
 
-    static void DrawRadar()
+    static void DrawRadar(const std::vector<OW::c_entity>& entitySnapshot,
+                          const OW::c_entity& localSnapshot)
     {
         if (!OW::Config::radar)
             return;
 
-        const std::vector<OW::c_entity> entitySnapshot = OW::TargetingDetail::SnapshotEntities();
-        const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
         if (entitySnapshot.empty() || localSnapshot.PlayerHealth <= 0.0f)
             return;
 
@@ -916,12 +916,11 @@ namespace {
         }
     }
 
-    static void DrawHealthPacks()
+    static void DrawHealthPacks(const std::vector<OW::hpanddy>& dynamicEntitySnapshot)
     {
         if (!OW::Config::draw_hp_pack)
             return;
 
-        const std::vector<OW::hpanddy> dynamicEntitySnapshot = OW::TargetingDetail::SnapshotDynamicEntities();
         if (dynamicEntitySnapshot.empty())
             return;
 
@@ -964,6 +963,45 @@ namespace {
         g_DiagnosticsThreadRunning.store(false, std::memory_order_release);
     }
 
+    static void HeroSkillRuntimeThread()
+    {
+        bool disconnectHandled = false;
+
+        while (g_HeroSkillRuntimeThreadRunning.load(std::memory_order_acquire)) {
+            const DWORD tick = GetTickCount();
+
+            if (OW::Config::doingentity == 0)
+                break;
+
+            if (OW::ProcessConnection::IsConnected()) {
+                disconnectHandled = false;
+                const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
+                OW::HeroPerkRuntime::UpdateContext(localSnapshot.HeroID, true, localSnapshot.Team);
+                OW::ProcessHeroSkills();
+            } else if (!disconnectHandled) {
+                OW::HeroPerkRuntime::ResetForDisconnect();
+                OW::CancelActiveSkill();
+                disconnectHandled = true;
+            }
+
+            const DWORD elapsed = GetTickCount() - tick;
+            if (elapsed < kHeroSkillRuntimeIntervalMs)
+                Sleep(kHeroSkillRuntimeIntervalMs - elapsed);
+            else
+                Sleep(1);
+        }
+
+        OW::HeroPerkRuntime::ResetForDisconnect();
+        OW::CancelActiveSkill();
+    }
+
+    static void StopHeroSkillRuntimeThread()
+    {
+        g_HeroSkillRuntimeThreadRunning.store(false, std::memory_order_release);
+        if (g_HeroSkillRuntimeThread.joinable())
+            g_HeroSkillRuntimeThread.join();
+    }
+
     static void PreloadAbilityIcons()
     {
         IconManager* iconManager = Render::GetIconManager();
@@ -998,27 +1036,45 @@ void RenderCallback()
     Diagnostics::RecordFrame();
     const bool boxPerfMode = OW::Config::boxPerfMode;
     Diagnostics::BeginRenderWorkloadFrame(boxPerfMode);
-    if (OW::ProcessConnection::IsConnected()) {
-        if (!boxPerfMode) {
-            const OW::c_entity localSnapshot = OW::TargetingDetail::SnapshotLocalEntity();
-            OW::HeroPerkRuntime::UpdateContext(localSnapshot.HeroID, true, localSnapshot.Team);
-            OW::ProcessHeroSkills();
-        }
-    } else {
-        OW::HeroPerkRuntime::ResetForDisconnect();
-        OW::CancelActiveSkill();
-    }
 
     // The menu is rendered by the separate overlay menu window. This callback
     // only draws the transparent full-screen canvas layer.
-    const bool entityListEmpty = OW::TargetingDetail::SnapshotEntities().empty();
+    const bool entityListEmpty = !OW::TargetingDetail::HasPublishedEntities();
     bool playerInfoCalled = false;
     bool skillInfoCalled = false;
+    std::vector<OW::c_entity> frameEntities;
+    std::vector<OW::hpanddy> frameDynamicEntities;
+    OW::c_entity frameLocal;
+    bool frameEntitiesReady = false;
+    bool frameDynamicEntitiesReady = false;
+    bool frameLocalReady = false;
+
+    auto frameEntitySnapshot = [&]() -> const std::vector<OW::c_entity>& {
+        if (!frameEntitiesReady) {
+            frameEntities = OW::TargetingDetail::SnapshotEntities();
+            frameEntitiesReady = true;
+        }
+        return frameEntities;
+    };
+    auto frameDynamicEntitySnapshot = [&]() -> const std::vector<OW::hpanddy>& {
+        if (!frameDynamicEntitiesReady) {
+            frameDynamicEntities = OW::TargetingDetail::SnapshotDynamicEntities();
+            frameDynamicEntitiesReady = true;
+        }
+        return frameDynamicEntities;
+    };
+    auto frameLocalSnapshot = [&]() -> const OW::c_entity& {
+        if (!frameLocalReady) {
+            frameLocal = OW::TargetingDetail::SnapshotLocalEntity();
+            frameLocalReady = true;
+        }
+        return frameLocal;
+    };
 
     if (boxPerfMode) {
         if (!entityListEmpty) {
             playerInfoCalled = true;
-            PlayerInfo(true);
+            PlayerInfoFromSnapshot(frameEntitySnapshot(), frameLocalSnapshot(), true);
         } else {
             Diagnostics::PlayerInfoStats emptyPlayerInfoStats{};
             emptyPlayerInfoStats.boxPerfMode = true;
@@ -1030,24 +1086,28 @@ void RenderCallback()
         return;
     }
 
-    DrawRadar();
+    if (!entityListEmpty && OW::Config::radar)
+        DrawRadar(frameEntitySnapshot(), frameLocalSnapshot());
 
     if (!entityListEmpty) {
         playerInfoCalled = true;
-        PlayerInfo(false);
+        PlayerInfoFromSnapshot(frameEntitySnapshot(), frameLocalSnapshot(), false);
         if (OW::Config::skillDisplayMode != 0 || OW::Config::ultimateDisplayMode != 0) {
             skillInfoCalled = true;
-            skillinfo();
+            skillinfo(frameEntitySnapshot());
         }
     } else {
         Diagnostics::PlayerInfoStats emptyPlayerInfoStats{};
         Diagnostics::SetPlayerInfoStats(emptyPlayerInfoStats);
     }
 
-    DrawAimTriggerStatusPanel();
-    DrawHealthPacks();
-    DrawFovCircle();
-    DrawTrackingDeadzoneCircles();
+    DrawAimTriggerStatusPanel(frameLocalSnapshot());
+    if (OW::Config::draw_hp_pack)
+        DrawHealthPacks(frameDynamicEntitySnapshot());
+    if (OW::Config::draw_fov)
+        DrawFovCircle(frameLocalSnapshot());
+    if (OW::Config::drawTrackingDeadzones)
+        DrawTrackingDeadzoneCircles(frameLocalSnapshot());
     DrawCrosshair();
     Diagnostics::SetRenderPipelineStatus(true, playerInfoCalled, skillInfoCalled, entityListEmpty);
 
@@ -1301,6 +1361,10 @@ static void StartBackgroundThreads()
     // TEST: RunKmboxMoveTest();
     std::printf("  [+] aimbot_thread\n");
 
+    g_HeroSkillRuntimeThreadRunning.store(true, std::memory_order_release);
+    g_HeroSkillRuntimeThread = std::thread(HeroSkillRuntimeThread);
+    std::printf("  [+] hero_skill_runtime_thread\n");
+
     std::thread(configsavenloadthread).detach();
     std::printf("  [+] configsavenloadthread\n");
 
@@ -1328,6 +1392,7 @@ static void ClearProcessRuntimeSnapshots()
         OW::entity_fast_scan_until_tick = 0;
     }
 
+    OW::TargetingDetail::SetPublishedEntityCount(0);
     OW::SetViewMatrices(OW::Matrix{}, OW::Matrix{});
     Diagnostics::SetEntityCount(0);
     Diagnostics::SetEntityProcessStats(Diagnostics::EntityProcessStats{});
@@ -1646,6 +1711,7 @@ int main(int argc, char** argv)
     // ---------------------------------------------------------------
     std::printf("\n[MAIN] Display closed.  Shutting down...\n");
     Diagnostics::Info("Display closed. Shutting down.");
+    StopHeroSkillRuntimeThread();
     OW::CancelActiveSkill();
     TestServer::Stop();
     StopProcessConnectionThread();

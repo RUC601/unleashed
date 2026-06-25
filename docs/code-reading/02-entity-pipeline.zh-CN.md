@@ -1,6 +1,6 @@
 # 02 Entity Pipeline
 
-Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/include/Game/Overwatch.hpp
+Source: D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/include/Game/Overwatch.hpp
 Snapshot: Git HEAD 10e87de + dirty working tree on 2026-06-10.
 Purpose: reading notes only, not runtime source of truth.
 

@@ -1,0 +1,51 @@
+{
+  "started_at": "2026-06-25T01:41:48.3338648-07:00",
+  "ended_at": "2026-06-25T01:42:48.7269887-07:00",
+  "sample_count": 30,
+  "duration_seconds": 58.347,
+  "fps": {
+    "avg": 53.71,
+    "min": 0.0,
+    "max": 59.998
+  },
+  "entity_process_hz": {
+    "avg": 13.813,
+    "min": 0.0,
+    "max": 18.462
+  },
+  "entity_scan_hz": {
+    "avg": 1.24,
+    "min": 0.0,
+    "max": 1.883
+  },
+  "entity_count": {
+    "avg": 17.3,
+    "min": 0.0,
+    "max": 19.0
+  },
+  "render_callback_ms": {
+    "avg": 0.078,
+    "min": 0.032,
+    "max": 0.095
+  },
+  "present_ms": {
+    "avg": 2.764,
+    "min": 2.607,
+    "max": 3.037
+  },
+  "render_frame_ms": {
+    "avg": 2.842,
+    "min": 2.689,
+    "max": 3.111
+  },
+  "dma_reads_per_second": 6631.405,
+  "dma_fail_rate_percent": 6.72,
+  "dma_total_delta": 386921,
+  "dma_fail_delta": 26000,
+  "slow_frame_log_lines": 0,
+  "slow_frame_effective_count": 0,
+  "slow_frame_max_render_ms": null,
+  "slow_frame_rt_dma_nonzero_lines": 0,
+  "slow_frame_render_canvas_nonzero_lines": 0,
+  "log_path": "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}

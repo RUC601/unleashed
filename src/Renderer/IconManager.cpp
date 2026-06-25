@@ -286,7 +286,7 @@ std::wstring IconManager::FindAbilityIconDirectory() const {
             return executable_assets;
     }
 
-    const std::wstring local_asset_source = L"D:\\Desktop\\SenseZen\\uc\\overwatch-kb\\assets\\ability-icons";
+    const std::wstring local_asset_source = L"D:\\Desktop\\SenseZen\\ECS_O\\02_RESEARCH\\forum-capture\\overwatch-kb\\assets\\ability-icons";
     if (DirectoryExists(local_asset_source))
         return local_asset_source;
 

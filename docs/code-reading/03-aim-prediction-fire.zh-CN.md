@@ -1,6 +1,6 @@
 # 03 Aim, Prediction, And Fire Chain
 
-Source: D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/include/Game/Target.hpp; D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/src/Game/WeaponSpec.cpp; D:/Desktop/SenseZen/ClaudeCodexCoding/Unleashed/src/Game/HeroSkills.cpp
+Source: D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/include/Game/Target.hpp; D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/src/Game/WeaponSpec.cpp; D:/Desktop/SenseZen/ECS_O/01_PRODUCTS/un-dma/src/Game/HeroSkills.cpp
 Snapshot: Git HEAD 10e87de + dirty working tree on 2026-06-10.
 Purpose: reading notes only, not runtime source of truth.
 

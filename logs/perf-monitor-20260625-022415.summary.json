@@ -1,0 +1,56 @@
+{
+  "started_at": "2026-06-25T02:23:40.1193766-07:00",
+  "ended_at": "2026-06-25T02:24:15.6221899-07:00",
+  "sample_count": 35,
+  "duration_seconds": 34.418,
+  "fps": {
+    "avg": 0.704,
+    "min": 0.0,
+    "max": 24.649
+  },
+  "entity_process_hz": {
+    "avg": 13.834,
+    "min": 12.077,
+    "max": 15.178
+  },
+  "entity_scan_hz": {
+    "avg": 1.305,
+    "min": 0.865,
+    "max": 1.73
+  },
+  "entity_count": {
+    "avg": 18.2,
+    "min": 17.0,
+    "max": 19.0
+  },
+  "view_matrix_bad_samples": 0,
+  "resolved_screen_sizes": [
+    "1920x1080"
+  ],
+  "projection_jump_samples": 0,
+  "render_callback_ms": {
+    "avg": 0.062,
+    "min": 0.062,
+    "max": 0.062
+  },
+  "present_ms": {
+    "avg": 2.916,
+    "min": 2.916,
+    "max": 2.916
+  },
+  "render_frame_ms": {
+    "avg": 2.979,
+    "min": 2.979,
+    "max": 2.979
+  },
+  "dma_reads_per_second": 6794.961,
+  "dma_fail_rate_percent": 7.01,
+  "dma_total_delta": 233868,
+  "dma_fail_delta": 16394,
+  "slow_frame_log_lines": 0,
+  "slow_frame_effective_count": 0,
+  "slow_frame_max_render_ms": null,
+  "slow_frame_rt_dma_nonzero_lines": 0,
+  "slow_frame_render_canvas_nonzero_lines": 0,
+  "log_path": "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}

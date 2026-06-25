@@ -7,6 +7,7 @@
 #include "Utils/Diagnostics.hpp"
 #include "resource.h"
 
+#include <algorithm>
 #include <windowsx.h>
 
 #pragma comment(lib, "d3d11.lib")
@@ -162,12 +163,28 @@ CanvasBounds ResolveCanvasBounds() {
 }
 
 void RefreshTargetScreenSize() {
+    static DWORD lastViewportFailureLogTick = 0;
+
     UINT width = 0;
     UINT height = 0;
-    if (TryReadViewportFromTarget(width, height))
+    if (TryReadViewportFromTarget(width, height)) {
         OW::SetDetectedScreenSize(static_cast<int>(width), static_cast<int>(height));
-    else
-        OW::ClearDetectedScreenSize();
+        return;
+    }
+
+    if (OW::detectedScreenWidth > 0 && OW::detectedScreenHeight > 0) {
+        const DWORD now = GetTickCount();
+        if (lastViewportFailureLogTick == 0 || now - lastViewportFailureLogTick >= 5000) {
+            Diagnostics::Info(
+                "Target viewport read failed; keeping last detected size %dx%d.",
+                OW::detectedScreenWidth,
+                OW::detectedScreenHeight);
+            lastViewportFailureLogTick = now;
+        }
+        return;
+    }
+
+    OW::ClearDetectedScreenSize();
 }
 
 void ApplyMinimumMenuTrackSize(LPARAM lParam) {
@@ -842,12 +859,35 @@ void Overlay::UpdateCanvasBounds(bool force) {
     m_canvasX = bounds.x;
     m_canvasY = bounds.y;
 
-    if (!boundsChanged)
-        return;
+    if (boundsChanged) {
+        SetWindowPos(m_canvasHWnd, HWND_TOPMOST, bounds.x, bounds.y,
+                     static_cast<int>(bounds.width), static_cast<int>(bounds.height),
+                     SWP_NOOWNERZORDER | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    }
 
-    SetWindowPos(m_canvasHWnd, HWND_TOPMOST, bounds.x, bounds.y,
-                 static_cast<int>(bounds.width), static_cast<int>(bounds.height),
-                 SWP_NOOWNERZORDER | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    RECT finalRect = currentRect;
+    if (boundsChanged)
+        GetWindowRect(m_canvasHWnd, &finalRect);
+
+    RECT clientRect = {};
+    UINT clientWidth = 0;
+    UINT clientHeight = 0;
+    if (GetClientRect(m_canvasHWnd, &clientRect)) {
+        clientWidth = static_cast<UINT>((std::max)(0L, clientRect.right - clientRect.left));
+        clientHeight = static_cast<UINT>((std::max)(0L, clientRect.bottom - clientRect.top));
+    }
+
+    const int finalWidth = finalRect.right - finalRect.left;
+    const int finalHeight = finalRect.bottom - finalRect.top;
+    Diagnostics::RecordOverlayCanvasBounds(
+        finalRect.left,
+        finalRect.top,
+        static_cast<UINT>((std::max)(0, finalWidth)),
+        static_cast<UINT>((std::max)(0, finalHeight)),
+        clientWidth,
+        clientHeight,
+        IsWindowVisible(m_canvasHWnd) != FALSE,
+        boundsChanged);
 }
 
 void Overlay::ApplyDesiredMenuClientSize() {
@@ -905,6 +945,7 @@ void Overlay::UpdateSwapChainSizes() {
             if (ResizeSwapChain(m_canvasSwapChain, &m_canvasRenderTargetView, width, height)) {
                 m_canvasWidth = width;
                 m_canvasHeight = height;
+                Diagnostics::RecordOverlayCanvasFrame(m_canvasWidth, m_canvasHeight, 0.0f, 0.0f, true);
             }
         }
     }
@@ -934,6 +975,8 @@ void Overlay::RenderCanvas(std::function<void()> renderCallback) {
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
+    const ImGuiIO& io = ImGui::GetIO();
+    Diagnostics::RecordOverlayCanvasFrame(m_canvasWidth, m_canvasHeight, io.DisplaySize.x, io.DisplaySize.y, false);
 
     DrawCanvasBackdrop(m_canvasWidth, m_canvasHeight);
 
