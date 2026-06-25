@@ -3743,9 +3743,9 @@ namespace OverlayRenderDetail {
     }
 
     inline float DistanceOpacity(float distance) {
-        if (OW::Config::visualMaxDist <= 0.0f)
-            return 1.0f;
-        return Clamp01(1.0f - Clamp01(distance / OW::Config::visualMaxDist));
+        (void)distance;
+        // Keep visualMaxDist as a render-distance gate only; ESP alpha is not distance-faded.
+        return 1.0f;
     }
 
     inline ImU32 EntityColor(const OW::c_entity& entity,
