@@ -171,6 +171,32 @@ std::atomic<uint64_t> g_entityScanCycles{ 0 };
 std::atomic<uint64_t> g_entityProcessCycles{ 0 };
 std::atomic<uint64_t> g_entityScanHzMilli{ 0 };
 std::atomic<uint64_t> g_entityProcessHzMilli{ 0 };
+std::atomic<uint64_t> g_viewMatrixPublishCycles{ 0 };
+std::atomic<uint64_t> g_viewMatrixPublishHzMilli{ 0 };
+std::atomic<uint64_t> g_viewMatrixPublishLastTickMs{ 0 };
+std::atomic<uint64_t> g_viewMatrixPublishLastIntervalMs{ 0 };
+std::atomic<uint64_t> g_viewMatrixPublishMaxIntervalMs{ 0 };
+std::atomic<uint64_t> g_renderViewMatrixUseCount{ 0 };
+std::atomic<uint64_t> g_renderViewMatrixUseLastAgeMs{ 0 };
+std::atomic<uint64_t> g_renderViewMatrixUseMaxAgeMs{ 0 };
+std::atomic<uint64_t> g_renderViewMatrixUseMissingPublish{ 0 };
+std::atomic<uint64_t> g_renderViewMatrixUseOver16Ms{ 0 };
+std::atomic<uint64_t> g_renderViewMatrixUseOver33Ms{ 0 };
+std::atomic<uint64_t> g_renderViewMatrixUseOver50Ms{ 0 };
+std::atomic<uint64_t> g_entityPublishCycles{ 0 };
+std::atomic<uint64_t> g_entityPublishHzMilli{ 0 };
+std::atomic<uint64_t> g_entityPublishLastTickMs{ 0 };
+std::atomic<uint64_t> g_entityPublishLastIntervalMs{ 0 };
+std::atomic<uint64_t> g_entityPublishMaxIntervalMs{ 0 };
+std::atomic<uint64_t> g_entityPublishLastCount{ 0 };
+std::atomic<uint64_t> g_entitySnapshotCopyCount{ 0 };
+std::atomic<uint64_t> g_entitySnapshotCopyLastCount{ 0 };
+std::atomic<uint64_t> g_entitySnapshotCopyLastUs{ 0 };
+std::atomic<uint64_t> g_entitySnapshotCopyMaxUs{ 0 };
+std::atomic<uint64_t> g_dynamicSnapshotCopyCount{ 0 };
+std::atomic<uint64_t> g_dynamicSnapshotCopyLastCount{ 0 };
+std::atomic<uint64_t> g_dynamicSnapshotCopyLastUs{ 0 };
+std::atomic<uint64_t> g_dynamicSnapshotCopyMaxUs{ 0 };
 std::atomic<uint64_t> g_rosterFresh{ 0 };
 std::atomic<uint64_t> g_rosterDead{ 0 };
 std::atomic<uint64_t> g_rosterMissing{ 0 };
@@ -469,18 +495,104 @@ void AimLogV(const char* fmt, va_list args)
 
 double UpdateFps()
 {
+    constexpr double kMinFpsSampleSeconds = 0.25;
     const auto now = std::chrono::steady_clock::now();
     const uint64_t frames = g_framesRendered.load(std::memory_order_relaxed);
 
     std::lock_guard<std::mutex> lock(g_fpsMutex);
     const std::chrono::duration<double> elapsed = now - g_lastFpsTime;
-    if (elapsed.count() > 0.001) {
+    if (elapsed.count() >= kMinFpsSampleSeconds) {
         const uint64_t deltaFrames = frames - g_lastFpsFrameCount;
         g_lastFps = static_cast<double>(deltaFrames) / elapsed.count();
         g_lastFpsFrameCount = frames;
         g_lastFpsTime = now;
     }
     return g_lastFps;
+}
+
+void RecordPublishCadence(std::atomic<uint64_t>& cycles,
+                          std::atomic<uint64_t>& hzMilli,
+                          std::atomic<uint64_t>& lastTickMs,
+                          std::atomic<uint64_t>& lastIntervalMs,
+                          std::atomic<uint64_t>& maxIntervalMs,
+                          size_t count,
+                          std::atomic<uint64_t>* lastCount)
+{
+    const uint64_t nowMs = GetTickCount64();
+    const uint64_t previousMs = lastTickMs.exchange(nowMs, std::memory_order_relaxed);
+    cycles.fetch_add(1, std::memory_order_relaxed);
+    if (lastCount)
+        lastCount->store(static_cast<uint64_t>(count), std::memory_order_relaxed);
+
+    if (previousMs == 0 || nowMs <= previousMs)
+        return;
+
+    const uint64_t intervalMs = nowMs - previousMs;
+    lastIntervalMs.store(intervalMs, std::memory_order_relaxed);
+    UpdateAtomicMax(maxIntervalMs, intervalMs);
+    hzMilli.store(intervalMs > 0 ? (1000000ULL / intervalMs) : 0ULL,
+                  std::memory_order_relaxed);
+}
+
+void RecordSnapshotCopy(std::atomic<uint64_t>& copies,
+                        std::atomic<uint64_t>& lastCount,
+                        std::atomic<uint64_t>& lastUs,
+                        std::atomic<uint64_t>& maxUs,
+                        size_t count,
+                        std::chrono::steady_clock::duration elapsed)
+{
+    const auto measuredUs = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    const uint64_t elapsedUs = measuredUs > 0 ? static_cast<uint64_t>(measuredUs) : 0ULL;
+    copies.fetch_add(1, std::memory_order_relaxed);
+    lastCount.store(static_cast<uint64_t>(count), std::memory_order_relaxed);
+    lastUs.store(elapsedUs, std::memory_order_relaxed);
+    UpdateAtomicMax(maxUs, elapsedUs);
+}
+
+PublishCadenceStats BuildPublishStats(const std::atomic<uint64_t>& cycles,
+                                      const std::atomic<uint64_t>& hzMilli,
+                                      const std::atomic<uint64_t>& lastTickMs,
+                                      const std::atomic<uint64_t>& lastIntervalMs,
+                                      const std::atomic<uint64_t>& maxIntervalMs,
+                                      const std::atomic<uint64_t>* lastCount)
+{
+    PublishCadenceStats stats{};
+    stats.cycles = cycles.load(std::memory_order_relaxed);
+    stats.hz = static_cast<double>(hzMilli.load(std::memory_order_relaxed)) / 1000.0;
+    const uint64_t lastTick = lastTickMs.load(std::memory_order_relaxed);
+    stats.ageMs = lastTick == 0 ? 0 : GetTickCount64() - lastTick;
+    stats.lastIntervalMs = lastIntervalMs.load(std::memory_order_relaxed);
+    stats.maxIntervalMs = maxIntervalMs.load(std::memory_order_relaxed);
+    if (lastCount)
+        stats.lastCount = static_cast<size_t>(lastCount->load(std::memory_order_relaxed));
+    return stats;
+}
+
+SnapshotCopyStats BuildSnapshotCopyStats(const std::atomic<uint64_t>& copies,
+                                         const std::atomic<uint64_t>& lastCount,
+                                         const std::atomic<uint64_t>& lastUs,
+                                         const std::atomic<uint64_t>& maxUs)
+{
+    SnapshotCopyStats stats{};
+    stats.copies = copies.load(std::memory_order_relaxed);
+    stats.lastCount = static_cast<size_t>(lastCount.load(std::memory_order_relaxed));
+    stats.lastMs = static_cast<double>(lastUs.load(std::memory_order_relaxed)) / 1000.0;
+    stats.maxMs = static_cast<double>(maxUs.load(std::memory_order_relaxed)) / 1000.0;
+    return stats;
+}
+
+ViewMatrixConsumerStats BuildViewMatrixConsumerStats()
+{
+    ViewMatrixConsumerStats stats{};
+    stats.uses = g_renderViewMatrixUseCount.load(std::memory_order_relaxed);
+    stats.lastAgeMs = g_renderViewMatrixUseLastAgeMs.load(std::memory_order_relaxed);
+    stats.maxAgeMs = g_renderViewMatrixUseMaxAgeMs.load(std::memory_order_relaxed);
+    stats.missingPublishUses =
+        g_renderViewMatrixUseMissingPublish.load(std::memory_order_relaxed);
+    stats.over16Ms = g_renderViewMatrixUseOver16Ms.load(std::memory_order_relaxed);
+    stats.over33Ms = g_renderViewMatrixUseOver33Ms.load(std::memory_order_relaxed);
+    stats.over50Ms = g_renderViewMatrixUseOver50Ms.load(std::memory_order_relaxed);
+    return stats;
 }
 
 } // namespace
@@ -807,6 +919,75 @@ void RecordEntityProcessCycle(double measuredHz)
     }
 }
 
+void RecordViewMatrixPublish()
+{
+    RecordPublishCadence(
+        g_viewMatrixPublishCycles,
+        g_viewMatrixPublishHzMilli,
+        g_viewMatrixPublishLastTickMs,
+        g_viewMatrixPublishLastIntervalMs,
+        g_viewMatrixPublishMaxIntervalMs,
+        0,
+        nullptr);
+}
+
+void RecordRenderViewMatrixUse()
+{
+    g_renderViewMatrixUseCount.fetch_add(1, std::memory_order_relaxed);
+
+    const uint64_t lastPublishTick =
+        g_viewMatrixPublishLastTickMs.load(std::memory_order_relaxed);
+    if (lastPublishTick == 0) {
+        g_renderViewMatrixUseMissingPublish.fetch_add(1, std::memory_order_relaxed);
+        g_renderViewMatrixUseLastAgeMs.store(0, std::memory_order_relaxed);
+        return;
+    }
+
+    const uint64_t ageMs = GetTickCount64() - lastPublishTick;
+    g_renderViewMatrixUseLastAgeMs.store(ageMs, std::memory_order_relaxed);
+    UpdateAtomicMax(g_renderViewMatrixUseMaxAgeMs, ageMs);
+    if (ageMs > 16)
+        g_renderViewMatrixUseOver16Ms.fetch_add(1, std::memory_order_relaxed);
+    if (ageMs > 33)
+        g_renderViewMatrixUseOver33Ms.fetch_add(1, std::memory_order_relaxed);
+    if (ageMs > 50)
+        g_renderViewMatrixUseOver50Ms.fetch_add(1, std::memory_order_relaxed);
+}
+
+void RecordEntityPublish(size_t count)
+{
+    RecordPublishCadence(
+        g_entityPublishCycles,
+        g_entityPublishHzMilli,
+        g_entityPublishLastTickMs,
+        g_entityPublishLastIntervalMs,
+        g_entityPublishMaxIntervalMs,
+        count,
+        &g_entityPublishLastCount);
+}
+
+void RecordEntitySnapshotCopy(size_t count, std::chrono::steady_clock::duration elapsed)
+{
+    RecordSnapshotCopy(
+        g_entitySnapshotCopyCount,
+        g_entitySnapshotCopyLastCount,
+        g_entitySnapshotCopyLastUs,
+        g_entitySnapshotCopyMaxUs,
+        count,
+        elapsed);
+}
+
+void RecordDynamicSnapshotCopy(size_t count, std::chrono::steady_clock::duration elapsed)
+{
+    RecordSnapshotCopy(
+        g_dynamicSnapshotCopyCount,
+        g_dynamicSnapshotCopyLastCount,
+        g_dynamicSnapshotCopyLastUs,
+        g_dynamicSnapshotCopyMaxUs,
+        count,
+        elapsed);
+}
+
 void SetEntityCount(size_t entityCount)
 {
     g_entityCount.store(static_cast<uint64_t>(entityCount), std::memory_order_relaxed);
@@ -1098,6 +1279,7 @@ void SetLocalEntityStats(const LocalEntityStats& stats)
 
 StatusSnapshot Snapshot()
 {
+    const double currentFps = UpdateFps();
     StatusSnapshot snapshot{};
     snapshot.entityCount = static_cast<size_t>(g_entityCount.load(std::memory_order_relaxed));
     snapshot.lastScanEntityCount = static_cast<size_t>(g_lastScanEntityCount.load(std::memory_order_relaxed));
@@ -1112,11 +1294,32 @@ StatusSnapshot Snapshot()
     snapshot.roster.missing = static_cast<size_t>(g_rosterMissing.load(std::memory_order_relaxed));
     snapshot.roster.expired = static_cast<size_t>(g_rosterExpired.load(std::memory_order_relaxed));
     snapshot.roster.heroChanged = static_cast<size_t>(g_rosterHeroChanged.load(std::memory_order_relaxed));
-
-    {
-        std::lock_guard<std::mutex> lock(g_fpsMutex);
-        snapshot.fps = g_lastFps;
-    }
+    snapshot.fps = currentFps;
+    snapshot.viewMatrixPublish = BuildPublishStats(
+        g_viewMatrixPublishCycles,
+        g_viewMatrixPublishHzMilli,
+        g_viewMatrixPublishLastTickMs,
+        g_viewMatrixPublishLastIntervalMs,
+        g_viewMatrixPublishMaxIntervalMs,
+        nullptr);
+    snapshot.entityPublish = BuildPublishStats(
+        g_entityPublishCycles,
+        g_entityPublishHzMilli,
+        g_entityPublishLastTickMs,
+        g_entityPublishLastIntervalMs,
+        g_entityPublishMaxIntervalMs,
+        &g_entityPublishLastCount);
+    snapshot.entitySnapshotCopy = BuildSnapshotCopyStats(
+        g_entitySnapshotCopyCount,
+        g_entitySnapshotCopyLastCount,
+        g_entitySnapshotCopyLastUs,
+        g_entitySnapshotCopyMaxUs);
+    snapshot.dynamicSnapshotCopy = BuildSnapshotCopyStats(
+        g_dynamicSnapshotCopyCount,
+        g_dynamicSnapshotCopyLastCount,
+        g_dynamicSnapshotCopyLastUs,
+        g_dynamicSnapshotCopyMaxUs);
+    snapshot.renderViewMatrixUse = BuildViewMatrixConsumerStats();
 
     snapshot.dmaReads.succeeded = g_dmaReadSucceeded.load(std::memory_order_relaxed);
     snapshot.dmaReads.failed = g_dmaReadFailed.load(std::memory_order_relaxed);
@@ -1374,7 +1577,6 @@ StatusSnapshot Snapshot()
 
 void DumpStatus()
 {
-    UpdateFps();
     const StatusSnapshot snapshot = Snapshot();
 
     Info("STATUS entities=%zu last_scan=%zu scan_cycles=%llu process_cycles=%llu scan_hz=%.1f process_hz=%.1f roster[fresh/dead/missing/expired/hero_change]=%zu/%zu/%zu/%zu/%zu fps=%.1f dma_reads=%llu ok=%llu fail=%llu latency_us[min/avg/max]=%llu/%llu/%llu errors[dma/decrypt/invalid]=%llu/%llu/%llu key=%s key1=0x%llX key2=0x%llX dma=%s process=%s",
@@ -1404,6 +1606,27 @@ void DumpStatus()
         static_cast<unsigned long long>(snapshot.globalKey2),
         snapshot.dmaReady ? "ready" : "not-ready",
         snapshot.processAttached ? "attached" : "not-attached");
+
+    Info("STATUS-CADENCE render_fps=%.1f viewmatrix_pub_hz=%.1f age_ms=%llu interval_ms[last/max]=%llu/%llu render_vm_age_ms[last/max]=%llu/%llu stale[16/33/50]=%llu/%llu/%llu entity_pub_hz=%.1f age_ms=%llu count=%zu interval_ms[last/max]=%llu/%llu snapshot_copy_ms[entities last/max=%.3f/%.3f dynamic last/max=%.3f/%.3f].",
+        snapshot.fps,
+        snapshot.viewMatrixPublish.hz,
+        static_cast<unsigned long long>(snapshot.viewMatrixPublish.ageMs),
+        static_cast<unsigned long long>(snapshot.viewMatrixPublish.lastIntervalMs),
+        static_cast<unsigned long long>(snapshot.viewMatrixPublish.maxIntervalMs),
+        static_cast<unsigned long long>(snapshot.renderViewMatrixUse.lastAgeMs),
+        static_cast<unsigned long long>(snapshot.renderViewMatrixUse.maxAgeMs),
+        static_cast<unsigned long long>(snapshot.renderViewMatrixUse.over16Ms),
+        static_cast<unsigned long long>(snapshot.renderViewMatrixUse.over33Ms),
+        static_cast<unsigned long long>(snapshot.renderViewMatrixUse.over50Ms),
+        snapshot.entityPublish.hz,
+        static_cast<unsigned long long>(snapshot.entityPublish.ageMs),
+        snapshot.entityPublish.lastCount,
+        static_cast<unsigned long long>(snapshot.entityPublish.lastIntervalMs),
+        static_cast<unsigned long long>(snapshot.entityPublish.maxIntervalMs),
+        snapshot.entitySnapshotCopy.lastMs,
+        snapshot.entitySnapshotCopy.maxMs,
+        snapshot.dynamicSnapshotCopy.lastMs,
+        snapshot.dynamicSnapshotCopy.maxMs);
 }
 
 void SetRenderThread()

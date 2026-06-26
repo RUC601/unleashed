@@ -2490,9 +2490,79 @@ std::string BuildDiagnosticsJson()
         << ",\"last_scan_entity_count\":" << snapshot.lastScanEntityCount
         << ",\"entity_scan_cycles\":" << snapshot.entityScanCycles
         << ",\"entity_process_cycles\":" << snapshot.entityProcessCycles
+        << ",\"render_fps\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.fps));
+    out << ",\"viewmatrix_publish_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.viewMatrixPublish.hz));
+    out << ",\"viewmatrix_publish_age_ms\":" << snapshot.viewMatrixPublish.ageMs
+        << ",\"viewmatrix_publish_cycles\":" << snapshot.viewMatrixPublish.cycles
+        << ",\"viewmatrix_publish_last_interval_ms\":" << snapshot.viewMatrixPublish.lastIntervalMs
+        << ",\"viewmatrix_publish_max_interval_ms\":" << snapshot.viewMatrixPublish.maxIntervalMs
+        << ",\"render_viewmatrix_age_ms\":" << snapshot.renderViewMatrixUse.lastAgeMs
+        << ",\"render_viewmatrix_max_age_ms\":" << snapshot.renderViewMatrixUse.maxAgeMs
+        << ",\"render_viewmatrix_uses\":" << snapshot.renderViewMatrixUse.uses
+        << ",\"render_viewmatrix_missing_publish_uses\":"
+        << snapshot.renderViewMatrixUse.missingPublishUses
+        << ",\"render_viewmatrix_over_16ms\":" << snapshot.renderViewMatrixUse.over16Ms
+        << ",\"render_viewmatrix_over_33ms\":" << snapshot.renderViewMatrixUse.over33Ms
+        << ",\"render_viewmatrix_over_50ms\":" << snapshot.renderViewMatrixUse.over50Ms
+        << ",\"entity_publish_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityPublish.hz));
+    out << ",\"entity_publish_age_ms\":" << snapshot.entityPublish.ageMs
+        << ",\"entity_publish_cycles\":" << snapshot.entityPublish.cycles
+        << ",\"entity_publish_count\":" << snapshot.entityPublish.lastCount
+        << ",\"entity_publish_last_interval_ms\":" << snapshot.entityPublish.lastIntervalMs
+        << ",\"entity_publish_max_interval_ms\":" << snapshot.entityPublish.maxIntervalMs
+        << ",\"snapshot_entities_copy_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entitySnapshotCopy.lastMs));
+    out << ",\"snapshot_entities_copy_max_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entitySnapshotCopy.maxMs));
+    out << ",\"snapshot_entities_copy_count\":" << snapshot.entitySnapshotCopy.copies
+        << ",\"snapshot_entities_copy_last_count\":" << snapshot.entitySnapshotCopy.lastCount
+        << ",\"snapshot_dynamic_copy_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.dynamicSnapshotCopy.lastMs));
+    out << ",\"snapshot_dynamic_copy_max_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.dynamicSnapshotCopy.maxMs));
+    out << ",\"snapshot_dynamic_copy_count\":" << snapshot.dynamicSnapshotCopy.copies
+        << ",\"snapshot_dynamic_copy_last_count\":" << snapshot.dynamicSnapshotCopy.lastCount
         << ",\"view_matrix_ok\":" << (snapshot.viewMatrixResolved && snapshot.viewMatrixValid ? "true" : "false")
         << ",\"view_matrix_resolved\":" << (snapshot.viewMatrixResolved ? "true" : "false")
         << ",\"view_matrix_valid\":" << (snapshot.viewMatrixValid ? "true" : "false")
+        << ",\"publish\":{\"viewmatrix\":{\"hz\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.viewMatrixPublish.hz));
+    out << ",\"age_ms\":" << snapshot.viewMatrixPublish.ageMs
+        << ",\"cycles\":" << snapshot.viewMatrixPublish.cycles
+        << ",\"last_interval_ms\":" << snapshot.viewMatrixPublish.lastIntervalMs
+        << ",\"max_interval_ms\":" << snapshot.viewMatrixPublish.maxIntervalMs
+        << "},\"entity\":{\"hz\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityPublish.hz));
+    out << ",\"age_ms\":" << snapshot.entityPublish.ageMs
+        << ",\"cycles\":" << snapshot.entityPublish.cycles
+        << ",\"count\":" << snapshot.entityPublish.lastCount
+        << ",\"last_interval_ms\":" << snapshot.entityPublish.lastIntervalMs
+        << ",\"max_interval_ms\":" << snapshot.entityPublish.maxIntervalMs
+        << "}},\"consume\":{\"viewmatrix\":{\"uses\":"
+        << snapshot.renderViewMatrixUse.uses
+        << ",\"age_ms\":" << snapshot.renderViewMatrixUse.lastAgeMs
+        << ",\"max_age_ms\":" << snapshot.renderViewMatrixUse.maxAgeMs
+        << ",\"missing_publish_uses\":"
+        << snapshot.renderViewMatrixUse.missingPublishUses
+        << ",\"over_16ms\":" << snapshot.renderViewMatrixUse.over16Ms
+        << ",\"over_33ms\":" << snapshot.renderViewMatrixUse.over33Ms
+        << ",\"over_50ms\":" << snapshot.renderViewMatrixUse.over50Ms
+        << "}},\"snapshot_copy\":{\"entities\":{\"copies\":" << snapshot.entitySnapshotCopy.copies
+        << ",\"last_count\":" << snapshot.entitySnapshotCopy.lastCount
+        << ",\"last_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entitySnapshotCopy.lastMs));
+    out << ",\"max_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entitySnapshotCopy.maxMs));
+    out << "},\"dynamic_entities\":{\"copies\":" << snapshot.dynamicSnapshotCopy.copies
+        << ",\"last_count\":" << snapshot.dynamicSnapshotCopy.lastCount
+        << ",\"last_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.dynamicSnapshotCopy.lastMs));
+    out << ",\"max_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.dynamicSnapshotCopy.maxMs));
+    out << "}}"
         << ",\"view_matrix_stability\":{\"rejected\":" << snapshot.viewMatrixStability.rejected
         << ",\"transient_rejected\":" << snapshot.viewMatrixStability.transientRejected
         << ",\"accepted_large_jump\":" << snapshot.viewMatrixStability.acceptedLargeJump

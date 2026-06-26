@@ -69,12 +69,29 @@ while ((Get-Date) -lt $deadline) {
         $sample = [pscustomobject]@{
             captured_at = (Get-Date)
             fps = As-DoubleOrNull $d.fps
+            render_fps = As-DoubleOrNull $d.render_fps
             entity_count = As-Int64OrZero $d.entity_count
             entity_process_hz = As-DoubleOrNull $d.entity_process_hz
             entity_scan_hz = As-DoubleOrNull $d.entity_scan_hz
+            entity_publish_hz = As-DoubleOrNull $d.entity_publish_hz
+            entity_publish_age_ms = As-Int64OrZero $d.entity_publish_age_ms
+            entity_publish_count = As-Int64OrZero $d.entity_publish_count
+            viewmatrix_publish_hz = As-DoubleOrNull $d.viewmatrix_publish_hz
+            viewmatrix_publish_age_ms = As-Int64OrZero $d.viewmatrix_publish_age_ms
+            render_viewmatrix_age_ms = As-Int64OrZero $d.render_viewmatrix_age_ms
+            render_viewmatrix_max_age_ms = As-Int64OrZero $d.render_viewmatrix_max_age_ms
+            render_viewmatrix_uses = As-Int64OrZero $d.render_viewmatrix_uses
+            render_viewmatrix_missing_publish_uses = As-Int64OrZero $d.render_viewmatrix_missing_publish_uses
+            render_viewmatrix_over_16ms = As-Int64OrZero $d.render_viewmatrix_over_16ms
+            render_viewmatrix_over_33ms = As-Int64OrZero $d.render_viewmatrix_over_33ms
+            render_viewmatrix_over_50ms = As-Int64OrZero $d.render_viewmatrix_over_50ms
             view_matrix_ok = [bool]$d.view_matrix_ok
             view_matrix_resolved = [bool]$d.view_matrix_resolved
             view_matrix_valid = [bool]$d.view_matrix_valid
+            snapshot_entities_copy_ms = As-DoubleOrNull $d.snapshot_entities_copy_ms
+            snapshot_entities_copy_max_ms = As-DoubleOrNull $d.snapshot_entities_copy_max_ms
+            snapshot_dynamic_copy_ms = As-DoubleOrNull $d.snapshot_dynamic_copy_ms
+            snapshot_dynamic_copy_max_ms = As-DoubleOrNull $d.snapshot_dynamic_copy_max_ms
             manual_width = As-Int64OrZero $screen.manual_width
             manual_height = As-Int64OrZero $screen.manual_height
             detected_width = As-Int64OrZero $screen.detected_width
@@ -104,9 +121,14 @@ while ((Get-Date) -lt $deadline) {
         }
         $samples.Add($sample) | Out-Null
 
-        Write-Host ("{0} fps={1:n1} entities={2} vm={3} screen={4:n0}x{5:n0} sample=({6},{7}) render={8:n2}ms rt_dmatotal={9}" -f `
+        Write-Host ("{0} fps={1:n1} vm_pub={2:n1}Hz/{3}ms vm_use={4}ms ent_pub={5:n1}Hz/{6}ms entities={7} vm={8} screen={9:n0}x{10:n0} sample=({11},{12}) render={13:n2}ms copy={14:n3}ms rt_dmatotal={15}" -f `
             (Get-Date -Format 'HH:mm:ss'),
-            $sample.fps,
+            $sample.render_fps,
+            $sample.viewmatrix_publish_hz,
+            $sample.viewmatrix_publish_age_ms,
+            $sample.render_viewmatrix_age_ms,
+            $sample.entity_publish_hz,
+            $sample.entity_publish_age_ms,
             $sample.entity_count,
             $sample.view_matrix_ok,
             $sample.resolved_wx,
@@ -114,6 +136,7 @@ while ((Get-Date) -lt $deadline) {
             $sample.sample_projected_left,
             $sample.sample_projected_top,
             $sample.render_callback_ms,
+            $sample.snapshot_entities_copy_ms,
             $sample.dma_total)
     }
     catch {
@@ -182,8 +205,22 @@ $summary = [ordered]@{
     sample_count = $samples.Count
     duration_seconds = [math]::Round($durationSeconds, 3)
     fps = Measure-SampleField $samples 'fps'
+    render_fps = Measure-SampleField $samples 'render_fps'
     entity_process_hz = Measure-SampleField $samples 'entity_process_hz'
     entity_scan_hz = Measure-SampleField $samples 'entity_scan_hz'
+    entity_publish_hz = Measure-SampleField $samples 'entity_publish_hz'
+    entity_publish_age_ms = Measure-SampleField $samples 'entity_publish_age_ms'
+    viewmatrix_publish_hz = Measure-SampleField $samples 'viewmatrix_publish_hz'
+    viewmatrix_publish_age_ms = Measure-SampleField $samples 'viewmatrix_publish_age_ms'
+    render_viewmatrix_age_ms = Measure-SampleField $samples 'render_viewmatrix_age_ms'
+    render_viewmatrix_max_age_ms = Measure-SampleField $samples 'render_viewmatrix_max_age_ms'
+    render_viewmatrix_uses_delta = [math]::Max(0, $last.render_viewmatrix_uses - $first.render_viewmatrix_uses)
+    render_viewmatrix_over_16ms_delta = [math]::Max(0, $last.render_viewmatrix_over_16ms - $first.render_viewmatrix_over_16ms)
+    render_viewmatrix_over_33ms_delta = [math]::Max(0, $last.render_viewmatrix_over_33ms - $first.render_viewmatrix_over_33ms)
+    render_viewmatrix_over_50ms_delta = [math]::Max(0, $last.render_viewmatrix_over_50ms - $first.render_viewmatrix_over_50ms)
+    render_viewmatrix_missing_publish_delta = [math]::Max(0, $last.render_viewmatrix_missing_publish_uses - $first.render_viewmatrix_missing_publish_uses)
+    snapshot_entities_copy_ms = Measure-SampleField $samples 'snapshot_entities_copy_ms'
+    snapshot_dynamic_copy_ms = Measure-SampleField $samples 'snapshot_dynamic_copy_ms'
     entity_count = Measure-SampleField $samples 'entity_count'
     view_matrix_bad_samples = $viewMatrixBadSamples
     resolved_screen_sizes = $resolvedSizeKeys

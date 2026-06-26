@@ -1385,14 +1385,12 @@ static void ClearProcessRuntimeSnapshots()
         std::lock_guard<std::mutex> lock(g_mutex);
         OW::ow_entities.clear();
         OW::ow_entities_scan.clear();
-        OW::entities.clear();
-        OW::hp_dy_entities.clear();
         OW::local_entity = OW::c_entity{};
         OW::abletotread = 0;
         OW::entity_fast_scan_until_tick = 0;
     }
 
-    OW::TargetingDetail::SetPublishedEntityCount(0);
+    OW::TargetingDetail::PublishEntitySnapshots({}, {});
     OW::SetViewMatrices(OW::Matrix{}, OW::Matrix{});
     Diagnostics::SetEntityCount(0);
     Diagnostics::SetEntityProcessStats(Diagnostics::EntityProcessStats{});

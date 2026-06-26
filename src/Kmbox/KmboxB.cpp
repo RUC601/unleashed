@@ -213,8 +213,10 @@ bool KmBoxBManager::SendCommandWithRetry(const std::string& command, KmBoxComman
             if (IsSerialOutputCommand(type)) {
                 const unsigned long long count =
                     g_KmBoxBOutputSendCount.fetch_add(1, std::memory_order_acq_rel) + 1;
-                Diagnostics::Info("[KMBOX-B] output send count=%llu type=%s command=%s",
-                    count, ToString(type), command.c_str());
+                if (OW::Config::kmboxDebugLog) {
+                    Diagnostics::Info("[KMBOX-B] output send count=%llu type=%s command=%s",
+                        count, ToString(type), command.c_str());
+                }
             }
             return true;
         }
@@ -400,14 +402,16 @@ void KmBoxBManager::km_click()
 void KmBoxBManager::km_left(bool down)
 {
     std::string command = "km.left(" + std::to_string(down ? 1 : 0) + ")\r\n";
-    Diagnostics::Info("[KMBOX-B] queue output command=km_left down=%d", down ? 1 : 0);
+    if (OW::Config::kmboxDebugLog)
+        Diagnostics::Info("[KMBOX-B] queue output command=km_left down=%d", down ? 1 : 0);
     EnqueueCommand(command, KmBoxCommandType::MouseButton);
 }
 
 void KmBoxBManager::km_right(bool down)
 {
     std::string command = "km.right(" + std::to_string(down ? 1 : 0) + ")\r\n";
-    Diagnostics::Info("[KMBOX-B] queue output command=km_right down=%d", down ? 1 : 0);
+    if (OW::Config::kmboxDebugLog)
+        Diagnostics::Info("[KMBOX-B] queue output command=km_right down=%d", down ? 1 : 0);
     EnqueueCommand(command, KmBoxCommandType::MouseButton);
 }
 

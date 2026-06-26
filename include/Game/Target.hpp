@@ -1065,6 +1065,7 @@ namespace OW {
 
         inline void SetPublishedEntityCount(size_t count) {
             published_entity_count.store(count, std::memory_order_release);
+            Diagnostics::RecordEntityPublish(count);
         }
 
         inline size_t PublishedEntityCount() {
@@ -1075,14 +1076,43 @@ namespace OW {
             return PublishedEntityCount() > 0;
         }
 
+        inline size_t PublishEntitySnapshots(std::vector<c_entity>&& nextEntities,
+                                             std::vector<hpanddy>&& nextDynamicEntities) {
+            const size_t count = nextEntities.size();
+            {
+                std::lock_guard<std::mutex> lock(::g_mutex);
+                entities = std::move(nextEntities);
+                hp_dy_entities = std::move(nextDynamicEntities);
+            }
+
+            SetPublishedEntityCount(count);
+            return count;
+        }
+
         inline std::vector<c_entity> SnapshotEntities() {
-            std::lock_guard<std::mutex> lock(::g_mutex);
-            return entities;
+            const auto startedAt = std::chrono::steady_clock::now();
+            std::vector<c_entity> snapshot;
+            {
+                std::lock_guard<std::mutex> lock(::g_mutex);
+                snapshot = entities;
+            }
+            Diagnostics::RecordEntitySnapshotCopy(
+                snapshot.size(),
+                std::chrono::steady_clock::now() - startedAt);
+            return snapshot;
         }
 
         inline std::vector<hpanddy> SnapshotDynamicEntities() {
-            std::lock_guard<std::mutex> lock(::g_mutex);
-            return hp_dy_entities;
+            const auto startedAt = std::chrono::steady_clock::now();
+            std::vector<hpanddy> snapshot;
+            {
+                std::lock_guard<std::mutex> lock(::g_mutex);
+                snapshot = hp_dy_entities;
+            }
+            Diagnostics::RecordDynamicSnapshotCopy(
+                snapshot.size(),
+                std::chrono::steady_clock::now() - startedAt);
+            return snapshot;
         }
 
         inline c_entity SnapshotLocalEntity() {

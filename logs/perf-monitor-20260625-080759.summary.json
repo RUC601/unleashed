@@ -1,0 +1,106 @@
+{
+  "started_at": "2026-06-25T08:07:44.6165302-07:00",
+  "ended_at": "2026-06-25T08:07:59.8726820-07:00",
+  "sample_count": 15,
+  "duration_seconds": 14.199,
+  "fps": {
+    "avg": 13.026,
+    "min": 0.0,
+    "max": 69.374
+  },
+  "render_fps": {
+    "avg": 13.026,
+    "min": 0.0,
+    "max": 69.374
+  },
+  "entity_process_hz": {
+    "avg": 29.74,
+    "min": 0.0,
+    "max": 40.431
+  },
+  "entity_scan_hz": {
+    "avg": 0.116,
+    "min": 0.0,
+    "max": 0.309
+  },
+  "entity_publish_hz": {
+    "avg": 33.267,
+    "min": 0.0,
+    "max": 66.666
+  },
+  "entity_publish_age_ms": {
+    "avg": 108.133,
+    "min": 0.0,
+    "max": 1219.0
+  },
+  "viewmatrix_publish_hz": {
+    "avg": 53.194,
+    "min": 0.0,
+    "max": 66.666
+  },
+  "viewmatrix_publish_age_ms": {
+    "avg": 28.0,
+    "min": 0.0,
+    "max": 188.0
+  },
+  "render_viewmatrix_age_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "render_viewmatrix_max_age_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "render_viewmatrix_uses_delta": 0,
+  "render_viewmatrix_over_16ms_delta": 0,
+  "render_viewmatrix_over_33ms_delta": 0,
+  "render_viewmatrix_over_50ms_delta": 0,
+  "render_viewmatrix_missing_publish_delta": 0,
+  "snapshot_entities_copy_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.001
+  },
+  "snapshot_dynamic_copy_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "view_matrix_bad_samples": 3,
+  "resolved_screen_sizes": [
+    "1920x1080"
+  ],
+  "projection_jump_samples": 0,
+  "render_callback_ms": {
+    "avg": 0.027,
+    "min": 0.0,
+    "max": 0.033
+  },
+  "present_ms": {
+    "avg": 2.874,
+    "min": 0.0,
+    "max": 6.253
+  },
+  "render_frame_ms": {
+    "avg": 2.901,
+    "min": 0.0,
+    "max": 6.281
+  },
+  "dma_reads_per_second": 6397.19,
+  "dma_fail_rate_percent": 6.642,
+  "dma_total_delta": 90832,
+  "dma_fail_delta": 6033,
+  "slow_frame_log_lines": 0,
+  "slow_frame_effective_count": 0,
+  "slow_frame_max_render_ms": null,
+  "slow_frame_rt_dma_nonzero_lines": 0,
+  "slow_frame_render_canvas_nonzero_lines": 0,
+  "log_path": "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}

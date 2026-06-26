@@ -100,6 +100,9 @@ namespace
 
     void LogMouseButtonChanges(unsigned char previous, unsigned char current)
     {
+        if (!OW::Config::kmboxDebugLog)
+            return;
+
         struct ButtonMap {
             unsigned char mask;
             const char* name;
@@ -157,6 +160,9 @@ namespace
         const standard_keyboard_report_t& previous,
         const standard_keyboard_report_t& current)
     {
+        if (!OW::Config::kmboxDebugLog)
+            return;
+
         if (previous.buttons == current.buttons &&
             std::memcmp(previous.data, current.data, sizeof(current.data)) == 0) {
             return;
@@ -769,8 +775,10 @@ void KmBoxNetManager::QueueWorkerLoop()
         } else if (IsOutputCommand(command.type)) {
             const unsigned long long count =
                 outputSendCount.fetch_add(1, std::memory_order_acq_rel) + 1;
-            Diagnostics::Info("[KMBOX-NET] output send count=%llu type=%s",
-                count, ToString(command.type));
+            if (OW::Config::kmboxDebugLog) {
+                Diagnostics::Info("[KMBOX-NET] output send count=%llu type=%s",
+                    count, ToString(command.type));
+            }
             Diagnostics::Aim("udp.queue send_success count=%llu type=%s",
                 count,
                 ToString(command.type));

@@ -1,0 +1,91 @@
+{
+  "started_at": "2026-06-25T07:33:31.7044509-07:00",
+  "ended_at": "2026-06-25T07:34:32.4723535-07:00",
+  "sample_count": 60,
+  "duration_seconds": 59.701,
+  "fps": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "render_fps": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_process_hz": {
+    "avg": 5.205,
+    "min": 4.759,
+    "max": 5.801
+  },
+  "entity_scan_hz": {
+    "avg": 0.347,
+    "min": 0.305,
+    "max": 0.395
+  },
+  "entity_publish_hz": {
+    "avg": 5.746,
+    "min": 0.877,
+    "max": 10.752
+  },
+  "entity_publish_age_ms": {
+    "avg": 144.533,
+    "min": 0.0,
+    "max": 515.0
+  },
+  "viewmatrix_publish_hz": {
+    "avg": 59.315,
+    "min": 5.813,
+    "max": 66.666
+  },
+  "viewmatrix_publish_age_ms": {
+    "avg": 13.817,
+    "min": 0.0,
+    "max": 94.0
+  },
+  "snapshot_entities_copy_ms": {
+    "avg": 0.004,
+    "min": 0.001,
+    "max": 0.015
+  },
+  "snapshot_dynamic_copy_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_count": {
+    "avg": 17.933,
+    "min": 17.0,
+    "max": 19.0
+  },
+  "view_matrix_bad_samples": 0,
+  "resolved_screen_sizes": [
+    "1920x1080"
+  ],
+  "projection_jump_samples": 0,
+  "render_callback_ms": {
+    "avg": 0.088,
+    "min": 0.088,
+    "max": 0.088
+  },
+  "present_ms": {
+    "avg": 2.611,
+    "min": 2.61,
+    "max": 2.61
+  },
+  "render_frame_ms": {
+    "avg": 2.698,
+    "min": 2.698,
+    "max": 2.698
+  },
+  "dma_reads_per_second": 6695.618,
+  "dma_fail_rate_percent": 2.537,
+  "dma_total_delta": 399738,
+  "dma_fail_delta": 10140,
+  "slow_frame_log_lines": 0,
+  "slow_frame_effective_count": 0,
+  "slow_frame_max_render_ms": null,
+  "slow_frame_rt_dma_nonzero_lines": 0,
+  "slow_frame_render_canvas_nonzero_lines": 0,
+  "log_path": "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}

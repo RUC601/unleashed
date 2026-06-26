@@ -51,7 +51,7 @@ private:
     int                     m_menuAnchorY = 0;
     unsigned long long      m_lastCanvasBoundsRefreshMs = 0;
     bool                    m_menuAnchorValid = false;
-    bool                    m_canMinimizeOnMenuDeactivate = false;
+    bool                    m_canHideMenuOnDeactivate = false;
     bool                    m_minimizedToTaskbar = false;
 
     bool RegisterWindowClasses(HINSTANCE instance);

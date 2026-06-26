@@ -467,6 +467,7 @@ namespace OW {
                 viewMatrix_xor = cameraViewMatrix;
             publishedCameraView = viewMatrix_xor;
         }
+        Diagnostics::RecordViewMatrixPublish();
 
         state.hasPublished = true;
         state.lastPublished = renderViewProjection;
@@ -1304,20 +1305,20 @@ inline void entity_thread() {
             Diagnostics::LocalEntityStats localStats{};
             std::vector<OW::c_entity> published_entities{};
             Diagnostics::RosterStats rosterStats = publishRosterSnapshot(processLoopTick, 0, published_entities);
-            const size_t published_count = published_entities.size();
             previousProcessedValidCount = 0;
             if (componentBaseCache.size() > 512)
                 componentBaseCache.clear();
             if (dynamicEntityCache.size() > 512)
                 dynamicEntityCache.clear();
-            {
+            const bool requestFastRescan =
+                rosterStats.fresh > 0 || rosterStats.missing > 0 || rosterStats.dead > 0;
+            const size_t published_count = OW::TargetingDetail::PublishEntitySnapshots(
+                std::move(published_entities),
+                std::vector<OW::hpanddy>{});
+            if (requestFastRescan) {
                 std::lock_guard<std::mutex> lock(g_mutex);
-                OW::entities = std::move(published_entities);
-                OW::hp_dy_entities = {};
-                if (rosterStats.fresh > 0 || rosterStats.missing > 0 || rosterStats.dead > 0)
-                    OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
+                OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
             }
-            OW::TargetingDetail::SetPublishedEntityCount(published_count);
             Diagnostics::SetEntityCount(rosterStats.fresh + rosterStats.dead + rosterStats.missing);
             Diagnostics::SetEntityProcessStats(stats);
             Diagnostics::SetLocalEntityStats(localStats);
@@ -2205,11 +2206,13 @@ inline void entity_thread() {
                                 componentCache.skillcd2 = 0.0f;
                                 componentCache.skeletonCache = OW::c_entity::SkeletonBoneCache{};
                                 ++heroChangedThisCycle;
-                                Diagnostics::Info("[PIPELINE] Stage 4 hero_change roster=0x%llX component=0x%llX old=0x%llX new=0x%llX.",
-                                    static_cast<unsigned long long>(entity.roster_key),
-                                    static_cast<unsigned long long>(ComponentParent),
-                                    static_cast<unsigned long long>(previousHeroId),
-                                    static_cast<unsigned long long>(newHeroId));
+                                if (OW::PipelineDebugEnabled()) {
+                                    Diagnostics::Info("[PIPELINE] Stage 4 hero_change roster=0x%llX component=0x%llX old=0x%llX new=0x%llX.",
+                                        static_cast<unsigned long long>(entity.roster_key),
+                                        static_cast<unsigned long long>(ComponentParent),
+                                        static_cast<unsigned long long>(previousHeroId),
+                                        static_cast<unsigned long long>(newHeroId));
+                                }
                             }
                             componentCache.heroId = newHeroId;
                             componentCache.heroValid = true;
@@ -2848,14 +2851,13 @@ inline void entity_thread() {
         const bool suspectStaleScan =
             (valid_count == 0 && !raw_entities.empty()) ||
             (previousProcessedValidCount > 0 && valid_count + 1 < previousProcessedValidCount);
-        {
+        OW::TargetingDetail::PublishEntitySnapshots(
+            std::move(published_entities),
+            std::move(hpdy_entities));
+        if (suspectStaleScan) {
             std::lock_guard<std::mutex> lock(g_mutex);
-            OW::entities = std::move(published_entities);
-            OW::hp_dy_entities = std::move(hpdy_entities);
-            if (suspectStaleScan)
-                OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
+            OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
         }
-        OW::TargetingDetail::SetPublishedEntityCount(published_count);
         previousProcessedValidCount = valid_count;
         Diagnostics::SetEntityCount(published_count);
         Diagnostics::SetEntityProcessStats(processStats);
@@ -3339,6 +3341,59 @@ namespace OverlayRenderDetail {
         int offsetCm = 0;
     };
 
+    inline bool ApplyShortRenderExtrapolation(
+        OW::c_entity& entity,
+        DWORD now,
+        RenderPredictionInfo* predictionInfo = nullptr) {
+        if (!entity.has_previous_render_sample || entity.render_sample_tick_ms == 0 ||
+            now <= entity.render_sample_tick_ms) {
+            return false;
+        }
+
+        const DWORD ageMs = now - entity.render_sample_tick_ms;
+        if (ageMs < 12 || ageMs > 160)
+            return false;
+
+        float speed = 0.0f;
+        if (!IsReasonableRenderVelocity(entity.velocity, &speed))
+            return false;
+
+        constexpr float kMaxLeadSeconds = 0.10f;
+        constexpr float kMaxOffsetMeters = 1.35f;
+        float leadSeconds = (std::min)(static_cast<float>(ageMs) / 1000.0f, kMaxLeadSeconds);
+        Vector3 offset = entity.velocity * leadSeconds;
+        float offsetSize = offset.Size();
+        if (!std::isfinite(offsetSize) || offsetSize < 0.005f)
+            return false;
+        if (offsetSize > kMaxOffsetMeters) {
+            const float scale = kMaxOffsetMeters / offsetSize;
+            offset = offset * scale;
+            offsetSize = kMaxOffsetMeters;
+            leadSeconds = (std::min)(leadSeconds, offsetSize / speed);
+        }
+
+        OffsetRenderPoint(entity.pos, offset);
+        OffsetRenderPoint(entity.head_pos, offset);
+        OffsetRenderPoint(entity.neck_pos, offset);
+        OffsetRenderPoint(entity.chest_pos, offset);
+        if (entity.cached_bot_chest_bone_valid)
+            OffsetRenderPoint(entity.cached_bot_chest_bone, offset);
+
+        for (size_t i = 0; i < entity.skeleton_bones.size(); ++i) {
+            if (entity.skeleton_bone_valid[i])
+                OffsetRenderPoint(entity.skeleton_bones[i], offset);
+        }
+
+        if (predictionInfo) {
+            predictionInfo->trainingBot = OW::GameData::IsTrainingBotHeroId(entity.HeroID);
+            predictionInfo->velocityReasonable = true;
+            predictionInfo->applied = true;
+            predictionInfo->leadMs = static_cast<int>(std::lround(leadSeconds * 1000.0f));
+            predictionInfo->offsetCm = static_cast<int>(std::lround(offsetSize * 100.0f));
+        }
+        return true;
+    }
+
     inline RenderPredictionInfo ApplyTrainingBotRenderPrediction(OW::c_entity& entity, DWORD now) {
         RenderPredictionInfo info{};
         if (!OW::GameData::IsTrainingBotHeroId(entity.HeroID))
@@ -3397,6 +3452,8 @@ namespace OverlayRenderDetail {
         OW::c_entity entity = source;
         if (alpha >= 0.999f) {
             RenderPredictionInfo info = ApplyTrainingBotRenderPrediction(entity, now);
+            if (!info.applied)
+                ApplyShortRenderExtrapolation(entity, now, &info);
             if (predictionInfo)
                 *predictionInfo = info;
             return entity;
@@ -3423,6 +3480,8 @@ namespace OverlayRenderDetail {
         }
 
         RenderPredictionInfo info = ApplyTrainingBotRenderPrediction(entity, now);
+        if (!info.applied)
+            ApplyShortRenderExtrapolation(entity, now, &info);
         if (predictionInfo)
             *predictionInfo = info;
         return entity;
@@ -4465,6 +4524,7 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
 
     OW::Matrix renderViewMatrix{}, renderViewMatrixXor{};
     OW::GetViewMatricesSnapshot(renderViewMatrix, renderViewMatrixXor);
+    Diagnostics::RecordRenderViewMatrixUse();
 
     auto publishStats = [&]() {
         const auto playerInfoEnd = std::chrono::steady_clock::now();

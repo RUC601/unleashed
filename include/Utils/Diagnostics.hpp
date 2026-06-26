@@ -92,6 +92,32 @@ struct RenderWorkloadStats {
     uint64_t fastBoxes = 0;
 };
 
+struct PublishCadenceStats {
+    uint64_t cycles = 0;
+    double hz = 0.0;
+    uint64_t ageMs = 0;
+    uint64_t lastIntervalMs = 0;
+    uint64_t maxIntervalMs = 0;
+    size_t lastCount = 0;
+};
+
+struct SnapshotCopyStats {
+    uint64_t copies = 0;
+    double lastMs = 0.0;
+    double maxMs = 0.0;
+    size_t lastCount = 0;
+};
+
+struct ViewMatrixConsumerStats {
+    uint64_t uses = 0;
+    uint64_t lastAgeMs = 0;
+    uint64_t maxAgeMs = 0;
+    uint64_t missingPublishUses = 0;
+    uint64_t over16Ms = 0;
+    uint64_t over33Ms = 0;
+    uint64_t over50Ms = 0;
+};
+
 // ---- Ring-buffer DMA window stats (lightweight) ----
 
 struct DmaWindowStats {
@@ -378,6 +404,11 @@ struct StatusSnapshot {
     double entityScanHz = 0.0;
     double entityProcessHz = 0.0;
     double fps = 0.0;
+    PublishCadenceStats viewMatrixPublish{};
+    PublishCadenceStats entityPublish{};
+    SnapshotCopyStats entitySnapshotCopy{};
+    SnapshotCopyStats dynamicSnapshotCopy{};
+    ViewMatrixConsumerStats renderViewMatrixUse{};
     DmaReadStats dmaReads{};
     ErrorCounters errors{};
     bool dmaReady = false;
@@ -455,6 +486,11 @@ void SetRenderThread();
 DmaWindowStats GetDmaWindowStats(uint64_t windowMs);
 void RecordEntityScanCycle(size_t entityCount, double measuredHz = -1.0);
 void RecordEntityProcessCycle(double measuredHz);
+void RecordViewMatrixPublish();
+void RecordRenderViewMatrixUse();
+void RecordEntityPublish(size_t count);
+void RecordEntitySnapshotCopy(size_t count, std::chrono::steady_clock::duration elapsed);
+void RecordDynamicSnapshotCopy(size_t count, std::chrono::steady_clock::duration elapsed);
 
 void SetEntityCount(size_t entityCount);
 void SetDmaReady(bool ready);

@@ -373,6 +373,10 @@ LRESULT WINAPI MenuWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             if ((wParam & 0xFFF0) == SC_RESTORE)
                 g_Overlay.RestoreFromTaskbar();
+            if ((wParam & 0xFFF0) == SC_MINIMIZE) {
+                g_Overlay.MinimizeToTaskbar();
+                return 0;
+            }
             break;
         case WM_SIZE:
             if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED)
@@ -467,7 +471,7 @@ void Overlay::MinimizeToTaskbar() {
         return;
 
     m_minimizedToTaskbar = true;
-    m_canMinimizeOnMenuDeactivate = false;
+    m_canHideMenuOnDeactivate = false;
     OW::Config::Menu = false;
 
     if (m_canvasHWnd && IsWindow(m_canvasHWnd))
@@ -481,7 +485,7 @@ void Overlay::RestoreFromTaskbar() {
         return;
 
     m_minimizedToTaskbar = false;
-    m_canMinimizeOnMenuDeactivate = false;
+    m_canHideMenuOnDeactivate = false;
 
     if (m_canvasHWnd && IsWindow(m_canvasHWnd)) {
         ShowWindow(m_canvasHWnd, SW_SHOWNA);
@@ -504,11 +508,15 @@ void Overlay::OnMenuActivated() {
 void Overlay::OnMenuDeactivated(HWND activatedWindow) {
     // Startup can produce activation messages before the menu has rendered.
     // Wait for one real menu frame before treating deactivation as user intent.
-    if (!m_canMinimizeOnMenuDeactivate)
+    if (!m_canHideMenuOnDeactivate)
         return;
 
-    if (ShouldMinimizeForExternalActivation(activatedWindow))
-        MinimizeToTaskbar();
+    if (!ShouldMinimizeForExternalActivation(activatedWindow))
+        return;
+
+    OW::Config::Menu = false;
+    if (m_menuHWnd && IsWindow(m_menuHWnd) && IsWindowVisible(m_menuHWnd) && !IsIconic(m_menuHWnd))
+        ShowWindow(m_menuHWnd, SW_HIDE);
 }
 
 void Overlay::RequestExit() {
@@ -1023,5 +1031,5 @@ void Overlay::RenderMenu() {
     m_pContext->ClearRenderTargetView(m_menuRenderTargetView, clearColor);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     m_menuSwapChain->Present(1, 0);
-    m_canMinimizeOnMenuDeactivate = true;
+    m_canHideMenuOnDeactivate = true;
 }
