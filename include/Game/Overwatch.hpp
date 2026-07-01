@@ -7577,7 +7577,9 @@ namespace AimbotDetail {
     };
 
     inline OW::c_entity LocalEntity();
-    inline bool IsConfiguredActivationKeyPressedForSelection(int keySetting);
+    inline bool IsConfiguredActivationKeyPressedForSelection(int keySetting,
+                                                             int* matchedKeySetting = nullptr,
+                                                             bool allowSideButtonAlias = false);
 
     struct TrackingSessionIdentity {
         uint64_t heroId = 0;
@@ -7589,6 +7591,8 @@ namespace AimbotDetail {
         OW::Config::HeroPreset preset{};
         int slotIndex = -1;
         bool matchedInput = false;
+        int activationKeyOverride = -1;
+        bool usedSideButtonAlias = false;
     };
 
     inline TrackingSessionIdentity CurrentTrackingSessionIdentity() {
@@ -7736,6 +7740,8 @@ namespace AimbotDetail {
             int slotIndex = -2;
             bool matchedInput = false;
             int key = -1;
+            int activationKeyOverride = -1;
+            bool usedSideButtonAlias = false;
             float fov = -1.0f;
             int aimBehavior = -1;
             int triggerMode = -1;
@@ -7754,6 +7760,8 @@ namespace AimbotDetail {
             state.slotIndex != selection.slotIndex ||
             state.matchedInput != selection.matchedInput ||
             state.key != preset.key ||
+            state.activationKeyOverride != selection.activationKeyOverride ||
+            state.usedSideButtonAlias != selection.usedSideButtonAlias ||
             (!isTriggerKind && std::fabs(state.fov - preset.fov) > 0.001f) ||
             state.aimBehavior != preset.aimBehavior ||
             state.triggerMode != preset.trigger.mode ||
@@ -7765,12 +7773,14 @@ namespace AimbotDetail {
 
         const int behaviorMethod = OW::Config::AimBehaviorMethod(preset.aimBehavior);
         if (isTriggerKind) {
-            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d activeKey=%d sideAlias=%d aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
                 kind,
                 static_cast<unsigned long long>(heroId),
                 selection.slotIndex + 1,
                 selection.matchedInput ? 1 : 0,
                 preset.key,
+                selection.activationKeyOverride,
+                selection.usedSideButtonAlias ? 1 : 0,
                 preset.aimMode,
                 preset.aimBehavior,
                 behaviorMethod,
@@ -7778,12 +7788,14 @@ namespace AimbotDetail {
                 preset.trigger.mode,
                 preset.trigger.key);
         } else {
-            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d fovDeg=%.2f aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d activeKey=%d sideAlias=%d fovDeg=%.2f aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
                 kind ? kind : "unknown",
                 static_cast<unsigned long long>(heroId),
                 selection.slotIndex + 1,
                 selection.matchedInput ? 1 : 0,
                 preset.key,
+                selection.activationKeyOverride,
+                selection.usedSideButtonAlias ? 1 : 0,
                 preset.fov,
                 preset.aimMode,
                 preset.aimBehavior,
@@ -7798,6 +7810,8 @@ namespace AimbotDetail {
         state.slotIndex = selection.slotIndex;
         state.matchedInput = selection.matchedInput;
         state.key = preset.key;
+        state.activationKeyOverride = selection.activationKeyOverride;
+        state.usedSideButtonAlias = selection.usedSideButtonAlias;
         state.fov = preset.fov;
         state.aimBehavior = preset.aimBehavior;
         state.triggerMode = preset.trigger.mode;
@@ -7807,29 +7821,45 @@ namespace AimbotDetail {
 
     inline bool TrySelectRuntimeAimPreset(uint64_t heroId, RuntimePresetSelection& selection) {
         RuntimePresetSelection fallback{};
-        RuntimePresetSelection inputFallback{};
-        RuntimePresetSelection distanceFallback{};
         bool hasFallback = false;
-        bool hasInputFallback = false;
-        bool hasDistanceFallback = false;
 
-        for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
-            OW::Config::HeroSlotPreset slot{};
-            if (!OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot) || !slot.enabled)
-                continue;
+        auto tryKeyedSelection = [&](bool allowSideButtonAlias, RuntimePresetSelection& outSelection) {
+            RuntimePresetSelection inputFallback{};
+            RuntimePresetSelection distanceFallback{};
+            bool hasInputFallback = false;
+            bool hasDistanceFallback = false;
 
-            if (!hasFallback) {
-                fallback.preset = slot.preset;
-                fallback.slotIndex = slotIndex;
-                fallback.matchedInput = false;
-                hasFallback = true;
-            }
+            for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
+                OW::Config::HeroSlotPreset slot{};
+                if (!OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot) || !slot.enabled)
+                    continue;
 
-            if (IsConfiguredActivationKeyPressedForSelection(slot.preset.key)) {
+                if (!hasFallback) {
+                    fallback.preset = slot.preset;
+                    fallback.slotIndex = slotIndex;
+                    fallback.matchedInput = false;
+                    fallback.activationKeyOverride = slot.preset.key;
+                    hasFallback = true;
+                }
+
+                int matchedKeySetting = slot.preset.key;
+                if (!IsConfiguredActivationKeyPressedForSelection(
+                        slot.preset.key,
+                        &matchedKeySetting,
+                        allowSideButtonAlias)) {
+                    continue;
+                }
+
+                const bool usedAlias = matchedKeySetting != slot.preset.key;
+                if (allowSideButtonAlias != usedAlias)
+                    continue;
+
                 RuntimePresetSelection keyedSelection{};
                 keyedSelection.preset = slot.preset;
                 keyedSelection.slotIndex = slotIndex;
                 keyedSelection.matchedInput = true;
+                keyedSelection.activationKeyOverride = matchedKeySetting;
+                keyedSelection.usedSideButtonAlias = usedAlias;
 
                 if (!hasInputFallback) {
                     inputFallback = keyedSelection;
@@ -7837,7 +7867,7 @@ namespace AimbotDetail {
                 }
 
                 if (AimPresetHasSelectableEntityInDistanceRange(slot.preset)) {
-                    selection = keyedSelection;
+                    outSelection = keyedSelection;
                     return true;
                 }
 
@@ -7846,17 +7876,25 @@ namespace AimbotDetail {
                     hasDistanceFallback = true;
                 }
             }
-        }
 
-        if (hasDistanceFallback) {
-            selection = distanceFallback;
-            return true;
-        }
+            if (hasDistanceFallback) {
+                outSelection = distanceFallback;
+                return true;
+            }
 
-        if (hasInputFallback) {
-            selection = inputFallback;
+            if (hasInputFallback) {
+                outSelection = inputFallback;
+                return true;
+            }
+
+            return false;
+        };
+
+        if (tryKeyedSelection(false, selection))
             return true;
-        }
+
+        if (tryKeyedSelection(true, selection))
+            return true;
 
         if (!hasFallback)
             return false;
@@ -7963,6 +8001,8 @@ namespace AimbotDetail {
             originalMinFov2 = OW::Config::minFov2;
             originalDrawFov = OW::Config::SnapshotRuntimeDrawFov();
             OW::Config::ApplyHeroAimPresetToGlobals(selection.preset);
+            if (selection.activationKeyOverride >= 0)
+                OW::Config::aim_key = selection.activationKeyOverride;
             OW::Config::SetRuntimeDrawFov(
                 OW::Config::ResolveHeroPresetFovForDistance(selection.preset, 0.0f),
                 static_cast<int>(OW::Config::FovRingSlotKind::Aim),
@@ -8295,8 +8335,38 @@ namespace AimbotDetail {
         return ReadDmaThenLocalVkQuiet(vk);
     }
 
-    inline bool IsConfiguredActivationKeyPressedForSelection(int keySetting) {
-        return IsInputVkDownQuiet(OW::get_bind_id(keySetting));
+    inline int SideMouseAliasKeySetting(int keySetting) {
+        constexpr int kMouse4KeySetting = 2;
+        constexpr int kMouse5KeySetting = 3;
+        if (keySetting == kMouse4KeySetting)
+            return kMouse5KeySetting;
+        if (keySetting == kMouse5KeySetting)
+            return kMouse4KeySetting;
+        return -1;
+    }
+
+    inline bool IsConfiguredActivationKeyPressedForSelection(int keySetting,
+                                                             int* matchedKeySetting,
+                                                             bool allowSideButtonAlias) {
+        if (matchedKeySetting)
+            *matchedKeySetting = keySetting;
+
+        if (IsInputVkDownQuiet(OW::get_bind_id(keySetting)))
+            return true;
+
+        if (!allowSideButtonAlias)
+            return false;
+
+        const int aliasKeySetting = SideMouseAliasKeySetting(keySetting);
+        if (aliasKeySetting < 0)
+            return false;
+
+        if (!IsInputVkDownQuiet(OW::get_bind_id(aliasKeySetting)))
+            return false;
+
+        if (matchedKeySetting)
+            *matchedKeySetting = aliasKeySetting;
+        return true;
     }
 
     inline bool IsConfiguredAimKeyPressed(int keySetting) {
@@ -8471,6 +8541,37 @@ namespace AimbotDetail {
         return !(local.HeroID == OW::eHero::HERO_HANJO && local.skill2act);
     }
 
+    inline bool ShouldSkipChargeReleaseForHeldActivation(const OW::c_entity& local,
+                                                         const OW::WeaponSpec* weapon,
+                                                         uint32_t fireKey,
+                                                         const char* source) {
+        if (!ShouldReleaseChargedFire(local, weapon))
+            return false;
+
+        int fireButton = -1;
+        if (!OW::DmaKeyToMouseButton(fireKey, fireButton))
+            return false;
+
+        const int fireVk = VkForMouseButton(fireButton);
+        const int activationVk = OW::get_bind_id(OW::Config::aim_key);
+        if (fireVk <= 0 || activationVk != fireVk)
+            return false;
+
+        if (!IsInputVkDownQuiet(fireVk))
+            return false;
+
+        Diagnostics::Aim("fire.charge_release skip reason=held_activation_passthrough source=%s hero=0x%llX action=%d weapon=%s keyMask=0x%X button=%d aimKey=%d vk=0x%X",
+            source ? source : "unknown",
+            static_cast<unsigned long long>(local.HeroID),
+            OW::Config::aimbotAttack,
+            weapon ? weapon->weaponId.data() : "none",
+            fireKey,
+            fireButton,
+            OW::Config::aim_key,
+            fireVk);
+        return true;
+    }
+
     inline void FireConfiguredAction(const OW::c_entity& local, DWORD sleep_ms = 10) {
         const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
         const uint32_t fireKey = OW::ResolveGeneratedFireKeyMask(weapon, OW::Config::aimbotAttack);
@@ -8478,6 +8579,8 @@ namespace AimbotDetail {
             return;
 
         if (ShouldReleaseChargedFire(local, weapon)) {
+            if (ShouldSkipChargeReleaseForHeldActivation(local, weapon, fireKey, "configured"))
+                return;
             Diagnostics::Aim("fire.configured mode=charge_release hero=0x%llX action=%d weapon=%s keyMask=0x%X",
                 static_cast<unsigned long long>(local.HeroID),
                 OW::Config::aimbotAttack,
@@ -9187,6 +9290,8 @@ namespace AimbotDetail {
             return;
 
         if (ShouldReleaseChargedFire(local, weapon)) {
+            if (ShouldSkipChargeReleaseForHeldActivation(local, weapon, fireKey, "primary"))
+                return;
             Diagnostics::Aim("fire.primary mode=charge_release hero=0x%llX action=%d weapon=%s keyMask=0x%X",
                 static_cast<unsigned long long>(local.HeroID),
                 OW::Config::aimbotAttack,

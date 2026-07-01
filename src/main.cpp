@@ -1210,6 +1210,18 @@ static void StartBackgroundThreads();
 static void StartProcessConnectionThread();
 static void StopProcessConnectionThread();
 
+static void ReleaseKmboxMouseStateForShutdown(const char* reason)
+{
+    if (!OW::Config::kmboxEnabled)
+        return;
+
+    Diagnostics::Aim("kmbox.shutdown_mouse_cleanup reason=%s deviceType=%d",
+        reason ? reason : "unknown",
+        OW::Config::kmboxDeviceType);
+    OW::ForceReleaseMouseButtons();
+    OW::UnmaskPhysicalMouseButtons();
+}
+
 static void LoadRuntimeConfigForDiagnostics()
 {
     const std::string configPath = OW::Config::ConfigPath();
@@ -1246,6 +1258,7 @@ static void ShutdownHeadlessRuntime()
     mem.CloseDma();
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
+    ReleaseKmboxMouseStateForShutdown("headless_shutdown");
     kmbox::MockHardwareMgr.Shutdown();
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
@@ -1278,9 +1291,25 @@ static int RunKmboxMoveTestCli()
     OW::Config::Menu = false;
     InitializeKmBoxFromConfig();
     RunKmboxMoveTest();
+    ReleaseKmboxMouseStateForShutdown("kmbox_move_test");
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
+    return 0;
+}
+
+static int RunKmboxRecoverMouseCli()
+{
+    Diagnostics::Initialize(Diagnostics::LogLevel::Info, "./unleashed_diag.log");
+    Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
+    LoadRuntimeConfigForDiagnostics();
+    OW::Config::Menu = false;
+    InitializeKmBoxFromConfig();
+    ReleaseKmboxMouseStateForShutdown("kmbox_recover_mouse_cli");
+    kmbox::ReleaseTimerResolution();
+    Diagnostics::ShutdownAimLog();
+    Diagnostics::Shutdown();
+    std::printf("[KMBOX] Mouse passthrough recovery sent.\n");
     return 0;
 }
 
@@ -1423,6 +1452,7 @@ static void MarkProcessDisconnected(const char* statusText)
     if (wasConnected) {
         Diagnostics::Warn("Target process disconnected.");
         std::printf("[MAIN] Target process disconnected; waiting for %s...\n", kTargetProcessName);
+        ReleaseKmboxMouseStateForShutdown("target_disconnect");
     }
 
     ClearProcessRuntimeSnapshots();
@@ -1569,6 +1599,8 @@ int main(int argc, char** argv)
 
     if (HasCommandLineFlag(argc, argv, "--config-check"))
         return RunConfigCheckCli();
+    if (HasCommandLineFlag(argc, argv, "--kmbox-recover-mouse"))
+        return RunKmboxRecoverMouseCli();
     if (HasCommandLineFlag(argc, argv, "--kmbox-move-test"))
         return RunKmboxMoveTestCli();
     if (HasCommandLineFlag(argc, argv, "--kmbox-calibrate")) {
@@ -1695,6 +1727,7 @@ int main(int argc, char** argv)
         mem.CloseDma();
         Diagnostics::SetDmaReady(false);
         Diagnostics::SetProcessAttached(false);
+        ReleaseKmboxMouseStateForShutdown("overlay_init_failure");
         kmbox::ReleaseTimerResolution();
         Diagnostics::ShutdownAimLog();
         Diagnostics::Shutdown();
@@ -1737,6 +1770,7 @@ int main(int argc, char** argv)
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
     Diagnostics::Info("DMA subsystem closed.");
+    ReleaseKmboxMouseStateForShutdown("overlay_shutdown");
     kmbox::MockHardwareMgr.Shutdown();
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
