@@ -596,6 +596,18 @@ void AppendEntityPipelineJson(std::ostringstream& out, const Diagnostics::Status
         << lifecycle.entityRecordMarkDeadCount
         << ",\"entity_record_expired_count\":"
         << lifecycle.entityRecordExpiredCount
+        << ",\"entity_record_scan_miss_soft_gap_count\":"
+        << lifecycle.entityRecordScanMissSoftGapCount
+        << ",\"entity_record_scan_miss_hard_gap_count\":"
+        << lifecycle.entityRecordScanMissHardGapCount
+        << ",\"entity_record_scan_miss_grace_append_count\":"
+        << lifecycle.entityRecordScanMissGraceAppendCount
+        << ",\"entity_record_scan_miss_grace_drop_count\":"
+        << lifecycle.entityRecordScanMissGraceDropCount
+        << ",\"entity_record_scan_miss_hot_read_success_count\":"
+        << lifecycle.entityRecordScanMissHotReadSuccessCount
+        << ",\"entity_record_scan_miss_hot_read_fail_count\":"
+        << lifecycle.entityRecordScanMissHotReadFailCount
         << ",\"component_cache_hit_count\":"
         << lifecycle.componentCacheHitCount
         << ",\"component_cache_miss_count\":"
@@ -4279,6 +4291,12 @@ std::string BuildEntitiesJson(const std::unordered_map<std::string, std::string>
         AppendNumberOrNull(out, motion.verticalVelocity);
         out << ",\"roster_state\":";
         AppendJsonString(out, RosterStateName(entity.roster_state));
+        out << ",\"last_scan_seen_tick_ms\":" << entity.last_scan_seen_tick_ms
+            << ",\"last_hot_read_tick_ms\":" << entity.last_hot_read_tick_ms
+            << ",\"scan_seen_gap_ms\":" << entity.scan_seen_gap_ms
+            << ",\"hot_read_gap_ms\":" << entity.hot_read_gap_ms
+            << ",\"consecutive_scan_miss_count\":"
+            << entity.consecutive_scan_miss_count;
         out << '}';
     }
 

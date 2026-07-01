@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 #include <windows.h>
 #include "Utils/Diagnostics.hpp"
 #include <process.h>
@@ -296,6 +297,22 @@ namespace OW {
             : 0;
     }
 
+    inline DWORD ReadEnvDword(const char* name, DWORD fallback, DWORD minValue, DWORD maxValue)
+    {
+        char buffer[32] = {};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return fallback;
+
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(buffer, &end, 10);
+        if (end == buffer || (end && *end != '\0'))
+            return fallback;
+
+        const DWORD value = static_cast<DWORD>(parsed);
+        return std::clamp(value, minValue, maxValue);
+    }
+
     inline bool EnvFlagEnabled(const char* name)
     {
         return ReadEnvFlagState(name) == 1;
@@ -321,6 +338,30 @@ namespace OW {
         if (scanFlag >= 0)
             return scanFlag == 1;
         return EntityPipelineV2Enabled();
+    }
+
+    inline DWORD EntitySoftRefreshGapMs()
+    {
+        static const DWORD value =
+            ReadEnvDword("UN_DMA_ENTITY_SOFT_REFRESH_GAP_MS", 0, 0, 10000);
+        return value;
+    }
+
+    inline DWORD EntityHardRescanGapMs()
+    {
+        static const DWORD value =
+            ReadEnvDword("UN_DMA_ENTITY_HARD_RESCAN_GAP_MS", 0, 0, 10000);
+        if (value == 0)
+            return 0;
+        const DWORD soft = EntitySoftRefreshGapMs();
+        return soft > 0 && value < soft ? soft : value;
+    }
+
+    inline DWORD EntityScanMissGraceCount()
+    {
+        static const DWORD value =
+            ReadEnvDword("UN_DMA_ENTITY_SCAN_MISS_GRACE_COUNT", 0, 0, 16);
+        return value;
     }
 
     inline bool IsMatrixNonIdentity(const Matrix& matrix)
@@ -1508,6 +1549,9 @@ inline void entity_thread() {
         DWORD firstSeenTick = 0;
         DWORD lastSeenTick = 0;
         DWORD missingSinceTick = 0;
+        DWORD lastScanSeenTick = 0;
+        DWORD lastHotReadTick = 0;
+        DWORD consecutiveScanMissCount = 0;
         ComponentBaseCache bases{};
         bool basesValid = false;
         DynamicEntityCache dynamic{};
@@ -1658,7 +1702,12 @@ inline void entity_thread() {
     struct RosterEntry {
         OW::c_entity entity{};
         bool seenThisCycle = false;
+        bool scanSeenThisCycle = false;
+        bool hotReadRetainedThisCycle = false;
         int skippedJumpObservations = 0;
+        DWORD lastScanSeenTick = 0;
+        DWORD lastHotReadTick = 0;
+        DWORD consecutiveScanMissCount = 0;
     };
     std::unordered_map<uint64_t, RosterEntry> entityRoster{};
     entityRoster.reserve(128);
@@ -1697,8 +1746,11 @@ inline void entity_thread() {
     };
 
     auto resetRosterCycleFlags = [&]() {
-        for (auto& rosterPair : entityRoster)
+        for (auto& rosterPair : entityRoster) {
             rosterPair.second.seenThisCycle = false;
+            rosterPair.second.scanSeenThisCycle = false;
+            rosterPair.second.hotReadRetainedThisCycle = false;
+        }
     };
 
     auto recordStateFromRoster = [](OW::EntityRosterState state) {
@@ -1823,6 +1875,9 @@ inline void entity_thread() {
         record->state = recordStateFromRoster(entity.roster_state);
         record->lastSeenTick = entity.last_seen_tick_ms ? entity.last_seen_tick_ms : now;
         record->missingSinceTick = entity.missing_since_tick_ms;
+        record->lastScanSeenTick = entity.last_scan_seen_tick_ms;
+        record->lastHotReadTick = entity.last_hot_read_tick_ms;
+        record->consecutiveScanMissCount = entity.consecutive_scan_miss_count;
         record->published = entity;
         record->publishedValid = true;
     };
@@ -2111,8 +2166,20 @@ inline void entity_thread() {
         published.reserve(entityRoster.size());
 
         for (auto it = entityRoster.begin(); it != entityRoster.end();) {
-            OW::c_entity& rosterEntity = it->second.entity;
-            const bool seen = it->second.seenThisCycle;
+            RosterEntry& rosterEntry = it->second;
+            OW::c_entity& rosterEntity = rosterEntry.entity;
+            const bool seen = rosterEntry.seenThisCycle;
+            if (rosterEntry.lastScanSeenTick == 0 && rosterEntity.last_scan_seen_tick_ms != 0)
+                rosterEntry.lastScanSeenTick = rosterEntity.last_scan_seen_tick_ms;
+            if (rosterEntry.lastHotReadTick == 0 && rosterEntity.last_hot_read_tick_ms != 0)
+                rosterEntry.lastHotReadTick = rosterEntity.last_hot_read_tick_ms;
+            rosterEntity.last_scan_seen_tick_ms = rosterEntry.lastScanSeenTick;
+            rosterEntity.last_hot_read_tick_ms = rosterEntry.lastHotReadTick;
+            rosterEntity.scan_seen_gap_ms =
+                rosterEntry.lastScanSeenTick != 0 ? now - rosterEntry.lastScanSeenTick : 0;
+            rosterEntity.hot_read_gap_ms =
+                rosterEntry.lastHotReadTick != 0 ? now - rosterEntry.lastHotReadTick : 0;
+            rosterEntity.consecutive_scan_miss_count = rosterEntry.consecutiveScanMissCount;
             const DWORD lastSeen = rosterEntity.last_seen_tick_ms;
             const DWORD unseenAge = lastSeen != 0 ? now - lastSeen : 0;
 
@@ -2426,6 +2493,7 @@ inline void entity_thread() {
 
         std::vector<std::pair<uint64_t, uint64_t>> consumedLatestRawEntities;
         bool consumedLatestRawScan = false;
+        bool consumedRawScanThisCycle = false;
         {
             ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.consumeScanMs);
             if (scanLatestWinsEnabled) {
@@ -2437,12 +2505,14 @@ inline void entity_thread() {
                     OW::last_consumed_raw_scan_generation =
                         OW::latest_raw_scan_snapshot.generation;
                     consumedLatestRawScan = true;
+                    consumedRawScanThisCycle = true;
                 }
             } else {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 if (OW::abletotread) {
                     OW::ow_entities = OW::ow_entities_scan;
                     OW::abletotread = 0;
+                    consumedRawScanThisCycle = true;
                 }
             }
         }
@@ -2458,11 +2528,83 @@ inline void entity_thread() {
             previous_entities = OW::entities;
         }
         const DWORD processLoopTick = GetTickCount();
+        std::unordered_set<uint64_t> rawScanSeenComponents{};
+        std::unordered_set<uint64_t> scheduledRawComponents{};
+        rawScanSeenComponents.reserve(raw_entities.size() * 2 + 16);
+        scheduledRawComponents.reserve(raw_entities.size() * 2 + 16);
+        for (const auto& rawPair : raw_entities) {
+            if (rawPair.first != 0) {
+                if (consumedRawScanThisCycle)
+                    rawScanSeenComponents.insert(rawPair.first);
+                scheduledRawComponents.insert(rawPair.first);
+            }
+        }
+        std::unordered_set<uint64_t> scanMissHotReadComponents{};
+        std::unordered_set<uint64_t> scanMissHotReadSucceededComponents{};
         auto requestTopologyRescan = [&](DWORD, bool = false) {
             // Full component/link topology scans are limited to startup and
             // reconnect, where the raw topology cache is empty.
         };
         resetRosterCycleFlags();
+
+        const DWORD softRefreshGapMs = OW::EntitySoftRefreshGapMs();
+        const DWORD hardRescanGapMs = OW::EntityHardRescanGapMs();
+        const DWORD scanMissGraceCount = OW::EntityScanMissGraceCount();
+        if (consumedRawScanThisCycle &&
+            hardRescanGapMs > 0 &&
+            scanMissGraceCount > 0 &&
+            !entityRoster.empty()) {
+            scanMissHotReadComponents.reserve(entityRoster.size());
+            scanMissHotReadSucceededComponents.reserve(entityRoster.size());
+            for (auto& rosterPair : entityRoster) {
+                RosterEntry& rosterEntry = rosterPair.second;
+                const OW::c_entity& rosterEntity = rosterEntry.entity;
+                if (!rosterEntity.address || !rosterEntity.LinkParent)
+                    continue;
+                if (scheduledRawComponents.find(rosterEntity.address) != scheduledRawComponents.end())
+                    continue;
+                if (rosterEntry.lastScanSeenTick == 0) {
+                    rosterEntry.lastScanSeenTick = rosterEntity.last_scan_seen_tick_ms != 0
+                        ? rosterEntity.last_scan_seen_tick_ms
+                        : rosterEntity.last_seen_tick_ms;
+                }
+                if (rosterEntry.lastHotReadTick == 0) {
+                    rosterEntry.lastHotReadTick = rosterEntity.last_hot_read_tick_ms != 0
+                        ? rosterEntity.last_hot_read_tick_ms
+                        : rosterEntity.last_seen_tick_ms;
+                }
+
+                const DWORD scanGapMs = rosterEntry.lastScanSeenTick != 0
+                    ? processLoopTick - rosterEntry.lastScanSeenTick
+                    : hardRescanGapMs + 1;
+                const DWORD estimatedScanMissCount = scanGapMs == 0
+                    ? 1
+                    : (scanGapMs + OW::kEntityScanIntervalMs - 1) / OW::kEntityScanIntervalMs;
+                const bool aliveHotReadable =
+                    rosterEntity.roster_state == OW::EntityRosterState::Fresh &&
+                    rosterEntity.Alive &&
+                    rosterEntity.PlayerHealth > 0.0f &&
+                    hasRenderableAnchor(rosterEntity);
+                if (!aliveHotReadable)
+                    continue;
+
+                if (scanGapMs <= hardRescanGapMs &&
+                    estimatedScanMissCount <= scanMissGraceCount) {
+                    if (scanGapMs >= softRefreshGapMs)
+                        ++lifecycleStats.entityRecordScanMissSoftGapCount;
+                    rosterEntry.consecutiveScanMissCount = estimatedScanMissCount;
+                    rosterEntry.hotReadRetainedThisCycle = true;
+                    raw_entities.emplace_back(rosterEntity.address, rosterEntity.LinkParent);
+                    scheduledRawComponents.insert(rosterEntity.address);
+                    scanMissHotReadComponents.insert(rosterEntity.address);
+                    ++lifecycleStats.entityRecordScanMissGraceAppendCount;
+                } else {
+                    if (scanGapMs > hardRescanGapMs)
+                        ++lifecycleStats.entityRecordScanMissHardGapCount;
+                    ++lifecycleStats.entityRecordScanMissGraceDropCount;
+                }
+            }
+        }
 
         // No entities available
         if (raw_entities.empty()) {
@@ -4605,6 +4747,10 @@ inline void entity_thread() {
             }
             const bool hasRenderablePosition =
                 !OW::offset::IsCnNeProfile() || hasRenderableAnchor(entity);
+            const bool scanSeenThisCycle =
+                rawScanSeenComponents.find(ComponentParent) != rawScanSeenComponents.end();
+            const bool scanMissHotRead =
+                scanMissHotReadComponents.find(ComponentParent) != scanMissHotReadComponents.end();
             if (ComponentParent && LinkParent && name != "Unknown" && hasRenderablePosition) {
                 entity.roster_state = entity.Alive
                     ? OW::EntityRosterState::Fresh
@@ -4645,6 +4791,27 @@ inline void entity_thread() {
                     }
                 }
                 RosterEntry& rosterEntry = entityRoster[entity.roster_key];
+                if (rosterEntry.lastScanSeenTick == 0 && entity.last_scan_seen_tick_ms != 0)
+                    rosterEntry.lastScanSeenTick = entity.last_scan_seen_tick_ms;
+                if (rosterEntry.lastHotReadTick == 0 && entity.last_hot_read_tick_ms != 0)
+                    rosterEntry.lastHotReadTick = entity.last_hot_read_tick_ms;
+                if (scanSeenThisCycle) {
+                    rosterEntry.lastScanSeenTick = processLoopTick;
+                    rosterEntry.consecutiveScanMissCount = 0;
+                    rosterEntry.scanSeenThisCycle = true;
+                } else if (scanMissHotRead) {
+                    rosterEntry.hotReadRetainedThisCycle = true;
+                    scanMissHotReadSucceededComponents.insert(ComponentParent);
+                    ++lifecycleStats.entityRecordScanMissHotReadSuccessCount;
+                }
+                rosterEntry.lastHotReadTick = processLoopTick;
+                entity.last_scan_seen_tick_ms = rosterEntry.lastScanSeenTick;
+                entity.last_hot_read_tick_ms = rosterEntry.lastHotReadTick;
+                entity.scan_seen_gap_ms =
+                    rosterEntry.lastScanSeenTick != 0 ? processLoopTick - rosterEntry.lastScanSeenTick : 0;
+                entity.hot_read_gap_ms =
+                    rosterEntry.lastHotReadTick != 0 ? processLoopTick - rosterEntry.lastHotReadTick : 0;
+                entity.consecutive_scan_miss_count = rosterEntry.consecutiveScanMissCount;
 
                 if (entity.roster_state == OW::EntityRosterState::Fresh &&
                     shouldSkipTeleportObservation(entity, rosterEntry, processLoopTick)) {
@@ -4654,6 +4821,11 @@ inline void entity_thread() {
                         held.missing_since_tick_ms = 0;
                         held.roster_state = OW::EntityRosterState::Fresh;
                         held.velocity = Vector3(0, 0, 0);
+                        held.last_scan_seen_tick_ms = rosterEntry.lastScanSeenTick;
+                        held.last_hot_read_tick_ms = rosterEntry.lastHotReadTick;
+                        held.scan_seen_gap_ms = entity.scan_seen_gap_ms;
+                        held.hot_read_gap_ms = entity.hot_read_gap_ms;
+                        held.consecutive_scan_miss_count = rosterEntry.consecutiveScanMissCount;
                         resetRenderHistory(held, processLoopTick);
                         rosterEntry.entity = held;
                         rosterEntry.seenThisCycle = true;
@@ -4702,6 +4874,13 @@ inline void entity_thread() {
             }
         }
 
+        }
+
+        for (const uint64_t componentParent : scanMissHotReadComponents) {
+            if (scanMissHotReadSucceededComponents.find(componentParent) ==
+                scanMissHotReadSucceededComponents.end()) {
+                ++lifecycleStats.entityRecordScanMissHotReadFailCount;
+            }
         }
 
         if (hotFieldScatter)

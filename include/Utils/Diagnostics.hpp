@@ -718,6 +718,12 @@ struct EntityLifecycleStats {
     size_t entityRecordMarkMissingCount = 0;
     size_t entityRecordMarkDeadCount = 0;
     size_t entityRecordExpiredCount = 0;
+    size_t entityRecordScanMissSoftGapCount = 0;
+    size_t entityRecordScanMissHardGapCount = 0;
+    size_t entityRecordScanMissGraceAppendCount = 0;
+    size_t entityRecordScanMissGraceDropCount = 0;
+    size_t entityRecordScanMissHotReadSuccessCount = 0;
+    size_t entityRecordScanMissHotReadFailCount = 0;
 
     size_t componentCacheHitCount = 0;
     size_t componentCacheMissCount = 0;

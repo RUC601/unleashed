@@ -73,6 +73,11 @@ namespace OW {
         uint32_t match_id = 0;
         uint32_t last_seen_tick_ms = 0;
         uint32_t missing_since_tick_ms = 0;
+        uint32_t last_scan_seen_tick_ms = 0;
+        uint32_t last_hot_read_tick_ms = 0;
+        uint32_t scan_seen_gap_ms = 0;
+        uint32_t hot_read_gap_ms = 0;
+        uint32_t consecutive_scan_miss_count = 0;
 
         bool   skill1act = false;
         bool   skill2act = false;

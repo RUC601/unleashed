@@ -117,6 +117,9 @@ $envGates = [ordered]@{
     UN_DMA_CN_NE_MAP_DIAG = Get-EnvGateValue 'UN_DMA_CN_NE_MAP_DIAG'
     UN_DMA_ENTITY_RECORD_STORE = Get-EnvGateValue 'UN_DMA_ENTITY_RECORD_STORE'
     UN_DMA_BASE_DECRYPT_LIFETIME_ONLY = Get-EnvGateValue 'UN_DMA_BASE_DECRYPT_LIFETIME_ONLY'
+    UN_DMA_ENTITY_SOFT_REFRESH_GAP_MS = Get-EnvGateValue 'UN_DMA_ENTITY_SOFT_REFRESH_GAP_MS'
+    UN_DMA_ENTITY_HARD_RESCAN_GAP_MS = Get-EnvGateValue 'UN_DMA_ENTITY_HARD_RESCAN_GAP_MS'
+    UN_DMA_ENTITY_SCAN_MISS_GRACE_COUNT = Get-EnvGateValue 'UN_DMA_ENTITY_SCAN_MISS_GRACE_COUNT'
     UN_DMA_SKILL_REFRESH_BUDGET = Get-EnvGateValue 'UN_DMA_SKILL_REFRESH_BUDGET'
     UN_DMA_TEAM_NAME_REFRESH_BUDGET = Get-EnvGateValue 'UN_DMA_TEAM_NAME_REFRESH_BUDGET'
     UN_DMA_SKELETON_REFRESH_BUDGET = Get-EnvGateValue 'UN_DMA_SKELETON_REFRESH_BUDGET'
@@ -171,6 +174,9 @@ $preflight = [ordered]@{
             cn_ne_component_negative_cache_ttl_ms = if ($rCounters) { As-Int64OrZero $rCounters.cn_ne_component_negative_cache_ttl_ms } else { $null }
             cn_ne_component_negative_cache_refresh_budget = if ($rCounters) { As-Int64OrZero $rCounters.cn_ne_component_negative_cache_refresh_budget } else { $null }
             record_store_enabled = if ($rPipeline -and $rPipeline.lifecycle) { [bool]$rPipeline.lifecycle.record_store_enabled } else { $null }
+            entity_soft_refresh_gap_ms_env = $envGates.UN_DMA_ENTITY_SOFT_REFRESH_GAP_MS
+            entity_hard_rescan_gap_ms_env = $envGates.UN_DMA_ENTITY_HARD_RESCAN_GAP_MS
+            entity_scan_miss_grace_count_env = $envGates.UN_DMA_ENTITY_SCAN_MISS_GRACE_COUNT
         }
     } else {
         $null
@@ -197,7 +203,7 @@ Write-Host ("Preflight: health_ok={0} diagnostics_ok={1} process_connected={2} s
     $preflight.process_connected,
     $preflight.process_status)
 if ($preflight.runtime_gates) {
-    Write-Host ("Runtime gates: map_cache={0} persist_cache={1}/{2}ms refresh_budget={3} match_id_header={4} root_cache={5}/{6}ms list_neg={7}/{8}ms list_read_cache={9}/{10}ms stale_meta={11}ms stale_only={12} chunk={13} record_snapshot={14}/{15}ms/b{16} link_neg={17}/{18}ms comp_neg={19}/{20}ms/b{21} vm_sleep={22}ms vm_scan_backoff={23}ms vm_due_guard={24}ms map_diag={25} light_scan={26} record_store={27}" -f `
+    Write-Host ("Runtime gates: map_cache={0} persist_cache={1}/{2}ms refresh_budget={3} match_id_header={4} root_cache={5}/{6}ms list_neg={7}/{8}ms list_read_cache={9}/{10}ms stale_meta={11}ms stale_only={12} chunk={13} record_snapshot={14}/{15}ms/b{16} link_neg={17}/{18}ms comp_neg={19}/{20}ms/b{21} vm_sleep={22}ms vm_scan_backoff={23}ms vm_due_guard={24}ms map_diag={25} light_scan={26} record_store={27} entity_gap_env={28}/{29}ms miss_grace_env={30}" -f `
         $preflight.runtime_gates.cn_ne_map_candidate_cache_enabled,
         $preflight.runtime_gates.cn_ne_map_candidate_persistent_cache_enabled,
         $preflight.runtime_gates.cn_ne_map_candidate_persistent_cache_ttl_ms,
@@ -225,7 +231,10 @@ if ($preflight.runtime_gates) {
         $preflight.runtime_gates.viewmatrix_scan_due_guard_ms,
         $preflight.runtime_gates.cn_ne_map_diag_enabled,
         $preflight.runtime_gates.light_scan_enabled,
-        $preflight.runtime_gates.record_store_enabled)
+        $preflight.runtime_gates.record_store_enabled,
+        $preflight.runtime_gates.entity_soft_refresh_gap_ms_env,
+        $preflight.runtime_gates.entity_hard_rescan_gap_ms_env,
+        $preflight.runtime_gates.entity_scan_miss_grace_count_env)
 }
 
 while ((Get-Date) -lt $deadline) {
@@ -597,6 +606,12 @@ while ((Get-Date) -lt $deadline) {
             entity_record_mark_missing_count = As-Int64OrZero $pipeLifecycle.entity_record_mark_missing_count
             entity_record_mark_dead_count = As-Int64OrZero $pipeLifecycle.entity_record_mark_dead_count
             entity_record_expired_count = As-Int64OrZero $pipeLifecycle.entity_record_expired_count
+            entity_record_scan_miss_soft_gap_count = As-Int64OrZero $pipeLifecycle.entity_record_scan_miss_soft_gap_count
+            entity_record_scan_miss_hard_gap_count = As-Int64OrZero $pipeLifecycle.entity_record_scan_miss_hard_gap_count
+            entity_record_scan_miss_grace_append_count = As-Int64OrZero $pipeLifecycle.entity_record_scan_miss_grace_append_count
+            entity_record_scan_miss_grace_drop_count = As-Int64OrZero $pipeLifecycle.entity_record_scan_miss_grace_drop_count
+            entity_record_scan_miss_hot_read_success_count = As-Int64OrZero $pipeLifecycle.entity_record_scan_miss_hot_read_success_count
+            entity_record_scan_miss_hot_read_fail_count = As-Int64OrZero $pipeLifecycle.entity_record_scan_miss_hot_read_fail_count
             component_cache_hit_count = As-Int64OrZero $pipeLifecycle.component_cache_hit_count
             component_cache_miss_count = As-Int64OrZero $pipeLifecycle.component_cache_miss_count
             component_cache_invalidate_interval_count = As-Int64OrZero $pipeLifecycle.component_cache_invalidate_interval_count
@@ -1223,6 +1238,12 @@ $summary = [ordered]@{
     entity_record_mark_missing_count = Measure-SampleField $samples 'entity_record_mark_missing_count'
     entity_record_mark_dead_count = Measure-SampleField $samples 'entity_record_mark_dead_count'
     entity_record_expired_count = Measure-SampleField $samples 'entity_record_expired_count'
+    entity_record_scan_miss_soft_gap_count = Measure-SampleField $samples 'entity_record_scan_miss_soft_gap_count'
+    entity_record_scan_miss_hard_gap_count = Measure-SampleField $samples 'entity_record_scan_miss_hard_gap_count'
+    entity_record_scan_miss_grace_append_count = Measure-SampleField $samples 'entity_record_scan_miss_grace_append_count'
+    entity_record_scan_miss_grace_drop_count = Measure-SampleField $samples 'entity_record_scan_miss_grace_drop_count'
+    entity_record_scan_miss_hot_read_success_count = Measure-SampleField $samples 'entity_record_scan_miss_hot_read_success_count'
+    entity_record_scan_miss_hot_read_fail_count = Measure-SampleField $samples 'entity_record_scan_miss_hot_read_fail_count'
     component_cache_hit_count = Measure-SampleField $samples 'component_cache_hit_count'
     component_cache_miss_count = Measure-SampleField $samples 'component_cache_miss_count'
     component_cache_invalidate_interval_count = Measure-SampleField $samples 'component_cache_invalidate_interval_count'
