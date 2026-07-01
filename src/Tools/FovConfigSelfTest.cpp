@@ -100,13 +100,17 @@ int main()
         return Fail();
 
     OW::offset::SetActiveProfile(OW::offset::RuntimeProfile::CnNe);
-    if (OW::offset::TeamComparisonKeyFromFlags(0x208D4041) != 0x8D4041)
+    if (OW::offset::TeamComparisonKeyFromFlags(0x208D4041) != 0x00800000)
         return Fail();
-    if (OW::offset::TeamComparisonKeyFromFlags(0x210D4041) != 0x0D4041)
+    if (OW::offset::TeamComparisonKeyFromFlags(0x208D4043) != 0x00800000)
+        return Fail();
+    if (OW::offset::TeamComparisonKeyFromFlags(0x210D4043) != 0x01000000)
         return Fail();
     if (OW::offset::TeamRawComparisonKeyFromFlags(0x208D4041) != 0x8D4041)
         return Fail();
-    if (OW::offset::TeamRawComparisonKeyFromFlags(0x210D4041) != 0x0D4041)
+    if (OW::offset::TeamRawComparisonKeyFromFlags(0x208D4043) != 0x8D4043)
+        return Fail();
+    if (OW::offset::TeamRawComparisonKeyFromFlags(0x210D4043) != 0x0D4043)
         return Fail();
     if (OW::offset::TeamRelationCodeFromFlags(0x208D4041) != 0x41)
         return Fail();

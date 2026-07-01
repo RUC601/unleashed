@@ -383,8 +383,9 @@ namespace OW {
 
         inline uint32_t TeamComparisonKeyFromFlags(uint32_t flags)
         {
-            if (IsCnNeProfile())
-                return flags & Team_CnNeComparisonMask;
+            // CN/NE 151177 keeps relation bits in the low byte. Live 5v5 data
+            // shows allies can differ as 0x...41 vs 0x...43 while sharing the
+            // legacy team bits, so compare only the stable team mask here.
             return flags & Team_LegacyMask;
         }
 
