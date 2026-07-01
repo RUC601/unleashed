@@ -3686,7 +3686,7 @@ inline void entity_thread() {
                         totalHealthMax <= 10000.0f &&
                         totalHealth >= 0.0f &&
                         totalHealth <= totalHealthMax + 2000.0f;
-                    if (offset::IsCnNeProfile() && !plausibleHealthLayout) {
+                    if (!plausibleHealthLayout) {
                         dmaFieldWindow.healthLayoutFail++;
                         requestTopologyRescan(processLoopTick);
                         invalidateEntityRecordBasesForComponent(ComponentParent);
@@ -3697,27 +3697,15 @@ inline void entity_thread() {
                         Diagnostics::RecordInvalidEntity();
                         continue;
                     }
-                    if (!offset::IsCnNeProfile() && !plausibleHealthLayout) {
-                        componentCache.playerHealth = 1.0f;
-                        componentCache.playerHealthMax = 1.0f;
-                        componentCache.minHealth = 1.0f;
-                        componentCache.maxHealth = 1.0f;
-                        componentCache.minArmorHealth = 0.0f;
-                        componentCache.maxArmorHealth = 0.0f;
-                        componentCache.minBarrierHealth = 0.0f;
-                        componentCache.maxBarrierHealth = 0.0f;
-                        componentCache.alive = true;
-                    } else {
-                        componentCache.playerHealth = totalHealth;
-                        componentCache.playerHealthMax = totalHealthMax;
-                        componentCache.minHealth = health_compo.health;
-                        componentCache.maxHealth = health_compo.health_max;
-                        componentCache.minArmorHealth = health_compo.armor;
-                        componentCache.maxArmorHealth = health_compo.armor_max;
-                        componentCache.minBarrierHealth = health_compo.barrier;
-                        componentCache.maxBarrierHealth = health_compo.barrier_max;
-                        componentCache.alive = componentCache.playerHealth > 0.f;
-                    }
+                    componentCache.playerHealth = totalHealth;
+                    componentCache.playerHealthMax = totalHealthMax;
+                    componentCache.minHealth = health_compo.health;
+                    componentCache.maxHealth = health_compo.health_max;
+                    componentCache.minArmorHealth = health_compo.armor;
+                    componentCache.maxArmorHealth = health_compo.armor_max;
+                    componentCache.minBarrierHealth = health_compo.barrier;
+                    componentCache.maxBarrierHealth = health_compo.barrier_max;
+                    componentCache.alive = componentCache.playerHealth > 0.f;
                     componentCache.imort = health_compo.isImmortal;
                     componentCache.barrprot = health_compo.isBarrierProjected;
                     componentCache.healthUpdateTick = processLoopTick;
@@ -4314,7 +4302,7 @@ inline void entity_thread() {
                 const auto teamReadStartedAt = std::chrono::steady_clock::now();
                 auto team = entity.GetTeam();
                 entity.Team = (team == OW::eTeam::TEAM_DEATHMATCH || !entity.SameTeamAs(localCycleSnapshot));
-                if (OW::offset::IsCnNeProfile() && OW::GameData::IsFriendlyTrainingBotHeroId(entity.HeroID))
+                if (OW::GameData::IsFriendlyTrainingBotHeroId(entity.HeroID))
                     entity.Team = false;
                 const double teamReadMs = static_cast<double>(
                     std::chrono::duration_cast<std::chrono::microseconds>(

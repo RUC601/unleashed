@@ -122,11 +122,15 @@ int main()
         return Fail();
     if (OW::GameData::IsFriendlyTrainingBotHeroId(OW::GameData::MakeHeroId(0x33C)))
         return Fail();
+    if (OW::GameData::UnknownHeroFallbackName(0x1234) != "BzHero_1234")
+        return Fail();
 
     OW::offset::SetActiveProfile(OW::offset::RuntimeProfile::WorldBz);
     if (OW::offset::TeamComparisonKeyFromFlags(0x208D4041) != 0x00800000)
         return Fail();
     if (OW::offset::TeamComparisonKeyFromFlags(0x210D4043) != 0x01000000)
+        return Fail();
+    if (OW::GameData::UnknownHeroFallbackName(0x1234) != "BzHero_1234")
         return Fail();
 
     return EXIT_SUCCESS;

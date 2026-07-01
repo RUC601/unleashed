@@ -4075,8 +4075,7 @@ std::string BuildLocalJson()
     std::vector<std::string> warnings;
     const OW::c_entity local = OW::TargetingDetail::SnapshotLocalEntity();
     const OW::TargetingDetail::FovRuntimeContext fov = OW::TargetingDetail::SnapshotFovRuntimeContext();
-    const OW::HeroPerks::State perk =
-        OW::HeroPerks::ReadCurrent(local.HeroID, local.SkillBase, local.address);
+    const OW::HeroPerks::State perk{};
     const bool hasLocal = local.address != 0 || local.HeroID != 0 || local.LinkBase != 0;
     if (!hasLocal)
         warnings.emplace_back("local entity snapshot is unavailable");
@@ -5309,6 +5308,8 @@ void HandleClient(SOCKET clientSocket)
     DWORD timeoutMs = 1000;
     setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO,
         reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+    setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO,
+        reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
 
     std::string request;
     request.reserve(2048);
@@ -5337,6 +5338,12 @@ void HandleClient(SOCKET clientSocket)
     SendHttpResponse(clientSocket, statusCode, body);
 }
 
+void HandleClientAndClose(SOCKET clientSocket)
+{
+    HandleClient(clientSocket);
+    closesocket(clientSocket);
+}
+
 void ServerLoop(SOCKET listenSocket, std::shared_ptr<std::atomic<bool>> runFlag, uint16_t port)
 {
     Diagnostics::Info("Unleashed test server listening on %s:%u.", kBindAddress, port);
@@ -5355,8 +5362,7 @@ void ServerLoop(SOCKET listenSocket, std::shared_ptr<std::atomic<bool>> runFlag,
             continue;
         }
 
-        HandleClient(clientSocket);
-        closesocket(clientSocket);
+        std::thread(HandleClientAndClose, clientSocket).detach();
     }
     Diagnostics::Info("Unleashed test server stopped.");
 }

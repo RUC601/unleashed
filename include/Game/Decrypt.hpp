@@ -2926,11 +2926,8 @@ namespace OW {
                         static_cast<unsigned long long>(HeroID & 0xFFFFull));
                     return fallback;
                 }
-                if (!offset::IsCnNeProfile() && HeroID != 0) {
-                    char fallback[24] = {};
-                    std::snprintf(fallback, sizeof(fallback), "BzHero_%04llX",
-                        static_cast<unsigned long long>(HeroID & 0xFFFFull));
-                    return fallback;
+                if (HeroID != 0) {
+                    return GameData::UnknownHeroFallbackName(HeroID);
                 }
                 return "Unknown";
         }

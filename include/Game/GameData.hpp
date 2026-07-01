@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 
 namespace OW::GameData {
 
@@ -210,6 +212,13 @@ constexpr bool Contains(const NamedU64 (&items)[N], uint64_t value) noexcept {
 
 constexpr const char* HeroName(uint64_t heroId) noexcept {
     return FindName(kHeroIds, heroId);
+}
+
+inline std::string UnknownHeroFallbackName(uint64_t heroId) {
+    char fallback[24] = {};
+    std::snprintf(fallback, sizeof(fallback), "BzHero_%04llX",
+        static_cast<unsigned long long>(heroId & 0xFFFFull));
+    return fallback;
 }
 
 constexpr bool IsKnownHeroId(uint64_t heroId) noexcept {

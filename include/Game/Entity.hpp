@@ -154,12 +154,6 @@ namespace OW {
         }
 
         bool SameTeamAs(const c_entity& other) const {
-            if (OW::offset::IsCnNeProfile()) {
-                const uint32_t selfKey = GetTeamComparisonKey();
-                const uint32_t otherKey = other.GetTeamComparisonKey();
-                if (selfKey != 0 && otherKey != 0)
-                    return selfKey == otherKey;
-            }
             return GetTeam() == other.GetTeam();
         }
 
