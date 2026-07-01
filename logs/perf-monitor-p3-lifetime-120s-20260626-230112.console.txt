@@ -1,0 +1,1037 @@
+Sampling http://127.0.0.1:19550/api/diagnostics for 120 seconds every 2 seconds...
+23:01:13 fps=0.0 vm_pub=0.0Hz/0ms vm_use=0ms ent_pub=0.0Hz/297ms entities=0 pred=0/0 vm=False screen=1,920x1,080 sample=(0,0) render=0.00ms copy=0.000ms rt_dmatotal=0
+23:01:15 fps=410.2 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=62.5Hz/0ms entities=0 pred=0/0 vm=True screen=1,920x1,080 sample=(0,0) render=0.02ms copy=0.000ms rt_dmatotal=8825
+23:01:17 fps=228.9 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=9.1Hz/15ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1436,520) render=0.82ms copy=0.003ms rt_dmatotal=22143
+23:01:19 fps=291.7 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=8.0Hz/31ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1498,517) render=0.75ms copy=0.002ms rt_dmatotal=33369
+23:01:21 fps=285.0 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=9.1Hz/47ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1457,520) render=0.73ms copy=0.001ms rt_dmatotal=46530
+23:01:23 fps=288.1 vm_pub=66.7Hz/16ms vm_use=16ms ent_pub=10.8Hz/63ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1363,524) render=0.82ms copy=0.002ms rt_dmatotal=59648
+23:01:25 fps=287.5 vm_pub=62.5Hz/16ms vm_use=16ms ent_pub=9.2Hz/16ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1259,498) render=0.78ms copy=0.002ms rt_dmatotal=71088
+23:01:27 fps=287.5 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=10.6Hz/63ms entities=17 pred=4/1 vm=True screen=1,920x1,080 sample=(1260,499) render=0.96ms copy=0.001ms rt_dmatotal=84272
+23:01:29 fps=295.8 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=10.6Hz/62ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1357,524) render=0.83ms copy=0.002ms rt_dmatotal=97355
+23:01:31 fps=271.8 vm_pub=62.5Hz/0ms vm_use=16ms ent_pub=15.9Hz/31ms entities=17 pred=4/1 vm=True screen=1,920x1,080 sample=(1456,520) render=1.07ms copy=0.002ms rt_dmatotal=110441
+23:01:33 fps=254.9 vm_pub=62.5Hz/16ms vm_use=16ms ent_pub=21.3Hz/32ms entities=17 pred=4/1 vm=True screen=1,920x1,080 sample=(1498,517) render=0.75ms copy=0.004ms rt_dmatotal=123508
+23:01:35 fps=254.5 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=10.6Hz/78ms entities=18 pred=3/1 vm=True screen=1,920x1,080 sample=(1438,521) render=1.23ms copy=0.003ms rt_dmatotal=134153
+23:01:37 fps=277.9 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=10.6Hz/78ms entities=19 pred=4/1 vm=True screen=1,920x1,080 sample=(1344,522) render=0.84ms copy=0.002ms rt_dmatotal=147042
+23:01:39 fps=257.4 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=10.6Hz/31ms entities=19 pred=4/1 vm=True screen=1,920x1,080 sample=(1252,498) render=1.03ms copy=0.002ms rt_dmatotal=160365
+23:01:41 fps=271.1 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=9.2Hz/78ms entities=19 pred=3/1 vm=True screen=1,920x1,080 sample=(1277,497) render=0.94ms copy=0.002ms rt_dmatotal=172236
+23:01:43 fps=81.4 vm_pub=66.7Hz/16ms vm_use=0ms ent_pub=9.2Hz/47ms entities=19 pred=5/1 vm=True screen=1,920x1,080 sample=(1382,524) render=8.54ms copy=0.002ms rt_dmatotal=185418
+23:01:45 fps=83.6 vm_pub=5.8Hz/31ms vm_use=31ms ent_pub=10.6Hz/250ms entities=17 pred=0/0 vm=True screen=1,920x1,080 sample=(1461,520) render=7.93ms copy=0.003ms rt_dmatotal=197504
+23:01:47 fps=83.7 vm_pub=62.5Hz/16ms vm_use=0ms ent_pub=16.1Hz/63ms entities=17 pred=2/1 vm=True screen=1,920x1,080 sample=(1494,517) render=8.42ms copy=0.002ms rt_dmatotal=210208
+23:01:49 fps=75.8 vm_pub=62.5Hz/15ms vm_use=15ms ent_pub=9.1Hz/93ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1418,521) render=8.89ms copy=0.003ms rt_dmatotal=223102
+23:01:51 fps=71.1 vm_pub=62.5Hz/0ms vm_use=16ms ent_pub=12.8Hz/63ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1324,507) render=8.16ms copy=0.002ms rt_dmatotal=235777
+23:01:53 fps=83.7 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=12.8Hz/31ms entities=17 pred=1/1 vm=True screen=1,920x1,080 sample=(1252,498) render=9.51ms copy=0.002ms rt_dmatotal=249050
+23:01:55 fps=84.7 vm_pub=62.5Hz/0ms vm_use=16ms ent_pub=9.2Hz/63ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1305,496) render=8.11ms copy=0.002ms rt_dmatotal=262364
+23:01:58 fps=85.9 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=12.8Hz/31ms entities=17 pred=4/1 vm=True screen=1,920x1,080 sample=(1406,522) render=8.43ms copy=0.002ms rt_dmatotal=273857
+23:02:00 fps=80.4 vm_pub=66.7Hz/16ms vm_use=16ms ent_pub=9.2Hz/16ms entities=19 pred=3/1 vm=True screen=1,920x1,080 sample=(1495,518) render=8.62ms copy=0.003ms rt_dmatotal=287271
+23:02:02 fps=79.9 vm_pub=62.5Hz/15ms vm_use=0ms ent_pub=8.0Hz/15ms entities=19 pred=5/1 vm=True screen=1,920x1,080 sample=(1483,517) render=9.62ms copy=0.003ms rt_dmatotal=300207
+23:02:04 fps=76.3 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=16.1Hz/31ms entities=19 pred=5/1 vm=True screen=1,920x1,080 sample=(1393,522) render=7.88ms copy=0.003ms rt_dmatotal=313503
+23:02:06 fps=82.0 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=12.7Hz/62ms entities=17 pred=2/1 vm=True screen=1,920x1,080 sample=(1303,494) render=7.96ms copy=0.003ms rt_dmatotal=324485
+23:02:08 fps=75.1 vm_pub=62.5Hz/16ms vm_use=16ms ent_pub=16.1Hz/110ms entities=17 pred=4/1 vm=True screen=1,920x1,080 sample=(1252,498) render=8.01ms copy=0.002ms rt_dmatotal=337377
+23:02:10 fps=83.6 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=10.8Hz/32ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1327,511) render=7.64ms copy=0.002ms rt_dmatotal=350887
+23:02:12 fps=83.8 vm_pub=62.5Hz/15ms vm_use=0ms ent_pub=15.9Hz/62ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1425,521) render=8.17ms copy=0.002ms rt_dmatotal=364019
+23:02:14 fps=78.7 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=16.1Hz/47ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1497,517) render=7.60ms copy=0.001ms rt_dmatotal=375892
+23:02:16 fps=89.2 vm_pub=66.7Hz/16ms vm_use=16ms ent_pub=16.1Hz/47ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1465,519) render=8.34ms copy=0.003ms rt_dmatotal=389090
+23:02:18 fps=82.3 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=4.9Hz/16ms entities=17 pred=1/0 vm=True screen=1,920x1,080 sample=(1380,523) render=8.83ms copy=0.002ms rt_dmatotal=400836
+23:02:20 fps=78.0 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=4.6Hz/78ms entities=19 pred=0/0 vm=True screen=1,920x1,080 sample=(1292,497) render=10.46ms copy=0.003ms rt_dmatotal=413489
+23:02:22 fps=69.6 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=8.0Hz/47ms entities=19 pred=4/1 vm=True screen=1,920x1,080 sample=(1252,497) render=9.09ms copy=0.003ms rt_dmatotal=426449
+23:02:24 fps=67.5 vm_pub=62.5Hz/0ms vm_use=16ms ent_pub=12.8Hz/94ms entities=19 pred=2/1 vm=True screen=1,920x1,080 sample=(1343,522) render=9.76ms copy=0.003ms rt_dmatotal=439793
+23:02:26 fps=86.2 vm_pub=62.5Hz/15ms vm_use=0ms ent_pub=8.0Hz/62ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1443,520) render=9.05ms copy=0.002ms rt_dmatotal=453023
+23:02:28 fps=82.0 vm_pub=66.7Hz/16ms vm_use=16ms ent_pub=12.8Hz/47ms entities=17 pred=4/1 vm=True screen=1,920x1,080 sample=(1498,517) render=9.03ms copy=0.001ms rt_dmatotal=466218
+23:02:30 fps=81.6 vm_pub=62.5Hz/16ms vm_use=16ms ent_pub=10.6Hz/94ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1448,520) render=9.42ms copy=0.003ms rt_dmatotal=477942
+23:02:32 fps=83.1 vm_pub=62.5Hz/0ms vm_use=16ms ent_pub=8.0Hz/78ms entities=17 pred=5/1 vm=True screen=1,920x1,080 sample=(1357,525) render=7.85ms copy=0.002ms rt_dmatotal=490856
+23:02:34 fps=78.2 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=10.8Hz/32ms entities=17 pred=4/1 vm=True screen=1,920x1,080 sample=(1252,499) render=8.30ms copy=0.003ms rt_dmatotal=504281
+23:02:36 fps=76.3 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=16.1Hz/31ms entities=18 pred=3/1 vm=True screen=1,920x1,080 sample=(1268,497) render=9.76ms copy=0.003ms rt_dmatotal=516721
+23:02:38 fps=70.5 vm_pub=62.5Hz/0ms vm_use=16ms ent_pub=8.0Hz/31ms entities=19 pred=5/1 vm=True screen=1,920x1,080 sample=(1368,524) render=9.80ms copy=0.003ms rt_dmatotal=530033
+23:02:40 fps=66.9 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=10.8Hz/79ms entities=20 pred=4/1 vm=True screen=1,920x1,080 sample=(1463,520) render=9.89ms copy=0.002ms rt_dmatotal=542150
+23:02:42 fps=69.5 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=9.1Hz/78ms entities=20 pred=2/1 vm=True screen=1,920x1,080 sample=(1497,517) render=9.63ms copy=0.003ms rt_dmatotal=555461
+23:02:44 fps=69.3 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=8.0Hz/31ms entities=21 pred=4/1 vm=True screen=1,920x1,080 sample=(1425,521) render=10.42ms copy=0.003ms rt_dmatotal=568738
+23:02:46 fps=69.9 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=15.9Hz/15ms entities=19 pred=5/1 vm=True screen=1,920x1,080 sample=(1331,513) render=10.08ms copy=0.003ms rt_dmatotal=582032
+23:02:48 fps=73.2 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=15.9Hz/78ms entities=19 pred=2/1 vm=True screen=1,920x1,080 sample=(1251,498) render=9.87ms copy=0.003ms rt_dmatotal=595194
+23:02:50 fps=83.5 vm_pub=62.5Hz/16ms vm_use=0ms ent_pub=12.8Hz/16ms entities=18 pred=5/1 vm=True screen=1,920x1,080 sample=(1296,497) render=8.80ms copy=0.003ms rt_dmatotal=606705
+23:02:52 fps=82.3 vm_pub=62.5Hz/0ms vm_use=16ms ent_pub=12.8Hz/32ms entities=18 pred=4/1 vm=True screen=1,920x1,080 sample=(1395,523) render=8.99ms copy=0.003ms rt_dmatotal=619964
+23:02:54 fps=68.0 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=16.1Hz/0ms entities=18 pred=3/1 vm=True screen=1,920x1,080 sample=(1484,518) render=9.10ms copy=0.003ms rt_dmatotal=633327
+23:02:56 fps=77.1 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=10.8Hz/16ms entities=18 pred=5/1 vm=True screen=1,920x1,080 sample=(1490,518) render=8.00ms copy=0.004ms rt_dmatotal=645520
+23:02:58 fps=71.2 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=9.1Hz/47ms entities=20 pred=5/1 vm=True screen=1,920x1,080 sample=(1403,522) render=11.47ms copy=0.003ms rt_dmatotal=659094
+23:03:00 fps=77.4 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=3.6Hz/109ms entities=20 pred=0/0 vm=True screen=1,920x1,080 sample=(1327,510) render=11.26ms copy=0.003ms rt_dmatotal=670817
+23:03:02 fps=75.2 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=12.8Hz/0ms entities=19 pred=4/1 vm=True screen=1,920x1,080 sample=(1251,498) render=8.55ms copy=0.002ms rt_dmatotal=683787
+23:03:04 fps=78.1 vm_pub=66.7Hz/0ms vm_use=0ms ent_pub=10.8Hz/0ms entities=19 pred=4/1 vm=True screen=1,920x1,080 sample=(1313,503) render=9.13ms copy=0.002ms rt_dmatotal=697294
+23:03:06 fps=90.6 vm_pub=62.5Hz/0ms vm_use=16ms ent_pub=12.8Hz/31ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1414,522) render=10.85ms copy=0.003ms rt_dmatotal=710327
+23:03:08 fps=83.2 vm_pub=62.5Hz/16ms vm_use=0ms ent_pub=8.0Hz/78ms entities=17 pred=4/1 vm=True screen=1,920x1,080 sample=(1500,517) render=9.43ms copy=0.003ms rt_dmatotal=723373
+23:03:10 fps=75.7 vm_pub=62.5Hz/0ms vm_use=0ms ent_pub=10.6Hz/0ms entities=17 pred=5/2 vm=True screen=1,920x1,080 sample=(1472,518) render=9.19ms copy=0.002ms rt_dmatotal=734366
+23:03:12 fps=75.9 vm_pub=62.5Hz/15ms vm_use=15ms ent_pub=10.6Hz/62ms entities=17 pred=3/1 vm=True screen=1,920x1,080 sample=(1386,523) render=8.27ms copy=0.002ms rt_dmatotal=747275
+
+Summary:
+{
+  "started_at": "2026-06-26T23:01:13.5113660-07:00",
+  "ended_at": "2026-06-26T23:03:14.5181813-07:00",
+  "sample_count": 60,
+  "duration_seconds": 118.897,
+  "fps": {
+    "avg": 124.726,
+    "min": 0.0,
+    "max": 410.192
+  },
+  "render_fps": {
+    "avg": 124.726,
+    "min": 0.0,
+    "max": 410.192
+  },
+  "entity_process_hz": {
+    "avg": 11.631,
+    "min": 0.0,
+    "max": 40.844
+  },
+  "entity_scan_hz": {
+    "avg": 0.276,
+    "min": 0.0,
+    "max": 0.489
+  },
+  "entity_publish_hz": {
+    "avg": 11.947,
+    "min": 0.0,
+    "max": 62.5
+  },
+  "entity_publish_age_ms": {
+    "avg": 54.45,
+    "min": 0.0,
+    "max": 297.0
+  },
+  "scan_loop_hz": {
+    "avg": 1.13,
+    "min": 0.0,
+    "max": 2.498
+  },
+  "scan_due_hz": {
+    "avg": 1.13,
+    "min": 0.0,
+    "max": 2.498
+  },
+  "scan_started_hz": {
+    "avg": 0.288,
+    "min": 0.0,
+    "max": 0.496
+  },
+  "scan_completed_hz": {
+    "avg": 0.288,
+    "min": 0.0,
+    "max": 0.496
+  },
+  "scan_failed_delta": 0,
+  "scan_publish_attempt_delta": 34,
+  "scan_publish_success_delta": 34,
+  "scan_get_ow_entities_ms": {
+    "avg": 3257.709,
+    "min": 0.0,
+    "max": 3862.88
+  },
+  "scan_pending_age_ms": {
+    "avg": 17.683,
+    "min": 0.0,
+    "max": 47.0
+  },
+  "scan_root_ms": {
+    "avg": 0.633,
+    "min": 0.0,
+    "max": 1.794
+  },
+  "scan_list_read_ms": {
+    "avg": 14.483,
+    "min": 0.0,
+    "max": 173.752
+  },
+  "scan_slot_walk_ms": {
+    "avg": 0.001,
+    "min": 0.0,
+    "max": 0.005
+  },
+  "scan_record_build_ms": {
+    "avg": 951.284,
+    "min": 0.0,
+    "max": 1233.25
+  },
+  "scan_match_link_ms": {
+    "avg": 1006.379,
+    "min": 0.0,
+    "max": 1362.74
+  },
+  "scan_cn_ne_target_map_ms": {
+    "avg": 1868.969,
+    "min": 0.0,
+    "max": 2293.88
+  },
+  "scan_cn_ne_self_validation_ms": {
+    "avg": 13.369,
+    "min": 0.0,
+    "max": 21.832
+  },
+  "scan_component_only_validation_ms": {
+    "avg": 358.313,
+    "min": 0.0,
+    "max": 587.675
+  },
+  "scan_dynamic_pair_ms": {
+    "avg": 0.004,
+    "min": 0.0,
+    "max": 0.007
+  },
+  "scan_finalize_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_dma_reads_delta": {
+    "avg": 20649.3,
+    "min": 0.0,
+    "max": 22435.0
+  },
+  "scan_dma_fail_delta": {
+    "avg": 428.2,
+    "min": 0.0,
+    "max": 601.0
+  },
+  "scan_list_read_count": {
+    "avg": 50.267,
+    "min": 0.0,
+    "max": 52.0
+  },
+  "scan_list_read_fail_count": {
+    "avg": 35.767,
+    "min": 0.0,
+    "max": 37.0
+  },
+  "scan_list_fallback_read_count": {
+    "avg": 46.4,
+    "min": 0.0,
+    "max": 48.0
+  },
+  "scan_record_add_attempt_count": {
+    "avg": 7424.0,
+    "min": 0.0,
+    "max": 7680.0
+  },
+  "scan_record_duplicate_count": {
+    "avg": 0.75,
+    "min": 0.0,
+    "max": 4.0
+  },
+  "scan_record_header_read_count": {
+    "avg": 1052.85,
+    "min": 0.0,
+    "max": 1115.0
+  },
+  "scan_record_header_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_record_remote_fallback_read_count": {
+    "avg": 1054.567,
+    "min": 0.0,
+    "max": 1116.0
+  },
+  "scan_pool_id_read_count": {
+    "avg": 1052.85,
+    "min": 0.0,
+    "max": 1115.0
+  },
+  "scan_match_lookup_count": {
+    "avg": 16.2,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "scan_match_lookup_hit_count": {
+    "avg": 16.167,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "scan_add_pair_attempt_count": {
+    "avg": 40.533,
+    "min": 0.0,
+    "max": 43.0
+  },
+  "scan_add_pair_duplicate_count": {
+    "avg": 16.133,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "scan_link_decrypt_attempt_count": {
+    "avg": 1102.183,
+    "min": 0.0,
+    "max": 1165.0
+  },
+  "scan_link_decrypt_success_count": {
+    "avg": 16.2,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "scan_playable_validation_attempt_count": {
+    "avg": 1052.85,
+    "min": 0.0,
+    "max": 1115.0
+  },
+  "scan_playable_validation_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_cn_ne_map_candidate_count": {
+    "avg": 2204.25,
+    "min": 0.0,
+    "max": 2330.0
+  },
+  "scan_cn_ne_target_map_attempt_count": {
+    "avg": 32.4,
+    "min": 0.0,
+    "max": 34.0
+  },
+  "scan_cn_ne_target_map_success_count": {
+    "avg": 32.333,
+    "min": 0.0,
+    "max": 34.0
+  },
+  "scan_cn_ne_bucket_entry_scan_count": {
+    "avg": 16.167,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "scan_component_only_validation_attempt_count": {
+    "avg": 1102.067,
+    "min": 0.0,
+    "max": 1165.0
+  },
+  "scan_component_only_validation_success_count": {
+    "avg": 4.333,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "scan_skip_pending_delta": 112,
+  "scan_skip_not_due_delta": 0,
+  "scan_overwritten_delta": 0,
+  "scan_detail_records": {
+    "avg": 1052.85,
+    "min": 0.0,
+    "max": 1115.0
+  },
+  "scan_detail_total_pairs": {
+    "avg": 24.4,
+    "min": 0.0,
+    "max": 26.0
+  },
+  "scan_light_scan_enabled": false,
+  "scan_light_unvalidated_pairs": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_light_cap_hits_delta": 0,
+  "entity_cycle_ms": {
+    "avg": 93.908,
+    "min": 0.0,
+    "max": 280.985
+  },
+  "phase_consume_scan_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.003
+  },
+  "phase_previous_snapshot_copy_ms": {
+    "avg": 0.002,
+    "min": 0.0,
+    "max": 0.006
+  },
+  "phase_hot_scatter_prepare_ms": {
+    "avg": 0.027,
+    "min": 0.0,
+    "max": 0.107
+  },
+  "phase_hot_scatter_execute_ms": {
+    "avg": 5.594,
+    "min": 0.0,
+    "max": 12.123
+  },
+  "phase_base_cache_ms": {
+    "avg": 15.853,
+    "min": 0.0,
+    "max": 34.912
+  },
+  "phase_base_decrypt_ms": {
+    "avg": 10.427,
+    "min": 0.0,
+    "max": 19.716
+  },
+  "phase_health_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.003
+  },
+  "phase_hero_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.004
+  },
+  "phase_visibility_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.001
+  },
+  "phase_skeleton_ms": {
+    "avg": 11.761,
+    "min": 0.0,
+    "max": 24.694
+  },
+  "phase_skill_ms": {
+    "avg": 6.321,
+    "min": 0.0,
+    "max": 73.2
+  },
+  "phase_team_name_ms": {
+    "avg": 13.582,
+    "min": 0.0,
+    "max": 34.596
+  },
+  "phase_local_select_ms": {
+    "avg": 6.113,
+    "min": 0.0,
+    "max": 32.284
+  },
+  "phase_publish_ms": {
+    "avg": 0.011,
+    "min": 0.0,
+    "max": 0.016
+  },
+  "hot_scatter_requested_count": {
+    "avg": 76.35,
+    "min": 0.0,
+    "max": 87.0
+  },
+  "hot_scatter_prepare_requested_count": {
+    "avg": 76.35,
+    "min": 0.0,
+    "max": 87.0
+  },
+  "hot_scatter_prepare_success_count": {
+    "avg": 76.35,
+    "min": 0.0,
+    "max": 87.0
+  },
+  "hot_scatter_prepare_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_execute_count": {
+    "avg": 6.05,
+    "min": 0.0,
+    "max": 9.0
+  },
+  "hot_scatter_execute_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_execute_fail_delta": 0,
+  "hot_scatter_bytes_requested": {
+    "avg": 73575.933,
+    "min": 0.0,
+    "max": 86120.0
+  },
+  "hot_scatter_bytes_read": {
+    "avg": 73575.933,
+    "min": 0.0,
+    "max": 86120.0
+  },
+  "hot_scatter_short_read_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_short_read_delta": 0,
+  "hot_scatter_batch_items": {
+    "avg": 15.583,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "hot_scatter_batch_requests": {
+    "avg": 61.833,
+    "min": 0.0,
+    "max": 68.0
+  },
+  "hot_scatter_estimated_unique_pages": {
+    "avg": 72.033,
+    "min": 0.0,
+    "max": 79.0
+  },
+  "hot_scatter_success_count": {
+    "avg": 68.05,
+    "min": 0.0,
+    "max": 75.0
+  },
+  "hot_scatter_partial_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_partial_delta": 0,
+  "hot_scatter_fallback_read_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_fallback_read_delta": 0,
+  "visibility_scatter_hit_count": {
+    "avg": 20.15,
+    "min": 0.0,
+    "max": 22.0
+  },
+  "visibility_scatter_hit_delta": 22,
+  "base_cache_hit_count": {
+    "avg": 20.15,
+    "min": 0.0,
+    "max": 22.0
+  },
+  "base_cache_hit_delta": 22,
+  "base_cache_miss_count": {
+    "avg": 2.183,
+    "min": 0.0,
+    "max": 7.0
+  },
+  "base_cache_miss_delta": 0,
+  "base_decrypt_attempt_count": {
+    "avg": 60.45,
+    "min": 0.0,
+    "max": 121.0
+  },
+  "base_decrypt_attempt_delta": 30,
+  "base_decrypt_success_count": {
+    "avg": 16.35,
+    "min": 0.0,
+    "max": 39.0
+  },
+  "base_decrypt_success_delta": 15,
+  "base_decrypt_fail_count": {
+    "avg": 44.1,
+    "min": 0.0,
+    "max": 82.0
+  },
+  "base_decrypt_fail_delta": 15,
+  "skeleton_cache_hit_count": {
+    "avg": 19.517,
+    "min": 0.0,
+    "max": 22.0
+  },
+  "skeleton_cache_hit_delta": 18,
+  "skeleton_cache_miss_count": {
+    "avg": 0.633,
+    "min": 0.0,
+    "max": 4.0
+  },
+  "skeleton_cache_miss_delta": 4,
+  "skeleton_block_read_bytes": {
+    "avg": 39372.2,
+    "min": 0.0,
+    "max": 44136.0
+  },
+  "skeleton_fallback_get_bone_pos_count": {
+    "avg": 0.6,
+    "min": 0.0,
+    "max": 4.0
+  },
+  "skeleton_fallback_get_bone_pos_delta": 4,
+  "visibility_fallback_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "visibility_fallback_delta": 0,
+  "skill_due_count": {
+    "avg": 1.833,
+    "min": 0.0,
+    "max": 15.0
+  },
+  "skill_read_count": {
+    "avg": 6.05,
+    "min": 0.0,
+    "max": 48.0
+  },
+  "skill_read_delta": 6,
+  "skill_skipped_not_due_count": {
+    "avg": 18.667,
+    "min": 0.0,
+    "max": 22.0
+  },
+  "skill_skipped_not_due_delta": 22,
+  "entity_record_created_count": {
+    "avg": 0.017,
+    "min": 0.0,
+    "max": 1.0
+  },
+  "entity_record_updated_actor_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_count": {
+    "avg": 8.483,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "entity_record_link_changed_same_component_count": {
+    "avg": 8.483,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "entity_record_link_changed_component_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_same_hero_count": {
+    "avg": 8.483,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "entity_record_link_changed_hero_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_hero_unknown_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_match_key_count": {
+    "avg": 8.483,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "entity_record_link_changed_link_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_component_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_mark_missing_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_mark_dead_count": {
+    "avg": 0.033,
+    "min": 0.0,
+    "max": 2.0
+  },
+  "entity_record_expired_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_hit_count": {
+    "avg": 20.15,
+    "min": 0.0,
+    "max": 22.0
+  },
+  "component_cache_miss_count": {
+    "avg": 2.183,
+    "min": 0.0,
+    "max": 7.0
+  },
+  "component_cache_invalidate_interval_count": {
+    "avg": 0.433,
+    "min": 0.0,
+    "max": 3.0
+  },
+  "component_cache_invalidate_interval_skipped_lifetime_count": {
+    "avg": 18.917,
+    "min": 0.0,
+    "max": 22.0
+  },
+  "component_cache_invalidate_link_change_count": {
+    "avg": 10.317,
+    "min": 0.0,
+    "max": 14.0
+  },
+  "component_cache_invalidate_health_resurrect_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_invalidate_hero_change_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_previous_match_id_known_count": {
+    "avg": 10.317,
+    "min": 0.0,
+    "max": 14.0
+  },
+  "component_cache_link_change_previous_match_id_zero_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_previous_match_id_unknown_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_alias_hit_count": {
+    "avg": 10.317,
+    "min": 0.0,
+    "max": 14.0
+  },
+  "component_cache_link_change_record_alias_miss_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_published_count": {
+    "avg": 10.0,
+    "min": 0.0,
+    "max": 14.0
+  },
+  "component_cache_link_change_record_bases_valid_count": {
+    "avg": 10.017,
+    "min": 0.0,
+    "max": 14.0
+  },
+  "component_cache_link_change_record_match_key_count": {
+    "avg": 10.317,
+    "min": 0.0,
+    "max": 14.0
+  },
+  "component_cache_link_change_record_link_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_component_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_attempt_count": {
+    "avg": 10.317,
+    "min": 0.0,
+    "max": 14.0
+  },
+  "component_cache_link_retain_success_count": {
+    "avg": 8.583,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "component_cache_link_retain_rejected_disabled_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_record_store_disabled_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_missing_record_count": {
+    "avg": 0.067,
+    "min": 0.0,
+    "max": 1.0
+  },
+  "component_cache_link_retain_rejected_missing_match_id_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_component_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_interval_count": {
+    "avg": 1.667,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "component_cache_link_retain_interval_bypassed_lifetime_count": {
+    "avg": 7.6,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "component_cache_link_retain_rejected_hero_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_hero_unknown_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_decrypt_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_cached_hero_validate_count": {
+    "avg": 4.317,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "component_cache_link_retain_refresh_decrypt_attempt_count": {
+    "avg": 25.75,
+    "min": 0.0,
+    "max": 30.0
+  },
+  "component_cache_link_retain_refresh_decrypt_success_count": {
+    "avg": 12.8,
+    "min": 0.0,
+    "max": 15.0
+  },
+  "component_cache_link_retain_refresh_decrypt_fail_count": {
+    "avg": 12.95,
+    "min": 0.0,
+    "max": 15.0
+  },
+  "component_cache_link_retain_refresh_link_attempt_count": {
+    "avg": 8.583,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "component_cache_link_retain_refresh_link_success_count": {
+    "avg": 4.267,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "component_cache_link_retain_refresh_link_fail_count": {
+    "avg": 4.317,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "component_cache_link_retain_refresh_hero_attempt_count": {
+    "avg": 8.583,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "component_cache_link_retain_refresh_hero_success_count": {
+    "avg": 4.267,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "component_cache_link_retain_refresh_hero_fail_count": {
+    "avg": 4.317,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "component_cache_link_retain_refresh_visibility_attempt_count": {
+    "avg": 8.583,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "component_cache_link_retain_refresh_visibility_success_count": {
+    "avg": 4.267,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "component_cache_link_retain_refresh_visibility_fail_count": {
+    "avg": 4.317,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "component_cache_link_retain_refresh_angle_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_skipped_no_prior_count": {
+    "avg": 8.583,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "component_cache_link_retain_refresh_angle_prior_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_prior_fail_rejected_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "dynamic_cache_created_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "dynamic_cache_reused_count": {
+    "avg": 3.867,
+    "min": 0.0,
+    "max": 4.0
+  },
+  "dynamic_cache_replaced_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "dynamic_cache_expired_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "record_store_enabled": true,
+  "record_store_size": {
+    "avg": 21.167,
+    "min": 0.0,
+    "max": 25.0
+  },
+  "record_store_fresh_count": {
+    "avg": 19.667,
+    "min": 0.0,
+    "max": 22.0
+  },
+  "record_store_missing_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "record_store_dead_count": {
+    "avg": 1.5,
+    "min": 0.0,
+    "max": 3.0
+  },
+  "record_store_expired_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "record_store_bases_valid_count": {
+    "avg": 16.8,
+    "min": 0.0,
+    "max": 20.0
+  },
+  "record_store_dynamic_valid_count": {
+    "avg": 3.867,
+    "min": 0.0,
+    "max": 4.0
+  },
+  "record_store_published_valid_count": {
+    "avg": 17.3,
+    "min": 0.0,
+    "max": 21.0
+  },
+  "sdk_component_key_cache_hit_delta": 0,
+  "sdk_component_key_cache_miss_delta": 0,
+  "sdk_begin_frame_scan_delta": 35,
+  "sdk_begin_frame_process_delta": 1336,
+  "sdk_begin_frame_unknown_delta": 0,
+  "viewmatrix_publish_hz": {
+    "avg": 61.902,
+    "min": 0.0,
+    "max": 66.666
+  },
+  "viewmatrix_publish_age_ms": {
+    "avg": 4.967,
+    "min": 0.0,
+    "max": 31.0
+  },
+  "render_viewmatrix_age_ms": {
+    "avg": 5.283,
+    "min": 0.0,
+    "max": 31.0
+  },
+  "render_viewmatrix_max_age_ms": {
+    "avg": 183.3,
+    "min": 0.0,
+    "max": 203.0
+  },
+  "render_viewmatrix_uses_delta": 14093,
+  "render_viewmatrix_over_16ms_delta": 333,
+  "render_viewmatrix_over_33ms_delta": 262,
+  "render_viewmatrix_over_50ms_delta": 209,
+  "render_viewmatrix_missing_publish_delta": 0,
+  "snapshot_entities_copy_ms": {
+    "avg": 0.002,
+    "min": 0.0,
+    "max": 0.004
+  },
+  "snapshot_dynamic_copy_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_count": {
+    "avg": 17.3,
+    "min": 0.0,
+    "max": 21.0
+  },
+  "view_matrix_bad_samples": 1,
+  "resolved_screen_sizes": [
+    "1920x1080"
+  ],
+  "projection_jump_samples": 0,
+  "render_prediction_candidates": {
+    "avg": 17.2,
+    "min": 0.0,
+    "max": 21.0
+  },
+  "render_prediction_applied": {
+    "avg": 3.467,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "render_prediction_world_delta_fallback": {
+    "avg": 0.917,
+    "min": 0.0,
+    "max": 2.0
+  },
+  "render_prediction_max_lead_ms": {
+    "avg": 89.133,
+    "min": 0.0,
+    "max": 100.0
+  },
+  "render_prediction_max_offset_cm": {
+    "avg": 40.517,
+    "min": 0.0,
+    "max": 49.0
+  },
+  "render_callback_ms": {
+    "avg": 6.961,
+    "min": 0.0,
+    "max": 11.465
+  },
+  "present_ms": {
+    "avg": 3.421,
+    "min": 0.0,
+    "max": 12.184
+  },
+  "render_frame_ms": {
+    "avg": 10.382,
+    "min": 0.0,
+    "max": 21.943
+  },
+  "dma_reads_per_second": 6285.036,
+  "dma_fail_rate_percent": 2.067,
+  "dma_total_delta": 747275,
+  "dma_fail_delta": 15448,
+  "slow_frame_log_lines": 0,
+  "slow_frame_effective_count": 0,
+  "slow_frame_max_render_ms": null,
+  "slow_frame_rt_dma_nonzero_lines": 0,
+  "slow_frame_render_canvas_nonzero_lines": 0,
+  "log_path": "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}
+
+Wrote samples: D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma\scripts\..\logs\perf-monitor-20260626-230314.samples.csv
+Wrote summary: D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma\scripts\..\logs\perf-monitor-20260626-230314.summary.json

@@ -37,6 +37,13 @@ int main()
         return Fail();
     if (!SameText(OW::AttackActionNameForHero(widow, 2), "Scoped"))
         return Fail();
+    if (OW::FireKeyMaskForAttackAction(2) != 0x1u)
+        return Fail();
+    const OW::WeaponSpec* widowScoped = OW::ResolveWeaponSpec(widow, 2);
+    if (!widowScoped || OW::ResolveGeneratedFireKeyMask(widowScoped, 2) != 0x1u)
+        return Fail();
+    if (OW::ResolveTrackingHoldMouseButton(widowScoped, 2) != 0)
+        return Fail();
 
     if (OW::HeroUsesScopedStanceActions(mei))
         return Fail();

@@ -1,0 +1,1017 @@
+{
+  "started_at": "2026-06-29T07:01:53.9543174-07:00",
+  "ended_at": "2026-06-29T07:02:54.5545181-07:00",
+  "sample_count": 30,
+  "duration_seconds": 58.531,
+  "fps": {
+    "avg": 225.021,
+    "min": 84.225,
+    "max": 467.844
+  },
+  "render_fps": {
+    "avg": 225.021,
+    "min": 84.225,
+    "max": 467.844
+  },
+  "entity_process_hz": {
+    "avg": 20.536,
+    "min": 0.0,
+    "max": 40.0
+  },
+  "entity_scan_hz": {
+    "avg": 0.031,
+    "min": 0.0,
+    "max": 0.054
+  },
+  "entity_publish_hz": {
+    "avg": 22.002,
+    "min": 0.0,
+    "max": 32.258
+  },
+  "entity_publish_age_ms": {
+    "avg": 315.567,
+    "min": 0.0,
+    "max": 3781.0
+  },
+  "scan_loop_hz": {
+    "avg": 137.148,
+    "min": 0.0,
+    "max": 174.0
+  },
+  "scan_due_hz": {
+    "avg": 0.013,
+    "min": 0.0,
+    "max": 0.223
+  },
+  "scan_started_hz": {
+    "avg": 0.013,
+    "min": 0.0,
+    "max": 0.223
+  },
+  "scan_completed_hz": {
+    "avg": 0.013,
+    "min": 0.0,
+    "max": 0.223
+  },
+  "scan_failed_delta": 0,
+  "scan_publish_attempt_delta": 2,
+  "scan_publish_success_delta": 2,
+  "scan_skip_stable_topology_count": {
+    "avg": 3245.3,
+    "min": 0.0,
+    "max": 7412.0
+  },
+  "scan_skip_stable_topology_delta": 7412,
+  "scan_get_ow_entities_ms": {
+    "avg": 4787.95,
+    "min": 0.0,
+    "max": 5813.93
+  },
+  "scan_pending_age_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_cold_topology_enabled": true,
+  "scan_topology_rescan_request_count": {
+    "avg": 0.567,
+    "min": 0.0,
+    "max": 1.0
+  },
+  "scan_topology_rescan_request_delta": 1,
+  "scan_topology_count_probe_count": {
+    "avg": 4.567,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "scan_topology_count_probe_delta": 10,
+  "scan_topology_count_probe_change_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_topology_count_probe_change_delta": 0,
+  "scan_topology_candidate_count": {
+    "avg": 1021.2,
+    "min": 0.0,
+    "max": 1156.0
+  },
+  "scan_root_ms": {
+    "avg": 0.658,
+    "min": 0.0,
+    "max": 0.845
+  },
+  "scan_list_read_ms": {
+    "avg": 2.576,
+    "min": 0.0,
+    "max": 3.003
+  },
+  "scan_slot_walk_ms": {
+    "avg": 0.006,
+    "min": 0.0,
+    "max": 0.009
+  },
+  "scan_record_build_ms": {
+    "avg": 2631.201,
+    "min": 0.0,
+    "max": 3396.49
+  },
+  "scan_match_link_ms": {
+    "avg": 2151.496,
+    "min": 0.0,
+    "max": 2411.54
+  },
+  "scan_cn_ne_target_map_ms": {
+    "avg": 2097.257,
+    "min": 0.0,
+    "max": 2339.6
+  },
+  "scan_cn_ne_self_validation_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_component_only_validation_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_dynamic_pair_ms": {
+    "avg": 0.005,
+    "min": 0.0,
+    "max": 0.007
+  },
+  "scan_finalize_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_dma_reads_delta": {
+    "avg": 12756.133,
+    "min": 0.0,
+    "max": 17072.0
+  },
+  "scan_dma_fail_delta": {
+    "avg": 407.933,
+    "min": 0.0,
+    "max": 464.0
+  },
+  "scan_list_read_count": {
+    "avg": 46.8,
+    "min": 0.0,
+    "max": 52.0
+  },
+  "scan_list_read_fail_count": {
+    "avg": 45.9,
+    "min": 0.0,
+    "max": 51.0
+  },
+  "scan_list_fallback_read_count": {
+    "avg": 43.2,
+    "min": 0.0,
+    "max": 48.0
+  },
+  "scan_record_add_attempt_count": {
+    "avg": 3686.4,
+    "min": 0.0,
+    "max": 4096.0
+  },
+  "scan_record_duplicate_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_record_header_read_count": {
+    "avg": 1025.733,
+    "min": 0.0,
+    "max": 1146.0
+  },
+  "scan_record_header_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_record_remote_fallback_read_count": {
+    "avg": 1025.733,
+    "min": 0.0,
+    "max": 1146.0
+  },
+  "scan_pool_id_read_count": {
+    "avg": 1025.733,
+    "min": 0.0,
+    "max": 1146.0
+  },
+  "scan_match_lookup_count": {
+    "avg": 15.633,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "scan_match_lookup_hit_count": {
+    "avg": 15.633,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "scan_add_pair_attempt_count": {
+    "avg": 34.867,
+    "min": 0.0,
+    "max": 40.0
+  },
+  "scan_add_pair_duplicate_count": {
+    "avg": 15.633,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "scan_link_decrypt_attempt_count": {
+    "avg": 1070.733,
+    "min": 0.0,
+    "max": 1196.0
+  },
+  "scan_link_decrypt_success_count": {
+    "avg": 15.633,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "scan_playable_validation_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_playable_validation_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_cn_ne_map_candidate_count": {
+    "avg": 1070.733,
+    "min": 0.0,
+    "max": 1196.0
+  },
+  "scan_cn_ne_target_map_attempt_count": {
+    "avg": 31.267,
+    "min": 0.0,
+    "max": 36.0
+  },
+  "scan_cn_ne_target_map_success_count": {
+    "avg": 31.267,
+    "min": 0.0,
+    "max": 36.0
+  },
+  "scan_cn_ne_bucket_entry_scan_count": {
+    "avg": 15.633,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "scan_cn_ne_map_candidate_cache_enabled": true,
+  "scan_cn_ne_map_candidate_cache_lookup_count": {
+    "avg": 1025.733,
+    "min": 0.0,
+    "max": 1146.0
+  },
+  "scan_cn_ne_map_candidate_cache_hit_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_cn_ne_map_candidate_cache_miss_count": {
+    "avg": 1025.733,
+    "min": 0.0,
+    "max": 1146.0
+  },
+  "scan_component_only_validation_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_component_only_validation_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_skip_pending_delta": 0,
+  "scan_skip_not_due_delta": 0,
+  "scan_overwritten_delta": 0,
+  "scan_detail_records": {
+    "avg": 1025.733,
+    "min": 0.0,
+    "max": 1146.0
+  },
+  "scan_detail_total_pairs": {
+    "avg": 19.233,
+    "min": 0.0,
+    "max": 22.0
+  },
+  "scan_light_scan_enabled": true,
+  "scan_light_unvalidated_pairs": {
+    "avg": 15.633,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "scan_light_cap_hits_delta": 0,
+  "entity_cycle_ms": {
+    "avg": 103.495,
+    "min": 0.0,
+    "max": 1054.74
+  },
+  "phase_consume_scan_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "phase_previous_snapshot_copy_ms": {
+    "avg": 0.002,
+    "min": 0.0,
+    "max": 0.004
+  },
+  "phase_hot_scatter_prepare_ms": {
+    "avg": 0.022,
+    "min": 0.0,
+    "max": 0.036
+  },
+  "phase_hot_scatter_execute_ms": {
+    "avg": 5.847,
+    "min": 0.0,
+    "max": 9.353
+  },
+  "phase_base_cache_ms": {
+    "avg": 0.144,
+    "min": 0.0,
+    "max": 1.21
+  },
+  "phase_base_decrypt_ms": {
+    "avg": 3.552,
+    "min": 0.0,
+    "max": 28.915
+  },
+  "phase_health_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.002
+  },
+  "phase_hero_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.001
+  },
+  "phase_visibility_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "phase_skeleton_ms": {
+    "avg": 21.114,
+    "min": 0.0,
+    "max": 399.692
+  },
+  "phase_skill_ms": {
+    "avg": 11.422,
+    "min": 0.0,
+    "max": 208.711
+  },
+  "phase_team_name_ms": {
+    "avg": 26.015,
+    "min": 0.0,
+    "max": 765.589
+  },
+  "phase_local_select_ms": {
+    "avg": 1.291,
+    "min": 0.0,
+    "max": 30.645
+  },
+  "phase_publish_ms": {
+    "avg": 0.008,
+    "min": 0.0,
+    "max": 0.012
+  },
+  "hot_scatter_requested_count": {
+    "avg": 52.5,
+    "min": 0.0,
+    "max": 70.0
+  },
+  "hot_scatter_prepare_requested_count": {
+    "avg": 52.5,
+    "min": 0.0,
+    "max": 70.0
+  },
+  "hot_scatter_prepare_success_count": {
+    "avg": 52.5,
+    "min": 0.0,
+    "max": 70.0
+  },
+  "hot_scatter_prepare_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_execute_count": {
+    "avg": 2.4,
+    "min": 0.0,
+    "max": 4.0
+  },
+  "hot_scatter_execute_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_execute_fail_delta": 0,
+  "hot_scatter_bytes_requested": {
+    "avg": 51700.267,
+    "min": 0.0,
+    "max": 65304.0
+  },
+  "hot_scatter_bytes_read": {
+    "avg": 51700.267,
+    "min": 0.0,
+    "max": 65304.0
+  },
+  "hot_scatter_short_read_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_short_read_delta": 0,
+  "hot_scatter_batch_items": {
+    "avg": 13.433,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "hot_scatter_batch_requests": {
+    "avg": 49.5,
+    "min": 0.0,
+    "max": 67.0
+  },
+  "hot_scatter_estimated_unique_pages": {
+    "avg": 59.1,
+    "min": 0.0,
+    "max": 80.0
+  },
+  "hot_scatter_success_count": {
+    "avg": 50.933,
+    "min": 0.0,
+    "max": 69.0
+  },
+  "hot_scatter_partial_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_partial_delta": 0,
+  "hot_scatter_fallback_read_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "hot_scatter_fallback_read_delta": 0,
+  "visibility_scatter_hit_count": {
+    "avg": 12.833,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "visibility_scatter_hit_delta": 13,
+  "base_cache_hit_count": {
+    "avg": 13.933,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "base_cache_hit_delta": 14,
+  "base_cache_miss_count": {
+    "avg": 1.733,
+    "min": 0.0,
+    "max": 3.0
+  },
+  "base_cache_miss_delta": 3,
+  "base_decrypt_attempt_count": {
+    "avg": 31.767,
+    "min": 0.0,
+    "max": 58.0
+  },
+  "base_decrypt_attempt_delta": 50,
+  "base_decrypt_success_count": {
+    "avg": 6.5,
+    "min": 0.0,
+    "max": 16.0
+  },
+  "base_decrypt_success_delta": 16,
+  "base_decrypt_fail_count": {
+    "avg": 25.267,
+    "min": 0.0,
+    "max": 50.0
+  },
+  "base_decrypt_fail_delta": 34,
+  "skeleton_cache_hit_count": {
+    "avg": 12.533,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "skeleton_cache_hit_delta": 13,
+  "skeleton_cache_miss_count": {
+    "avg": 0.3,
+    "min": 0.0,
+    "max": 1.0
+  },
+  "skeleton_cache_miss_delta": 0,
+  "skeleton_block_read_bytes": {
+    "avg": 26700.8,
+    "min": 0.0,
+    "max": 35436.0
+  },
+  "skeleton_fallback_get_bone_pos_count": {
+    "avg": 0.3,
+    "min": 0.0,
+    "max": 1.0
+  },
+  "skeleton_fallback_get_bone_pos_delta": 0,
+  "visibility_fallback_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "visibility_fallback_delta": 0,
+  "skill_due_count": {
+    "avg": 0.933,
+    "min": 0.0,
+    "max": 10.0
+  },
+  "skill_read_count": {
+    "avg": 2.667,
+    "min": 0.0,
+    "max": 30.0
+  },
+  "skill_read_delta": 9,
+  "skill_skipped_not_due_count": {
+    "avg": 12.3,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "skill_skipped_not_due_delta": 12,
+  "entity_record_created_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_updated_actor_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_same_component_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_component_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_same_hero_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_hero_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_hero_unknown_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_match_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_link_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_link_changed_component_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_mark_missing_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_mark_dead_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_record_expired_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_hit_count": {
+    "avg": 13.933,
+    "min": 0.0,
+    "max": 18.0
+  },
+  "component_cache_miss_count": {
+    "avg": 1.733,
+    "min": 0.0,
+    "max": 3.0
+  },
+  "component_cache_invalidate_interval_count": {
+    "avg": 1.733,
+    "min": 0.0,
+    "max": 3.0
+  },
+  "component_cache_invalidate_interval_skipped_lifetime_count": {
+    "avg": 12.833,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "component_cache_invalidate_link_change_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_invalidate_health_resurrect_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_invalidate_hero_change_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_previous_match_id_known_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_previous_match_id_zero_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_previous_match_id_unknown_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_alias_hit_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_alias_miss_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_published_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_bases_valid_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_match_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_link_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_change_record_component_key_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_disabled_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_record_store_disabled_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_missing_record_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_missing_match_id_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_component_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_interval_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_interval_bypassed_lifetime_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_hero_changed_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_hero_unknown_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_rejected_decrypt_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_cached_hero_validate_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_decrypt_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_decrypt_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_decrypt_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_link_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_link_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_link_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_hero_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_hero_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_hero_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_visibility_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_visibility_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_visibility_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_attempt_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_success_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_fail_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_skipped_no_prior_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_prior_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "component_cache_link_retain_refresh_angle_prior_fail_rejected_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "dynamic_cache_created_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "dynamic_cache_reused_count": {
+    "avg": 3.6,
+    "min": 0.0,
+    "max": 4.0
+  },
+  "dynamic_cache_replaced_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "dynamic_cache_expired_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "record_store_enabled": true,
+  "record_store_size": {
+    "avg": 17.8,
+    "min": 0.0,
+    "max": 21.0
+  },
+  "record_store_fresh_count": {
+    "avg": 16.467,
+    "min": 0.0,
+    "max": 21.0
+  },
+  "record_store_missing_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "record_store_dead_count": {
+    "avg": 1.333,
+    "min": 0.0,
+    "max": 3.0
+  },
+  "record_store_expired_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "record_store_bases_valid_count": {
+    "avg": 13.167,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "record_store_dynamic_valid_count": {
+    "avg": 3.6,
+    "min": 0.0,
+    "max": 4.0
+  },
+  "record_store_published_valid_count": {
+    "avg": 14.2,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "sdk_component_key_cache_hit_delta": 0,
+  "sdk_component_key_cache_miss_delta": 0,
+  "sdk_begin_frame_scan_delta": 2,
+  "sdk_begin_frame_process_delta": 1152,
+  "sdk_begin_frame_unknown_delta": 0,
+  "viewmatrix_publish_hz": {
+    "avg": 55.868,
+    "min": 0.0,
+    "max": 66.666
+  },
+  "viewmatrix_publish_age_ms": {
+    "avg": 77.6,
+    "min": 0.0,
+    "max": 781.0
+  },
+  "render_viewmatrix_age_ms": {
+    "avg": 67.7,
+    "min": 0.0,
+    "max": 766.0
+  },
+  "render_viewmatrix_max_age_ms": {
+    "avg": 771.033,
+    "min": 0.0,
+    "max": 968.0
+  },
+  "render_viewmatrix_uses_delta": 10320,
+  "render_viewmatrix_over_16ms_delta": 1927,
+  "render_viewmatrix_over_33ms_delta": 1740,
+  "render_viewmatrix_over_50ms_delta": 1594,
+  "render_viewmatrix_missing_publish_delta": 0,
+  "snapshot_entities_copy_ms": {
+    "avg": 0.002,
+    "min": 0.0,
+    "max": 0.005
+  },
+  "snapshot_dynamic_copy_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_count": {
+    "avg": 14.2,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "view_matrix_bad_samples": 1,
+  "resolved_screen_sizes": [
+    "1920x1080"
+  ],
+  "projection_jump_samples": 0,
+  "render_prediction_candidates": {
+    "avg": 13.6,
+    "min": 0.0,
+    "max": 17.0
+  },
+  "render_prediction_applied": {
+    "avg": 1.767,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "render_prediction_world_delta_fallback": {
+    "avg": 0.6,
+    "min": 0.0,
+    "max": 1.0
+  },
+  "render_prediction_max_lead_ms": {
+    "avg": 38.667,
+    "min": 0.0,
+    "max": 100.0
+  },
+  "render_prediction_max_offset_cm": {
+    "avg": 18.1,
+    "min": 0.0,
+    "max": 47.0
+  },
+  "render_callback_ms": {
+    "avg": 3.75,
+    "min": 0.015,
+    "max": 8.539
+  },
+  "present_ms": {
+    "avg": 2.371,
+    "min": 1.799,
+    "max": 3.404
+  },
+  "render_frame_ms": {
+    "avg": 6.122,
+    "min": 2.006,
+    "max": 11.007
+  },
+  "dma_reads_per_second": 2410.229,
+  "dma_fail_rate_percent": 1.202,
+  "dma_total_delta": 141073,
+  "dma_fail_delta": 1695,
+  "slow_frame_log_lines": 0,
+  "slow_frame_effective_count": 0,
+  "slow_frame_max_render_ms": null,
+  "slow_frame_rt_dma_nonzero_lines": 0,
+  "slow_frame_render_canvas_nonzero_lines": 0,
+  "log_path": "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}

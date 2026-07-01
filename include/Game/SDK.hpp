@@ -11,6 +11,7 @@
 #include <atomic>
 
 #include "Memory/Memory.h"
+#include "Utils/Diagnostics.hpp"
 
 namespace OW {
 
@@ -160,8 +161,9 @@ namespace OW {
             m_componentKeyCache = {};
         }
 
-        void BeginFrame()
+        void BeginFrame(Diagnostics::SdkFrameSource source = Diagnostics::SdkFrameSource::Unknown)
         {
+            Diagnostics::RecordSdkBeginFrame(source);
             std::lock_guard<std::mutex> lock(m_frameCacheMutex);
             ++m_frameGeneration;
             if (m_frameGeneration == 0)
@@ -221,9 +223,11 @@ namespace OW {
                 source = m_componentKeyCache.source;
                 material = m_componentKeyCache.material;
                 byte = m_componentKeyCache.byte;
+                Diagnostics::RecordSdkComponentKeyCacheHit();
                 return true;
             }
 
+            Diagnostics::RecordSdkComponentKeyCacheMiss();
             const uint64_t loadedSource = RPM<uint64_t>(sourcePointerAddress);
             if (!loadedSource)
                 return false;

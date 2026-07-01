@@ -1158,6 +1158,13 @@ static void InitializeKmBoxFromConfig()
             static_cast<WORD>(OW::Config::kmboxPort),
             OW::Config::kmboxMac);
         if (status == success) {
+            const int recoveryStatus = kmbox::KmBoxMgr.RecoverMousePassthrough();
+            if (recoveryStatus != success) {
+                std::printf("[KMBOX] Mouse passthrough recovery warning. status=%d\n", recoveryStatus);
+                Diagnostics::Warn("KMBox mouse passthrough recovery warning. status=%d", recoveryStatus);
+            }
+            OW::ForceReleaseMouseButtons();
+            OW::UnmaskPhysicalMouseButtons();
             std::printf("[KMBOX] Network device ready.\n");
             Diagnostics::Info("KMBox network device ready. ip=%s port=%d",
                 OW::Config::kmboxIp, OW::Config::kmboxPort);
@@ -1388,6 +1395,12 @@ static void ClearProcessRuntimeSnapshots()
         OW::local_entity = OW::c_entity{};
         OW::abletotread = 0;
         OW::entity_fast_scan_until_tick = 0;
+        OW::entity_topology_rescan_request_count = 0;
+    }
+    {
+        std::lock_guard<std::mutex> lock(OW::raw_scan_mutex);
+        OW::latest_raw_scan_snapshot = OW::RawEntityScanSnapshot{};
+        OW::last_consumed_raw_scan_generation = 0;
     }
 
     OW::TargetingDetail::PublishEntitySnapshots({}, {});

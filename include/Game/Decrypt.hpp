@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -317,6 +318,21 @@ namespace OW {
             return 0;
         }
 
+        if (activeOffsets.componentTransform == offset::ComponentTransformMode::World151177) {
+            component = ROR64(component ^ component_key_material_1,
+                offset::Component151177_Ror1);
+            component = ROR64(component + offset::Component151177_Add1,
+                offset::Component151177_Ror2);
+            component ^= static_cast<uint64_t>(component_key_byte);
+            component ^= offset::Component151177_Xor1;
+            component ^= offset::Component151177_Xor2;
+
+            const uintptr_t decoded = static_cast<uintptr_t>(present_mask & component);
+            if (!decoded)
+                Diagnostics::RecordDecryptFailure();
+            return decoded;
+        }
+
         if (activeOffsets.componentTransform == offset::ComponentTransformMode::World150818) {
             component = static_cast<uint64_t>(component_key_byte) ^
                 ((component_key_material_1 ^
@@ -522,7 +538,7 @@ namespace OW {
         return 0;
     }
 
-    inline void AddCnNeMapBaseCandidate(
+    inline bool AddCnNeMapBaseCandidate(
         std::vector<uint64_t>& candidates,
         uint64_t value,
         uint64_t entityList,
@@ -535,10 +551,12 @@ namespace OW {
                 entityListReadSize,
                 moduleBase,
                 moduleSize)) {
-            return;
+            return false;
         }
-        if (std::find(candidates.begin(), candidates.end(), value) == candidates.end())
-            candidates.push_back(value);
+        if (std::find(candidates.begin(), candidates.end(), value) != candidates.end())
+            return false;
+        candidates.push_back(value);
+        return true;
     }
 
     inline std::vector<uint64_t> CollectCnNeMapBaseCandidates(
@@ -546,35 +564,49 @@ namespace OW {
         uint64_t entityList,
         size_t entityListReadSize,
         uint64_t moduleBase,
-        uint64_t moduleSize) {
+        uint64_t moduleSize,
+        Diagnostics::EntityScanDetailStats* scanDetail = nullptr,
+        bool mapDiagEnabled = false) {
         std::vector<uint64_t> candidates;
         candidates.reserve(3);
 
-        AddCnNeMapBaseCandidate(
-            candidates,
-            parent,
-            entityList,
-            entityListReadSize,
-            moduleBase,
-            moduleSize);
+        if (AddCnNeMapBaseCandidate(
+                candidates,
+                parent,
+                entityList,
+                entityListReadSize,
+                moduleBase,
+                moduleSize) &&
+            mapDiagEnabled &&
+            scanDetail) {
+            ++scanDetail->cnNeMapCandidateDirectSourceCount;
+        }
 
         const uint64_t plus8 = SDK->RPM<uint64_t>(parent + 0x8);
-        AddCnNeMapBaseCandidate(
-            candidates,
-            plus8,
-            entityList,
-            entityListReadSize,
-            moduleBase,
-            moduleSize);
+        if (AddCnNeMapBaseCandidate(
+                candidates,
+                plus8,
+                entityList,
+                entityListReadSize,
+                moduleBase,
+                moduleSize) &&
+            mapDiagEnabled &&
+            scanDetail) {
+            ++scanDetail->cnNeMapCandidatePlus8SourceCount;
+        }
 
         const uint64_t wrapperMapBase = ResolveCnNeWrapperMapBase(parent);
-        AddCnNeMapBaseCandidate(
-            candidates,
-            wrapperMapBase,
-            entityList,
-            entityListReadSize,
-            moduleBase,
-            moduleSize);
+        if (AddCnNeMapBaseCandidate(
+                candidates,
+                wrapperMapBase,
+                entityList,
+                entityListReadSize,
+                moduleBase,
+                moduleSize) &&
+            mapDiagEnabled &&
+            scanDetail) {
+            ++scanDetail->cnNeMapCandidateWrapperSourceCount;
+        }
 
         return candidates;
     }
@@ -862,12 +894,375 @@ namespace OW {
         return 0;
     }
 
+    inline int ReadEntityScannerEnvFlagState(const char* name)
+    {
+        char buffer[16] = {};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return -1;
+        return buffer[0] != '0' &&
+            buffer[0] != 'n' &&
+            buffer[0] != 'N' &&
+            buffer[0] != 'f' &&
+            buffer[0] != 'F'
+            ? 1
+            : 0;
+    }
+
+    inline bool EntityScannerEnvFlagEnabled(const char* name)
+    {
+        return ReadEntityScannerEnvFlagState(name) == 1;
+    }
+
+    inline bool EntityLightScanRequested()
+    {
+        static const int lightScanFlag =
+            ReadEntityScannerEnvFlagState("UN_DMA_LIGHT_SCAN");
+        if (lightScanFlag >= 0)
+            return lightScanFlag == 1;
+        return EntityScannerEnvFlagEnabled("UN_DMA_ENTITY_PIPELINE_V2");
+    }
+
+    inline size_t EntityLightScanMaxCandidates()
+    {
+        char buffer[32] = {};
+        const DWORD length = GetEnvironmentVariableA(
+            "UN_DMA_LIGHT_SCAN_MAX_CANDIDATES",
+            buffer,
+            static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return 128;
+
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(buffer, &end, 10);
+        if (end == buffer || (end && *end != '\0'))
+            return 128;
+        return (std::min<size_t>)((std::max<size_t>)(parsed, 16), 512);
+    }
+
+    inline DWORD EntityScannerPersistentMapCacheTtlMs()
+    {
+        static const DWORD ttlMs = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_STAGE4B_MAP_CACHE_PERSIST_MS",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<DWORD>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<DWORD>(0);
+            if (parsed == 0)
+                return static_cast<DWORD>(0);
+            return (std::min<DWORD>)((std::max<DWORD>)(parsed, 50), 2000);
+        }();
+        return ttlMs;
+    }
+
+    inline size_t EntityScannerPersistentMapCacheRefreshBudget()
+    {
+        static const size_t refreshBudget = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_STAGE4B_MAP_CACHE_REFRESH_BUDGET",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<size_t>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<size_t>(0);
+            if (parsed == 0)
+                return static_cast<size_t>(0);
+            return (std::min<size_t>)((std::max<size_t>)(parsed, 1), 64);
+        }();
+        return refreshBudget;
+    }
+
+    inline DWORD EntityScannerComponentNegativeCacheTtlMs()
+    {
+        static const DWORD ttlMs = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_COMPONENT_NEGATIVE_CACHE_MS",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<DWORD>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<DWORD>(0);
+            if (parsed == 0)
+                return static_cast<DWORD>(0);
+            return (std::min<DWORD>)((std::max<DWORD>)(parsed, 50), 2000);
+        }();
+        return ttlMs;
+    }
+
+    inline DWORD EntityScannerLinkDecryptNegativeCacheTtlMs()
+    {
+        static const DWORD ttlMs = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_LINK_DECRYPT_NEGATIVE_CACHE_MS",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<DWORD>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<DWORD>(0);
+            if (parsed == 0)
+                return static_cast<DWORD>(0);
+            return (std::min<DWORD>)((std::max<DWORD>)(parsed, 50), 2000);
+        }();
+        return ttlMs;
+    }
+
+    inline DWORD EntityScannerRecordSnapshotCacheTtlMs()
+    {
+        static const DWORD ttlMs = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_RECORD_SNAPSHOT_CACHE_MS",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<DWORD>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<DWORD>(0);
+            if (parsed == 0)
+                return static_cast<DWORD>(0);
+            return (std::min<DWORD>)((std::max<DWORD>)(parsed, 50), 2000);
+        }();
+        return ttlMs;
+    }
+
+    inline DWORD EntityScannerEntityListRootCacheTtlMs()
+    {
+        static const DWORD ttlMs = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_ENTITY_LIST_ROOT_CACHE_MS",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<DWORD>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<DWORD>(0);
+            if (parsed == 0)
+                return static_cast<DWORD>(0);
+            return (std::min<DWORD>)((std::max<DWORD>)(parsed, 50), 10000);
+        }();
+        return ttlMs;
+    }
+
+    inline DWORD EntityScannerEntityListReadNegativeCacheTtlMs()
+    {
+        static const DWORD ttlMs = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_ENTITY_LIST_READ_NEGATIVE_CACHE_MS",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<DWORD>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<DWORD>(0);
+            if (parsed == 0)
+                return static_cast<DWORD>(0);
+            return (std::min<DWORD>)((std::max<DWORD>)(parsed, 50), 2000);
+        }();
+        return ttlMs;
+    }
+
+    inline DWORD EntityScannerEntityListReadCacheTtlMs()
+    {
+        static const DWORD ttlMs = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_ENTITY_LIST_READ_CACHE_MS",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<DWORD>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<DWORD>(0);
+            if (parsed == 0)
+                return static_cast<DWORD>(0);
+            return (std::min<DWORD>)((std::max<DWORD>)(parsed, 16), 2000);
+        }();
+        return ttlMs;
+    }
+
+    inline size_t EntityScannerCnNeEntityListChunkSize()
+    {
+        static const size_t chunkSize = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_ENTITY_LIST_CHUNK_SIZE",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<size_t>(0x10000);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 0);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<size_t>(0x10000);
+            size_t value = (std::min<size_t>)(
+                (std::max<size_t>)(parsed, 0x1000),
+                0x10000);
+            value -= value % 0x1000;
+            return value == 0 ? static_cast<size_t>(0x1000) : value;
+        }();
+        return chunkSize;
+    }
+
+    inline size_t EntityScannerRecordSnapshotCacheRefreshBudget()
+    {
+        static const size_t refreshBudget = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_RECORD_SNAPSHOT_CACHE_REFRESH_BUDGET",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<size_t>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<size_t>(0);
+            if (parsed == 0)
+                return static_cast<size_t>(0);
+            return (std::min<size_t>)((std::max<size_t>)(parsed, 1), 64);
+        }();
+        return refreshBudget;
+    }
+
+    inline size_t EntityScannerComponentNegativeCacheRefreshBudget()
+    {
+        static const size_t refreshBudget = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_COMPONENT_NEGATIVE_CACHE_REFRESH_BUDGET",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<size_t>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<size_t>(0);
+            if (parsed == 0)
+                return static_cast<size_t>(0);
+            return (std::min<size_t>)((std::max<size_t>)(parsed, 1), 64);
+        }();
+        return refreshBudget;
+    }
+
+    inline DWORD EntityScannerStaleMetadataMs()
+    {
+        static const DWORD staleMs = []() {
+            char buffer[32] = {};
+            const DWORD length = GetEnvironmentVariableA(
+                "UN_DMA_CN_NE_SCANNER_STALE_METADATA_MS",
+                buffer,
+                static_cast<DWORD>(sizeof(buffer)));
+            if (length == 0 || length >= sizeof(buffer))
+                return static_cast<DWORD>(0);
+
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(buffer, &end, 10);
+            if (end == buffer || (end && *end != '\0'))
+                return static_cast<DWORD>(0);
+            if (parsed == 0)
+                return static_cast<DWORD>(0);
+            return (std::min<DWORD>)((std::max<DWORD>)(parsed, 50), 30000);
+        }();
+        return staleMs;
+    }
+
     // =========================================================================
     // Entity list scanning
     // =========================================================================
 
+    inline size_t ProbeEntityTopologyCandidateCount() {
+        struct Entity {
+            uint64_t entity;
+            uint64_t pad;
+        };
+
+        const uint64_t entity_list = SDK->RPM<uint64_t>(
+            SDK->dwGameBase + offset::Active().Address_entity_base);
+        if (!entity_list)
+            return 0;
+
+        const bool cnNeProfile = offset::IsCnNeProfile();
+        const size_t listReadSize = cnNeProfile ? 0x40000 : 0x1E000;
+        const size_t chunkSize = cnNeProfile ? 0x10000 : 0x1000;
+        uint64_t moduleSize = 0;
+        if (cnNeProfile)
+            moduleSize = static_cast<uint64_t>(mem.GetBaseSize("Overwatch.exe"));
+
+        std::unordered_set<uint64_t> seen{};
+        seen.reserve(256);
+        std::vector<uint8_t> chunk(chunkSize);
+        for (size_t offset = 0; offset < listReadSize; offset += chunkSize) {
+            const size_t remaining = listReadSize - offset;
+            const size_t bytesToRead = remaining < chunkSize ? remaining : chunkSize;
+            if (!mem.Read(entity_list + offset, chunk.data(), bytesToRead))
+                continue;
+
+            for (size_t slotOffset = 0; slotOffset + sizeof(Entity) <= bytesToRead;
+                 slotOffset += sizeof(Entity)) {
+                uint64_t possibleParent = 0;
+                std::memcpy(&possibleParent, chunk.data() + slotOffset, sizeof(possibleParent));
+                if (!IsPlausibleUserPointer(possibleParent))
+                    continue;
+                if (cnNeProfile &&
+                    !IsLikelyCnNeEntityParent(
+                        possibleParent,
+                        entity_list,
+                        listReadSize,
+                        SDK->dwGameBase,
+                        moduleSize)) {
+                    continue;
+                }
+                seen.insert(possibleParent);
+            }
+        }
+
+        return seen.size();
+    }
+
     inline std::vector<std::pair<uint64_t, uint64_t>> get_ow_entities() {
-        SDK->BeginFrame();
+        SDK->BeginFrame(Diagnostics::SdkFrameSource::Scan);
+        const Diagnostics::ScopedDmaCallsite scannerCallsite(Diagnostics::DmaCallsite::EntityScan);
+        (void)scannerCallsite;
 
         std::vector<std::pair<uint64_t, uint64_t>> result;
 
@@ -884,6 +1279,110 @@ namespace OW {
             EntityHeaderSnapshot header{};
         };
 
+        const Diagnostics::DmaReadStats scanDmaStart = Diagnostics::SnapshotDmaReadStats();
+        const bool scanDmaRangeDiagEnabled =
+            EntityScannerEnvFlagEnabled("UN_DMA_SCAN_DMA_RANGE_DIAG");
+        const size_t scanDmaRangeStart =
+            scanDmaRangeDiagEnabled ? Diagnostics::DmaSampleCursor() : 0;
+        Diagnostics::EntityScanDetailStats scanDetail{};
+        scanDetail.scanDmaRangeDiagEnabled = scanDmaRangeDiagEnabled;
+        auto elapsedMs = [](std::chrono::steady_clock::time_point startedAt) {
+            return static_cast<double>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - startedAt).count()) / 1000.0;
+        };
+        auto finishScanDetail = [&]() {
+            const auto finalizeStartedAt = std::chrono::steady_clock::now();
+            const Diagnostics::DmaReadStats scanDmaEnd = Diagnostics::SnapshotDmaReadStats();
+            scanDetail.scanDmaReadsDelta = scanDmaEnd.total >= scanDmaStart.total
+                ? scanDmaEnd.total - scanDmaStart.total
+                : 0;
+            scanDetail.scanDmaFailDelta = scanDmaEnd.failed >= scanDmaStart.failed
+                ? scanDmaEnd.failed - scanDmaStart.failed
+                : 0;
+            if (scanDmaRangeDiagEnabled) {
+                const Diagnostics::DmaWindowStats scanDmaRange =
+                    Diagnostics::GetDmaRangeStats(
+                        scanDmaRangeStart,
+                        Diagnostics::DmaSampleCursor());
+                scanDetail.scanDmaRangeReads = scanDmaRange.totalReads;
+                scanDetail.scanDmaRangeFailed = scanDmaRange.failedReads;
+                scanDetail.scanDmaRangeMaxLatencyUs = scanDmaRange.maxLatencyUs;
+                uint64_t maxCallsiteLatencyUs = 0;
+                int maxCallsite = 0;
+                for (int i = 0; i < static_cast<int>(Diagnostics::DmaCallsite::Count); ++i) {
+                    if (scanDmaRange.perCallsiteMaxUs[i] > maxCallsiteLatencyUs) {
+                        maxCallsiteLatencyUs = scanDmaRange.perCallsiteMaxUs[i];
+                        maxCallsite = i;
+                    }
+                }
+                scanDetail.scanDmaRangeMaxCallsite =
+                    static_cast<uint8_t>(maxCallsite);
+                auto isScannerCallsite = [](Diagnostics::DmaCallsite callsite) {
+                    switch (callsite) {
+                    case Diagnostics::DmaCallsite::EntityScan:
+                    case Diagnostics::DmaCallsite::EntityScanRoot:
+                    case Diagnostics::DmaCallsite::EntityScanListRead:
+                    case Diagnostics::DmaCallsite::EntityScanRecordBuild:
+                    case Diagnostics::DmaCallsite::EntityScanRecordMatchId:
+                    case Diagnostics::DmaCallsite::EntityScanRecordHeader:
+                    case Diagnostics::DmaCallsite::EntityScanRecordPoolPtr:
+                    case Diagnostics::DmaCallsite::EntityScanRecordPoolId:
+                    case Diagnostics::DmaCallsite::EntityScanMatchLink:
+                    case Diagnostics::DmaCallsite::EntityScanTargetMap:
+                    case Diagnostics::DmaCallsite::EntityScanMapCandidate:
+                    case Diagnostics::DmaCallsite::EntityScanLinkTargetResolve:
+                    case Diagnostics::DmaCallsite::EntityScanSelfValidation:
+                    case Diagnostics::DmaCallsite::EntityScanComponentValidation:
+                        return true;
+                    default:
+                        return false;
+                    }
+                };
+                for (int i = 0; i < static_cast<int>(Diagnostics::DmaCallsite::Count); ++i) {
+                    const uint64_t reads = scanDmaRange.perCallsiteReads[i];
+                    if (reads == 0)
+                        continue;
+                    const uint64_t maxUs = scanDmaRange.perCallsiteMaxUs[i];
+                    const auto callsite = static_cast<Diagnostics::DmaCallsite>(i);
+                    if (isScannerCallsite(callsite)) {
+                        scanDetail.scanDmaRangeScannerReads += reads;
+                        if (maxUs > scanDetail.scanDmaRangeScannerMaxLatencyUs) {
+                            scanDetail.scanDmaRangeScannerMaxLatencyUs = maxUs;
+                            scanDetail.scanDmaRangeScannerMaxCallsite =
+                                static_cast<uint8_t>(i);
+                        }
+                    } else {
+                        scanDetail.scanDmaRangeForeignReads += reads;
+                        if (maxUs > scanDetail.scanDmaRangeForeignMaxLatencyUs) {
+                            scanDetail.scanDmaRangeForeignMaxLatencyUs = maxUs;
+                            scanDetail.scanDmaRangeForeignMaxCallsite =
+                                static_cast<uint8_t>(i);
+                        }
+                    }
+                }
+                auto callsiteMax = [&](Diagnostics::DmaCallsite callsite) {
+                    return scanDmaRange.perCallsiteMaxUs[static_cast<int>(callsite)];
+                };
+                scanDetail.scanDmaRangeRootMaxUs =
+                    callsiteMax(Diagnostics::DmaCallsite::EntityScanRoot);
+                scanDetail.scanDmaRangeListReadMaxUs =
+                    callsiteMax(Diagnostics::DmaCallsite::EntityScanListRead);
+                scanDetail.scanDmaRangeRecordHeaderMaxUs =
+                    callsiteMax(Diagnostics::DmaCallsite::EntityScanRecordHeader);
+                scanDetail.scanDmaRangeRecordPoolIdMaxUs =
+                    callsiteMax(Diagnostics::DmaCallsite::EntityScanRecordPoolId);
+                scanDetail.scanDmaRangeTargetMapMaxUs =
+                    callsiteMax(Diagnostics::DmaCallsite::EntityScanTargetMap);
+                scanDetail.scanDmaRangeComponentValidationMaxUs =
+                    callsiteMax(Diagnostics::DmaCallsite::EntityScanComponentValidation);
+                scanDetail.scanDmaRangeViewMatrixMaxUs =
+                    callsiteMax(Diagnostics::DmaCallsite::ViewMatrix);
+            }
+            scanDetail.scanFinalizeMs += elapsedMs(finalizeStartedAt);
+            Diagnostics::SetEntityScanDetailStats(scanDetail);
+        };
+
         auto isDynamicEntityId = [](uint64_t entity_id) {
             return entity_id == 0x400000000000060 ||
                    entity_id == 0x40000000000480A ||
@@ -891,9 +1390,75 @@ namespace OW {
                    entity_id == 0x400000000002533;
         };
 
-        uint64_t entity_list = SDK->RPM<uint64_t>(
-            SDK->dwGameBase + offset::Active().Address_entity_base);
+        const bool cnNeProfile = offset::IsCnNeProfile();
+        const DWORD rootCacheTtlMs =
+            cnNeProfile ? EntityScannerEntityListRootCacheTtlMs() : 0;
+        const bool rootCacheEnabled = cnNeProfile && rootCacheTtlMs > 0;
+        scanDetail.cnNeEntityListRootCacheEnabled = rootCacheEnabled;
+        scanDetail.cnNeEntityListRootCacheTtlMs = rootCacheTtlMs;
+        const DWORD staleMetadataMs =
+            cnNeProfile ? EntityScannerStaleMetadataMs() : 0;
+        scanDetail.cnNeScannerStaleMetadataMs = staleMetadataMs;
+        const bool staleMetadataOnly =
+            cnNeProfile &&
+            staleMetadataMs > 0 &&
+            EntityScannerEnvFlagEnabled("UN_DMA_CN_NE_SCANNER_STALE_METADATA_ONLY");
+        scanDetail.cnNeScannerStaleMetadataOnlyEnabled = staleMetadataOnly;
+
+        static uint64_t cachedCnNeEntityListRootModuleBase = 0;
+        static uint64_t cachedCnNeEntityListRootPointer = 0;
+        static DWORD cachedCnNeEntityListRootTick = 0;
+        if (rootCacheEnabled &&
+            cachedCnNeEntityListRootModuleBase != 0 &&
+            cachedCnNeEntityListRootModuleBase != SDK->dwGameBase) {
+            cachedCnNeEntityListRootModuleBase = 0;
+            cachedCnNeEntityListRootPointer = 0;
+            cachedCnNeEntityListRootTick = 0;
+        }
+
+        const auto rootPhaseStartedAt = std::chrono::steady_clock::now();
+        uint64_t entity_list = 0;
+        const DWORD rootCacheNowTick = GetTickCount();
+        const bool rootCacheContextMatch =
+            rootCacheEnabled &&
+            cachedCnNeEntityListRootModuleBase == SDK->dwGameBase &&
+            cachedCnNeEntityListRootPointer != 0;
+        const DWORD rootCacheAgeMs =
+            rootCacheContextMatch ?
+                (rootCacheNowTick - cachedCnNeEntityListRootTick) : 0;
+        if (rootCacheContextMatch &&
+            rootCacheAgeMs <= rootCacheTtlMs) {
+            entity_list = cachedCnNeEntityListRootPointer;
+            scanDetail.cnNeEntityListRootCacheHitCount = 1;
+        } else if (
+            rootCacheContextMatch &&
+            staleMetadataMs > 0 &&
+            (staleMetadataOnly ||
+             static_cast<uint64_t>(rootCacheAgeMs) <=
+                static_cast<uint64_t>(rootCacheTtlMs) + staleMetadataMs)) {
+            entity_list = cachedCnNeEntityListRootPointer;
+            scanDetail.cnNeEntityListRootCacheExpiredCount = 1;
+            scanDetail.cnNeEntityListRootCacheStaleHitCount = 1;
+        } else {
+            if (rootCacheContextMatch) {
+                scanDetail.cnNeEntityListRootCacheExpiredCount = 1;
+            }
+            scanDetail.cnNeEntityListRootCacheReadCount = 1;
+            const Diagnostics::ScopedDmaCallsite rootCallsite(
+                Diagnostics::DmaCallsite::EntityScanRoot);
+            entity_list = SDK->RPM<uint64_t>(
+                SDK->dwGameBase + offset::Active().Address_entity_base);
+            if (rootCacheEnabled && entity_list != 0) {
+                cachedCnNeEntityListRootModuleBase = SDK->dwGameBase;
+                cachedCnNeEntityListRootPointer = entity_list;
+                cachedCnNeEntityListRootTick = rootCacheNowTick;
+                scanDetail.cnNeEntityListRootCacheStoreCount = 1;
+            }
+        }
+        scanDetail.entityList = entity_list;
         if (!entity_list) {
+            scanDetail.scanRootMs += elapsedMs(rootPhaseStartedAt);
+            finishScanDetail();
             Diagnostics::Trace("Entity scan skipped: entity list pointer is null.");
             return result;
         }
@@ -906,11 +1471,26 @@ namespace OW {
         seen_entities.reserve(4096);
 
         const size_t kEntityListReadSize =
-            offset::IsCnNeProfile() ? 0x40000 : 0x1E000;
+            cnNeProfile ? 0x40000 : 0x1E000;
         const size_t kEntityListChunkSize =
-            offset::IsCnNeProfile() ? 0x10000 : 0x1000;
+            cnNeProfile ? EntityScannerCnNeEntityListChunkSize() : 0x1000;
+        scanDetail.cnNeEntityListChunkSize = cnNeProfile ? kEntityListChunkSize : 0;
         constexpr size_t kEntityListFallbackChunkSize = 0x1000;
-        const bool cnNeProfile = offset::IsCnNeProfile();
+        const bool lightScanRequested = EntityLightScanRequested();
+        const bool lightScan = lightScanRequested;
+        const size_t lightScanMaxCandidates =
+            lightScan ? EntityLightScanMaxCandidates() : 0;
+        const bool cnNeMapCandidateCacheEnabled =
+            cnNeProfile &&
+            EntityScannerEnvFlagEnabled("UN_DMA_CN_NE_STAGE4B_MAP_CACHE");
+        scanDetail.cnNeMapCandidateCacheEnabled = cnNeMapCandidateCacheEnabled;
+        const bool cnNeMapDiagEnabled =
+            cnNeProfile && EntityScannerEnvFlagEnabled("UN_DMA_CN_NE_MAP_DIAG");
+        scanDetail.cnNeMapDiagEnabled = cnNeMapDiagEnabled;
+        const bool cnNeRecordMatchIdFromHeaderEnabled =
+            cnNeProfile &&
+            EntityScannerEnvFlagEnabled("UN_DMA_CN_NE_RECORD_MATCH_ID_FROM_HEADER");
+        scanDetail.cnNeRecordMatchIdFromHeaderEnabled = cnNeRecordMatchIdFromHeaderEnabled;
         static uint64_t cachedModuleBase = 0;
         static uint64_t cachedModuleSize = 0;
         if (cnNeProfile && cachedModuleBase != SDK->dwGameBase) {
@@ -918,10 +1498,203 @@ namespace OW {
             cachedModuleSize = static_cast<uint64_t>(mem.GetBaseSize("Overwatch.exe"));
         }
         const uint64_t moduleSize = cnNeProfile ? cachedModuleSize : 0;
+        scanDetail.scanRootMs += elapsedMs(rootPhaseStartedAt);
+
+        struct PersistentCnNeRecordSnapshotCacheEntry {
+            uint64_t entityList = 0;
+            uint64_t moduleBase = 0;
+            uint64_t moduleSize = 0;
+            DWORD updateTick = 0;
+            EntityScanRecord record{};
+        };
+        static std::unordered_map<uint64_t, PersistentCnNeRecordSnapshotCacheEntry>
+            persistentCnNeRecordSnapshotCache{};
+        static uint64_t persistentCnNeRecordSnapshotEntityList = 0;
+        static uint64_t persistentCnNeRecordSnapshotModuleBase = 0;
+        static uint64_t persistentCnNeRecordSnapshotModuleSize = 0;
+        const DWORD recordSnapshotCacheTtlMs =
+            cnNeProfile ? EntityScannerRecordSnapshotCacheTtlMs() : 0;
+        const bool recordSnapshotCacheEnabled =
+            cnNeProfile && recordSnapshotCacheTtlMs > 0;
+        const size_t recordSnapshotCacheRefreshBudget =
+            recordSnapshotCacheEnabled ? EntityScannerRecordSnapshotCacheRefreshBudget() : 0;
+        const bool recordSnapshotCacheRefreshBudgetEnabled =
+            recordSnapshotCacheRefreshBudget > 0;
+        size_t recordSnapshotCacheRefreshCount = 0;
+        scanDetail.cnNeRecordSnapshotCacheEnabled = recordSnapshotCacheEnabled;
+        scanDetail.cnNeRecordSnapshotCacheTtlMs = recordSnapshotCacheTtlMs;
+        scanDetail.cnNeRecordSnapshotCacheRefreshBudget =
+            recordSnapshotCacheRefreshBudget;
+        if (recordSnapshotCacheEnabled &&
+            (persistentCnNeRecordSnapshotEntityList != entity_list ||
+             persistentCnNeRecordSnapshotModuleBase != SDK->dwGameBase ||
+             persistentCnNeRecordSnapshotModuleSize != moduleSize)) {
+            persistentCnNeRecordSnapshotCache.clear();
+            persistentCnNeRecordSnapshotEntityList = entity_list;
+            persistentCnNeRecordSnapshotModuleBase = SDK->dwGameBase;
+            persistentCnNeRecordSnapshotModuleSize = moduleSize;
+        }
+        if (recordSnapshotCacheEnabled &&
+            persistentCnNeRecordSnapshotCache.size() > 8192) {
+            persistentCnNeRecordSnapshotCache.clear();
+        }
+
+        static std::unordered_map<uint64_t, DWORD>
+            persistentCnNeEntityListReadNegativeCache{};
+        static uint64_t persistentCnNeEntityListReadNegativeCacheEntityList = 0;
+        static uint64_t persistentCnNeEntityListReadNegativeCacheModuleBase = 0;
+        const DWORD listReadNegativeCacheTtlMs =
+            cnNeProfile ? EntityScannerEntityListReadNegativeCacheTtlMs() : 0;
+        const bool listReadNegativeCacheEnabled =
+            cnNeProfile && listReadNegativeCacheTtlMs > 0;
+        scanDetail.cnNeEntityListReadNegativeCacheEnabled =
+            listReadNegativeCacheEnabled;
+        scanDetail.cnNeEntityListReadNegativeCacheTtlMs =
+            listReadNegativeCacheTtlMs;
+        if (listReadNegativeCacheEnabled &&
+            (persistentCnNeEntityListReadNegativeCacheEntityList != entity_list ||
+             persistentCnNeEntityListReadNegativeCacheModuleBase != SDK->dwGameBase)) {
+            persistentCnNeEntityListReadNegativeCache.clear();
+            persistentCnNeEntityListReadNegativeCacheEntityList = entity_list;
+            persistentCnNeEntityListReadNegativeCacheModuleBase = SDK->dwGameBase;
+        }
+        if (listReadNegativeCacheEnabled &&
+            persistentCnNeEntityListReadNegativeCache.size() > 512) {
+            persistentCnNeEntityListReadNegativeCache.clear();
+        }
+        auto entityListReadNegativeCacheKey = [](size_t offset, size_t size) {
+            return static_cast<uint64_t>(offset) ^
+                (static_cast<uint64_t>(size) << 32);
+        };
+        auto shouldSkipEntityListRead = [&](size_t offset, size_t size) {
+            if (!listReadNegativeCacheEnabled)
+                return false;
+            ++scanDetail.cnNeEntityListReadNegativeCacheLookupCount;
+            const uint64_t key = entityListReadNegativeCacheKey(offset, size);
+            auto it = persistentCnNeEntityListReadNegativeCache.find(key);
+            if (it == persistentCnNeEntityListReadNegativeCache.end())
+                return false;
+            const DWORD now = GetTickCount();
+            const DWORD ageMs = now - it->second;
+            const bool fresh = ageMs <= listReadNegativeCacheTtlMs;
+            const bool staleAllowed =
+                !fresh &&
+                staleMetadataMs > 0 &&
+                (staleMetadataOnly ||
+                 static_cast<uint64_t>(ageMs) <=
+                    static_cast<uint64_t>(listReadNegativeCacheTtlMs) +
+                        staleMetadataMs);
+            if (fresh || staleAllowed) {
+                ++scanDetail.cnNeEntityListReadNegativeCacheHitCount;
+                if (staleAllowed)
+                    ++scanDetail.cnNeEntityListReadNegativeCacheStaleHitCount;
+                ++scanDetail.listReadSkippedCount;
+                return true;
+            }
+            ++scanDetail.cnNeEntityListReadNegativeCacheExpiredCount;
+            persistentCnNeEntityListReadNegativeCache.erase(it);
+            return false;
+        };
+        auto rememberEntityListReadFailure = [&](size_t offset, size_t size) {
+            if (!listReadNegativeCacheEnabled)
+                return;
+            persistentCnNeEntityListReadNegativeCache.insert_or_assign(
+                entityListReadNegativeCacheKey(offset, size),
+                GetTickCount());
+            ++scanDetail.cnNeEntityListReadNegativeCacheStoreCount;
+        };
+
+        struct PersistentCnNeEntityListReadCacheEntry {
+            DWORD updateTick = 0;
+            std::vector<uint8_t> bytes{};
+        };
+        static std::unordered_map<uint64_t, PersistentCnNeEntityListReadCacheEntry>
+            persistentCnNeEntityListReadCache{};
+        static uint64_t persistentCnNeEntityListReadCacheEntityList = 0;
+        static uint64_t persistentCnNeEntityListReadCacheModuleBase = 0;
+        const DWORD listReadCacheTtlMs =
+            cnNeProfile ? EntityScannerEntityListReadCacheTtlMs() : 0;
+        const bool listReadCacheEnabled =
+            cnNeProfile && listReadCacheTtlMs > 0;
+        scanDetail.cnNeEntityListReadCacheEnabled = listReadCacheEnabled;
+        scanDetail.cnNeEntityListReadCacheTtlMs = listReadCacheTtlMs;
+        if (listReadCacheEnabled &&
+            (persistentCnNeEntityListReadCacheEntityList != entity_list ||
+             persistentCnNeEntityListReadCacheModuleBase != SDK->dwGameBase)) {
+            persistentCnNeEntityListReadCache.clear();
+            persistentCnNeEntityListReadCacheEntityList = entity_list;
+            persistentCnNeEntityListReadCacheModuleBase = SDK->dwGameBase;
+        }
+        if (listReadCacheEnabled &&
+            persistentCnNeEntityListReadCache.size() > 512) {
+            persistentCnNeEntityListReadCache.clear();
+        }
+        auto loadEntityListReadCache =
+            [&](size_t offset, size_t size, std::vector<uint8_t>& destination) {
+                if (!listReadCacheEnabled)
+                    return false;
+                ++scanDetail.cnNeEntityListReadCacheLookupCount;
+                const uint64_t key = entityListReadNegativeCacheKey(offset, size);
+                auto it = persistentCnNeEntityListReadCache.find(key);
+                if (it == persistentCnNeEntityListReadCache.end())
+                    return false;
+
+                const DWORD now = GetTickCount();
+                PersistentCnNeEntityListReadCacheEntry& entry = it->second;
+                const DWORD ageMs = now - entry.updateTick;
+                if (entry.bytes.size() != size) {
+                    ++scanDetail.cnNeEntityListReadCacheExpiredCount;
+                    persistentCnNeEntityListReadCache.erase(it);
+                    return false;
+                }
+
+                if (ageMs > listReadCacheTtlMs) {
+                    ++scanDetail.cnNeEntityListReadCacheExpiredCount;
+                    if (staleMetadataMs == 0 ||
+                        (!staleMetadataOnly &&
+                         static_cast<uint64_t>(ageMs) >
+                            static_cast<uint64_t>(listReadCacheTtlMs) +
+                                staleMetadataMs)) {
+                        persistentCnNeEntityListReadCache.erase(it);
+                        return false;
+                    }
+
+                    std::memcpy(destination.data(), entry.bytes.data(), size);
+                    ++scanDetail.cnNeEntityListReadCacheHitCount;
+                    ++scanDetail.cnNeEntityListReadCacheStaleHitCount;
+                    return true;
+                }
+
+                std::memcpy(destination.data(), entry.bytes.data(), size);
+                ++scanDetail.cnNeEntityListReadCacheHitCount;
+                return true;
+            };
+        auto rememberEntityListReadSuccess =
+            [&](size_t offset, size_t size, const std::vector<uint8_t>& source) {
+                if (!listReadCacheEnabled)
+                    return;
+                PersistentCnNeEntityListReadCacheEntry entry{};
+                entry.updateTick = GetTickCount();
+                entry.bytes.assign(source.begin(), source.begin() + size);
+                persistentCnNeEntityListReadCache.insert_or_assign(
+                    entityListReadNegativeCacheKey(offset, size),
+                    std::move(entry));
+                ++scanDetail.cnNeEntityListReadCacheStoreCount;
+            };
 
         auto addRecord = [&](uint64_t possible_common) {
+            const auto recordBuildStartedAt = std::chrono::steady_clock::now();
+            const Diagnostics::ScopedDmaCallsite recordBuildCallsite(
+                Diagnostics::DmaCallsite::EntityScanRecordBuild);
+            ++scanDetail.recordAddAttemptCount;
+            auto finishRecordBuild = [&]() {
+                scanDetail.scanRecordBuildMs += elapsedMs(recordBuildStartedAt);
+            };
             if (!possible_common)
+            {
+                finishRecordBuild();
                 return;
+            }
             if (cnNeProfile &&
                 !IsLikelyCnNeEntityParent(
                     possible_common,
@@ -929,41 +1702,193 @@ namespace OW {
                     kEntityListReadSize,
                     SDK->dwGameBase,
                     moduleSize)) {
+                finishRecordBuild();
                 return;
             }
 
-            uint32_t cnNeUniqueId = 0;
-            if (cnNeProfile) {
-                cnNeUniqueId = SDK->RPM<uint32_t>(
-                    possible_common + offset::Entity_MatchId);
-                if (cnNeUniqueId == 0)
-                    return;
+            if (recordSnapshotCacheEnabled) {
+                ++scanDetail.cnNeRecordSnapshotCacheLookupCount;
+                const DWORD now = GetTickCount();
+                auto snapshotIt = persistentCnNeRecordSnapshotCache.find(possible_common);
+                if (snapshotIt != persistentCnNeRecordSnapshotCache.end()) {
+                    const PersistentCnNeRecordSnapshotCacheEntry& entry =
+                        snapshotIt->second;
+                    const bool sameContext =
+                        entry.entityList == entity_list &&
+                        entry.moduleBase == SDK->dwGameBase &&
+                        entry.moduleSize == moduleSize;
+                    const DWORD ageMs = now - entry.updateTick;
+                    const bool fresh = sameContext && ageMs <= recordSnapshotCacheTtlMs;
+                    const bool staleMetadataAllowed =
+                        sameContext &&
+                        !fresh &&
+                        staleMetadataMs > 0 &&
+                        (staleMetadataOnly || ageMs <= staleMetadataMs);
+                    const bool staleAllowed =
+                        staleMetadataAllowed ||
+                        (sameContext &&
+                         !fresh &&
+                         recordSnapshotCacheRefreshBudgetEnabled &&
+                         recordSnapshotCacheRefreshCount >= recordSnapshotCacheRefreshBudget);
+                    if (fresh || staleAllowed) {
+                        EntityScanRecord cached = entry.record;
+                        if (cached.entity == possible_common && cached.unique_id != 0) {
+                            if (!seen_entities.insert(possible_common).second) {
+                                ++scanDetail.recordDuplicateCount;
+                                finishRecordBuild();
+                                return;
+                            }
+                            ++scanDetail.cnNeRecordSnapshotCacheHitCount;
+                            if (staleAllowed)
+                                ++scanDetail.cnNeRecordSnapshotCacheStaleHitCount;
+                            match_index[cached.unique_id].push_back(cached.entity);
+                            records.push_back(std::move(cached));
+                            finishRecordBuild();
+                            return;
+                        }
+                    }
+                    if (sameContext)
+                        ++scanDetail.cnNeRecordSnapshotCacheExpiredCount;
+                    persistentCnNeRecordSnapshotCache.erase(snapshotIt);
+                }
             }
-
-            if (!seen_entities.insert(possible_common).second)
-                return;
+            if (recordSnapshotCacheEnabled) {
+                ++recordSnapshotCacheRefreshCount;
+                ++scanDetail.cnNeRecordSnapshotCacheRefreshCount;
+            }
 
             EntityScanRecord record{};
             record.entity = possible_common;
-            record.header.Read(possible_common);
+            bool recordHeaderLoaded = false;
+            auto readRecordHeader = [&]() {
+                if (recordHeaderLoaded)
+                    return;
+                ++scanDetail.recordHeaderReadCount;
+                {
+                    const Diagnostics::ScopedDmaCallsite headerCallsite(
+                        Diagnostics::DmaCallsite::EntityScanRecordHeader);
+                    record.header.Read(possible_common);
+                }
+                if (!record.header.valid)
+                    ++scanDetail.recordHeaderFailCount;
+                recordHeaderLoaded = true;
+            };
+
+            bool headerMatchIdObserved = false;
+            bool headerHasUniqueId = false;
+            uint32_t headerUniqueId = 0;
+            auto observeHeaderMatchId = [&](uint32_t compareValue, bool haveCompareValue) {
+                if (headerMatchIdObserved)
+                    return;
+                headerHasUniqueId =
+                    record.header.ReadParentOffset(offset::Entity_MatchId, headerUniqueId);
+                if (headerHasUniqueId) {
+                    ++scanDetail.recordMatchIdHeaderHitCount;
+                    if (haveCompareValue) {
+                        if (headerUniqueId == compareValue)
+                            ++scanDetail.recordMatchIdHeaderMatchCount;
+                        else
+                            ++scanDetail.recordMatchIdHeaderMismatchCount;
+                    }
+                } else {
+                    ++scanDetail.recordMatchIdHeaderMissCount;
+                }
+                headerMatchIdObserved = true;
+            };
+
+            uint32_t cnNeUniqueId = 0;
+            if (cnNeProfile && cnNeRecordMatchIdFromHeaderEnabled) {
+                readRecordHeader();
+                observeHeaderMatchId(0, false);
+                if (headerHasUniqueId && headerUniqueId != 0) {
+                    cnNeUniqueId = headerUniqueId;
+                    ++scanDetail.recordMatchIdHeaderUseCount;
+                } else {
+                    ++scanDetail.recordRemoteFallbackReadCount;
+                    ++scanDetail.recordMatchIdDirectReadCount;
+                    {
+                        const Diagnostics::ScopedDmaCallsite matchIdCallsite(
+                            Diagnostics::DmaCallsite::EntityScanRecordMatchId);
+                        cnNeUniqueId = SDK->RPM<uint32_t>(
+                            possible_common + offset::Entity_MatchId);
+                    }
+                    if (cnNeUniqueId == 0) {
+                        ++scanDetail.recordMatchIdDirectZeroCount;
+                        finishRecordBuild();
+                        return;
+                    }
+                }
+            } else if (cnNeProfile) {
+                ++scanDetail.recordRemoteFallbackReadCount;
+                ++scanDetail.recordMatchIdDirectReadCount;
+                {
+                    const Diagnostics::ScopedDmaCallsite matchIdCallsite(
+                        Diagnostics::DmaCallsite::EntityScanRecordMatchId);
+                    cnNeUniqueId = SDK->RPM<uint32_t>(
+                        possible_common + offset::Entity_MatchId);
+                }
+                if (cnNeUniqueId == 0) {
+                    ++scanDetail.recordMatchIdDirectZeroCount;
+                    finishRecordBuild();
+                    return;
+                }
+            }
+
+            if (!seen_entities.insert(possible_common).second) {
+                ++scanDetail.recordDuplicateCount;
+                finishRecordBuild();
+                return;
+            }
+
+            readRecordHeader();
+            observeHeaderMatchId(cnNeUniqueId, cnNeProfile && cnNeUniqueId != 0);
 
             if (cnNeProfile) {
                 record.unique_id = cnNeUniqueId;
-            } else if (!record.header.ReadParentOffset(offset::Entity_MatchId, record.unique_id)) {
+            } else if (headerHasUniqueId) {
+                record.unique_id = headerUniqueId;
+            } else {
+                ++scanDetail.recordRemoteFallbackReadCount;
+                ++scanDetail.recordMatchIdDirectReadCount;
+                const Diagnostics::ScopedDmaCallsite matchIdCallsite(
+                    Diagnostics::DmaCallsite::EntityScanRecordMatchId);
                 record.unique_id = SDK->RPM<uint32_t>(possible_common + offset::Entity_MatchId);
+                if (record.unique_id == 0)
+                    ++scanDetail.recordMatchIdDirectZeroCount;
             }
 
             uint64_t ptr_value = 0;
-            if (!record.header.ReadParentOffset(offset::Entity_PoolPtr, ptr_value))
+            if (!record.header.ReadParentOffset(offset::Entity_PoolPtr, ptr_value)) {
+                ++scanDetail.recordRemoteFallbackReadCount;
+                const Diagnostics::ScopedDmaCallsite poolPtrCallsite(
+                    Diagnostics::DmaCallsite::EntityScanRecordPoolPtr);
                 ptr_value = SDK->RPM<uint64_t>(possible_common + offset::Entity_PoolPtr);
+            }
 
             record.ptr = ptr_value & 0xFFFFFFFFFFFFFFC0;
-            if (record.ptr && record.ptr < 0xFFFFFFFFFFFFFFEF)
+            if (record.ptr && record.ptr < 0xFFFFFFFFFFFFFFEF) {
+                ++scanDetail.poolIdReadCount;
+                const Diagnostics::ScopedDmaCallsite poolIdCallsite(
+                    Diagnostics::DmaCallsite::EntityScanRecordPoolId);
                 record.entity_id = SDK->RPM<uint64_t>(record.ptr + offset::Pool_PoolId);
+            }
 
             if (record.unique_id != 0)
                 match_index[record.unique_id].push_back(record.entity);
+            if (recordSnapshotCacheEnabled && record.unique_id != 0) {
+                PersistentCnNeRecordSnapshotCacheEntry entry{};
+                entry.entityList = entity_list;
+                entry.moduleBase = SDK->dwGameBase;
+                entry.moduleSize = moduleSize;
+                entry.updateTick = GetTickCount();
+                entry.record = record;
+                persistentCnNeRecordSnapshotCache.insert_or_assign(
+                    record.entity,
+                    entry);
+                ++scanDetail.cnNeRecordSnapshotCacheStoreCount;
+            }
             records.push_back(std::move(record));
+            finishRecordBuild();
         };
 
         std::vector<uint8_t> entity_chunk(kEntityListChunkSize);
@@ -972,12 +1897,11 @@ namespace OW {
         size_t slots_scanned = 0;
         size_t nonzero_slots = 0;
         size_t plausible_slots = 0;
-        Diagnostics::EntityScanDetailStats scanDetail{};
-        scanDetail.entityList = entity_list;
         auto processEntityChunk = [&](const std::vector<uint8_t>& chunk,
                                       size_t chunk_size) {
             for (size_t slot_offset = 0; slot_offset + sizeof(Entity) <= chunk_size;
                  slot_offset += sizeof(Entity)) {
+                const auto slotWalkStartedAt = std::chrono::steady_clock::now();
                 uint64_t possible_common = 0;
                 std::memcpy(&possible_common, chunk.data() + slot_offset, sizeof(possible_common));
                 ++slots_scanned;
@@ -985,6 +1909,7 @@ namespace OW {
                     ++nonzero_slots;
                 if (IsPlausibleUserPointer(possible_common))
                     ++plausible_slots;
+                scanDetail.scanSlotWalkMs += elapsedMs(slotWalkStartedAt);
                 addRecord(possible_common);
             }
         };
@@ -993,11 +1918,31 @@ namespace OW {
             const size_t remaining = kEntityListReadSize - offset;
             const size_t chunk_size =
                 remaining < kEntityListChunkSize ? remaining : kEntityListChunkSize;
-            if (mem.Read(entity_list + offset, entity_chunk.data(), chunk_size)) {
+            bool chunkRead = loadEntityListReadCache(offset, chunk_size, entity_chunk);
+            const bool chunkSkipped = chunkRead ? false : shouldSkipEntityListRead(offset, chunk_size);
+            if (!chunkSkipped) {
+                if (!chunkRead) {
+                    ++scanDetail.listReadCount;
+                    const auto listReadStartedAt = std::chrono::steady_clock::now();
+                    {
+                        const Diagnostics::ScopedDmaCallsite listReadCallsite(
+                            Diagnostics::DmaCallsite::EntityScanListRead);
+                        chunkRead = mem.Read(entity_list + offset, entity_chunk.data(), chunk_size);
+                    }
+                    scanDetail.scanListReadMs += elapsedMs(listReadStartedAt);
+                    if (chunkRead)
+                        rememberEntityListReadSuccess(offset, chunk_size, entity_chunk);
+                }
+            }
+            if (chunkRead) {
                 readable_bytes += chunk_size;
                 ++readable_chunks;
                 processEntityChunk(entity_chunk, chunk_size);
                 continue;
+            }
+            if (!chunkSkipped) {
+                ++scanDetail.listReadFailCount;
+                rememberEntityListReadFailure(offset, chunk_size);
             }
 
             if (!cnNeProfile || kEntityListFallbackChunkSize >= chunk_size)
@@ -1010,9 +1955,37 @@ namespace OW {
                     sub_remaining < kEntityListFallbackChunkSize
                         ? sub_remaining
                         : kEntityListFallbackChunkSize;
-                if (!mem.Read(entity_list + offset + sub_offset,
-                        entity_chunk.data(),
-                        sub_size)) {
+                const size_t absoluteSubOffset = offset + sub_offset;
+                bool subChunkRead =
+                    loadEntityListReadCache(absoluteSubOffset, sub_size, entity_chunk);
+                const bool subChunkSkipped = subChunkRead
+                    ? false
+                    : shouldSkipEntityListRead(absoluteSubOffset, sub_size);
+                if (!subChunkSkipped) {
+                    if (!subChunkRead) {
+                        ++scanDetail.listReadCount;
+                        ++scanDetail.listFallbackReadCount;
+                        const auto subListReadStartedAt = std::chrono::steady_clock::now();
+                        {
+                            const Diagnostics::ScopedDmaCallsite listReadCallsite(
+                                Diagnostics::DmaCallsite::EntityScanListRead);
+                            subChunkRead = mem.Read(entity_list + absoluteSubOffset,
+                                    entity_chunk.data(),
+                                    sub_size);
+                        }
+                        scanDetail.scanListReadMs += elapsedMs(subListReadStartedAt);
+                        if (subChunkRead)
+                            rememberEntityListReadSuccess(
+                                absoluteSubOffset,
+                                sub_size,
+                                entity_chunk);
+                    }
+                }
+                if (!subChunkRead) {
+                    if (!subChunkSkipped) {
+                        ++scanDetail.listReadFailCount;
+                        rememberEntityListReadFailure(absoluteSubOffset, sub_size);
+                    }
                     continue;
                 }
                 readable_bytes += sub_size;
@@ -1028,25 +2001,44 @@ namespace OW {
         scanDetail.plausibleSlots = plausible_slots;
         scanDetail.records = records.size();
         scanDetail.matchIds = match_index.size();
+        scanDetail.lightScanRequested = lightScanRequested;
+        scanDetail.lightScanEnabled = lightScan;
+        scanDetail.lightScanPairCap = lightScanMaxCandidates;
 
         if (records.empty()) {
             Diagnostics::Trace("Entity scan skipped: no records from list=0x%llX chunks=%zu bytes=%zu.",
                 static_cast<unsigned long long>(entity_list),
                 readable_chunks,
                 readable_bytes);
-            Diagnostics::SetEntityScanDetailStats(scanDetail);
+            finishScanDetail();
             return result;
         }
 
-        auto addPair = [&](uint64_t component_parent, uint64_t link_parent) {
+        auto addPair = [&](uint64_t component_parent,
+                           uint64_t link_parent,
+                           bool lightCandidate = false) {
+            ++scanDetail.addPairAttemptCount;
             if (!component_parent || !link_parent)
-                return;
+                return false;
+            if (lightCandidate &&
+                lightScanMaxCandidates != 0 &&
+                result.size() >= lightScanMaxCandidates) {
+                ++scanDetail.lightScanCapHits;
+                return false;
+            }
             const auto pair = std::make_pair(component_parent, link_parent);
-            if (std::find(result.begin(), result.end(), pair) == result.end())
-                result.push_back(pair);
+            if (std::find(result.begin(), result.end(), pair) != result.end()) {
+                ++scanDetail.addPairDuplicateCount;
+                return false;
+            }
+            result.push_back(pair);
+            if (lightCandidate)
+                ++scanDetail.lightScanUnvalidatedPairs;
+            return true;
         };
 
         auto hasPlayableComponents = [&](uint64_t component_parent) {
+            ++scanDetail.playableValidationAttemptCount;
             if (!component_parent)
                 return false;
             const uint64_t health =
@@ -1055,12 +2047,25 @@ namespace OW {
                 return false;
             const uint64_t velocity =
                 DecryptComponent(component_parent, TYPE_VELOCITY);
-            return velocity != 0;
+            if (!velocity)
+                return false;
+            ++scanDetail.playableValidationSuccessCount;
+            return true;
         };
 
         auto hasCnNePlayableComponents = [&](const EntityScanRecord& current) {
+            const auto validationStartedAt = std::chrono::steady_clock::now();
+            const Diagnostics::ScopedDmaCallsite validationCallsite(
+                Diagnostics::DmaCallsite::EntityScanSelfValidation);
+            ++scanDetail.playableValidationAttemptCount;
+            auto finishValidation = [&]() {
+                scanDetail.scanCnNeSelfValidationMs += elapsedMs(validationStartedAt);
+            };
             if (!current.entity)
+            {
+                finishValidation();
                 return false;
+            }
             const EntityHeaderSnapshot* snapshot =
                 current.header.valid ? &current.header : nullptr;
             auto rememberReject = [&](int reason,
@@ -1095,12 +2100,14 @@ namespace OW {
                 ++scanDetail.selfHealthBase;
             if (!IsPlausibleUserPointer(health)) {
                 rememberReject(1, health, 0, 0, 0, 0, 0.0f, 0.0f);
+                finishValidation();
                 return false;
             }
 
             health_compo_t health_compo{};
             if (!SDK->read_range(health, &health_compo, sizeof(health_compo))) {
                 rememberReject(2, health, 0, 0, 0, 0, 0.0f, 0.0f);
+                finishValidation();
                 return false;
             }
             ++scanDetail.selfHealthRead;
@@ -1117,6 +2124,7 @@ namespace OW {
                 totalHealthMax > 10000.0f ||
                 totalHealth > totalHealthMax + 2000.0f) {
                 rememberReject(3, health, 0, 0, 0, 0, totalHealth, totalHealthMax);
+                finishValidation();
                 return false;
             }
             ++scanDetail.selfHealthPlausible;
@@ -1127,16 +2135,19 @@ namespace OW {
                 ++scanDetail.selfHeroBase;
             if (!IsPlausibleUserPointer(hero)) {
                 rememberReject(4, health, hero, 0, 0, 0, totalHealth, totalHealthMax);
+                finishValidation();
                 return false;
             }
             hero_compo_t hero_compo{};
             if (!SDK->read_range(hero, &hero_compo, sizeof(hero_compo))) {
                 rememberReject(5, health, hero, 0, 0, 0, totalHealth, totalHealthMax);
+                finishValidation();
                 return false;
             }
             ++scanDetail.selfHeroRead;
             if (!GameData::IsKnownHeroId(hero_compo.heroid)) {
                 rememberReject(6, health, hero, hero_compo.heroid, 0, 0, totalHealth, totalHealthMax);
+                finishValidation();
                 return false;
             }
             ++scanDetail.selfHeroKnown;
@@ -1151,20 +2162,130 @@ namespace OW {
                 ++scanDetail.selfBoneBase;
             if (!IsPlausibleUserPointer(velocity) && !IsPlausibleUserPointer(bone)) {
                 rememberReject(7, health, hero, hero_compo.heroid, velocity, bone, totalHealth, totalHealthMax);
+                finishValidation();
                 return false;
             }
             ++scanDetail.selfPlayable;
+            ++scanDetail.playableValidationSuccessCount;
+            finishValidation();
             return true;
         };
 
+        struct PersistentCnNeComponentNegativeCacheEntry {
+            uint64_t entityList = 0;
+            uint64_t moduleBase = 0;
+            uint64_t moduleSize = 0;
+            DWORD updateTick = 0;
+        };
+        static std::unordered_map<uint64_t, PersistentCnNeComponentNegativeCacheEntry>
+            persistentCnNeComponentNegativeCache{};
+        static uint64_t persistentCnNeComponentNegativeEntityList = 0;
+        static uint64_t persistentCnNeComponentNegativeModuleBase = 0;
+        static uint64_t persistentCnNeComponentNegativeModuleSize = 0;
+        const DWORD componentNegativeCacheTtlMs =
+            cnNeProfile ? EntityScannerComponentNegativeCacheTtlMs() : 0;
+        const bool componentNegativeCacheEnabled =
+            cnNeProfile && componentNegativeCacheTtlMs > 0;
+        const size_t componentNegativeCacheRefreshBudget =
+            componentNegativeCacheEnabled ? EntityScannerComponentNegativeCacheRefreshBudget() : 0;
+        const bool componentNegativeCacheRefreshBudgetEnabled =
+            componentNegativeCacheRefreshBudget > 0;
+        size_t componentNegativeCacheRefreshCount = 0;
+        scanDetail.cnNeComponentNegativeCacheEnabled = componentNegativeCacheEnabled;
+        scanDetail.cnNeComponentNegativeCacheTtlMs = componentNegativeCacheTtlMs;
+        scanDetail.cnNeComponentNegativeCacheRefreshBudget =
+            componentNegativeCacheRefreshBudget;
+        if (componentNegativeCacheEnabled &&
+            (persistentCnNeComponentNegativeEntityList != entity_list ||
+             persistentCnNeComponentNegativeModuleBase != SDK->dwGameBase ||
+             persistentCnNeComponentNegativeModuleSize != moduleSize)) {
+            persistentCnNeComponentNegativeCache.clear();
+            persistentCnNeComponentNegativeEntityList = entity_list;
+            persistentCnNeComponentNegativeModuleBase = SDK->dwGameBase;
+            persistentCnNeComponentNegativeModuleSize = moduleSize;
+        }
+        if (componentNegativeCacheEnabled &&
+            persistentCnNeComponentNegativeCache.size() > 8192) {
+            persistentCnNeComponentNegativeCache.clear();
+        }
+
         auto hasCnNeComponentOnlyPlayable = [&](const EntityScanRecord& source,
                                                 uint64_t component_parent) {
+            const auto validationStartedAt = std::chrono::steady_clock::now();
+            const Diagnostics::ScopedDmaCallsite validationCallsite(
+                Diagnostics::DmaCallsite::EntityScanComponentValidation);
+            ++scanDetail.componentOnlyValidationAttemptCount;
+            auto finishValidation = [&]() {
+                scanDetail.scanComponentOnlyValidationMs += elapsedMs(validationStartedAt);
+            };
             if (!component_parent)
+            {
+                finishValidation();
                 return false;
+            }
+
+            if (componentNegativeCacheEnabled) {
+                ++scanDetail.cnNeComponentNegativeCacheLookupCount;
+                const DWORD now = GetTickCount();
+                auto negativeIt = persistentCnNeComponentNegativeCache.find(component_parent);
+                if (negativeIt != persistentCnNeComponentNegativeCache.end()) {
+                    const PersistentCnNeComponentNegativeCacheEntry& entry =
+                        negativeIt->second;
+                    const bool sameContext =
+                        entry.entityList == entity_list &&
+                        entry.moduleBase == SDK->dwGameBase &&
+                        entry.moduleSize == moduleSize;
+                    const DWORD ageMs = now - entry.updateTick;
+                    const bool fresh = sameContext && ageMs <= componentNegativeCacheTtlMs;
+                    const bool staleMetadataAllowed =
+                        sameContext &&
+                        !fresh &&
+                        staleMetadataMs > 0 &&
+                        (staleMetadataOnly || ageMs <= staleMetadataMs);
+                    const bool staleAllowed =
+                        staleMetadataAllowed ||
+                        (sameContext &&
+                         !fresh &&
+                         componentNegativeCacheRefreshBudgetEnabled &&
+                         componentNegativeCacheRefreshCount >= componentNegativeCacheRefreshBudget);
+                    if (fresh || staleAllowed) {
+                        ++scanDetail.cnNeComponentNegativeCacheHitCount;
+                        if (staleAllowed)
+                            ++scanDetail.cnNeComponentNegativeCacheStaleHitCount;
+                        finishValidation();
+                        return false;
+                    }
+                    if (sameContext)
+                        ++scanDetail.cnNeComponentNegativeCacheExpiredCount;
+                    persistentCnNeComponentNegativeCache.erase(negativeIt);
+                }
+            }
+            if (componentNegativeCacheEnabled) {
+                ++componentNegativeCacheRefreshCount;
+                ++scanDetail.cnNeComponentNegativeCacheRefreshCount;
+            }
 
             EntityHeaderSnapshot componentHeader{};
             const EntityHeaderSnapshot* snapshot =
                 componentHeader.Read(component_parent) ? &componentHeader : nullptr;
+            auto rememberNegative = [&]() {
+                if (!componentNegativeCacheEnabled)
+                    return;
+                PersistentCnNeComponentNegativeCacheEntry entry{};
+                entry.entityList = entity_list;
+                entry.moduleBase = SDK->dwGameBase;
+                entry.moduleSize = moduleSize;
+                entry.updateTick = GetTickCount();
+                persistentCnNeComponentNegativeCache.insert_or_assign(
+                    component_parent,
+                    entry);
+                ++scanDetail.cnNeComponentNegativeCacheStoreCount;
+            };
+            auto failValidation = [&]() {
+                rememberNegative();
+                finishValidation();
+                return false;
+            };
             auto rememberReject = [&](int reason,
                                       uint64_t healthBase,
                                       uint64_t velocityBase,
@@ -1193,13 +2314,13 @@ namespace OW {
                 ++scanDetail.selfHealthBase;
             if (!IsPlausibleUserPointer(health)) {
                 rememberReject(11, health, 0, 0, 0.0f, 0.0f);
-                return false;
+                return failValidation();
             }
 
             health_compo_t health_compo{};
             if (!SDK->read_range(health, &health_compo, sizeof(health_compo))) {
                 rememberReject(12, health, 0, 0, 0.0f, 0.0f);
-                return false;
+                return failValidation();
             }
             ++scanDetail.selfHealthRead;
 
@@ -1217,7 +2338,7 @@ namespace OW {
                 totalHealth <= totalHealthMax + 2000.0f;
             if (!plausibleHealthLayout) {
                 rememberReject(13, health, 0, 0, totalHealth, totalHealthMax);
-                return false;
+                return failValidation();
             }
             ++scanDetail.selfHealthPlausible;
 
@@ -1226,7 +2347,7 @@ namespace OW {
                 std::fabs(totalHealthMax - 500.0f) <= 10.0f;
             if (!trainingBotSized) {
                 rememberReject(14, health, 0, 0, totalHealth, totalHealthMax);
-                return false;
+                return failValidation();
             }
 
             const uint64_t velocity =
@@ -1241,13 +2362,13 @@ namespace OW {
                 ++scanDetail.selfBoneBase;
             if (!IsPlausibleUserPointer(velocity)) {
                 rememberReject(15, health, velocity, bone, totalHealth, totalHealthMax);
-                return false;
+                return failValidation();
             }
 
             velocity_compo_t velocity_compo{};
             if (!SDK->read_range(velocity, &velocity_compo, sizeof(velocity_compo))) {
                 rememberReject(16, health, velocity, bone, totalHealth, totalHealthMax);
-                return false;
+                return failValidation();
             }
             const XMFLOAT3 location = velocity_compo.location;
             const bool finiteLocation =
@@ -1262,7 +2383,7 @@ namespace OW {
                  std::fabs(location.z) > 0.001f);
             if (!finiteLocation) {
                 rememberReject(17, health, velocity, bone, totalHealth, totalHealthMax);
-                return false;
+                return failValidation();
             }
 
             bool teamOk = false;
@@ -1273,10 +2394,14 @@ namespace OW {
             }
             if (!teamOk && !IsPlausibleUserPointer(bone)) {
                 rememberReject(18, health, velocity, bone, totalHealth, totalHealthMax);
-                return false;
+                return failValidation();
             }
 
+            if (componentNegativeCacheEnabled)
+                persistentCnNeComponentNegativeCache.erase(component_parent);
             ++scanDetail.selfPlayable;
+            ++scanDetail.componentOnlyValidationSuccessCount;
+            finishValidation();
             return true;
         };
 
@@ -1326,42 +2451,294 @@ namespace OW {
                 GameData::IsKnownHeroId(hero_compo.heroid);
         };
 
-        auto addPlayableMatches = [&](uint32_t match_id, uint64_t link_parent) {
+        auto addPlayableMatches = [&](uint32_t match_id,
+                                      uint64_t link_parent,
+                                      bool trustMatchOnly = false) {
             if (match_id == 0)
                 return false;
+            ++scanDetail.matchLookupCount;
             const auto match = match_index.find(match_id);
             if (match == match_index.end())
                 return false;
+            ++scanDetail.matchLookupHitCount;
 
             bool added = false;
             for (uint64_t component_parent : match->second) {
                 if (component_parent == link_parent)
                     continue;
-                if (!hasPlayableComponents(component_parent))
+                if (!trustMatchOnly && !hasPlayableComponents(component_parent))
                     continue;
-                addPair(component_parent, link_parent);
-                added = true;
+                added = addPair(component_parent, link_parent, trustMatchOnly) || added;
             }
             return added;
         };
 
+        std::unordered_map<uint64_t, std::vector<uint64_t>> cnNeMapCandidateCache{};
+        if (cnNeMapCandidateCacheEnabled)
+            cnNeMapCandidateCache.reserve(records.size());
+        struct PersistentCnNeMapCandidateCacheEntry {
+            uint64_t entityList = 0;
+            uint64_t moduleBase = 0;
+            uint64_t moduleSize = 0;
+            DWORD updateTick = 0;
+            std::vector<uint64_t> candidates{};
+        };
+        static std::unordered_map<uint64_t, PersistentCnNeMapCandidateCacheEntry>
+            persistentCnNeMapCandidateCache{};
+        static uint64_t persistentCnNeMapCandidateEntityList = 0;
+        static uint64_t persistentCnNeMapCandidateModuleBase = 0;
+        static uint64_t persistentCnNeMapCandidateModuleSize = 0;
+        const DWORD persistentMapCacheTtlMs =
+            cnNeMapCandidateCacheEnabled ? EntityScannerPersistentMapCacheTtlMs() : 0;
+        const bool persistentMapCacheEnabled =
+            cnNeProfile && cnNeMapCandidateCacheEnabled && persistentMapCacheTtlMs > 0;
+        const size_t persistentMapCacheRefreshBudget =
+            persistentMapCacheEnabled ? EntityScannerPersistentMapCacheRefreshBudget() : 0;
+        const bool persistentMapCacheRefreshBudgetEnabled =
+            persistentMapCacheRefreshBudget > 0;
+        size_t persistentMapCacheRefreshCount = 0;
+        scanDetail.cnNeMapCandidatePersistentCacheEnabled = persistentMapCacheEnabled;
+        scanDetail.cnNeMapCandidatePersistentCacheTtlMs = persistentMapCacheTtlMs;
+        scanDetail.cnNeMapCandidatePersistentCacheRefreshBudget =
+            persistentMapCacheRefreshBudget;
+        if (persistentMapCacheEnabled &&
+            (persistentCnNeMapCandidateEntityList != entity_list ||
+             persistentCnNeMapCandidateModuleBase != SDK->dwGameBase ||
+             persistentCnNeMapCandidateModuleSize != moduleSize)) {
+            persistentCnNeMapCandidateCache.clear();
+            persistentCnNeMapCandidateEntityList = entity_list;
+            persistentCnNeMapCandidateModuleBase = SDK->dwGameBase;
+            persistentCnNeMapCandidateModuleSize = moduleSize;
+        }
+        if (persistentMapCacheEnabled &&
+            persistentCnNeMapCandidateCache.size() > 4096) {
+            persistentCnNeMapCandidateCache.clear();
+        }
+        std::unordered_set<uint64_t> cnNeMapDiagParents{};
+        if (cnNeMapDiagEnabled)
+            cnNeMapDiagParents.reserve(records.size());
+
+        auto collectCnNeMapBaseCandidatesForParent =
+            [&](uint64_t parent) -> std::vector<uint64_t> {
+                if (cnNeMapDiagEnabled) {
+                    ++scanDetail.cnNeMapCandidateParentLookupCount;
+                    if (cnNeMapDiagParents.insert(parent).second)
+                        ++scanDetail.cnNeMapCandidateUniqueParentCount;
+                    else
+                        ++scanDetail.cnNeMapCandidateDuplicateParentCount;
+                }
+
+                if (!cnNeMapCandidateCacheEnabled) {
+                    return CollectCnNeMapBaseCandidates(
+                        parent,
+                        entity_list,
+                        kEntityListReadSize,
+                        SDK->dwGameBase,
+                        moduleSize,
+                        &scanDetail,
+                        cnNeMapDiagEnabled);
+                }
+
+                ++scanDetail.cnNeMapCandidateCacheLookupCount;
+                const auto cachedIt = cnNeMapCandidateCache.find(parent);
+                if (cachedIt != cnNeMapCandidateCache.end()) {
+                    ++scanDetail.cnNeMapCandidateCacheHitCount;
+                    return cachedIt->second;
+                }
+
+                ++scanDetail.cnNeMapCandidateCacheMissCount;
+                if (persistentMapCacheEnabled) {
+                    ++scanDetail.cnNeMapCandidatePersistentCacheLookupCount;
+                    const DWORD now = GetTickCount();
+                    auto persistentIt = persistentCnNeMapCandidateCache.find(parent);
+                    if (persistentIt != persistentCnNeMapCandidateCache.end()) {
+                        const PersistentCnNeMapCandidateCacheEntry& entry =
+                            persistentIt->second;
+                        const bool sameContext =
+                            entry.entityList == entity_list &&
+                            entry.moduleBase == SDK->dwGameBase &&
+                            entry.moduleSize == moduleSize;
+                        const DWORD ageMs = now - entry.updateTick;
+                        if (sameContext && ageMs <= persistentMapCacheTtlMs) {
+                            ++scanDetail.cnNeMapCandidatePersistentCacheHitCount;
+                            cnNeMapCandidateCache.emplace(parent, entry.candidates);
+                            return entry.candidates;
+                        }
+                        if (sameContext &&
+                            staleMetadataMs > 0 &&
+                            (staleMetadataOnly || ageMs <= staleMetadataMs) &&
+                            !entry.candidates.empty()) {
+                            ++scanDetail.cnNeMapCandidatePersistentCacheStaleHitCount;
+                            cnNeMapCandidateCache.emplace(parent, entry.candidates);
+                            return entry.candidates;
+                        }
+                        if (sameContext)
+                            ++scanDetail.cnNeMapCandidatePersistentCacheExpiredCount;
+                        if (sameContext &&
+                            persistentMapCacheRefreshBudgetEnabled &&
+                            persistentMapCacheRefreshCount >= persistentMapCacheRefreshBudget &&
+                            !entry.candidates.empty()) {
+                            ++scanDetail.cnNeMapCandidatePersistentCacheStaleHitCount;
+                            cnNeMapCandidateCache.emplace(parent, entry.candidates);
+                            return entry.candidates;
+                        }
+                        persistentCnNeMapCandidateCache.erase(persistentIt);
+                    }
+                    ++scanDetail.cnNeMapCandidatePersistentCacheMissCount;
+                }
+                if (persistentMapCacheEnabled) {
+                    ++persistentMapCacheRefreshCount;
+                    ++scanDetail.cnNeMapCandidatePersistentCacheRefreshCount;
+                }
+                std::vector<uint64_t> candidates = CollectCnNeMapBaseCandidates(
+                    parent,
+                    entity_list,
+                    kEntityListReadSize,
+                    SDK->dwGameBase,
+                    moduleSize,
+                    &scanDetail,
+                    cnNeMapDiagEnabled);
+                cnNeMapCandidateCache.emplace(parent, candidates);
+                if (persistentMapCacheEnabled) {
+                    PersistentCnNeMapCandidateCacheEntry entry{};
+                    entry.entityList = entity_list;
+                    entry.moduleBase = SDK->dwGameBase;
+                    entry.moduleSize = moduleSize;
+                    entry.updateTick = GetTickCount();
+                    entry.candidates = candidates;
+                    persistentCnNeMapCandidateCache.insert_or_assign(parent, std::move(entry));
+                    ++scanDetail.cnNeMapCandidatePersistentCacheStoreCount;
+                }
+                return candidates;
+            };
+
         const bool worldBzProfile = !offset::IsCnNeProfile();
         std::unordered_set<uint64_t> cnNeLinkTargetPairs{};
 
-        for (const EntityScanRecord& current : records) {
-            uint64_t cur_entity = current.entity;
-            if (!cur_entity) continue;
+        struct PersistentCnNeLinkDecryptNegativeCacheEntry {
+            uint64_t entityList = 0;
+            uint64_t moduleBase = 0;
+            uint64_t moduleSize = 0;
+            DWORD updateTick = 0;
+        };
+        static std::unordered_map<uint64_t, PersistentCnNeLinkDecryptNegativeCacheEntry>
+            persistentCnNeLinkDecryptNegativeCache{};
+        static uint64_t persistentCnNeLinkDecryptNegativeEntityList = 0;
+        static uint64_t persistentCnNeLinkDecryptNegativeModuleBase = 0;
+        static uint64_t persistentCnNeLinkDecryptNegativeModuleSize = 0;
+        const DWORD linkDecryptNegativeCacheTtlMs =
+            cnNeProfile ? EntityScannerLinkDecryptNegativeCacheTtlMs() : 0;
+        const bool linkDecryptNegativeCacheEnabled =
+            cnNeProfile && linkDecryptNegativeCacheTtlMs > 0;
+        scanDetail.cnNeLinkDecryptNegativeCacheEnabled =
+            linkDecryptNegativeCacheEnabled;
+        scanDetail.cnNeLinkDecryptNegativeCacheTtlMs =
+            linkDecryptNegativeCacheTtlMs;
+        if (linkDecryptNegativeCacheEnabled &&
+            (persistentCnNeLinkDecryptNegativeEntityList != entity_list ||
+             persistentCnNeLinkDecryptNegativeModuleBase != SDK->dwGameBase ||
+             persistentCnNeLinkDecryptNegativeModuleSize != moduleSize)) {
+            persistentCnNeLinkDecryptNegativeCache.clear();
+            persistentCnNeLinkDecryptNegativeEntityList = entity_list;
+            persistentCnNeLinkDecryptNegativeModuleBase = SDK->dwGameBase;
+            persistentCnNeLinkDecryptNegativeModuleSize = moduleSize;
+        }
+        if (linkDecryptNegativeCacheEnabled &&
+            persistentCnNeLinkDecryptNegativeCache.size() > 8192) {
+            persistentCnNeLinkDecryptNegativeCache.clear();
+        }
+        auto linkDecryptNegativeCacheHit = [&](uint64_t parent) {
+            if (!linkDecryptNegativeCacheEnabled || !parent)
+                return false;
+            ++scanDetail.cnNeLinkDecryptNegativeCacheLookupCount;
+            const DWORD now = GetTickCount();
+            auto negativeIt = persistentCnNeLinkDecryptNegativeCache.find(parent);
+            if (negativeIt == persistentCnNeLinkDecryptNegativeCache.end())
+                return false;
 
-            uint64_t common_linker = DecryptComponent(
+            const PersistentCnNeLinkDecryptNegativeCacheEntry& entry =
+                negativeIt->second;
+            const bool sameContext =
+                entry.entityList == entity_list &&
+                entry.moduleBase == SDK->dwGameBase &&
+                entry.moduleSize == moduleSize;
+            const DWORD ageMs = now - entry.updateTick;
+            const bool fresh = sameContext && ageMs <= linkDecryptNegativeCacheTtlMs;
+            const bool staleAllowed =
+                sameContext &&
+                !fresh &&
+                staleMetadataMs > 0 &&
+                (staleMetadataOnly || ageMs <= staleMetadataMs);
+            if (fresh || staleAllowed) {
+                ++scanDetail.cnNeLinkDecryptNegativeCacheHitCount;
+                if (staleAllowed)
+                    ++scanDetail.cnNeLinkDecryptNegativeCacheStaleHitCount;
+                return true;
+            }
+
+            if (sameContext)
+                ++scanDetail.cnNeLinkDecryptNegativeCacheExpiredCount;
+            persistentCnNeLinkDecryptNegativeCache.erase(negativeIt);
+            return false;
+        };
+        auto storeLinkDecryptNegativeCache = [&](uint64_t parent) {
+            if (!linkDecryptNegativeCacheEnabled || !parent)
+                return;
+            PersistentCnNeLinkDecryptNegativeCacheEntry entry{};
+            entry.entityList = entity_list;
+            entry.moduleBase = SDK->dwGameBase;
+            entry.moduleSize = moduleSize;
+            entry.updateTick = GetTickCount();
+            persistentCnNeLinkDecryptNegativeCache.insert_or_assign(parent, entry);
+            ++scanDetail.cnNeLinkDecryptNegativeCacheStoreCount;
+        };
+        auto decryptCnNeLink = [&](uint64_t parent,
+                                   const EntityHeaderSnapshot* snapshot) {
+            if (linkDecryptNegativeCacheHit(parent))
+                return static_cast<uint64_t>(0);
+            ++scanDetail.linkDecryptAttemptCount;
+            const uint64_t link = DecryptComponent(parent, TYPE_LINK, snapshot);
+            if (!link)
+                storeLinkDecryptNegativeCache(parent);
+            return link;
+        };
+
+        for (const EntityScanRecord& current : records) {
+            const auto matchLinkStartedAt = std::chrono::steady_clock::now();
+            const Diagnostics::ScopedDmaCallsite matchLinkCallsite(
+                Diagnostics::DmaCallsite::EntityScanMatchLink);
+            uint64_t cur_entity = current.entity;
+            if (!cur_entity) {
+                scanDetail.scanMatchLinkMs += elapsedMs(matchLinkStartedAt);
+                continue;
+            }
+
+            if (worldBzProfile && lightScan) {
+                bool added = false;
+                if (current.unique_id != 0)
+                    added = addPlayableMatches(current.unique_id + 1, cur_entity, true);
+                if (!added && current.unique_id != 0)
+                    added = addPlayableMatches(current.unique_id, cur_entity, true);
+                if (!added &&
+                    current.unique_id != 0 &&
+                    (current.unique_id & 0x80000000u) == 0) {
+                    addPlayableMatches(current.unique_id | 0x80000000u, cur_entity, true);
+                }
+                scanDetail.scanMatchLinkMs += elapsedMs(matchLinkStartedAt);
+                continue;
+            }
+
+            uint64_t common_linker = decryptCnNeLink(
                 cur_entity,
-                TYPE_LINK,
                 current.header.valid ? &current.header : nullptr);
             if (!common_linker) {
                 if (worldBzProfile) {
                     Diagnostics::RecordInvalidEntity();
+                    scanDetail.scanMatchLinkMs += elapsedMs(matchLinkStartedAt);
                     continue;
                 }
             } else {
+                ++scanDetail.linkDecryptSuccessCount;
                 ++scanDetail.linkPresent;
             }
 
@@ -1376,6 +2753,7 @@ namespace OW {
                     added = addPlayableMatches(unique_id, cur_entity);
                 if (!added && unique_id != 0 && (unique_id & 0x80000000u) == 0)
                     addPlayableMatches(unique_id | 0x80000000u, cur_entity);
+                scanDetail.scanMatchLinkMs += elapsedMs(matchLinkStartedAt);
                 continue;
             }
 
@@ -1388,9 +2766,11 @@ namespace OW {
                 const uint64_t linkBase =
                     link_parent == cur_entity && common_linker
                         ? common_linker
-                        : DecryptComponent(link_parent, TYPE_LINK, snapshot);
+                        : decryptCnNeLink(link_parent, snapshot);
                 if (!linkBase)
                     return;
+                if (!(link_parent == cur_entity && common_linker))
+                    ++scanDetail.linkDecryptSuccessCount;
 
                 processedCnNeLink = true;
                 ++scanDetail.linkPresent;
@@ -1399,21 +2779,32 @@ namespace OW {
                     SDK->RPM<uint32_t>(linkBase + offset::Link_UniqueId);
                 if (unique_id != 0) {
                     ++scanDetail.linkUidNonZero;
+                    ++scanDetail.matchLookupCount;
                     const auto match = match_index.find(unique_id);
                     if (match != match_index.end()) {
+                        ++scanDetail.matchLookupHitCount;
                         ++scanDetail.linkMatched;
+                        scanDetail.cnNeBucketEntryScanCount += match->second.size();
                         for (uint64_t component_parent : match->second) {
-                            addPair(component_parent, link_parent);
-                            ++scanDetail.linkPairs;
+                            if (addPair(component_parent, link_parent, lightScan))
+                                ++scanDetail.linkPairs;
                         }
                     }
                 }
 
-                const bool linkHeroKnown = hasCnNeKnownHero(link_parent);
+                const bool linkHeroKnown = !lightScan && hasCnNeKnownHero(link_parent);
                 for (uint64_t idOffset : { offset::Link_TargetId, offset::Link_UniqueId }) {
                     uint32_t resolvedId = 0;
-                    const uint64_t targetMapBase =
-                        ResolveCnNeLinkTargetMapBase(linkBase, idOffset, &resolvedId);
+                    uint64_t targetMapBase = 0;
+                    {
+                        const auto targetMapStartedAt = std::chrono::steady_clock::now();
+                        const Diagnostics::ScopedDmaCallsite targetResolveCallsite(
+                            Diagnostics::DmaCallsite::EntityScanLinkTargetResolve);
+                        ++scanDetail.cnNeTargetMapAttemptCount;
+                        targetMapBase =
+                            ResolveCnNeLinkTargetMapBase(linkBase, idOffset, &resolvedId);
+                        scanDetail.scanCnNeTargetMapMs += elapsedMs(targetMapStartedAt);
+                    }
                     if (!IsLikelyCnNeEntityParent(
                             targetMapBase,
                             entity_list,
@@ -1422,18 +2813,20 @@ namespace OW {
                             moduleSize)) {
                         continue;
                     }
+                    ++scanDetail.cnNeTargetMapSuccessCount;
 
                     const uint64_t pairKey =
                         (link_parent >> 4) ^ (targetMapBase << 17) ^ resolvedId;
                     if (!cnNeLinkTargetPairs.insert(pairKey).second)
                         continue;
 
-                    if (!linkHeroKnown && !hasCnNePlausibleHealth(targetMapBase))
+                    if (!lightScan && !linkHeroKnown && !hasCnNePlausibleHealth(targetMapBase))
                         continue;
 
-                    addPair(targetMapBase, link_parent);
-                    ++scanDetail.linkMatched;
-                    ++scanDetail.linkPairs;
+                    if (addPair(targetMapBase, link_parent, lightScan)) {
+                        ++scanDetail.linkMatched;
+                        ++scanDetail.linkPairs;
+                    }
                 }
             };
 
@@ -1442,50 +2835,67 @@ namespace OW {
                     cur_entity,
                     current.header.valid ? &current.header : nullptr);
 
-            for (uint64_t link_parent : CollectCnNeMapBaseCandidates(
-                     cur_entity,
-                     entity_list,
-                     kEntityListReadSize,
-                     SDK->dwGameBase,
-                     moduleSize)) {
-                if (link_parent == cur_entity)
-                    continue;
+            {
+                std::vector<uint64_t> linkParentCandidates{};
+                {
+                    const auto targetMapStartedAt = std::chrono::steady_clock::now();
+                    const Diagnostics::ScopedDmaCallsite mapCandidateCallsite(
+                        Diagnostics::DmaCallsite::EntityScanMapCandidate);
+                    linkParentCandidates =
+                        collectCnNeMapBaseCandidatesForParent(cur_entity);
+                    scanDetail.scanCnNeTargetMapMs += elapsedMs(targetMapStartedAt);
+                }
+                scanDetail.cnNeMapCandidateCount += linkParentCandidates.size();
+                for (uint64_t link_parent : linkParentCandidates) {
+                    if (link_parent == cur_entity)
+                        continue;
+                    if (linkDecryptNegativeCacheHit(link_parent))
+                        continue;
 
-                EntityHeaderSnapshot linkHeader{};
-                const EntityHeaderSnapshot* snapshot =
-                    linkHeader.Read(link_parent) ? &linkHeader : nullptr;
-                processCnNeLinkParent(link_parent, snapshot);
+                    EntityHeaderSnapshot linkHeader{};
+                    const EntityHeaderSnapshot* snapshot =
+                        linkHeader.Read(link_parent) ? &linkHeader : nullptr;
+                    processCnNeLinkParent(link_parent, snapshot);
+                }
             }
 
             if (!processedCnNeLink)
                 Diagnostics::RecordInvalidEntity();
+            scanDetail.scanMatchLinkMs += elapsedMs(matchLinkStartedAt);
         }
 
-        if (offset::IsCnNeProfile()) {
+        if (offset::IsCnNeProfile() && !lightScan) {
             for (const EntityScanRecord& current : records) {
                 if (hasCnNePlayableComponents(current))
                     addPair(current.entity, current.entity);
-                for (uint64_t component_parent : CollectCnNeMapBaseCandidates(
-                         current.entity,
-                         entity_list,
-                         kEntityListReadSize,
-                         SDK->dwGameBase,
-                         moduleSize)) {
+                std::vector<uint64_t> componentCandidates{};
+                {
+                    const auto targetMapStartedAt = std::chrono::steady_clock::now();
+                    const Diagnostics::ScopedDmaCallsite mapCandidateCallsite(
+                        Diagnostics::DmaCallsite::EntityScanMapCandidate);
+                    componentCandidates =
+                        collectCnNeMapBaseCandidatesForParent(current.entity);
+                    scanDetail.scanCnNeTargetMapMs += elapsedMs(targetMapStartedAt);
+                }
+                scanDetail.cnNeMapCandidateCount += componentCandidates.size();
+                for (uint64_t component_parent : componentCandidates) {
                     if (hasCnNeComponentOnlyPlayable(current, component_parent))
                         addPair(component_parent, component_parent);
                 }
             }
         }
 
+        const auto dynamicPairStartedAt = std::chrono::steady_clock::now();
         for (const EntityScanRecord& current : records) {
             if (isDynamicEntityId(current.entity_id)) {
                 addPair(current.entity, current.entity);
                 ++scanDetail.dynamicPairs;
             }
         }
+        scanDetail.scanDynamicPairMs += elapsedMs(dynamicPairStartedAt);
 
         scanDetail.totalPairs = result.size();
-        Diagnostics::SetEntityScanDetailStats(scanDetail);
+        finishScanDetail();
 
         Diagnostics::Trace("Entity scan list=0x%llX bytes=%zu records=%zu pairs=%zu.",
             static_cast<unsigned long long>(entity_list),

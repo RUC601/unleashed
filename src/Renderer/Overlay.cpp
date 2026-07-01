@@ -27,6 +27,7 @@ constexpr int kHeaderActionWidth = 364;
 constexpr wchar_t kCanvasClassName[] = L"UnleashedOverlayCanvasDX11";
 constexpr wchar_t kMenuClassName[] = L"UnleashedOverlayMenuDX11";
 constexpr ULONGLONG kCanvasBoundsRefreshMs = 2000;
+constexpr ULONGLONG kMenuRenderIntervalMs = 16;
 
 ImGuiContext* g_menuContext = nullptr;
 
@@ -291,7 +292,7 @@ DXGI_SWAP_CHAIN_DESC MakeSwapChainDesc(HWND hWnd, UINT width, UINT height) {
     desc.BufferDesc.Width = width;
     desc.BufferDesc.Height = height;
     desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.BufferDesc.RefreshRate.Numerator = 60;
+    desc.BufferDesc.RefreshRate.Numerator = 0;
     desc.BufferDesc.RefreshRate.Denominator = 1;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.OutputWindow = hWnd;
@@ -459,8 +460,16 @@ void Overlay::Run(std::function<void()> renderCallback) {
         UpdateSwapChainSizes();
 
         RenderCanvas(renderCallback);
-        if (OW::Config::Menu)
-            RenderMenu();
+        if (OW::Config::Menu) {
+            const ULONGLONG now = GetTickCount64();
+            if (m_lastMenuRenderMs == 0 ||
+                now - m_lastMenuRenderMs >= kMenuRenderIntervalMs) {
+                m_lastMenuRenderMs = now;
+                RenderMenu();
+            }
+        } else {
+            m_lastMenuRenderMs = 0;
+        }
     }
 
     Shutdown();
@@ -1030,6 +1039,6 @@ void Overlay::RenderMenu() {
     m_pContext->OMSetRenderTargets(1, &m_menuRenderTargetView, nullptr);
     m_pContext->ClearRenderTargetView(m_menuRenderTargetView, clearColor);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-    m_menuSwapChain->Present(1, 0);
+    m_menuSwapChain->Present(0, 0);
     m_canHideMenuOnDeactivate = true;
 }

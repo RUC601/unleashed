@@ -1,0 +1,521 @@
+{
+  "ok": true,
+  "schema_version": 1,
+  "timestamp_ms": 1782440496667,
+  "local": {
+    "hero_id": "0x2E000000000052C",
+    "hero_name": "Shion",
+    "health": 250,
+    "health_max": 250,
+    "alive": true,
+    "position": {
+      "x": 47.3672,
+      "y": 1.56644,
+      "z": 19.3564
+    },
+    "camera_position": {
+      "x": 47.3672,
+      "y": 3.11644,
+      "z": 19.3564
+    },
+    "view_direction": {
+      "x": -0.189363,
+      "y": 0.088185,
+      "z": -0.977939
+    },
+    "link_base": "0x270A3BC9240",
+    "skill_base": "0x27101CFCA40",
+    "player_controller": "0x270A3AE0040",
+    "ultimate_perk": {
+      "available": true,
+      "lookup_ready": true,
+      "policy": "safe_no338",
+      "seed_generated_at_utc": "2026-06-14T00:09:54Z",
+      "seed_trusted_rows": 202,
+      "seed_trusted_samples": 404,
+      "seed_source_holdout_known": 94,
+      "seed_source_holdout_samples": 404,
+      "seed_source_holdout_false_known": 0,
+      "skill_base": "0x27101CFCA40",
+      "e44_read": true,
+      "e44_u32": "0x42A",
+      "e44_u64": "0x4A2943200000042A",
+      "e78_read": true,
+      "e78_u32": "0x2A5",
+      "e78_u64": "0x2C7000002A5",
+      "research_selected_boolean": {
+        "evidence": "20260615_live_validation_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "rule": "unsupported_or_unread",
+        "raw": {
+          "skill_16c2_read": true,
+          "skill_16c2_u16": "0x12",
+          "symmetra_02e8_read": true,
+          "symmetra_02e8_u64": "0x8000001800000005",
+          "component55_base": null,
+          "component55_270_read": false,
+          "component55_270_u32": "0x0"
+        }
+      },
+      "selected_boolean": {
+        "evidence": "20260615_merged_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "result": "unsupported_or_unread",
+        "source": null,
+        "rule": null,
+        "used_signals": {
+          "raw": true,
+          "candidate_slots": true,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        }
+      },
+      "statescript_ea0c_selected_boolean": {
+        "evidence": "20260615_ea0c_10127_unique_candidate_fail_closed",
+        "supported_hero": true,
+        "available": true,
+        "selected": false,
+        "result": "known_unselected",
+        "resolution": "unique_record_match",
+        "source_name": "skill_qword_c0_storage",
+        "hero_map_known": false,
+        "mapped_source_offset": null,
+        "map_consistent": true,
+        "known_candidate_count": 1,
+        "source_found": true,
+        "matched_source_offset": "0x1D0",
+        "used_signals": {
+          "statescript_record_qwords": true,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        },
+        "records": {
+          "0x0000EA0C": {
+            "found": true,
+            "qword_0050_read": true,
+            "qword_0050": "0x1",
+            "qword_0058_read": true,
+            "qword_0058": "0x100000000"
+          },
+          "0x00010127": {
+            "found": true,
+            "qword_0050_read": true,
+            "qword_0050": "0x1",
+            "qword_0058_read": true,
+            "qword_0058": "0x100000000"
+          }
+        }
+      },
+      "ana_headshot_selected_boolean": {
+        "evidence": "20260616_ana_e44_not_no_pri_component21_02e8_headshot_major_right",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "result": "unsupported_or_unread",
+        "primary_gate_e44_read": false,
+        "primary_gate_e44_u32": "0x0",
+        "primary_gate_active": false,
+        "major_selected_known": false,
+        "major_selected": false,
+        "skill_02e8_read": false,
+        "skill_02e8_u64": "0x0",
+        "skill_02e8_high32": "0x0",
+        "skill_02e8_low32": "0x0",
+        "skill_02e8_gate_known": false,
+        "skill_02e8_gate_active": false,
+        "skill_0348_target_read": false,
+        "skill_0348_target": null,
+        "skill_0348_target_plausible": false,
+        "skill_0348_target_01d4_read": false,
+        "skill_0348_target_01d4_u32": "0x0",
+        "skill_0348_target_01d4_qword_read": false,
+        "skill_0348_target_01d4_u64": "0x0",
+        "component21_base": null,
+        "component21_021c_read": false,
+        "component21_021c_u32": "0x0",
+        "component21_0228_read": false,
+        "component21_0228_u32": "0x0",
+        "component21_0228_qword_read": false,
+        "component21_0228_u64": "0x0",
+        "component21_02e0_read": false,
+        "component21_02e0_u32": "0x0",
+        "component21_02e8_read": false,
+        "component21_02e8_u32": "0x0",
+        "component21_02e8_qword_read": false,
+        "component21_02e8_u64": "0x0",
+        "component7f_base": null,
+        "component7f_d4_read": false,
+        "component7f_d4_u64": "0x0",
+        "component7f_d8_read": false,
+        "component7f_d8_u32": "0x0",
+        "component7f_d8_qword_read": false,
+        "component7f_d8_u64": "0x0",
+        "component7f_scan": {
+          "range_begin": "0x0",
+          "range_end_exclusive": "0x200",
+          "stride": "0x8",
+          "hash": "0x0",
+          "read_count": 0,
+          "nonzero_count": 0,
+          "nonzero_qwords": []
+        },
+        "component7f_raw_slot": {
+          "bitset_read": false,
+          "present": false,
+          "index_read": false,
+          "table_read": false,
+          "table_plausible": false,
+          "slot_read": false,
+          "slot_plausible": false,
+          "bitset": "0x0",
+          "index_base": "0x0",
+          "component_index": "0x0",
+          "table": null,
+          "base": null,
+          "d8_read": false,
+          "d8_u32": "0x0",
+          "d8_qword_read": false,
+          "d8_u64": "0x0",
+          "scan": {
+            "range_begin": "0x0",
+            "range_end_exclusive": "0x240",
+            "stride": "0x8",
+            "hash": "0x0",
+            "read_count": 0,
+            "nonzero_count": 0,
+            "nonzero_qwords": []
+          }
+        },
+        "candidate_diagnostics": {
+          "skill_09a_read": false,
+          "skill_09a_u16": "0x0",
+          "skill_592_read": false,
+          "skill_592_u16": "0x0",
+          "skill_0bd0_read": false,
+          "skill_0bd0_u64": "0x0",
+          "component22_base": null,
+          "component22_0140_read": false,
+          "component22_0140_u16": "0x0",
+          "component22_01f2_read": false,
+          "component22_01f2_u16": "0x0",
+          "component22_0200_read": false,
+          "component22_0200_u32": "0x0",
+          "component22_0202_read": false,
+          "component22_0202_u16": "0x0",
+          "component22_0203_read": false,
+          "component22_0203_u8": "0x0",
+          "component22_0350_read": false,
+          "component22_0350_u16": "0x0"
+        },
+        "used_signals": {
+          "statescript_major_selected": false,
+          "component21_02e8": true,
+          "component21_0228": false,
+          "e44_primary_gate": true,
+          "skill_0348_target_01d4": false,
+          "skill_02e8_gate": false,
+          "component7f_d4_d8": false,
+          "component7f_scan": false,
+          "component7f_raw_slot": false,
+          "ana_candidate_diagnostics": false,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        }
+      },
+      "raw_selected_boolean": {
+        "evidence": "20260615_raw_per_hero_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "rule": "unsupported_or_unread",
+        "used_signals": {
+          "skill_16c2": true,
+          "symmetra_02e8": true,
+          "zarya_component55_270": true,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        }
+      },
+      "candidate_slot_selected_boolean": {
+        "evidence": "20260615_candidate_slot_family_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "result": "unsupported_or_unread",
+        "family": null,
+        "confidence": "none",
+        "side": null,
+        "matched_offsets": [],
+        "used_signals": {
+          "candidate_slots": true,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        }
+      },
+      "candidate_slots": [
+        {
+          "offset": "0x320",
+          "qword_read": true,
+          "qword": "0x27102C804F0",
+          "pointer_plausible": true,
+          "target_semantic_signature": "0xF2535C992EFEB3FD",
+          "target_completion": {
+            "count_u32_read": true,
+            "count_u32": "0x6",
+            "count_plausible": true,
+            "values_read": 6,
+            "values_u32_hex": [
+              "0x1",
+              "0x1",
+              "0x1",
+              "0x0",
+              "0x0",
+              "0x0"
+            ]
+          }
+        },
+        {
+          "offset": "0x328",
+          "qword_read": true,
+          "qword": "0x27102C804F0",
+          "pointer_plausible": true,
+          "target_semantic_signature": "0xF2535C992EFEB3FD",
+          "target_completion": {
+            "count_u32_read": true,
+            "count_u32": "0x6",
+            "count_plausible": true,
+            "values_read": 6,
+            "values_u32_hex": [
+              "0x1",
+              "0x1",
+              "0x1",
+              "0x0",
+              "0x0",
+              "0x0"
+            ]
+          }
+        },
+        {
+          "offset": "0x330",
+          "qword_read": true,
+          "qword": "0x27102C804F0",
+          "pointer_plausible": true,
+          "target_semantic_signature": "0xF2535C992EFEB3FD",
+          "target_completion": {
+            "count_u32_read": true,
+            "count_u32": "0x6",
+            "count_plausible": true,
+            "values_read": 6,
+            "values_u32_hex": [
+              "0x1",
+              "0x1",
+              "0x1",
+              "0x0",
+              "0x0",
+              "0x0"
+            ]
+          }
+        },
+        {
+          "offset": "0x338",
+          "qword_read": true,
+          "qword": "0x27102C804F0",
+          "pointer_plausible": true,
+          "target_semantic_signature": "0xF2535C992EFEB3FD",
+          "target_completion": {
+            "count_u32_read": true,
+            "count_u32": "0x6",
+            "count_plausible": true,
+            "values_read": 6,
+            "values_u32_hex": [
+              "0x1",
+              "0x1",
+              "0x1",
+              "0x0",
+              "0x0",
+              "0x0"
+            ]
+          }
+        },
+        {
+          "offset": "0x340",
+          "qword_read": true,
+          "qword": "0x27102C804F0",
+          "pointer_plausible": true,
+          "target_semantic_signature": "0xF2535C992EFEB3FD",
+          "target_completion": {
+            "count_u32_read": true,
+            "count_u32": "0x6",
+            "count_plausible": true,
+            "values_read": 6,
+            "values_u32_hex": [
+              "0x1",
+              "0x1",
+              "0x1",
+              "0x0",
+              "0x0",
+              "0x0"
+            ]
+          }
+        },
+        {
+          "offset": "0x348",
+          "qword_read": true,
+          "qword": "0x27102C804F0",
+          "pointer_plausible": true,
+          "target_semantic_signature": "0xF2535C992EFEB3FD",
+          "target_completion": {
+            "count_u32_read": true,
+            "count_u32": "0x6",
+            "count_plausible": true,
+            "values_read": 6,
+            "values_u32_hex": [
+              "0x1",
+              "0x1",
+              "0x1",
+              "0x0",
+              "0x0",
+              "0x0"
+            ]
+          }
+        },
+        {
+          "offset": "0xB30",
+          "qword_read": true,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x6738829C9F5491B9",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0xB38",
+          "qword_read": true,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x6738829C9F5491B9",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0xB50",
+          "qword_read": true,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x6738829C9F5491B9",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0xB58",
+          "qword_read": true,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x6738829C9F5491B9",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0xB60",
+          "qword_read": true,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x6738829C9F5491B9",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        }
+      ],
+      "result": "unknown_missing",
+      "selected": null,
+      "tier": null,
+      "key": null,
+      "signatures": {
+        "ordered": "0x8B06729F37357EF0",
+        "cluster": "0xA610641FB3927CEA",
+        "unique_no338": "0xB39FBE99A9145378",
+        "multiset": "0xE44A2FB07534BC24"
+      },
+      "keys": {
+        "ordered": "0xD61D9222F2845C61",
+        "cluster": "0x5D090A63780D8A55",
+        "unique_no338": "0x79E9C75D84AC699A",
+        "multiset": "0x7388627DED9D6D8D",
+        "state_code": "0x255B0C8226760295"
+      },
+      "research_candidate_signatures": {
+        "norm_ordered_320_338": "0x7DD8EE5F7D494D38",
+        "norm_unique_328_330_340": "0xB39FBE99A9145378",
+        "norm_unique_320_328_348": "0xB39FBE99A9145378",
+        "norm_unique_340": "0xB39FBE99A9145378",
+        "norm_unique_320_328": "0xB39FBE99A9145378"
+      },
+      "research_candidate_keys": {
+        "norm_ordered_320_338": "0xA7C727A96DB0BDB2",
+        "norm_unique_328_330_340": "0x79E9C75D84AC699A",
+        "norm_unique_320_328_348": "0x79E9C75D84AC699A",
+        "norm_unique_340": "0x79E9C75D84AC699A",
+        "norm_unique_320_328": "0x79E9C75D84AC699A"
+      },
+      "checked": [
+        {
+          "tier": "ordered",
+          "key": "0xD61D9222F2845C61",
+          "hit": false,
+          "collision": false
+        },
+        {
+          "tier": "cluster",
+          "key": "0x5D090A63780D8A55",
+          "hit": false,
+          "collision": false
+        },
+        {
+          "tier": "hero_e44_e78_unique_no338",
+          "key": "0x79E9C75D84AC699A",
+          "hit": false,
+          "collision": false
+        },
+        {
+          "tier": "hero_e44_e78_multiset",
+          "key": "0x7388627DED9D6D8D",
+          "hit": false,
+          "collision": false
+        }
+      ]
+    }
+  }
+}

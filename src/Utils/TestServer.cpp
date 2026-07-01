@@ -176,6 +176,551 @@ void AppendHexOrNull(std::ostringstream& out, uint64_t value)
     AppendHexString(out, value);
 }
 
+void AppendDmaWindowFields(std::ostringstream& out, const Diagnostics::DmaWindowStats& window)
+{
+    uint64_t maxCallsiteLatencyUs = 0;
+    const char* maxCallsiteName = "Unknown";
+    for (int i = 0; i < static_cast<int>(Diagnostics::DmaCallsite::Count); ++i) {
+        if (window.perCallsiteMaxUs[i] > maxCallsiteLatencyUs) {
+            maxCallsiteLatencyUs = window.perCallsiteMaxUs[i];
+            maxCallsiteName = Diagnostics::ToString(static_cast<Diagnostics::DmaCallsite>(i));
+        }
+    }
+
+    out << ",\"window_ms\":" << window.windowMs
+        << ",\"window_total\":" << window.totalReads
+        << ",\"window_failed\":" << window.failedReads
+        << ",\"window_max_latency_us\":" << window.maxLatencyUs
+        << ",\"window_slow_threshold_us\":" << window.slowThresholdUs
+        << ",\"window_slow_reads\":" << window.slowReads
+        << ",\"window_slow_failed\":" << window.slowFailedReads
+        << ",\"window_max_callsite\":";
+    AppendJsonString(out, maxCallsiteName);
+    out << ",\"window_max_callsite_latency_us\":" << maxCallsiteLatencyUs
+        << ",\"window_callsite\":{";
+    for (int i = 0; i < static_cast<int>(Diagnostics::DmaCallsite::Count); ++i) {
+        if (i != 0)
+            out << ',';
+        AppendJsonString(out, Diagnostics::ToString(static_cast<Diagnostics::DmaCallsite>(i)));
+        out << ":{\"reads\":" << window.perCallsiteReads[i]
+            << ",\"failed\":" << window.perCallsiteFailedReads[i]
+            << ",\"max_latency_us\":" << window.perCallsiteMaxUs[i]
+            << ",\"success_max_latency_us\":" << window.perCallsiteSuccessMaxUs[i]
+            << ",\"failed_max_latency_us\":" << window.perCallsiteFailedMaxUs[i]
+            << ",\"slow_reads\":" << window.perCallsiteSlowReads[i]
+            << ",\"slow_failed\":" << window.perCallsiteSlowFailedReads[i]
+            << '}';
+    }
+    out << '}';
+}
+
+void AppendDmaSlowReadSamples(
+    std::ostringstream& out,
+    uint64_t windowMs,
+    uint64_t minLatencyUs,
+    size_t maxSamples)
+{
+    const auto samples = Diagnostics::GetDmaSlowReadSamples(
+        windowMs,
+        minLatencyUs,
+        maxSamples);
+    out << ",\"slow_samples_window_ms\":" << windowMs
+        << ",\"slow_samples_min_latency_us\":" << minLatencyUs
+        << ",\"slow_samples\":[";
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const auto& sample = samples[i];
+        if (i != 0)
+            out << ',';
+        out << "{\"sequence\":" << sample.sequence
+            << ",\"thread_id\":" << sample.threadId
+            << ",\"callsite\":";
+        AppendJsonString(out, Diagnostics::ToString(sample.callsite));
+        out << ",\"success\":" << (sample.success ? "true" : "false")
+            << ",\"latency_us\":" << sample.latencyUs
+            << ",\"started_tick_ms\":" << sample.startedTickMs
+            << ",\"completed_tick_ms\":" << sample.completedTickMs
+            << ",\"completed_age_ms\":" << sample.completedAgeMs
+            << ",\"started_age_ms\":" << sample.startedAgeMs
+            << '}';
+    }
+    out << ']';
+}
+
+void AppendEntityPipelineJson(std::ostringstream& out, const Diagnostics::StatusSnapshot& snapshot)
+{
+    const auto& scan = snapshot.entityPipelineScan;
+    const auto& process = snapshot.entityPipelineProcess;
+    const auto& phase = process.phase;
+    const auto& lifecycle = process.lifecycle;
+
+    out << "{\"scan\":{\"scan_loop_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.loopHz));
+    out << ",\"scan_due_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.dueHz));
+    out << ",\"scan_started_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.startedHz));
+    out << ",\"scan_completed_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.completedHz));
+    out << ",\"scan_loop_count\":" << scan.loopCount
+        << ",\"scan_due_count\":" << scan.dueCount
+        << ",\"scan_skip_pending_count\":" << scan.skipPendingCount
+        << ",\"scan_skip_not_due_count\":" << scan.skipNotDueCount
+        << ",\"scan_skip_stable_topology_count\":" << scan.skipStableTopologyCount
+        << ",\"scan_started_count\":" << scan.startedCount
+        << ",\"scan_completed_count\":" << scan.completedCount
+        << ",\"scan_failed_count\":" << scan.failedCount
+        << ",\"scan_get_ow_entities_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.getOwEntitiesMs));
+    out << ",\"scan_result_raw_count\":" << scan.resultRawCount
+        << ",\"scan_max_get_ow_entities_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.maxGetOwEntitiesMs));
+    out << ",\"scan_max_get_ow_entities_generation\":"
+        << scan.maxGetOwEntitiesGeneration
+        << ",\"scan_max_get_ow_entities_records\":"
+        << scan.maxGetOwEntitiesRecords
+        << ",\"scan_max_get_ow_entities_pairs\":"
+        << scan.maxGetOwEntitiesPairs
+        << ",\"scan_max_record_build_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.maxGetOwEntitiesRecordBuildMs));
+    out << ",\"scan_max_match_link_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.maxGetOwEntitiesMatchLinkMs));
+    out << ",\"scan_max_cn_ne_target_map_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.maxGetOwEntitiesTargetMapMs));
+    out << ",\"scan_max_component_only_validation_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(scan.maxGetOwEntitiesComponentValidationMs));
+    out << ",\"scan_max_dma_reads_delta\":"
+        << scan.maxGetOwEntitiesDmaReadsDelta
+        << ",\"scan_max_dma_fail_delta\":"
+        << scan.maxGetOwEntitiesDmaFailDelta
+        << ",\"scan_max_dma_range_diag_enabled\":"
+        << (scan.maxGetOwEntitiesDmaRangeDiagEnabled ? "true" : "false")
+        << ",\"scan_max_dma_range_reads\":"
+        << scan.maxGetOwEntitiesDmaRangeReads
+        << ",\"scan_max_dma_range_failed\":"
+        << scan.maxGetOwEntitiesDmaRangeFailed
+        << ",\"scan_max_dma_range_max_latency_us\":"
+        << scan.maxGetOwEntitiesDmaRangeMaxLatencyUs
+        << ",\"scan_max_dma_range_max_callsite\":";
+    AppendJsonString(out, Diagnostics::ToString(
+        static_cast<Diagnostics::DmaCallsite>(
+            scan.maxGetOwEntitiesDmaRangeMaxCallsite)));
+    out << ",\"scan_max_dma_range_scanner_reads\":"
+        << scan.maxGetOwEntitiesDmaRangeScannerReads
+        << ",\"scan_max_dma_range_scanner_max_latency_us\":"
+        << scan.maxGetOwEntitiesDmaRangeScannerMaxLatencyUs
+        << ",\"scan_max_dma_range_scanner_max_callsite\":";
+    AppendJsonString(out, Diagnostics::ToString(
+        static_cast<Diagnostics::DmaCallsite>(
+            scan.maxGetOwEntitiesDmaRangeScannerMaxCallsite)));
+    out << ",\"scan_max_dma_range_foreign_reads\":"
+        << scan.maxGetOwEntitiesDmaRangeForeignReads
+        << ",\"scan_max_dma_range_foreign_max_latency_us\":"
+        << scan.maxGetOwEntitiesDmaRangeForeignMaxLatencyUs
+        << ",\"scan_max_dma_range_foreign_max_callsite\":";
+    AppendJsonString(out, Diagnostics::ToString(
+        static_cast<Diagnostics::DmaCallsite>(
+            scan.maxGetOwEntitiesDmaRangeForeignMaxCallsite)));
+    out << ",\"scan_max_dma_range_root_max_us\":"
+        << scan.maxGetOwEntitiesDmaRangeRootMaxUs
+        << ",\"scan_max_dma_range_list_read_max_us\":"
+        << scan.maxGetOwEntitiesDmaRangeListReadMaxUs
+        << ",\"scan_max_dma_range_record_header_max_us\":"
+        << scan.maxGetOwEntitiesDmaRangeRecordHeaderMaxUs
+        << ",\"scan_max_dma_range_record_pool_id_max_us\":"
+        << scan.maxGetOwEntitiesDmaRangeRecordPoolIdMaxUs
+        << ",\"scan_max_dma_range_target_map_max_us\":"
+        << scan.maxGetOwEntitiesDmaRangeTargetMapMaxUs
+        << ",\"scan_max_dma_range_component_validation_max_us\":"
+        << scan.maxGetOwEntitiesDmaRangeComponentValidationMaxUs
+        << ",\"scan_max_dma_range_viewmatrix_max_us\":"
+        << scan.maxGetOwEntitiesDmaRangeViewMatrixMaxUs
+        << ",\"scan_max_cn_ne_entity_list_root_cache_hit_count\":"
+        << scan.maxGetOwEntitiesRootCacheHitCount
+        << ",\"scan_max_cn_ne_entity_list_root_cache_read_count\":"
+        << scan.maxGetOwEntitiesRootCacheReadCount
+        << ",\"scan_max_cn_ne_entity_list_root_cache_store_count\":"
+        << scan.maxGetOwEntitiesRootCacheStoreCount
+        << ",\"scan_max_cn_ne_entity_list_root_cache_expired_count\":"
+        << scan.maxGetOwEntitiesRootCacheExpiredCount
+        << ",\"scan_max_cn_ne_entity_list_root_cache_stale_hit_count\":"
+        << scan.maxGetOwEntitiesRootCacheStaleHitCount
+        << ",\"scan_max_list_read_skipped_count\":"
+        << scan.maxGetOwEntitiesListReadSkippedCount
+        << ",\"scan_max_cn_ne_entity_list_read_negative_cache_hit_count\":"
+        << scan.maxGetOwEntitiesListReadNegativeCacheHitCount
+        << ",\"scan_max_cn_ne_entity_list_read_negative_cache_store_count\":"
+        << scan.maxGetOwEntitiesListReadNegativeCacheStoreCount
+        << ",\"scan_max_cn_ne_entity_list_read_negative_cache_expired_count\":"
+        << scan.maxGetOwEntitiesListReadNegativeCacheExpiredCount
+        << ",\"scan_max_cn_ne_entity_list_read_negative_cache_stale_hit_count\":"
+        << scan.maxGetOwEntitiesListReadNegativeCacheStaleHitCount
+        << ",\"scan_max_cn_ne_entity_list_read_cache_hit_count\":"
+        << scan.maxGetOwEntitiesListReadCacheHitCount
+        << ",\"scan_max_cn_ne_entity_list_read_cache_store_count\":"
+        << scan.maxGetOwEntitiesListReadCacheStoreCount
+        << ",\"scan_max_cn_ne_entity_list_read_cache_expired_count\":"
+        << scan.maxGetOwEntitiesListReadCacheExpiredCount
+        << ",\"scan_max_cn_ne_entity_list_read_cache_stale_hit_count\":"
+        << scan.maxGetOwEntitiesListReadCacheStaleHitCount
+        << ",\"scan_max_record_match_id_direct_read_count\":"
+        << scan.maxGetOwEntitiesRecordMatchIdDirectReadCount
+        << ",\"scan_max_record_match_id_direct_zero_count\":"
+        << scan.maxGetOwEntitiesRecordMatchIdDirectZeroCount
+        << ",\"scan_max_record_match_id_header_hit_count\":"
+        << scan.maxGetOwEntitiesRecordMatchIdHeaderHitCount
+        << ",\"scan_max_record_match_id_header_miss_count\":"
+        << scan.maxGetOwEntitiesRecordMatchIdHeaderMissCount
+        << ",\"scan_max_record_match_id_header_match_count\":"
+        << scan.maxGetOwEntitiesRecordMatchIdHeaderMatchCount
+        << ",\"scan_max_record_match_id_header_mismatch_count\":"
+        << scan.maxGetOwEntitiesRecordMatchIdHeaderMismatchCount
+        << ",\"scan_max_record_match_id_header_use_count\":"
+        << scan.maxGetOwEntitiesRecordMatchIdHeaderUseCount
+        << ",\"scan_max_persistent_refresh_count\":"
+        << scan.maxGetOwEntitiesPersistentRefreshCount
+        << ",\"scan_max_persistent_stale_hit_count\":"
+        << scan.maxGetOwEntitiesPersistentStaleHitCount
+        << ",\"scan_publish_attempt_count\":" << scan.publishAttemptCount
+        << ",\"scan_publish_success_count\":" << scan.publishSuccessCount
+        << ",\"scan_overwritten_count\":" << scan.overwrittenCount
+        << ",\"scan_pending_age_ms\":" << scan.pendingAgeMs
+        << ",\"scan_generation\":" << scan.generation
+        << ",\"scan_last_success_age_ms\":" << scan.lastSuccessAgeMs
+        << ",\"scan_cold_topology_enabled\":"
+        << (scan.coldTopologyScanEnabled ? "true" : "false")
+        << ",\"scan_topology_rescan_request_count\":"
+        << scan.topologyRescanRequestCount
+        << ",\"scan_topology_count_probe_count\":"
+        << scan.topologyCountProbeCount
+        << ",\"scan_topology_count_probe_change_count\":"
+        << scan.topologyCountProbeChangeCount
+        << ",\"scan_topology_candidate_count\":"
+        << scan.topologyCandidateCount
+        << "},\"process\":{\"entity_cycle_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(process.entityCycleMs));
+    out << ",\"entity_cycle_raw_count\":" << process.rawCount
+        << ",\"entity_cycle_validated_count\":" << process.validatedCount
+        << ",\"entity_cycle_published_count\":" << process.publishedCount
+        << ",\"entity_cycle_dma_reads_delta\":" << process.dmaReadsDelta
+        << ",\"entity_cycle_dma_fail_delta\":" << process.dmaFailDelta
+        << ",\"phases\":{\"phase_begin_frame_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.beginFrameMs));
+    out << ",\"phase_consume_scan_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.consumeScanMs));
+    out << ",\"phase_previous_snapshot_copy_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.previousSnapshotCopyMs));
+    out << ",\"phase_prefetch_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.prefetchMs));
+    out << ",\"phase_previous_index_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.previousIndexMs));
+    out << ",\"phase_hot_scatter_prepare_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.hotScatterPrepareMs));
+    out << ",\"phase_hot_scatter_execute_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.hotScatterExecuteMs));
+    out << ",\"phase_base_cache_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.baseCacheMs));
+    out << ",\"phase_base_decrypt_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.baseDecryptMs));
+    out << ",\"phase_health_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.healthMs));
+    out << ",\"phase_hero_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.heroMs));
+    out << ",\"phase_visibility_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.visibilityMs));
+    out << ",\"phase_skeleton_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.skeletonMs));
+    out << ",\"phase_skeleton_velocity_read_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.skeletonVelocityReadMs));
+    out << ",\"phase_skeleton_cache_call_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.skeletonCacheCallMs));
+    out << ",\"phase_skill_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.skillMs));
+    out << ",\"phase_team_name_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.teamNameMs));
+    out << ",\"phase_team_name_hero_lookup_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.teamNameHeroLookupMs));
+    out << ",\"phase_team_name_bot_adjust_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.teamNameBotAdjustMs));
+    out << ",\"phase_team_name_battle_tag_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.teamNameBattleTagMs));
+    out << ",\"phase_team_name_team_read_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.teamNameTeamReadMs));
+    out << ",\"phase_local_select_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.localSelectMs));
+    out << ",\"phase_publish_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.publishMs));
+    out << ",\"phase_record_sync_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.recordSyncMs));
+    out << ",\"phase_entity_loop_wall_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityLoopWallMs));
+    out << ",\"phase_entity_loop_setup_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityLoopSetupMs));
+    out << ",\"phase_entity_header_special_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityHeaderSpecialMs));
+    out << ",\"phase_entity_header_component_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityHeaderComponentMs));
+    out << ",\"phase_entity_header_link_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityHeaderLinkMs));
+    out << ",\"phase_entity_special_probe_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entitySpecialProbeMs));
+    out << ",\"phase_entity_cache_apply_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityCacheApplyMs));
+    out << ",\"phase_entity_cache_match_id_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityCacheMatchIdMs));
+    out << ",\"phase_entity_cache_record_update_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityCacheRecordUpdateMs));
+    out << ",\"phase_entity_hot_fields_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityHotFieldsMs));
+    out << ",\"phase_entity_rotation_position_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityRotationPositionMs));
+    out << ",\"phase_entity_loop_gap_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.entityLoopGapMs));
+    out << ",\"phase_cycle_gap_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(phase.cycleGapMs));
+    out << "}},\"hot\":{\"hot_scatter_requested_count\":" << process.hotScatterRequestedCount
+        << ",\"hot_scatter_prepare_requested_count\":" << process.hotScatterPrepareRequestedCount
+        << ",\"hot_scatter_prepare_success_count\":" << process.hotScatterPrepareSuccessCount
+        << ",\"hot_scatter_prepare_fail_count\":" << process.hotScatterPrepareFailCount
+        << ",\"hot_scatter_execute_count\":" << process.hotScatterExecuteCount
+        << ",\"hot_scatter_execute_fail_count\":" << process.hotScatterExecuteFailCount
+        << ",\"hot_scatter_bytes_requested\":" << process.hotScatterBytesRequested
+        << ",\"hot_scatter_bytes_read\":" << process.hotScatterBytesRead
+        << ",\"hot_scatter_short_read_count\":" << process.hotScatterShortReadCount
+        << ",\"hot_scatter_batch_items\":" << process.hotScatterBatchItems
+        << ",\"hot_scatter_batch_requests\":" << process.hotScatterBatchRequests
+        << ",\"hot_scatter_estimated_unique_pages\":" << process.hotScatterEstimatedUniquePages
+        << ",\"hot_scatter_success_count\":" << process.hotScatterSuccessCount
+        << ",\"hot_scatter_partial_count\":" << process.hotScatterPartialCount
+        << ",\"visibility_scatter_hit_count\":" << process.visibilityScatterHitCount
+        << ",\"skeleton_cache_hit_count\":" << process.skeletonCacheHitCount
+        << ",\"skeleton_cache_miss_count\":" << process.skeletonCacheMissCount
+        << ",\"skeleton_exact_bone_read_count\":" << process.skeletonExactBoneReadCount
+        << ",\"skeleton_block_read_bytes\":" << process.skeletonBlockReadBytes
+        << ",\"skeleton_slow_call_count\":" << process.skeletonSlowCallCount
+        << ",\"skeleton_max_call_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(process.skeletonMaxCallMs));
+    out << ",\"skeleton_max_call_op\":" << process.skeletonMaxCallOp
+        << ",\"skeleton_max_call_hero_id\":\"0x" << std::hex
+        << process.skeletonMaxCallHeroId << std::dec << "\""
+        << ",\"skeleton_max_call_entity\":\"0x" << std::hex
+        << process.skeletonMaxCallEntity << std::dec << "\""
+        << ",\"skeleton_max_call_bone_base\":\"0x" << std::hex
+        << process.skeletonMaxCallBoneBase << std::dec << "\""
+        << ",\"skeleton_max_call_velocity_base\":\"0x" << std::hex
+        << process.skeletonMaxCallVelocityBase << std::dec << "\""
+        << ",\"skeleton_max_call_velocity_bone_data\":\"0x" << std::hex
+        << process.skeletonMaxCallVelocityBoneData << std::dec << "\""
+        << ",\"skeleton_max_call_cache_hit\":"
+        << (process.skeletonMaxCallCacheHit ? "true" : "false")
+        << ",\"skeleton_max_call_cache_valid\":"
+        << (process.skeletonMaxCallCacheValid ? "true" : "false")
+        << ",\"skeleton_max_call_fallback\":"
+        << (process.skeletonMaxCallFallback ? "true" : "false")
+        << ",\"skeleton_max_call_max_mapped_index\":"
+        << process.skeletonMaxCallMaxMappedIndex
+        << ",\"skeleton_max_call_success\":"
+        << (process.skeletonMaxCallSuccess ? "true" : "false")
+        << "},\"cold\":{\"base_cache_hit_count\":" << process.baseCacheHitCount
+        << ",\"base_cache_miss_count\":" << process.baseCacheMissCount
+        << ",\"base_decrypt_attempt_count\":" << process.baseDecryptAttemptCount
+        << ",\"base_decrypt_success_count\":" << process.baseDecryptSuccessCount
+        << ",\"base_decrypt_fail_count\":" << process.baseDecryptFailCount
+        << ",\"base_decrypt_slow_call_count\":" << process.baseDecryptSlowCallCount
+        << ",\"base_decrypt_fallback_attempt_count\":"
+        << process.baseDecryptFallbackAttemptCount
+        << ",\"base_decrypt_fallback_success_count\":"
+        << process.baseDecryptFallbackSuccessCount
+        << ",\"base_decrypt_fallback_fail_count\":"
+        << process.baseDecryptFallbackFailCount
+        << ",\"base_decrypt_unique_key_count\":"
+        << process.baseDecryptUniqueKeyCount
+        << ",\"base_decrypt_duplicate_key_count\":"
+        << process.baseDecryptDuplicateKeyCount
+        << ",\"base_decrypt_max_duplicate_key_count\":"
+        << process.baseDecryptMaxDuplicateKeyCount
+        << ",\"base_decrypt_max_duplicate_key_type\":"
+        << process.baseDecryptMaxDuplicateKeyType
+        << ",\"base_decrypt_max_duplicate_key_parent\":\"0x" << std::hex
+        << process.baseDecryptMaxDuplicateKeyParent << std::dec << "\""
+        << ",\"base_decrypt_max_call_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(process.baseDecryptMaxCallMs));
+    out << ",\"base_decrypt_max_call_type\":" << process.baseDecryptMaxCallType
+        << ",\"base_decrypt_max_call_parent\":\"0x" << std::hex
+        << process.baseDecryptMaxCallParent << std::dec << "\""
+        << ",\"base_decrypt_max_call_success\":"
+        << (process.baseDecryptMaxCallSuccess ? "true" : "false")
+        << ",\"team_name_slow_call_count\":" << process.teamNameSlowCallCount
+        << ",\"team_name_max_call_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(process.teamNameMaxCallMs));
+    out << ",\"team_name_max_call_op\":" << process.teamNameMaxCallOp
+        << ",\"team_name_max_call_hero_id\":\"0x" << std::hex
+        << process.teamNameMaxCallHeroId << std::dec << "\""
+        << ",\"team_name_max_call_link_base\":\"0x" << std::hex
+        << process.teamNameMaxCallLinkBase << std::dec << "\""
+        << ",\"team_name_max_call_team_base\":\"0x" << std::hex
+        << process.teamNameMaxCallTeamBase << std::dec << "\""
+        << ",\"team_name_max_call_success\":"
+        << (process.teamNameMaxCallSuccess ? "true" : "false")
+        << ",\"skill_due_count\":" << process.skillDueCount
+        << ",\"skill_read_count\":" << process.skillReadCount
+        << ",\"skill_skipped_not_due_count\":" << process.skillSkippedNotDueCount
+        << "},\"fallback\":{\"hot_scatter_fallback_read_count\":"
+        << process.hotScatterFallbackReadCount
+        << ",\"skeleton_fallback_get_bone_pos_count\":" << process.skeletonFallbackGetBonePosCount
+        << ",\"visibility_fallback_count\":" << process.visibilityFallbackCount
+        << "},\"lifecycle\":{\"entity_record_created_count\":"
+        << lifecycle.entityRecordCreatedCount
+        << ",\"entity_record_updated_actor_count\":"
+        << lifecycle.entityRecordUpdatedActorCount
+        << ",\"entity_record_link_changed_count\":"
+        << lifecycle.entityRecordLinkChangedCount
+        << ",\"entity_record_link_changed_same_component_count\":"
+        << lifecycle.entityRecordLinkChangedSameComponentCount
+        << ",\"entity_record_link_changed_component_changed_count\":"
+        << lifecycle.entityRecordLinkChangedComponentChangedCount
+        << ",\"entity_record_link_changed_same_hero_count\":"
+        << lifecycle.entityRecordLinkChangedSameHeroCount
+        << ",\"entity_record_link_changed_hero_changed_count\":"
+        << lifecycle.entityRecordLinkChangedHeroChangedCount
+        << ",\"entity_record_link_changed_hero_unknown_count\":"
+        << lifecycle.entityRecordLinkChangedHeroUnknownCount
+        << ",\"entity_record_link_changed_match_key_count\":"
+        << lifecycle.entityRecordLinkChangedMatchKeyCount
+        << ",\"entity_record_link_changed_link_key_count\":"
+        << lifecycle.entityRecordLinkChangedLinkKeyCount
+        << ",\"entity_record_link_changed_component_key_count\":"
+        << lifecycle.entityRecordLinkChangedComponentKeyCount
+        << ",\"entity_record_mark_missing_count\":"
+        << lifecycle.entityRecordMarkMissingCount
+        << ",\"entity_record_mark_dead_count\":"
+        << lifecycle.entityRecordMarkDeadCount
+        << ",\"entity_record_expired_count\":"
+        << lifecycle.entityRecordExpiredCount
+        << ",\"component_cache_hit_count\":"
+        << lifecycle.componentCacheHitCount
+        << ",\"component_cache_miss_count\":"
+        << lifecycle.componentCacheMissCount
+        << ",\"component_cache_invalidate_interval_count\":"
+        << lifecycle.componentCacheInvalidateIntervalCount
+        << ",\"component_cache_invalidate_interval_skipped_lifetime_count\":"
+        << lifecycle.componentCacheInvalidateIntervalSkippedLifetimeCount
+        << ",\"component_cache_invalidate_link_change_count\":"
+        << lifecycle.componentCacheInvalidateLinkChangeCount
+        << ",\"component_cache_invalidate_health_resurrect_count\":"
+        << lifecycle.componentCacheInvalidateHealthResurrectCount
+        << ",\"component_cache_invalidate_hero_change_count\":"
+        << lifecycle.componentCacheInvalidateHeroChangeCount
+        << ",\"component_cache_link_change_previous_match_id_known_count\":"
+        << lifecycle.componentCacheLinkChangePreviousMatchIdKnownCount
+        << ",\"component_cache_link_change_previous_match_id_zero_count\":"
+        << lifecycle.componentCacheLinkChangePreviousMatchIdZeroCount
+        << ",\"component_cache_link_change_previous_match_id_unknown_count\":"
+        << lifecycle.componentCacheLinkChangePreviousMatchIdUnknownCount
+        << ",\"component_cache_link_change_record_alias_hit_count\":"
+        << lifecycle.componentCacheLinkChangeRecordAliasHitCount
+        << ",\"component_cache_link_change_record_alias_miss_count\":"
+        << lifecycle.componentCacheLinkChangeRecordAliasMissCount
+        << ",\"component_cache_link_change_record_published_count\":"
+        << lifecycle.componentCacheLinkChangeRecordPublishedCount
+        << ",\"component_cache_link_change_record_bases_valid_count\":"
+        << lifecycle.componentCacheLinkChangeRecordBasesValidCount
+        << ",\"component_cache_link_change_record_match_key_count\":"
+        << lifecycle.componentCacheLinkChangeRecordMatchKeyCount
+        << ",\"component_cache_link_change_record_link_key_count\":"
+        << lifecycle.componentCacheLinkChangeRecordLinkKeyCount
+        << ",\"component_cache_link_change_record_component_key_count\":"
+        << lifecycle.componentCacheLinkChangeRecordComponentKeyCount
+        << ",\"component_cache_link_retain_attempt_count\":"
+        << lifecycle.componentCacheLinkRetainAttemptCount
+        << ",\"component_cache_link_retain_success_count\":"
+        << lifecycle.componentCacheLinkRetainSuccessCount
+        << ",\"component_cache_link_retain_rejected_disabled_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedDisabledCount
+        << ",\"component_cache_link_retain_rejected_record_store_disabled_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedRecordStoreDisabledCount
+        << ",\"component_cache_link_retain_rejected_missing_record_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedMissingRecordCount
+        << ",\"component_cache_link_retain_rejected_missing_match_id_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedMissingMatchIdCount
+        << ",\"component_cache_link_retain_rejected_component_changed_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedComponentChangedCount
+        << ",\"component_cache_link_retain_rejected_interval_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedIntervalCount
+        << ",\"component_cache_link_retain_interval_bypassed_lifetime_count\":"
+        << lifecycle.componentCacheLinkRetainIntervalBypassedLifetimeCount
+        << ",\"component_cache_link_retain_rejected_hero_changed_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedHeroChangedCount
+        << ",\"component_cache_link_retain_rejected_hero_unknown_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedHeroUnknownCount
+        << ",\"component_cache_link_retain_rejected_decrypt_fail_count\":"
+        << lifecycle.componentCacheLinkRetainRejectedDecryptFailCount
+        << ",\"component_cache_link_retain_cached_hero_validate_count\":"
+        << lifecycle.componentCacheLinkRetainCachedHeroValidateCount
+        << ",\"component_cache_link_retain_refresh_decrypt_attempt_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshDecryptAttemptCount
+        << ",\"component_cache_link_retain_refresh_decrypt_success_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshDecryptSuccessCount
+        << ",\"component_cache_link_retain_refresh_decrypt_fail_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshDecryptFailCount
+        << ",\"component_cache_link_retain_refresh_link_attempt_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshLinkAttemptCount
+        << ",\"component_cache_link_retain_refresh_link_success_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshLinkSuccessCount
+        << ",\"component_cache_link_retain_refresh_link_fail_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshLinkFailCount
+        << ",\"component_cache_link_retain_refresh_hero_attempt_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshHeroAttemptCount
+        << ",\"component_cache_link_retain_refresh_hero_success_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshHeroSuccessCount
+        << ",\"component_cache_link_retain_refresh_hero_fail_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshHeroFailCount
+        << ",\"component_cache_link_retain_refresh_visibility_attempt_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshVisibilityAttemptCount
+        << ",\"component_cache_link_retain_refresh_visibility_success_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshVisibilitySuccessCount
+        << ",\"component_cache_link_retain_refresh_visibility_fail_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshVisibilityFailCount
+        << ",\"component_cache_link_retain_refresh_angle_attempt_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshAngleAttemptCount
+        << ",\"component_cache_link_retain_refresh_angle_success_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshAngleSuccessCount
+        << ",\"component_cache_link_retain_refresh_angle_fail_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshAngleFailCount
+        << ",\"component_cache_link_retain_refresh_angle_skipped_no_prior_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshAngleSkippedNoPriorCount
+        << ",\"component_cache_link_retain_refresh_angle_prior_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshAnglePriorCount
+        << ",\"component_cache_link_retain_refresh_angle_prior_fail_rejected_count\":"
+        << lifecycle.componentCacheLinkRetainRefreshAnglePriorFailRejectedCount
+        << ",\"dynamic_cache_created_count\":"
+        << lifecycle.dynamicCacheCreatedCount
+        << ",\"dynamic_cache_reused_count\":"
+        << lifecycle.dynamicCacheReusedCount
+        << ",\"dynamic_cache_replaced_count\":"
+        << lifecycle.dynamicCacheReplacedCount
+        << ",\"dynamic_cache_expired_count\":"
+        << lifecycle.dynamicCacheExpiredCount
+        << ",\"record_store_enabled\":"
+        << (lifecycle.recordStoreEnabled ? "true" : "false")
+        << ",\"record_store_size\":"
+        << lifecycle.recordStoreSize
+        << ",\"record_store_fresh_count\":"
+        << lifecycle.recordStoreFreshCount
+        << ",\"record_store_missing_count\":"
+        << lifecycle.recordStoreMissingCount
+        << ",\"record_store_dead_count\":"
+        << lifecycle.recordStoreDeadCount
+        << ",\"record_store_expired_count\":"
+        << lifecycle.recordStoreExpiredCount
+        << ",\"record_store_bases_valid_count\":"
+        << lifecycle.recordStoreBasesValidCount
+        << ",\"record_store_dynamic_valid_count\":"
+        << lifecycle.recordStoreDynamicValidCount
+        << ",\"record_store_published_valid_count\":"
+        << lifecycle.recordStorePublishedValidCount
+        << "}}";
+}
+
 template <typename T>
 bool TryReadValue(uint64_t address, T& value);
 
@@ -269,6 +814,37 @@ ProjectionRawSample ProjectRaw(const OW::Matrix& matrix, const OW::Vector3& worl
     return sample;
 }
 
+ProjectionRawSample ProjectRawRowMajor(const OW::Matrix& matrix, const OW::Vector3& world, const OW::Vector2& window)
+{
+    ProjectionRawSample sample{};
+    sample.clipX = matrix.m11 * world.X + matrix.m12 * world.Y + matrix.m13 * world.Z + matrix.m14;
+    sample.clipY = matrix.m21 * world.X + matrix.m22 * world.Y + matrix.m23 * world.Z + matrix.m24;
+    sample.clipW = matrix.m41 * world.X + matrix.m42 * world.Y + matrix.m43 * world.Z + matrix.m44;
+    sample.wPositive = sample.clipW >= 0.001f;
+    if (std::fabs(sample.clipW) >= 0.001f) {
+        sample.ndcX = sample.clipX / sample.clipW;
+        sample.ndcY = sample.clipY / sample.clipW;
+        sample.screenX = (sample.ndcX + 1.0f) * 0.5f * window.X;
+        sample.screenY = (1.0f - sample.ndcY) * 0.5f * window.Y;
+    }
+    sample.finite =
+        std::isfinite(sample.clipX) &&
+        std::isfinite(sample.clipY) &&
+        std::isfinite(sample.clipW) &&
+        std::isfinite(sample.ndcX) &&
+        std::isfinite(sample.ndcY) &&
+        std::isfinite(sample.screenX) &&
+        std::isfinite(sample.screenY);
+    sample.inBounds =
+        sample.finite &&
+        sample.screenX >= 0.0f &&
+        sample.screenY >= 0.0f &&
+        sample.screenX < window.X &&
+        sample.screenY < window.Y;
+    sample.ok = sample.wPositive && sample.inBounds;
+    return sample;
+}
+
 void AppendProjectionRawSampleJson(std::ostringstream& out, const ProjectionRawSample& sample)
 {
     out << "{\"ok\":" << (sample.ok ? "true" : "false")
@@ -313,6 +889,27 @@ void AppendMatrixProjectionJson(
     out << '}';
 }
 
+void AppendMatrixProjectionRowMajorJson(
+    std::ostringstream& out,
+    const char* name,
+    bool matrixRead,
+    bool matrixValid,
+    const OW::Matrix& matrix,
+    const OW::Vector3& world,
+    const OW::Vector2& window)
+{
+    out << "{\"name\":";
+    AppendJsonString(out, name ? name : "");
+    out << ",\"matrix_read\":" << (matrixRead ? "true" : "false")
+        << ",\"matrix_valid\":" << (matrixValid ? "true" : "false")
+        << ",\"projection\":";
+    if (matrixRead)
+        AppendProjectionRawSampleJson(out, ProjectRawRowMajor(matrix, world, window));
+    else
+        out << "null";
+    out << '}';
+}
+
 void AppendProjectionSetJson(
     std::ostringstream& out,
     const OW::Vector3& world,
@@ -332,7 +929,11 @@ void AppendProjectionSetJson(
     out << '[';
     AppendMatrixProjectionJson(out, "published", true, publishedValid, published, world, window);
     out << ',';
+    AppendMatrixProjectionRowMajorJson(out, "published_row_major", true, publishedValid, published, world, window);
+    out << ',';
     AppendMatrixProjectionJson(out, "direct_render_vp", directRead, directValid, directRender, world, window);
+    out << ',';
+    AppendMatrixProjectionRowMajorJson(out, "direct_render_vp_row_major", directRead, directValid, directRender, world, window);
     out << ',';
     AppendMatrixProjectionJson(out, "camera_times_projection", cameraProjectionRead, cameraProjectionValid, cameraProjection, world, window);
     out << ',';
@@ -1790,7 +2391,11 @@ void AppendViewMatrixRootProbeJson(
     AppendHexOrNull(out, decoded);
     out << ",\"decoded_plausible\":"
         << (OW::IsPlausibleUserPointer(decoded) ? "true" : "false")
-        << ",\"direct_1c0\":";
+        << ",\"direct_configured\":{\"offset\":";
+    AppendHexString(out, OW::offset::Active().VM_DirectMatrix);
+    out << ",\"matrix\":";
+    AppendMatrixProbeJson(out, decoded + OW::offset::Active().VM_DirectMatrix);
+    out << "},\"direct_1c0_legacy\":";
     AppendMatrixProbeJson(out, decoded + OW::offset::Bz150818_DirectViewProjectionMatrix);
     out << ",\"chain_6c8\":";
     AppendViewMatrixChainProbeJson(out, "chain_6c8", decoded, 0x6C8);
@@ -2494,7 +3099,12 @@ std::string BuildDiagnosticsJson()
     AppendNumberOrNull(out, static_cast<float>(snapshot.fps));
     out << ",\"viewmatrix_publish_hz\":";
     AppendNumberOrNull(out, static_cast<float>(snapshot.viewMatrixPublish.hz));
-    out << ",\"viewmatrix_publish_age_ms\":" << snapshot.viewMatrixPublish.ageMs
+    out << ",\"viewmatrix_poll_sleep_ms\":" << ViewMatrixPollSleepMs()
+        << ",\"viewmatrix_scan_backoff_ms\":" << ViewMatrixScanBackoffMs()
+        << ",\"viewmatrix_scan_due_guard_ms\":" << ViewMatrixScanDueGuardMs()
+        << ",\"viewmatrix_scan_backoff_count\":" << OW::ViewMatrixScanBackoffCount()
+        << ",\"viewmatrix_scan_due_guard_count\":" << OW::ViewMatrixScanDueGuardCount()
+        << ",\"viewmatrix_publish_age_ms\":" << snapshot.viewMatrixPublish.ageMs
         << ",\"viewmatrix_publish_cycles\":" << snapshot.viewMatrixPublish.cycles
         << ",\"viewmatrix_publish_last_interval_ms\":" << snapshot.viewMatrixPublish.lastIntervalMs
         << ",\"viewmatrix_publish_max_interval_ms\":" << snapshot.viewMatrixPublish.maxIntervalMs
@@ -2612,15 +3222,268 @@ std::string BuildDiagnosticsJson()
         << ",\"succeeded\":" << snapshot.dmaReads.succeeded
         << ",\"failed\":" << snapshot.dmaReads.failed
         << ",\"avg_latency_us\":" << snapshot.dmaReads.avgLatencyUs
-        << ",\"max_latency_us\":" << snapshot.dmaReads.maxLatencyUs
-        << "},\"roster\":{\"fresh\":" << snapshot.roster.fresh
+        << ",\"max_latency_us\":" << snapshot.dmaReads.maxLatencyUs;
+    AppendDmaWindowFields(out, snapshot.dmaWindow);
+    AppendDmaSlowReadSamples(
+        out,
+        snapshot.dmaWindow.windowMs,
+        snapshot.dmaWindow.slowThresholdUs,
+        16);
+    out << "},\"roster\":{\"fresh\":" << snapshot.roster.fresh
         << ",\"dead\":" << snapshot.roster.dead
         << ",\"missing\":" << snapshot.roster.missing
         << ",\"expired\":" << snapshot.roster.expired
         << ",\"hero_changed\":" << snapshot.roster.heroChanged
+        << "},\"sdk\":{\"component_key_cache_hit_count\":"
+        << snapshot.sdkCache.componentKeyCacheHitCount
+        << ",\"component_key_cache_miss_count\":"
+        << snapshot.sdkCache.componentKeyCacheMissCount
+        << ",\"begin_frame_scan_count\":"
+        << snapshot.sdkCache.beginFrameScanCount
+        << ",\"begin_frame_process_count\":"
+        << snapshot.sdkCache.beginFrameProcessCount
+        << ",\"begin_frame_unknown_count\":"
+        << snapshot.sdkCache.beginFrameUnknownCount
         << "},\"entity_scan_detail\":{\"entity_list\":";
     AppendHexOrNull(out, snapshot.entityScanDetail.entityList);
-    out << ",\"readable_bytes\":" << snapshot.entityScanDetail.readableBytes
+    out << ",\"scanner_subphases\":{\"scan_root_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanRootMs));
+    out << ",\"scan_list_read_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanListReadMs));
+    out << ",\"scan_slot_walk_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanSlotWalkMs));
+    out << ",\"scan_record_build_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanRecordBuildMs));
+    out << ",\"scan_match_link_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanMatchLinkMs));
+    out << ",\"scan_cn_ne_target_map_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanCnNeTargetMapMs));
+    out << ",\"scan_cn_ne_self_validation_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanCnNeSelfValidationMs));
+    out << ",\"scan_component_only_validation_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanComponentOnlyValidationMs));
+    out << ",\"scan_dynamic_pair_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanDynamicPairMs));
+    out << ",\"scan_finalize_ms\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityScanDetail.scanFinalizeMs));
+    out << ",\"scan_dma_reads_delta\":" << snapshot.entityScanDetail.scanDmaReadsDelta
+        << ",\"scan_dma_fail_delta\":" << snapshot.entityScanDetail.scanDmaFailDelta
+        << ",\"scan_dma_range_diag_enabled\":"
+        << (snapshot.entityScanDetail.scanDmaRangeDiagEnabled ? "true" : "false")
+        << ",\"scan_dma_range_reads\":" << snapshot.entityScanDetail.scanDmaRangeReads
+        << ",\"scan_dma_range_failed\":" << snapshot.entityScanDetail.scanDmaRangeFailed
+        << ",\"scan_dma_range_max_latency_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeMaxLatencyUs
+        << ",\"scan_dma_range_max_callsite\":";
+    AppendJsonString(out, Diagnostics::ToString(
+        static_cast<Diagnostics::DmaCallsite>(
+            snapshot.entityScanDetail.scanDmaRangeMaxCallsite)));
+    out << ",\"scan_dma_range_scanner_reads\":"
+        << snapshot.entityScanDetail.scanDmaRangeScannerReads
+        << ",\"scan_dma_range_scanner_max_latency_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeScannerMaxLatencyUs
+        << ",\"scan_dma_range_scanner_max_callsite\":";
+    AppendJsonString(out, Diagnostics::ToString(
+        static_cast<Diagnostics::DmaCallsite>(
+            snapshot.entityScanDetail.scanDmaRangeScannerMaxCallsite)));
+    out << ",\"scan_dma_range_foreign_reads\":"
+        << snapshot.entityScanDetail.scanDmaRangeForeignReads
+        << ",\"scan_dma_range_foreign_max_latency_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeForeignMaxLatencyUs
+        << ",\"scan_dma_range_foreign_max_callsite\":";
+    AppendJsonString(out, Diagnostics::ToString(
+        static_cast<Diagnostics::DmaCallsite>(
+            snapshot.entityScanDetail.scanDmaRangeForeignMaxCallsite)));
+    out << ",\"scan_dma_range_root_max_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeRootMaxUs
+        << ",\"scan_dma_range_list_read_max_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeListReadMaxUs
+        << ",\"scan_dma_range_record_header_max_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeRecordHeaderMaxUs
+        << ",\"scan_dma_range_record_pool_id_max_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeRecordPoolIdMaxUs
+        << ",\"scan_dma_range_target_map_max_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeTargetMapMaxUs
+        << ",\"scan_dma_range_component_validation_max_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeComponentValidationMaxUs
+        << ",\"scan_dma_range_viewmatrix_max_us\":"
+        << snapshot.entityScanDetail.scanDmaRangeViewMatrixMaxUs
+        << "},\"scanner_counters\":{\"list_read_count\":" << snapshot.entityScanDetail.listReadCount
+        << ",\"list_read_fail_count\":" << snapshot.entityScanDetail.listReadFailCount
+        << ",\"list_fallback_read_count\":" << snapshot.entityScanDetail.listFallbackReadCount
+        << ",\"list_read_skipped_count\":" << snapshot.entityScanDetail.listReadSkippedCount
+        << ",\"cn_ne_entity_list_chunk_size\":"
+        << snapshot.entityScanDetail.cnNeEntityListChunkSize
+        << ",\"record_add_attempt_count\":" << snapshot.entityScanDetail.recordAddAttemptCount
+        << ",\"record_duplicate_count\":" << snapshot.entityScanDetail.recordDuplicateCount
+        << ",\"record_header_read_count\":" << snapshot.entityScanDetail.recordHeaderReadCount
+        << ",\"record_header_fail_count\":" << snapshot.entityScanDetail.recordHeaderFailCount
+        << ",\"record_remote_fallback_read_count\":" << snapshot.entityScanDetail.recordRemoteFallbackReadCount
+        << ",\"record_match_id_direct_read_count\":" << snapshot.entityScanDetail.recordMatchIdDirectReadCount
+        << ",\"record_match_id_direct_zero_count\":" << snapshot.entityScanDetail.recordMatchIdDirectZeroCount
+        << ",\"record_match_id_header_hit_count\":" << snapshot.entityScanDetail.recordMatchIdHeaderHitCount
+        << ",\"record_match_id_header_miss_count\":" << snapshot.entityScanDetail.recordMatchIdHeaderMissCount
+        << ",\"record_match_id_header_match_count\":" << snapshot.entityScanDetail.recordMatchIdHeaderMatchCount
+        << ",\"record_match_id_header_mismatch_count\":" << snapshot.entityScanDetail.recordMatchIdHeaderMismatchCount
+        << ",\"record_match_id_header_use_count\":" << snapshot.entityScanDetail.recordMatchIdHeaderUseCount
+        << ",\"cn_ne_record_match_id_from_header_enabled\":"
+        << (snapshot.entityScanDetail.cnNeRecordMatchIdFromHeaderEnabled ? "true" : "false")
+        << ",\"cn_ne_entity_list_root_cache_enabled\":"
+        << (snapshot.entityScanDetail.cnNeEntityListRootCacheEnabled ? "true" : "false")
+        << ",\"cn_ne_entity_list_root_cache_ttl_ms\":"
+        << snapshot.entityScanDetail.cnNeEntityListRootCacheTtlMs
+        << ",\"cn_ne_entity_list_root_cache_hit_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListRootCacheHitCount
+        << ",\"cn_ne_entity_list_root_cache_read_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListRootCacheReadCount
+        << ",\"cn_ne_entity_list_root_cache_store_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListRootCacheStoreCount
+        << ",\"cn_ne_entity_list_root_cache_expired_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListRootCacheExpiredCount
+        << ",\"cn_ne_entity_list_root_cache_stale_hit_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListRootCacheStaleHitCount
+        << ",\"cn_ne_entity_list_read_negative_cache_enabled\":"
+        << (snapshot.entityScanDetail.cnNeEntityListReadNegativeCacheEnabled ? "true" : "false")
+        << ",\"cn_ne_entity_list_read_negative_cache_ttl_ms\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadNegativeCacheTtlMs
+        << ",\"cn_ne_entity_list_read_negative_cache_lookup_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadNegativeCacheLookupCount
+        << ",\"cn_ne_entity_list_read_negative_cache_hit_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadNegativeCacheHitCount
+        << ",\"cn_ne_entity_list_read_negative_cache_store_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadNegativeCacheStoreCount
+        << ",\"cn_ne_entity_list_read_negative_cache_expired_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadNegativeCacheExpiredCount
+        << ",\"cn_ne_entity_list_read_negative_cache_stale_hit_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadNegativeCacheStaleHitCount
+        << ",\"cn_ne_entity_list_read_cache_enabled\":"
+        << (snapshot.entityScanDetail.cnNeEntityListReadCacheEnabled ? "true" : "false")
+        << ",\"cn_ne_entity_list_read_cache_ttl_ms\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadCacheTtlMs
+        << ",\"cn_ne_entity_list_read_cache_lookup_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadCacheLookupCount
+        << ",\"cn_ne_entity_list_read_cache_hit_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadCacheHitCount
+        << ",\"cn_ne_entity_list_read_cache_store_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadCacheStoreCount
+        << ",\"cn_ne_entity_list_read_cache_expired_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadCacheExpiredCount
+        << ",\"cn_ne_entity_list_read_cache_stale_hit_count\":"
+        << snapshot.entityScanDetail.cnNeEntityListReadCacheStaleHitCount
+        << ",\"cn_ne_scanner_stale_metadata_ms\":"
+        << snapshot.entityScanDetail.cnNeScannerStaleMetadataMs
+        << ",\"cn_ne_scanner_stale_metadata_only_enabled\":"
+        << (snapshot.entityScanDetail.cnNeScannerStaleMetadataOnlyEnabled ? "true" : "false")
+        << ",\"cn_ne_record_snapshot_cache_enabled\":"
+        << (snapshot.entityScanDetail.cnNeRecordSnapshotCacheEnabled ? "true" : "false")
+        << ",\"cn_ne_record_snapshot_cache_ttl_ms\":"
+        << snapshot.entityScanDetail.cnNeRecordSnapshotCacheTtlMs
+        << ",\"cn_ne_record_snapshot_cache_lookup_count\":"
+        << snapshot.entityScanDetail.cnNeRecordSnapshotCacheLookupCount
+        << ",\"cn_ne_record_snapshot_cache_hit_count\":"
+        << snapshot.entityScanDetail.cnNeRecordSnapshotCacheHitCount
+        << ",\"cn_ne_record_snapshot_cache_store_count\":"
+        << snapshot.entityScanDetail.cnNeRecordSnapshotCacheStoreCount
+        << ",\"cn_ne_record_snapshot_cache_expired_count\":"
+        << snapshot.entityScanDetail.cnNeRecordSnapshotCacheExpiredCount
+        << ",\"cn_ne_record_snapshot_cache_refresh_budget\":"
+        << snapshot.entityScanDetail.cnNeRecordSnapshotCacheRefreshBudget
+        << ",\"cn_ne_record_snapshot_cache_refresh_count\":"
+        << snapshot.entityScanDetail.cnNeRecordSnapshotCacheRefreshCount
+        << ",\"cn_ne_record_snapshot_cache_stale_hit_count\":"
+        << snapshot.entityScanDetail.cnNeRecordSnapshotCacheStaleHitCount
+        << ",\"pool_id_read_count\":" << snapshot.entityScanDetail.poolIdReadCount
+        << ",\"match_lookup_count\":" << snapshot.entityScanDetail.matchLookupCount
+        << ",\"match_lookup_hit_count\":" << snapshot.entityScanDetail.matchLookupHitCount
+        << ",\"add_pair_attempt_count\":" << snapshot.entityScanDetail.addPairAttemptCount
+        << ",\"add_pair_duplicate_count\":" << snapshot.entityScanDetail.addPairDuplicateCount
+        << ",\"link_decrypt_attempt_count\":" << snapshot.entityScanDetail.linkDecryptAttemptCount
+        << ",\"link_decrypt_success_count\":" << snapshot.entityScanDetail.linkDecryptSuccessCount
+        << ",\"cn_ne_link_decrypt_negative_cache_enabled\":"
+        << (snapshot.entityScanDetail.cnNeLinkDecryptNegativeCacheEnabled ? "true" : "false")
+        << ",\"cn_ne_link_decrypt_negative_cache_ttl_ms\":"
+        << snapshot.entityScanDetail.cnNeLinkDecryptNegativeCacheTtlMs
+        << ",\"cn_ne_link_decrypt_negative_cache_lookup_count\":"
+        << snapshot.entityScanDetail.cnNeLinkDecryptNegativeCacheLookupCount
+        << ",\"cn_ne_link_decrypt_negative_cache_hit_count\":"
+        << snapshot.entityScanDetail.cnNeLinkDecryptNegativeCacheHitCount
+        << ",\"cn_ne_link_decrypt_negative_cache_store_count\":"
+        << snapshot.entityScanDetail.cnNeLinkDecryptNegativeCacheStoreCount
+        << ",\"cn_ne_link_decrypt_negative_cache_expired_count\":"
+        << snapshot.entityScanDetail.cnNeLinkDecryptNegativeCacheExpiredCount
+        << ",\"cn_ne_link_decrypt_negative_cache_stale_hit_count\":"
+        << snapshot.entityScanDetail.cnNeLinkDecryptNegativeCacheStaleHitCount
+        << ",\"playable_validation_attempt_count\":" << snapshot.entityScanDetail.playableValidationAttemptCount
+        << ",\"playable_validation_success_count\":" << snapshot.entityScanDetail.playableValidationSuccessCount
+        << ",\"cn_ne_map_candidate_count\":" << snapshot.entityScanDetail.cnNeMapCandidateCount
+        << ",\"cn_ne_target_map_attempt_count\":" << snapshot.entityScanDetail.cnNeTargetMapAttemptCount
+        << ",\"cn_ne_target_map_success_count\":" << snapshot.entityScanDetail.cnNeTargetMapSuccessCount
+        << ",\"cn_ne_bucket_entry_scan_count\":" << snapshot.entityScanDetail.cnNeBucketEntryScanCount
+        << ",\"cn_ne_map_candidate_cache_enabled\":"
+        << (snapshot.entityScanDetail.cnNeMapCandidateCacheEnabled ? "true" : "false")
+        << ",\"cn_ne_map_candidate_cache_lookup_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidateCacheLookupCount
+        << ",\"cn_ne_map_candidate_cache_hit_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidateCacheHitCount
+        << ",\"cn_ne_map_candidate_cache_miss_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidateCacheMissCount
+        << ",\"cn_ne_map_candidate_persistent_cache_enabled\":"
+        << (snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheEnabled ? "true" : "false")
+        << ",\"cn_ne_map_candidate_persistent_cache_ttl_ms\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheTtlMs
+        << ",\"cn_ne_map_candidate_persistent_cache_lookup_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheLookupCount
+        << ",\"cn_ne_map_candidate_persistent_cache_hit_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheHitCount
+        << ",\"cn_ne_map_candidate_persistent_cache_miss_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheMissCount
+        << ",\"cn_ne_map_candidate_persistent_cache_store_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheStoreCount
+        << ",\"cn_ne_map_candidate_persistent_cache_expired_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheExpiredCount
+        << ",\"cn_ne_map_candidate_persistent_cache_refresh_budget\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheRefreshBudget
+        << ",\"cn_ne_map_candidate_persistent_cache_refresh_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheRefreshCount
+        << ",\"cn_ne_map_candidate_persistent_cache_stale_hit_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePersistentCacheStaleHitCount
+        << ",\"cn_ne_component_negative_cache_enabled\":"
+        << (snapshot.entityScanDetail.cnNeComponentNegativeCacheEnabled ? "true" : "false")
+        << ",\"cn_ne_component_negative_cache_ttl_ms\":"
+        << snapshot.entityScanDetail.cnNeComponentNegativeCacheTtlMs
+        << ",\"cn_ne_component_negative_cache_lookup_count\":"
+        << snapshot.entityScanDetail.cnNeComponentNegativeCacheLookupCount
+        << ",\"cn_ne_component_negative_cache_hit_count\":"
+        << snapshot.entityScanDetail.cnNeComponentNegativeCacheHitCount
+        << ",\"cn_ne_component_negative_cache_store_count\":"
+        << snapshot.entityScanDetail.cnNeComponentNegativeCacheStoreCount
+        << ",\"cn_ne_component_negative_cache_expired_count\":"
+        << snapshot.entityScanDetail.cnNeComponentNegativeCacheExpiredCount
+        << ",\"cn_ne_component_negative_cache_refresh_budget\":"
+        << snapshot.entityScanDetail.cnNeComponentNegativeCacheRefreshBudget
+        << ",\"cn_ne_component_negative_cache_refresh_count\":"
+        << snapshot.entityScanDetail.cnNeComponentNegativeCacheRefreshCount
+        << ",\"cn_ne_component_negative_cache_stale_hit_count\":"
+        << snapshot.entityScanDetail.cnNeComponentNegativeCacheStaleHitCount
+        << ",\"cn_ne_map_diag_enabled\":"
+        << (snapshot.entityScanDetail.cnNeMapDiagEnabled ? "true" : "false")
+        << ",\"cn_ne_map_candidate_parent_lookup_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidateParentLookupCount
+        << ",\"cn_ne_map_candidate_unique_parent_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidateUniqueParentCount
+        << ",\"cn_ne_map_candidate_duplicate_parent_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidateDuplicateParentCount
+        << ",\"cn_ne_map_candidate_direct_source_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidateDirectSourceCount
+        << ",\"cn_ne_map_candidate_plus8_source_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidatePlus8SourceCount
+        << ",\"cn_ne_map_candidate_wrapper_source_count\":"
+        << snapshot.entityScanDetail.cnNeMapCandidateWrapperSourceCount
+        << ",\"component_only_validation_attempt_count\":"
+        << snapshot.entityScanDetail.componentOnlyValidationAttemptCount
+        << ",\"component_only_validation_success_count\":"
+        << snapshot.entityScanDetail.componentOnlyValidationSuccessCount
+        << "},\"readable_bytes\":" << snapshot.entityScanDetail.readableBytes
         << ",\"readable_chunks\":" << snapshot.entityScanDetail.readableChunks
         << ",\"slots_scanned\":" << snapshot.entityScanDetail.slotsScanned
         << ",\"nonzero_slots\":" << snapshot.entityScanDetail.nonZeroSlots
@@ -2642,6 +3505,14 @@ std::string BuildDiagnosticsJson()
         << ",\"self_playable\":" << snapshot.entityScanDetail.selfPlayable
         << ",\"dynamic_pairs\":" << snapshot.entityScanDetail.dynamicPairs
         << ",\"total_pairs\":" << snapshot.entityScanDetail.totalPairs
+        << ",\"light_scan_requested\":"
+        << (snapshot.entityScanDetail.lightScanRequested ? "true" : "false")
+        << ",\"light_scan_enabled\":"
+        << (snapshot.entityScanDetail.lightScanEnabled ? "true" : "false")
+        << ",\"light_scan_pair_cap\":" << snapshot.entityScanDetail.lightScanPairCap
+        << ",\"light_scan_cap_hits\":" << snapshot.entityScanDetail.lightScanCapHits
+        << ",\"light_scan_unvalidated_pairs\":"
+        << snapshot.entityScanDetail.lightScanUnvalidatedPairs
         << ",\"sample_reject\":{\"reason\":" << snapshot.entityScanDetail.sampleRejectReason
         << ",\"parent\":";
     AppendHexOrNull(out, snapshot.entityScanDetail.sampleRejectParent);
@@ -2659,7 +3530,9 @@ std::string BuildDiagnosticsJson()
     AppendHexOrNull(out, snapshot.entityScanDetail.sampleRejectBoneBase);
     out << ",\"health_cm\":" << snapshot.entityScanDetail.sampleRejectHealthCm
         << ",\"health_max_cm\":" << snapshot.entityScanDetail.sampleRejectHealthMaxCm
-        << "}},\"render\":{\"mode\":";
+        << "}},\"entity_pipeline\":";
+    AppendEntityPipelineJson(out, snapshot);
+    out << ",\"render\":{\"mode\":";
     AppendJsonString(out, snapshot.renderWorkload.boxPerfMode ? "box_perf" : "normal");
     out << ",\"box_perf_mode\":" << (snapshot.renderWorkload.boxPerfMode ? "true" : "false")
         << ",\"draw_radar_called\":" << (snapshot.renderDrawRadarCalled ? "true" : "false")
@@ -2720,6 +3593,12 @@ std::string BuildDiagnosticsJson()
         << ",\"center_x\":" << snapshot.playerInfo.sampleDrawnCenterX
         << ",\"bottom\":" << snapshot.playerInfo.sampleDrawnBottom
         << ",\"distance_m\":" << snapshot.playerInfo.sampleDrawnDistanceM
+        << "},\"render_prediction\":{\"candidates\":"
+        << snapshot.playerInfo.renderPredictionCandidates
+        << ",\"applied\":" << snapshot.playerInfo.renderPredictionApplied
+        << ",\"world_delta_fallback\":" << snapshot.playerInfo.renderPredictionWorldDeltaFallback
+        << ",\"max_lead_ms\":" << snapshot.playerInfo.renderPredictionMaxLeadMs
+        << ",\"max_offset_cm\":" << snapshot.playerInfo.renderPredictionMaxOffsetCm
         << "},\"training_bot_prediction\":{\"candidates\":"
         << snapshot.playerInfo.trainingBotPredictionCandidates
         << ",\"applied\":" << snapshot.playerInfo.trainingBotPredictionApplied
@@ -3016,19 +3895,19 @@ std::string BuildBzOffsetProbeJson()
     out << ',';
     AppendRvaDwordProbeJson(out, "active_height", base, activeOffsets.ViewportHeight_RVA);
     out << ',';
-    AppendRvaDwordProbeJson(out, "bz150480_width_4019bc8", base, 0x4019BC8);
+    AppendRvaDwordProbeJson(out, "bz150818_width_4019bc8_historical", base, 0x4019BC8);
     out << ',';
-    AppendRvaDwordProbeJson(out, "bz150480_height_4019c38", base, 0x4019C38);
+    AppendRvaDwordProbeJson(out, "bz150818_height_4019c38_historical", base, 0x4019C38);
     out << ',';
     AppendRvaDwordProbeJson(out, "ne_input_delta_width_49b24f8", base, 0x49B24F8);
     out << ',';
     AppendRvaDwordProbeJson(out, "ne_input_delta_height_49b2568", base, 0x49B2568);
     out << "],\"entity_roots\":[";
-    AppendRvaQwordProbeJson(out, "active_ida_390d7c8", base, OW::offset::Address_entity_base);
+    AppendRvaQwordProbeJson(out, "active_ida_39bb858", base, OW::offset::Address_entity_base);
     out << ',';
-    AppendRvaDwordProbeJson(out, "active_slot_count_390d7b4", base, OW::offset::EntityList_SlotCount_RVA);
+    AppendRvaDwordProbeJson(out, "active_entity_state_39bb840", base, OW::offset::EntityList_SlotCount_RVA);
     out << ',';
-    AppendRvaQwordProbeJson(out, "forum_betsit_39017b8", base, 0x39017B8);
+    AppendRvaQwordProbeJson(out, "bz150818_forum_betsit_39017b8_historical", base, 0x39017B8);
     out << "],\"global_admin\":[";
     AppendSingletonProbeJson(
         out,
@@ -3040,7 +3919,7 @@ std::string BuildBzOffsetProbeJson()
     out << ',';
     AppendSingletonProbeJson(
         out,
-        "ida_global_admin_3a71930",
+        "bz150818_ida_global_admin_3a71930_historical",
         base,
         0x3A71930,
         OW::offset::Singleton_InputOffset,
@@ -3048,7 +3927,7 @@ std::string BuildBzOffsetProbeJson()
     out << ',';
     AppendSingletonProbeJson(
         out,
-        "forum_betsit_3a65930",
+        "bz150818_forum_betsit_3a65930_historical",
         base,
         0x3A65930,
         OW::offset::Singleton_InputOffset,
@@ -3056,7 +3935,7 @@ std::string BuildBzOffsetProbeJson()
     out << ',';
     AppendSingletonProbeJson(
         out,
-        "forum_client_game_3a5fbc8_liveadmin",
+        "bz150818_client_game_3a5fbc8_liveadmin_historical",
         base,
         0x3A5FBC8,
         0x30,
@@ -3150,17 +4029,17 @@ std::string BuildBzOffsetProbeJson()
     out << "],\"viewmatrix_roots\":[";
     AppendViewMatrixRootProbeJson(
         out,
-        "active_bz_38a6980",
+        "active_configured_chain_3960960",
         base,
         OW::offset::Address_viewmatrix_base,
         OW::offset::offset_viewmatrix_xor_key,
         OW::offset::offset_viewmatrix_xor_key2,
         OW::offset::offset_viewmatrix_xor_key3,
-        "sub_xor_sub");
+        "add_xor");
     out << ',';
     AppendViewMatrixRootProbeJson(
         out,
-        "ida_direct_38b2a88",
+        "active_sibling_3960a70",
         base,
         OW::offset::Address_viewmatrix_direct_base,
         OW::offset::offset_viewmatrix_xor_key,
@@ -3170,7 +4049,7 @@ std::string BuildBzOffsetProbeJson()
     out << ',';
     AppendViewMatrixRootProbeJson(
         out,
-        "ida_adjacent_38b2aa0",
+        "dynamic_context_3960a58",
         base,
         OW::offset::Address_viewmatrix_primary_base,
         OW::offset::offset_viewmatrix_xor_key,
@@ -3180,7 +4059,7 @@ std::string BuildBzOffsetProbeJson()
     out << ',';
     AppendViewMatrixRootProbeJson(
         out,
-        "forum_betsit_38a6980",
+        "bz150818_forum_betsit_38a6980_historical",
         base,
         0x38A6980,
         0x59D406B75C2A4377ull,
@@ -3685,6 +4564,295 @@ std::string BuildProjectionDebugJson(const std::unordered_map<std::string, std::
     return out.str();
 }
 
+struct MatrixSweepProjection {
+    bool ok = false;
+    ProjectionRawSample head{};
+    ProjectionRawSample root{};
+    ProjectionRawSample chest{};
+};
+
+MatrixSweepProjection ProjectEntityForSweep(
+    const OW::Matrix& matrix,
+    const OW::c_entity& entity,
+    const OW::Vector2& window,
+    bool rowMajor)
+{
+    MatrixSweepProjection projection{};
+    projection.head = rowMajor
+        ? ProjectRawRowMajor(matrix, entity.head_pos, window)
+        : ProjectRaw(matrix, entity.head_pos, window);
+    projection.root = rowMajor
+        ? ProjectRawRowMajor(matrix, entity.pos, window)
+        : ProjectRaw(matrix, entity.pos, window);
+    projection.chest = rowMajor
+        ? ProjectRawRowMajor(matrix, entity.chest_pos, window)
+        : ProjectRaw(matrix, entity.chest_pos, window);
+    projection.ok = projection.head.ok && projection.root.ok && projection.chest.finite;
+    return projection;
+}
+
+std::string BuildBzMatrixSweepJson(const std::unordered_map<std::string, std::string>& rawQuery)
+{
+    EntityQuery query = ParseEntityQuery(rawQuery);
+    query.includeDead = true;
+    const int emitLimit = std::clamp(ParseIntQuery(rawQuery, "sweep_limit", 24, query.warnings), 1, 128);
+    const int maxBytes = std::clamp(ParseIntQuery(rawQuery, "bytes", 0x4000, query.warnings), 0x100, 0x10000);
+
+    const OW::c_entity local = OW::TargetingDetail::SnapshotLocalEntity();
+    std::vector<OW::c_entity> entities = OW::TargetingDetail::SnapshotEntities();
+    const float fallbackWidth = OW::Config::manualScreenWidth > 0
+        ? static_cast<float>(OW::Config::manualScreenWidth)
+        : static_cast<float>(GetSystemMetrics(SM_CXSCREEN));
+    const float fallbackHeight = OW::Config::manualScreenHeight > 0
+        ? static_cast<float>(OW::Config::manualScreenHeight)
+        : static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+    const OW::Vector2 window(OW::WX > 0.0f ? OW::WX : fallbackWidth,
+        OW::WY > 0.0f ? OW::WY : fallbackHeight);
+
+    const uint64_t moduleBase = OW::SDK && OW::SDK->IsInitialized() ? OW::SDK->dwGameBase : 0;
+    const auto& activeOffsets = OW::offset::Active();
+    const auto viewMatrixMode = activeOffsets.viewMatrixMode;
+    const bool directRoot = viewMatrixMode == OW::offset::ViewMatrixMode::DirectChain;
+    const bool subXorSubRoot = viewMatrixMode == OW::offset::ViewMatrixMode::EncryptedChainSubXorSub;
+
+    uint64_t root = 0;
+    uint64_t decoded = 0;
+    if (moduleBase != 0 && activeOffsets.Address_viewmatrix_base != 0 &&
+        TryReadValue(moduleBase + activeOffsets.Address_viewmatrix_base, root) && root != 0) {
+        decoded = directRoot
+            ? root
+            : (subXorSubRoot
+                ? ((root - activeOffsets.offset_viewmatrix_xor_key)
+                    ^ activeOffsets.offset_viewmatrix_xor_key2) -
+                    activeOffsets.offset_viewmatrix_xor_key3
+                : ((root + activeOffsets.offset_viewmatrix_xor_key)
+                    ^ activeOffsets.offset_viewmatrix_xor_key2));
+    }
+
+    struct CandidateEntity {
+        OW::c_entity entity{};
+        float distanceM = 0.0f;
+        uint64_t key = 0;
+    };
+    std::vector<CandidateEntity> candidateEntities;
+    candidateEntities.reserve(entities.size());
+    for (const OW::c_entity& entity : entities) {
+        if (!query.includeDead && !entity.Alive)
+            continue;
+        if (!TeamMatches(entity, query.team))
+            continue;
+        if (!IsFiniteVector(entity.pos) || !IsFiniteVector(entity.head_pos))
+            continue;
+        const float distance = IsFiniteVector(local.pos)
+            ? entity.pos.DistTo(local.pos)
+            : (std::numeric_limits<float>::max)();
+        if (distance > query.maxDistanceM)
+            continue;
+        candidateEntities.push_back(CandidateEntity{ entity, distance, EntityKey(entity) });
+    }
+    std::sort(candidateEntities.begin(), candidateEntities.end(),
+        [](const CandidateEntity& lhs, const CandidateEntity& rhs) {
+            if (lhs.distanceM != rhs.distanceM)
+                return lhs.distanceM < rhs.distanceM;
+            return lhs.key < rhs.key;
+        });
+    if (static_cast<int>(candidateEntities.size()) > query.limit)
+        candidateEntities.resize(static_cast<size_t>(query.limit));
+
+    struct SweepScore {
+        size_t offset = 0;
+        bool rowMajor = false;
+        size_t hits = 0;
+        size_t saneHeights = 0;
+        float avgHeight = 0.0f;
+        float minHeight = 0.0f;
+        float maxHeight = 0.0f;
+        float avgCenterX = 0.0f;
+        float avgBottomY = 0.0f;
+        float score = 0.0f;
+        ProjectionRawSample firstHead{};
+        ProjectionRawSample firstRoot{};
+        OW::Matrix matrix{};
+    };
+
+    std::vector<SweepScore> scores;
+    size_t matricesTested = 0;
+    if (decoded != 0 && OW::SDK && OW::SDK->IsInitialized()) {
+        for (size_t offset = 0; offset + sizeof(OW::Matrix) <= static_cast<size_t>(maxBytes); offset += 0x10) {
+            OW::Matrix matrix{};
+            if (!TryReadValue(decoded + offset, matrix) || !MatrixNonIdentity(matrix))
+                continue;
+            ++matricesTested;
+
+            for (bool rowMajor : { false, true }) {
+                SweepScore score{};
+                score.offset = offset;
+                score.rowMajor = rowMajor;
+                score.matrix = matrix;
+                float heightSum = 0.0f;
+                float centerXSum = 0.0f;
+                float bottomYSum = 0.0f;
+                for (const CandidateEntity& candidate : candidateEntities) {
+                    const MatrixSweepProjection projected =
+                        ProjectEntityForSweep(matrix, candidate.entity, window, rowMajor);
+                    if (!projected.ok)
+                        continue;
+                    const float height = std::fabs(projected.root.screenY - projected.head.screenY);
+                    if (!std::isfinite(height) || height <= 0.0f)
+                        continue;
+                    if (score.hits == 0) {
+                        score.firstHead = projected.head;
+                        score.firstRoot = projected.root;
+                        score.minHeight = score.maxHeight = height;
+                    } else {
+                        score.minHeight = (std::min)(score.minHeight, height);
+                        score.maxHeight = (std::max)(score.maxHeight, height);
+                    }
+                    ++score.hits;
+                    if (height >= 12.0f && height <= 180.0f)
+                        ++score.saneHeights;
+                    heightSum += height;
+                    centerXSum += (projected.head.screenX + projected.root.screenX) * 0.5f;
+                    bottomYSum += projected.root.screenY;
+                }
+                if (score.hits == 0)
+                    continue;
+                score.avgHeight = heightSum / static_cast<float>(score.hits);
+                score.avgCenterX = centerXSum / static_cast<float>(score.hits);
+                score.avgBottomY = bottomYSum / static_cast<float>(score.hits);
+                score.score =
+                    static_cast<float>(score.hits) * 1000.0f +
+                    static_cast<float>(score.saneHeights) * 100.0f -
+                    std::fabs(score.avgHeight - 45.0f);
+                scores.push_back(score);
+            }
+        }
+    }
+
+    std::sort(scores.begin(), scores.end(),
+        [](const SweepScore& lhs, const SweepScore& rhs) {
+            if (lhs.score != rhs.score)
+                return lhs.score > rhs.score;
+            if (lhs.hits != rhs.hits)
+                return lhs.hits > rhs.hits;
+            if (lhs.saneHeights != rhs.saneHeights)
+                return lhs.saneHeights > rhs.saneHeights;
+            return lhs.offset < rhs.offset;
+        });
+
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    AppendCommonStart(out, query.warnings);
+    out << ",\"query\":{\"max_distance_m\":";
+    AppendNumberOrNull(out, query.maxDistanceM);
+    out << ",\"team\":";
+    AppendJsonString(out, query.team);
+    out << ",\"limit\":" << query.limit
+        << ",\"sweep_limit\":" << emitLimit
+        << ",\"bytes\":" << maxBytes
+        << "},\"screen\":{\"width\":";
+    AppendNumberOrNull(out, window.X);
+    out << ",\"height\":";
+    AppendNumberOrNull(out, window.Y);
+    out << "},\"matrix_root\":{\"profile\":";
+    AppendJsonString(out, activeOffsets.name);
+    out << ",\"module_base\":";
+    AppendHexOrNull(out, moduleBase);
+    out << ",\"root_rva\":";
+    AppendHexString(out, activeOffsets.Address_viewmatrix_base);
+    out << ",\"root\":";
+    AppendHexOrNull(out, root);
+    out << ",\"decoded\":";
+    AppendHexOrNull(out, decoded);
+    out << ",\"configured_direct_offset\":";
+    AppendHexString(out, activeOffsets.VM_DirectMatrix);
+    out << "},\"root_field_scan\":{\"slot_pointers\":[";
+    bool firstField = true;
+    if (decoded != 0) {
+        for (size_t offset = 0; offset + sizeof(uint64_t) <= 0xB70; offset += 8) {
+            uint64_t value = 0;
+            if (!TryReadValue(decoded + offset, value))
+                continue;
+            if (value < decoded || value >= decoded + static_cast<uint64_t>(maxBytes))
+                continue;
+            if (!firstField)
+                out << ',';
+            firstField = false;
+            out << "{\"offset\":";
+            AppendHexString(out, static_cast<uint64_t>(offset));
+            out << ",\"value\":";
+            AppendHexOrNull(out, value);
+            out << ",\"target_offset\":";
+            AppendHexString(out, value - decoded);
+            out << '}';
+        }
+    }
+    out << "],\"small_u32\":[";
+    firstField = true;
+    if (decoded != 0) {
+        size_t emittedSmall = 0;
+        for (size_t offset = 0; offset + sizeof(uint32_t) <= 0xB70 && emittedSmall < 128; offset += 4) {
+            uint32_t value = 0;
+            if (!TryReadValue(decoded + offset, value))
+                continue;
+            if (value > 128)
+                continue;
+            if (!firstField)
+                out << ',';
+            firstField = false;
+            ++emittedSmall;
+            out << "{\"offset\":";
+            AppendHexString(out, static_cast<uint64_t>(offset));
+            out << ",\"value\":" << value << '}';
+        }
+    }
+    out << "]},\"entity_count\":" << candidateEntities.size()
+        << ",\"matrices_tested\":" << matricesTested
+        << ",\"scores\":[";
+    const size_t emitted = (std::min)(scores.size(), static_cast<size_t>(emitLimit));
+    for (size_t index = 0; index < emitted; ++index) {
+        if (index != 0)
+            out << ',';
+        const SweepScore& score = scores[index];
+        out << "{\"rank\":" << index
+            << ",\"offset\":";
+        AppendHexString(out, static_cast<uint64_t>(score.offset));
+        out << ",\"address\":";
+        AppendHexOrNull(out, decoded ? decoded + score.offset : 0);
+        out << ",\"layout\":";
+        AppendJsonString(out, score.rowMajor ? "row_major" : "current_col");
+        out << ",\"hits\":" << score.hits
+            << ",\"sane_heights\":" << score.saneHeights
+            << ",\"avg_height\":";
+        AppendNumberOrNull(out, score.avgHeight);
+        out << ",\"min_height\":";
+        AppendNumberOrNull(out, score.minHeight);
+        out << ",\"max_height\":";
+        AppendNumberOrNull(out, score.maxHeight);
+        out << ",\"avg_center_x\":";
+        AppendNumberOrNull(out, score.avgCenterX);
+        out << ",\"avg_bottom_y\":";
+        AppendNumberOrNull(out, score.avgBottomY);
+        out << ",\"score\":";
+        AppendNumberOrNull(out, score.score);
+        out << ",\"first_head\":";
+        AppendProjectionRawSampleJson(out, score.firstHead);
+        out << ",\"first_root\":";
+        AppendProjectionRawSampleJson(out, score.firstRoot);
+        out << ",\"m11\":";
+        AppendNumberOrNull(out, score.matrix.m11);
+        out << ",\"m22\":";
+        AppendNumberOrNull(out, score.matrix.m22);
+        out << ",\"m33\":";
+        AppendNumberOrNull(out, score.matrix.m33);
+        out << ",\"m44\":";
+        AppendNumberOrNull(out, score.matrix.m44);
+        out << '}';
+    }
+    out << "]}";
+    return out.str();
+}
+
 std::optional<std::pair<size_t, OW::c_entity>> FindTargetEntity(
     const std::vector<OW::c_entity>& entities,
     const OW::TargetingDetail::TargetLockRuntime& lock)
@@ -4081,6 +5249,8 @@ std::string BuildJsonForTarget(const RequestTarget& target, int& statusCode)
         return BuildEntitiesJson(target.query);
     if (target.path == "/api/projection-debug")
         return BuildProjectionDebugJson(target.query);
+    if (target.path == "/api/bz-matrix-sweep")
+        return BuildBzMatrixSweepJson(target.query);
     if (target.path == "/api/target")
         return BuildTargetJson();
     if (target.path == "/api/target/history")

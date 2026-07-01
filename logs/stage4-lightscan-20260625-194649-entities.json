@@ -1,0 +1,325 @@
+{
+  "ok": true,
+  "schema_version": 1,
+  "timestamp_ms": 1782442009127,
+  "query": {
+    "max_distance_m": 50,
+    "team": "enemy",
+    "include_dead": false,
+    "limit": 32
+  },
+  "entities": [
+    {
+      "key": "0x27062346D80",
+      "address": "0x27062346D80",
+      "component_parent": "0x27062346D80",
+      "link_parent": "0x27062343FD0",
+      "health_base": "0x270FD3A35C0",
+      "link_base": "0x2701913CDC0",
+      "team_base": "0x270FB90A810",
+      "velocity_base": "0x270FB3E8040",
+      "hero_base": "0x270A3BCCE40",
+      "bone_base": "0x27063DE0AB0",
+      "skill_base": "0x270FDBE6140",
+      "visibility_base": "0x270FB73B940",
+      "player_controller_base": null,
+      "enemy_angle_base": "0x270FD237840",
+      "hero_id": "0x2E0000000000003",
+      "hero_source": "component",
+      "hero_name": "Tracer",
+      "team": "enemy",
+      "alive": true,
+      "visible": false,
+      "visibility_source": "component",
+      "health": 175,
+      "health_max": 175,
+      "distance_m": 30.0056,
+      "position": {
+        "x": 34.2422,
+        "y": 2.14066,
+        "z": 22.9727
+      },
+      "head_position": {
+        "x": 34.3705,
+        "y": 3.46849,
+        "z": 22.9544
+      },
+      "chest_position": {
+        "x": 34.2917,
+        "y": 3.18904,
+        "z": 22.9165
+      },
+      "velocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "motion_state": "grounded",
+      "motion_confidence": 0.35,
+      "grounded_y_baseline": 2.14066,
+      "height_above_ground": 0,
+      "vertical_velocity_y": 0,
+      "roster_state": "fresh"
+    },
+    {
+      "key": "0x27062347030",
+      "address": "0x27062347030",
+      "component_parent": "0x27062347030",
+      "link_parent": "0x27062342648",
+      "health_base": "0x271232ECEC0",
+      "link_base": "0x26D412DEF80",
+      "team_base": "0x26D53013B40",
+      "velocity_base": "0x26D52F78040",
+      "hero_base": "0x26D5304DC40",
+      "bone_base": "0x27063DD1600",
+      "skill_base": "0x27101CDE5C0",
+      "visibility_base": "0x26D412DF5C0",
+      "player_controller_base": null,
+      "enemy_angle_base": "0x2710C58E2B0",
+      "hero_id": "0x2E000000000033C",
+      "hero_source": "component",
+      "hero_name": "Standard Bot",
+      "team": "enemy",
+      "alive": true,
+      "visible": true,
+      "visibility_source": "component",
+      "health": 150,
+      "health_max": 150,
+      "distance_m": 35.3208,
+      "position": {
+        "x": 45.4766,
+        "y": 2.00003,
+        "z": 9.82812
+      },
+      "head_position": {
+        "x": 45.4767,
+        "y": 3.98122,
+        "z": 9.99264
+      },
+      "chest_position": {
+        "x": 45.4764,
+        "y": 3.31559,
+        "z": 9.82787
+      },
+      "velocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "motion_state": "grounded",
+      "motion_confidence": 0.35,
+      "grounded_y_baseline": 2.00003,
+      "height_above_ground": 0,
+      "vertical_velocity_y": 0,
+      "roster_state": "fresh"
+    },
+    {
+      "key": "0x27062352038",
+      "address": "0x27062352038",
+      "component_parent": "0x27062352038",
+      "link_parent": "0x2706232F948",
+      "health_base": "0x2710062A780",
+      "link_base": "0x26FE63C49C0",
+      "team_base": "0x2710049F0C0",
+      "velocity_base": "0x27100674730",
+      "hero_base": "0x270154E57C0",
+      "bone_base": "0x27063DDE4A0",
+      "skill_base": "0x270FFD73340",
+      "visibility_base": "0x2705E171580",
+      "player_controller_base": null,
+      "enemy_angle_base": "0x270FFAD5730",
+      "hero_id": "0x2E000000000033C",
+      "hero_source": "component",
+      "hero_name": "Standard Bot",
+      "team": "enemy",
+      "alive": true,
+      "visible": false,
+      "visibility_source": "component",
+      "health": 150,
+      "health_max": 150,
+      "distance_m": 37.3521,
+      "position": {
+        "x": 93.1146,
+        "y": -3.99997,
+        "z": 43.5158
+      },
+      "head_position": {
+        "x": 92.9381,
+        "y": -2.08316,
+        "z": 43.6536
+      },
+      "chest_position": {
+        "x": 93.1725,
+        "y": -2.75581,
+        "z": 43.5102
+      },
+      "velocity": {
+        "x": -1.72876,
+        "y": 0,
+        "z": -1.24048
+      },
+      "motion_state": "strafing",
+      "motion_confidence": 0.45,
+      "grounded_y_baseline": -3.99997,
+      "height_above_ground": 0,
+      "vertical_velocity_y": 0,
+      "roster_state": "fresh"
+    },
+    {
+      "key": "0x270623539C0",
+      "address": "0x270623539C0",
+      "component_parent": "0x270623539C0",
+      "link_parent": "0x2706233C990",
+      "health_base": "0x26D51B46C30",
+      "link_base": "0x26D4A4B9940",
+      "team_base": "0x26D414E4780",
+      "velocity_base": "0x271232E0040",
+      "hero_base": "0x26D4148B440",
+      "bone_base": "0x27063DD1090",
+      "skill_base": "0x27101CDB2C0",
+      "visibility_base": "0x26D4A4B9800",
+      "player_controller_base": null,
+      "enemy_angle_base": "0x26D4A32F8A0",
+      "hero_id": "0x2E000000000033C",
+      "hero_source": "component",
+      "hero_name": "Standard Bot",
+      "team": "enemy",
+      "alive": true,
+      "visible": true,
+      "visibility_source": "component",
+      "health": 150,
+      "health_max": 150,
+      "distance_m": 38.1836,
+      "position": {
+        "x": 42.6055,
+        "y": 2.00003,
+        "z": 7.79297
+      },
+      "head_position": {
+        "x": 42.6072,
+        "y": 3.94947,
+        "z": 7.95623
+      },
+      "chest_position": {
+        "x": 42.6056,
+        "y": 3.28408,
+        "z": 7.79252
+      },
+      "velocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "motion_state": "grounded",
+      "motion_confidence": 0.35,
+      "grounded_y_baseline": 2.00003,
+      "height_above_ground": 0,
+      "vertical_velocity_y": 0,
+      "roster_state": "fresh"
+    },
+    {
+      "key": "0x27062355A00",
+      "address": "0x27062355A00",
+      "component_parent": "0x27062355A00",
+      "link_parent": "0x270623350A0",
+      "health_base": "0x271044B5540",
+      "link_base": "0x2701B0516C0",
+      "team_base": "0x271044EC6C0",
+      "velocity_base": "0x271044E3010",
+      "hero_base": "0x2701B0522C0",
+      "bone_base": "0x27063DDC400",
+      "skill_base": "0x27101CFE3C0",
+      "visibility_base": "0x270190E4A00",
+      "player_controller_base": null,
+      "enemy_angle_base": "0x271058E2860",
+      "hero_id": "0x2E000000000033C",
+      "hero_source": "component",
+      "hero_name": "Standard Bot",
+      "team": "enemy",
+      "alive": true,
+      "visible": false,
+      "visibility_source": "component",
+      "health": 150,
+      "health_max": 150,
+      "distance_m": 39.9249,
+      "position": {
+        "x": 95.2538,
+        "y": -3.99997,
+        "z": 37.5098
+      },
+      "head_position": {
+        "x": 95.2464,
+        "y": -2.03327,
+        "z": 37.7447
+      },
+      "chest_position": {
+        "x": 95.253,
+        "y": -2.71518,
+        "z": 37.5084
+      },
+      "velocity": {
+        "x": 3.63131,
+        "y": 0,
+        "z": 2.68555
+      },
+      "motion_state": "strafing",
+      "motion_confidence": 0.45,
+      "grounded_y_baseline": -3.99997,
+      "height_above_ground": 0,
+      "vertical_velocity_y": 0,
+      "roster_state": "fresh"
+    },
+    {
+      "key": "0x2706234E518",
+      "address": "0x2706234E518",
+      "component_parent": "0x2706234E518",
+      "link_parent": "0x27062340F70",
+      "health_base": "0x2700D7C99C0",
+      "link_base": "0x26FE63DBC40",
+      "team_base": "0x270FFA5D500",
+      "velocity_base": "0x270FB41A4A0",
+      "hero_base": "0x270FB735840",
+      "bone_base": "0x27063DDF4F0",
+      "skill_base": "0x270FFDB48C0",
+      "visibility_base": "0x27063F925C0",
+      "player_controller_base": null,
+      "enemy_angle_base": "0x270FFA52C40",
+      "hero_id": "0x2E0000000000337",
+      "hero_source": "component",
+      "hero_name": "Tank Bot",
+      "team": "enemy",
+      "alive": true,
+      "visible": false,
+      "visibility_source": "component",
+      "health": 200,
+      "health_max": 200,
+      "distance_m": 45.585,
+      "position": {
+        "x": 100.398,
+        "y": -3.99997,
+        "z": 33.9829
+      },
+      "head_position": {
+        "x": 100.365,
+        "y": -1.92371,
+        "z": 34.0654
+      },
+      "chest_position": {
+        "x": 100.404,
+        "y": -2.61809,
+        "z": 33.9625
+      },
+      "velocity": {
+        "x": -0.345296,
+        "y": 0,
+        "z": 0.0813802
+      },
+      "motion_state": "grounded",
+      "motion_confidence": 0.35,
+      "grounded_y_baseline": -3.99997,
+      "height_above_ground": 0,
+      "vertical_velocity_y": 0,
+      "roster_state": "fresh"
+    }
+  ]
+}

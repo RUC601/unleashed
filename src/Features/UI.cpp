@@ -994,8 +994,10 @@ enum class UiText : size_t {
     Language,
     GroupApplication,
     Unleashed,
+    Overlay,
     CloseUn,
     ReconnectUn,
+    MinimizeOverlay,
     RuntimeVersion,
     Process,
     SaveConfig,
@@ -1009,6 +1011,7 @@ enum class UiText : size_t {
     TooltipSaveHero,
     TooltipSaveFallback,
     TooltipReconnect,
+    TooltipMinimizeOverlay,
     GroupDiagnostics,
     InputSource,
     HotkeyProbe,
@@ -1142,8 +1145,10 @@ static constexpr UiTextPair kUiText[] = {
     { "Language", "语言" },
     { "Application", "应用" },
     { "Unleashed", "Unleashed" },
+    { "Overlay", "Overlay" },
     { "Close UN", "关闭 UN" },
     { "Reconnect UN", "重连 UN" },
+    { "Minimize Overlay", "最小化 Overlay" },
     { "Runtime Version", "运行版本" },
     { "Process", "进程" },
     { "Save Config", "保存配置" },
@@ -1162,6 +1167,8 @@ static constexpr UiTextPair kUiText[] = {
       "使用当前本地英雄或全局后备保存 config.ini。" },
     { "Force a fresh target-process PID scan and SDK attach.",
       "强制重新扫描目标进程 PID 并附加 SDK。" },
+    { "Hide the drawing canvas and put the overlay menu on the taskbar. Restore it from the taskbar when you need the UI again.",
+      "隐藏绘制画布，并把 Overlay 菜单放到任务栏；需要界面时从任务栏还原。" },
     { "Diagnostics", "诊断" },
     { "Input Source", "输入来源" },
     { "Hotkey Probe", "热键探测" },
@@ -4926,6 +4933,12 @@ static void DrawMiscGeneralPage() {
             ImGui::EndDisabled();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("%s", T(UiText::TooltipReconnect));
+
+        SettingRow(T(UiText::Overlay));
+        if (ImGui::Button(T(UiText::MinimizeOverlay), ImVec2(144.0f, kControlHeight)))
+            g_Overlay.MinimizeToTaskbar();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", T(UiText::TooltipMinimizeOverlay));
 
         SettingRow(T(UiText::RuntimeVersion));
         const bool cnNeProfile = OW::offset::IsCnNeProfile();

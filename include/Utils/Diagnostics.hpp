@@ -24,12 +24,36 @@ enum class KeyStatus {
     Failed
 };
 
+enum class SdkFrameSource : uint8_t {
+    Unknown = 0,
+    Scan,
+    Process
+};
+
 // ---- DMA callsite tagging ----
 
 enum class DmaCallsite : uint8_t {
     Unknown = 0,
     EntityScan,
+    EntityScanRoot,
+    EntityScanListRead,
+    EntityScanRecordBuild,
+    EntityScanRecordMatchId,
+    EntityScanRecordHeader,
+    EntityScanRecordPoolPtr,
+    EntityScanRecordPoolId,
+    EntityScanMatchLink,
+    EntityScanTargetMap,
+    EntityScanMapCandidate,
+    EntityScanLinkTargetResolve,
+    EntityScanSelfValidation,
+    EntityScanComponentValidation,
     EntityDecrypt,
+    EntityBaseDecrypt,
+    EntityHeaderSpecial,
+    EntityHotScatter,
+    EntityHotFields,
+    EntityRotationPosition,
     ViewMatrix,
     BoneChain,
     KeyState,
@@ -40,6 +64,7 @@ enum class DmaCallsite : uint8_t {
 };
 
 const char* ToString(DmaCallsite cs);
+const char* ToString(SdkFrameSource source);
 
 // RAII guard — pushes a callsite onto the thread-local stack on construction,
 // restores the previous one on destruction.  No heap allocation.
@@ -121,11 +146,32 @@ struct ViewMatrixConsumerStats {
 // ---- Ring-buffer DMA window stats (lightweight) ----
 
 struct DmaWindowStats {
+    uint64_t windowMs = 0;
     uint64_t totalReads = 0;
     uint64_t failedReads = 0;
     uint64_t maxLatencyUs = 0;
+    uint64_t slowThresholdUs = 50000;
+    uint64_t slowReads = 0;
+    uint64_t slowFailedReads = 0;
     uint64_t perCallsiteReads[static_cast<int>(DmaCallsite::Count)]{};
+    uint64_t perCallsiteFailedReads[static_cast<int>(DmaCallsite::Count)]{};
     uint64_t perCallsiteMaxUs[static_cast<int>(DmaCallsite::Count)]{};
+    uint64_t perCallsiteSuccessMaxUs[static_cast<int>(DmaCallsite::Count)]{};
+    uint64_t perCallsiteFailedMaxUs[static_cast<int>(DmaCallsite::Count)]{};
+    uint64_t perCallsiteSlowReads[static_cast<int>(DmaCallsite::Count)]{};
+    uint64_t perCallsiteSlowFailedReads[static_cast<int>(DmaCallsite::Count)]{};
+};
+
+struct DmaSlowReadSample {
+    uint64_t sequence = 0;
+    uint64_t threadId = 0;
+    uint64_t startedTickMs = 0;
+    uint64_t completedTickMs = 0;
+    uint64_t completedAgeMs = 0;
+    uint64_t startedAgeMs = 0;
+    uint64_t latencyUs = 0;
+    DmaCallsite callsite = DmaCallsite::Unknown;
+    bool success = false;
 };
 
 // ---- Existing structures ----
@@ -276,6 +322,11 @@ struct PlayerInfoStats {
     int sampleDrawnCenterX = 0;
     int sampleDrawnBottom = 0;
     int sampleDrawnDistanceM = 0;
+    size_t renderPredictionCandidates = 0;
+    size_t renderPredictionApplied = 0;
+    size_t renderPredictionWorldDeltaFallback = 0;
+    int renderPredictionMaxLeadMs = 0;
+    int renderPredictionMaxOffsetCm = 0;
     size_t trainingBotPredictionCandidates = 0;
     size_t trainingBotPredictionApplied = 0;
     size_t trainingBotPredictionLeadDrops = 0;
@@ -362,6 +413,138 @@ struct OverlayCanvasStats {
 
 struct EntityScanDetailStats {
     uint64_t entityList = 0;
+    double scanRootMs = 0.0;
+    double scanListReadMs = 0.0;
+    double scanSlotWalkMs = 0.0;
+    double scanRecordBuildMs = 0.0;
+    double scanMatchLinkMs = 0.0;
+    double scanCnNeTargetMapMs = 0.0;
+    double scanCnNeSelfValidationMs = 0.0;
+    double scanComponentOnlyValidationMs = 0.0;
+    double scanDynamicPairMs = 0.0;
+    double scanFinalizeMs = 0.0;
+    uint64_t scanDmaReadsDelta = 0;
+    uint64_t scanDmaFailDelta = 0;
+    bool scanDmaRangeDiagEnabled = false;
+    uint64_t scanDmaRangeReads = 0;
+    uint64_t scanDmaRangeFailed = 0;
+    uint64_t scanDmaRangeMaxLatencyUs = 0;
+    uint8_t scanDmaRangeMaxCallsite = 0;
+    uint64_t scanDmaRangeScannerReads = 0;
+    uint64_t scanDmaRangeScannerMaxLatencyUs = 0;
+    uint8_t scanDmaRangeScannerMaxCallsite = 0;
+    uint64_t scanDmaRangeForeignReads = 0;
+    uint64_t scanDmaRangeForeignMaxLatencyUs = 0;
+    uint8_t scanDmaRangeForeignMaxCallsite = 0;
+    uint64_t scanDmaRangeRootMaxUs = 0;
+    uint64_t scanDmaRangeListReadMaxUs = 0;
+    uint64_t scanDmaRangeRecordHeaderMaxUs = 0;
+    uint64_t scanDmaRangeRecordPoolIdMaxUs = 0;
+    uint64_t scanDmaRangeTargetMapMaxUs = 0;
+    uint64_t scanDmaRangeComponentValidationMaxUs = 0;
+    uint64_t scanDmaRangeViewMatrixMaxUs = 0;
+    bool cnNeEntityListRootCacheEnabled = false;
+    uint64_t cnNeEntityListRootCacheTtlMs = 0;
+    size_t cnNeEntityListRootCacheHitCount = 0;
+    size_t cnNeEntityListRootCacheReadCount = 0;
+    size_t cnNeEntityListRootCacheStoreCount = 0;
+    size_t cnNeEntityListRootCacheExpiredCount = 0;
+    size_t cnNeEntityListRootCacheStaleHitCount = 0;
+    size_t listReadCount = 0;
+    size_t listReadFailCount = 0;
+    size_t listFallbackReadCount = 0;
+    size_t listReadSkippedCount = 0;
+    size_t cnNeEntityListChunkSize = 0;
+    size_t recordAddAttemptCount = 0;
+    size_t recordDuplicateCount = 0;
+    size_t recordHeaderReadCount = 0;
+    size_t recordHeaderFailCount = 0;
+    size_t recordRemoteFallbackReadCount = 0;
+    size_t recordMatchIdDirectReadCount = 0;
+    size_t recordMatchIdDirectZeroCount = 0;
+    size_t recordMatchIdHeaderHitCount = 0;
+    size_t recordMatchIdHeaderMissCount = 0;
+    size_t recordMatchIdHeaderMatchCount = 0;
+    size_t recordMatchIdHeaderMismatchCount = 0;
+    size_t recordMatchIdHeaderUseCount = 0;
+    bool cnNeRecordMatchIdFromHeaderEnabled = false;
+    bool cnNeRecordSnapshotCacheEnabled = false;
+    uint64_t cnNeRecordSnapshotCacheTtlMs = 0;
+    size_t cnNeRecordSnapshotCacheLookupCount = 0;
+    size_t cnNeRecordSnapshotCacheHitCount = 0;
+    size_t cnNeRecordSnapshotCacheStoreCount = 0;
+    size_t cnNeRecordSnapshotCacheExpiredCount = 0;
+    size_t cnNeRecordSnapshotCacheRefreshBudget = 0;
+    size_t cnNeRecordSnapshotCacheRefreshCount = 0;
+    size_t cnNeRecordSnapshotCacheStaleHitCount = 0;
+    bool cnNeEntityListReadNegativeCacheEnabled = false;
+    uint64_t cnNeEntityListReadNegativeCacheTtlMs = 0;
+    size_t cnNeEntityListReadNegativeCacheLookupCount = 0;
+    size_t cnNeEntityListReadNegativeCacheHitCount = 0;
+    size_t cnNeEntityListReadNegativeCacheStoreCount = 0;
+    size_t cnNeEntityListReadNegativeCacheExpiredCount = 0;
+    size_t cnNeEntityListReadNegativeCacheStaleHitCount = 0;
+    bool cnNeEntityListReadCacheEnabled = false;
+    uint64_t cnNeEntityListReadCacheTtlMs = 0;
+    size_t cnNeEntityListReadCacheLookupCount = 0;
+    size_t cnNeEntityListReadCacheHitCount = 0;
+    size_t cnNeEntityListReadCacheStoreCount = 0;
+    size_t cnNeEntityListReadCacheExpiredCount = 0;
+    size_t cnNeEntityListReadCacheStaleHitCount = 0;
+    uint64_t cnNeScannerStaleMetadataMs = 0;
+    bool cnNeScannerStaleMetadataOnlyEnabled = false;
+    size_t poolIdReadCount = 0;
+    size_t matchLookupCount = 0;
+    size_t matchLookupHitCount = 0;
+    size_t addPairAttemptCount = 0;
+    size_t addPairDuplicateCount = 0;
+    size_t linkDecryptAttemptCount = 0;
+    size_t linkDecryptSuccessCount = 0;
+    bool cnNeLinkDecryptNegativeCacheEnabled = false;
+    uint64_t cnNeLinkDecryptNegativeCacheTtlMs = 0;
+    size_t cnNeLinkDecryptNegativeCacheLookupCount = 0;
+    size_t cnNeLinkDecryptNegativeCacheHitCount = 0;
+    size_t cnNeLinkDecryptNegativeCacheStoreCount = 0;
+    size_t cnNeLinkDecryptNegativeCacheExpiredCount = 0;
+    size_t cnNeLinkDecryptNegativeCacheStaleHitCount = 0;
+    size_t playableValidationAttemptCount = 0;
+    size_t playableValidationSuccessCount = 0;
+    size_t cnNeMapCandidateCount = 0;
+    size_t cnNeTargetMapAttemptCount = 0;
+    size_t cnNeTargetMapSuccessCount = 0;
+    size_t cnNeBucketEntryScanCount = 0;
+    bool cnNeMapCandidateCacheEnabled = false;
+    size_t cnNeMapCandidateCacheLookupCount = 0;
+    size_t cnNeMapCandidateCacheHitCount = 0;
+    size_t cnNeMapCandidateCacheMissCount = 0;
+    bool cnNeMapCandidatePersistentCacheEnabled = false;
+    uint64_t cnNeMapCandidatePersistentCacheTtlMs = 0;
+    size_t cnNeMapCandidatePersistentCacheLookupCount = 0;
+    size_t cnNeMapCandidatePersistentCacheHitCount = 0;
+    size_t cnNeMapCandidatePersistentCacheMissCount = 0;
+    size_t cnNeMapCandidatePersistentCacheStoreCount = 0;
+    size_t cnNeMapCandidatePersistentCacheExpiredCount = 0;
+    size_t cnNeMapCandidatePersistentCacheRefreshBudget = 0;
+    size_t cnNeMapCandidatePersistentCacheRefreshCount = 0;
+    size_t cnNeMapCandidatePersistentCacheStaleHitCount = 0;
+    bool cnNeComponentNegativeCacheEnabled = false;
+    uint64_t cnNeComponentNegativeCacheTtlMs = 0;
+    size_t cnNeComponentNegativeCacheLookupCount = 0;
+    size_t cnNeComponentNegativeCacheHitCount = 0;
+    size_t cnNeComponentNegativeCacheStoreCount = 0;
+    size_t cnNeComponentNegativeCacheExpiredCount = 0;
+    size_t cnNeComponentNegativeCacheRefreshBudget = 0;
+    size_t cnNeComponentNegativeCacheRefreshCount = 0;
+    size_t cnNeComponentNegativeCacheStaleHitCount = 0;
+    bool cnNeMapDiagEnabled = false;
+    size_t cnNeMapCandidateParentLookupCount = 0;
+    size_t cnNeMapCandidateUniqueParentCount = 0;
+    size_t cnNeMapCandidateDuplicateParentCount = 0;
+    size_t cnNeMapCandidateDirectSourceCount = 0;
+    size_t cnNeMapCandidatePlus8SourceCount = 0;
+    size_t cnNeMapCandidateWrapperSourceCount = 0;
+    size_t componentOnlyValidationAttemptCount = 0;
+    size_t componentOnlyValidationSuccessCount = 0;
     size_t readableBytes = 0;
     size_t readableChunks = 0;
     size_t slotsScanned = 0;
@@ -384,6 +567,11 @@ struct EntityScanDetailStats {
     size_t selfPlayable = 0;
     size_t dynamicPairs = 0;
     size_t totalPairs = 0;
+    bool lightScanRequested = false;
+    bool lightScanEnabled = false;
+    size_t lightScanPairCap = 0;
+    size_t lightScanCapHits = 0;
+    size_t lightScanUnvalidatedPairs = 0;
     int sampleRejectReason = 0;
     uint64_t sampleRejectParent = 0;
     uint64_t sampleRejectMatchId = 0;
@@ -394,6 +582,288 @@ struct EntityScanDetailStats {
     uint64_t sampleRejectBoneBase = 0;
     int sampleRejectHealthCm = 0;
     int sampleRejectHealthMaxCm = 0;
+};
+
+struct EntityPipelineScanStats {
+    uint64_t loopCount = 0;
+    uint64_t dueCount = 0;
+    uint64_t skipPendingCount = 0;
+    uint64_t skipNotDueCount = 0;
+    uint64_t skipStableTopologyCount = 0;
+    uint64_t startedCount = 0;
+    uint64_t completedCount = 0;
+    uint64_t failedCount = 0;
+    uint64_t publishAttemptCount = 0;
+    uint64_t publishSuccessCount = 0;
+    uint64_t overwrittenCount = 0;
+    uint64_t generation = 0;
+    double loopHz = 0.0;
+    double dueHz = 0.0;
+    double startedHz = 0.0;
+    double completedHz = 0.0;
+    double getOwEntitiesMs = 0.0;
+    double maxGetOwEntitiesMs = 0.0;
+    uint64_t maxGetOwEntitiesGeneration = 0;
+    size_t maxGetOwEntitiesRecords = 0;
+    size_t maxGetOwEntitiesPairs = 0;
+    double maxGetOwEntitiesRecordBuildMs = 0.0;
+    double maxGetOwEntitiesMatchLinkMs = 0.0;
+    double maxGetOwEntitiesTargetMapMs = 0.0;
+    double maxGetOwEntitiesComponentValidationMs = 0.0;
+    uint64_t maxGetOwEntitiesDmaReadsDelta = 0;
+    uint64_t maxGetOwEntitiesDmaFailDelta = 0;
+    bool maxGetOwEntitiesDmaRangeDiagEnabled = false;
+    uint64_t maxGetOwEntitiesDmaRangeReads = 0;
+    uint64_t maxGetOwEntitiesDmaRangeFailed = 0;
+    uint64_t maxGetOwEntitiesDmaRangeMaxLatencyUs = 0;
+    uint8_t maxGetOwEntitiesDmaRangeMaxCallsite = 0;
+    uint64_t maxGetOwEntitiesDmaRangeScannerReads = 0;
+    uint64_t maxGetOwEntitiesDmaRangeScannerMaxLatencyUs = 0;
+    uint8_t maxGetOwEntitiesDmaRangeScannerMaxCallsite = 0;
+    uint64_t maxGetOwEntitiesDmaRangeForeignReads = 0;
+    uint64_t maxGetOwEntitiesDmaRangeForeignMaxLatencyUs = 0;
+    uint8_t maxGetOwEntitiesDmaRangeForeignMaxCallsite = 0;
+    uint64_t maxGetOwEntitiesDmaRangeRootMaxUs = 0;
+    uint64_t maxGetOwEntitiesDmaRangeListReadMaxUs = 0;
+    uint64_t maxGetOwEntitiesDmaRangeRecordHeaderMaxUs = 0;
+    uint64_t maxGetOwEntitiesDmaRangeRecordPoolIdMaxUs = 0;
+    uint64_t maxGetOwEntitiesDmaRangeTargetMapMaxUs = 0;
+    uint64_t maxGetOwEntitiesDmaRangeComponentValidationMaxUs = 0;
+    uint64_t maxGetOwEntitiesDmaRangeViewMatrixMaxUs = 0;
+    size_t maxGetOwEntitiesRootCacheHitCount = 0;
+    size_t maxGetOwEntitiesRootCacheReadCount = 0;
+    size_t maxGetOwEntitiesRootCacheStoreCount = 0;
+    size_t maxGetOwEntitiesRootCacheExpiredCount = 0;
+    size_t maxGetOwEntitiesRootCacheStaleHitCount = 0;
+    size_t maxGetOwEntitiesListReadSkippedCount = 0;
+    size_t maxGetOwEntitiesListReadNegativeCacheHitCount = 0;
+    size_t maxGetOwEntitiesListReadNegativeCacheStoreCount = 0;
+    size_t maxGetOwEntitiesListReadNegativeCacheExpiredCount = 0;
+    size_t maxGetOwEntitiesListReadNegativeCacheStaleHitCount = 0;
+    size_t maxGetOwEntitiesListReadCacheHitCount = 0;
+    size_t maxGetOwEntitiesListReadCacheStoreCount = 0;
+    size_t maxGetOwEntitiesListReadCacheExpiredCount = 0;
+    size_t maxGetOwEntitiesListReadCacheStaleHitCount = 0;
+    size_t maxGetOwEntitiesRecordMatchIdDirectReadCount = 0;
+    size_t maxGetOwEntitiesRecordMatchIdDirectZeroCount = 0;
+    size_t maxGetOwEntitiesRecordMatchIdHeaderHitCount = 0;
+    size_t maxGetOwEntitiesRecordMatchIdHeaderMissCount = 0;
+    size_t maxGetOwEntitiesRecordMatchIdHeaderMatchCount = 0;
+    size_t maxGetOwEntitiesRecordMatchIdHeaderMismatchCount = 0;
+    size_t maxGetOwEntitiesRecordMatchIdHeaderUseCount = 0;
+    size_t maxGetOwEntitiesPersistentRefreshCount = 0;
+    size_t maxGetOwEntitiesPersistentStaleHitCount = 0;
+    size_t resultRawCount = 0;
+    uint64_t pendingAgeMs = 0;
+    uint64_t lastSuccessAgeMs = 0;
+    bool coldTopologyScanEnabled = false;
+    uint64_t topologyRescanRequestCount = 0;
+    uint64_t topologyCountProbeCount = 0;
+    uint64_t topologyCountProbeChangeCount = 0;
+    size_t topologyCandidateCount = 0;
+};
+
+struct EntityPipelinePhaseStats {
+    double beginFrameMs = 0.0;
+    double consumeScanMs = 0.0;
+    double previousSnapshotCopyMs = 0.0;
+    double prefetchMs = 0.0;
+    double previousIndexMs = 0.0;
+    double hotScatterPrepareMs = 0.0;
+    double hotScatterExecuteMs = 0.0;
+    double baseCacheMs = 0.0;
+    double baseDecryptMs = 0.0;
+    double healthMs = 0.0;
+    double heroMs = 0.0;
+    double visibilityMs = 0.0;
+    double skeletonMs = 0.0;
+    double skeletonVelocityReadMs = 0.0;
+    double skeletonCacheCallMs = 0.0;
+    double skillMs = 0.0;
+    double teamNameMs = 0.0;
+    double teamNameHeroLookupMs = 0.0;
+    double teamNameBotAdjustMs = 0.0;
+    double teamNameBattleTagMs = 0.0;
+    double teamNameTeamReadMs = 0.0;
+    double localSelectMs = 0.0;
+    double publishMs = 0.0;
+    double recordSyncMs = 0.0;
+    double entityLoopWallMs = 0.0;
+    double entityLoopSetupMs = 0.0;
+    double entityHeaderSpecialMs = 0.0;
+    double entityHeaderComponentMs = 0.0;
+    double entityHeaderLinkMs = 0.0;
+    double entitySpecialProbeMs = 0.0;
+    double entityCacheApplyMs = 0.0;
+    double entityCacheMatchIdMs = 0.0;
+    double entityCacheRecordUpdateMs = 0.0;
+    double entityHotFieldsMs = 0.0;
+    double entityRotationPositionMs = 0.0;
+    double entityLoopGapMs = 0.0;
+    double cycleGapMs = 0.0;
+};
+
+struct EntityLifecycleStats {
+    size_t entityRecordCreatedCount = 0;
+    size_t entityRecordUpdatedActorCount = 0;
+    size_t entityRecordLinkChangedCount = 0;
+    size_t entityRecordLinkChangedSameComponentCount = 0;
+    size_t entityRecordLinkChangedComponentChangedCount = 0;
+    size_t entityRecordLinkChangedSameHeroCount = 0;
+    size_t entityRecordLinkChangedHeroChangedCount = 0;
+    size_t entityRecordLinkChangedHeroUnknownCount = 0;
+    size_t entityRecordLinkChangedMatchKeyCount = 0;
+    size_t entityRecordLinkChangedLinkKeyCount = 0;
+    size_t entityRecordLinkChangedComponentKeyCount = 0;
+    size_t entityRecordMarkMissingCount = 0;
+    size_t entityRecordMarkDeadCount = 0;
+    size_t entityRecordExpiredCount = 0;
+
+    size_t componentCacheHitCount = 0;
+    size_t componentCacheMissCount = 0;
+    size_t componentCacheInvalidateIntervalCount = 0;
+    size_t componentCacheInvalidateIntervalSkippedLifetimeCount = 0;
+    size_t componentCacheInvalidateLinkChangeCount = 0;
+    size_t componentCacheInvalidateHealthResurrectCount = 0;
+    size_t componentCacheInvalidateHeroChangeCount = 0;
+    size_t componentCacheLinkChangePreviousMatchIdKnownCount = 0;
+    size_t componentCacheLinkChangePreviousMatchIdZeroCount = 0;
+    size_t componentCacheLinkChangePreviousMatchIdUnknownCount = 0;
+    size_t componentCacheLinkChangeRecordAliasHitCount = 0;
+    size_t componentCacheLinkChangeRecordAliasMissCount = 0;
+    size_t componentCacheLinkChangeRecordPublishedCount = 0;
+    size_t componentCacheLinkChangeRecordBasesValidCount = 0;
+    size_t componentCacheLinkChangeRecordMatchKeyCount = 0;
+    size_t componentCacheLinkChangeRecordLinkKeyCount = 0;
+    size_t componentCacheLinkChangeRecordComponentKeyCount = 0;
+    size_t componentCacheLinkRetainAttemptCount = 0;
+    size_t componentCacheLinkRetainSuccessCount = 0;
+    size_t componentCacheLinkRetainRejectedDisabledCount = 0;
+    size_t componentCacheLinkRetainRejectedRecordStoreDisabledCount = 0;
+    size_t componentCacheLinkRetainRejectedMissingRecordCount = 0;
+    size_t componentCacheLinkRetainRejectedMissingMatchIdCount = 0;
+    size_t componentCacheLinkRetainRejectedComponentChangedCount = 0;
+    size_t componentCacheLinkRetainRejectedIntervalCount = 0;
+    size_t componentCacheLinkRetainIntervalBypassedLifetimeCount = 0;
+    size_t componentCacheLinkRetainRejectedHeroChangedCount = 0;
+    size_t componentCacheLinkRetainRejectedHeroUnknownCount = 0;
+    size_t componentCacheLinkRetainRejectedDecryptFailCount = 0;
+    size_t componentCacheLinkRetainCachedHeroValidateCount = 0;
+    size_t componentCacheLinkRetainRefreshDecryptAttemptCount = 0;
+    size_t componentCacheLinkRetainRefreshDecryptSuccessCount = 0;
+    size_t componentCacheLinkRetainRefreshDecryptFailCount = 0;
+    size_t componentCacheLinkRetainRefreshLinkAttemptCount = 0;
+    size_t componentCacheLinkRetainRefreshLinkSuccessCount = 0;
+    size_t componentCacheLinkRetainRefreshLinkFailCount = 0;
+    size_t componentCacheLinkRetainRefreshHeroAttemptCount = 0;
+    size_t componentCacheLinkRetainRefreshHeroSuccessCount = 0;
+    size_t componentCacheLinkRetainRefreshHeroFailCount = 0;
+    size_t componentCacheLinkRetainRefreshVisibilityAttemptCount = 0;
+    size_t componentCacheLinkRetainRefreshVisibilitySuccessCount = 0;
+    size_t componentCacheLinkRetainRefreshVisibilityFailCount = 0;
+    size_t componentCacheLinkRetainRefreshAngleAttemptCount = 0;
+    size_t componentCacheLinkRetainRefreshAngleSuccessCount = 0;
+    size_t componentCacheLinkRetainRefreshAngleFailCount = 0;
+    size_t componentCacheLinkRetainRefreshAngleSkippedNoPriorCount = 0;
+    size_t componentCacheLinkRetainRefreshAnglePriorCount = 0;
+    size_t componentCacheLinkRetainRefreshAnglePriorFailRejectedCount = 0;
+
+    size_t dynamicCacheCreatedCount = 0;
+    size_t dynamicCacheReusedCount = 0;
+    size_t dynamicCacheReplacedCount = 0;
+    size_t dynamicCacheExpiredCount = 0;
+
+    bool recordStoreEnabled = false;
+    size_t recordStoreSize = 0;
+    size_t recordStoreFreshCount = 0;
+    size_t recordStoreMissingCount = 0;
+    size_t recordStoreDeadCount = 0;
+    size_t recordStoreExpiredCount = 0;
+    size_t recordStoreBasesValidCount = 0;
+    size_t recordStoreDynamicValidCount = 0;
+    size_t recordStorePublishedValidCount = 0;
+};
+
+struct SdkCacheStats {
+    uint64_t componentKeyCacheHitCount = 0;
+    uint64_t componentKeyCacheMissCount = 0;
+    uint64_t beginFrameScanCount = 0;
+    uint64_t beginFrameProcessCount = 0;
+    uint64_t beginFrameUnknownCount = 0;
+};
+
+struct EntityPipelineProcessStats {
+    double entityCycleMs = 0.0;
+    size_t rawCount = 0;
+    size_t validatedCount = 0;
+    size_t publishedCount = 0;
+    uint64_t dmaReadsDelta = 0;
+    uint64_t dmaFailDelta = 0;
+    EntityPipelinePhaseStats phase{};
+    size_t baseCacheHitCount = 0;
+    size_t baseCacheMissCount = 0;
+    size_t baseDecryptAttemptCount = 0;
+    size_t baseDecryptSuccessCount = 0;
+    size_t baseDecryptFailCount = 0;
+    size_t baseDecryptSlowCallCount = 0;
+    size_t baseDecryptFallbackAttemptCount = 0;
+    size_t baseDecryptFallbackSuccessCount = 0;
+    size_t baseDecryptFallbackFailCount = 0;
+    size_t baseDecryptUniqueKeyCount = 0;
+    size_t baseDecryptDuplicateKeyCount = 0;
+    size_t baseDecryptMaxDuplicateKeyCount = 0;
+    uint32_t baseDecryptMaxDuplicateKeyType = 0;
+    uint64_t baseDecryptMaxDuplicateKeyParent = 0;
+    double baseDecryptMaxCallMs = 0.0;
+    uint32_t baseDecryptMaxCallType = 0;
+    uint64_t baseDecryptMaxCallParent = 0;
+    bool baseDecryptMaxCallSuccess = false;
+    size_t teamNameSlowCallCount = 0;
+    double teamNameMaxCallMs = 0.0;
+    uint32_t teamNameMaxCallOp = 0;
+    uint64_t teamNameMaxCallHeroId = 0;
+    uint64_t teamNameMaxCallLinkBase = 0;
+    uint64_t teamNameMaxCallTeamBase = 0;
+    bool teamNameMaxCallSuccess = false;
+    size_t hotScatterRequestedCount = 0;
+    size_t hotScatterPrepareRequestedCount = 0;
+    size_t hotScatterPrepareSuccessCount = 0;
+    size_t hotScatterPrepareFailCount = 0;
+    size_t hotScatterExecuteCount = 0;
+    size_t hotScatterExecuteFailCount = 0;
+    size_t hotScatterBytesRequested = 0;
+    size_t hotScatterBytesRead = 0;
+    size_t hotScatterShortReadCount = 0;
+    size_t hotScatterBatchItems = 0;
+    size_t hotScatterBatchRequests = 0;
+    size_t hotScatterEstimatedUniquePages = 0;
+    size_t hotScatterSuccessCount = 0;
+    size_t hotScatterPartialCount = 0;
+    size_t hotScatterFallbackReadCount = 0;
+    size_t skeletonCacheHitCount = 0;
+    size_t skeletonCacheMissCount = 0;
+    size_t skeletonExactBoneReadCount = 0;
+    size_t skeletonBlockReadBytes = 0;
+    size_t skeletonFallbackGetBonePosCount = 0;
+    size_t skeletonSlowCallCount = 0;
+    double skeletonMaxCallMs = 0.0;
+    uint32_t skeletonMaxCallOp = 0;
+    uint64_t skeletonMaxCallHeroId = 0;
+    uint64_t skeletonMaxCallEntity = 0;
+    uint64_t skeletonMaxCallBoneBase = 0;
+    uint64_t skeletonMaxCallVelocityBase = 0;
+    uint64_t skeletonMaxCallVelocityBoneData = 0;
+    bool skeletonMaxCallCacheHit = false;
+    bool skeletonMaxCallCacheValid = false;
+    bool skeletonMaxCallFallback = false;
+    int skeletonMaxCallMaxMappedIndex = -1;
+    bool skeletonMaxCallSuccess = false;
+    size_t visibilityScatterHitCount = 0;
+    size_t visibilityFallbackCount = 0;
+    size_t skillDueCount = 0;
+    size_t skillReadCount = 0;
+    size_t skillSkippedNotDueCount = 0;
+    EntityLifecycleStats lifecycle{};
 };
 
 struct StatusSnapshot {
@@ -410,6 +880,7 @@ struct StatusSnapshot {
     SnapshotCopyStats dynamicSnapshotCopy{};
     ViewMatrixConsumerStats renderViewMatrixUse{};
     DmaReadStats dmaReads{};
+    DmaWindowStats dmaWindow{};
     ErrorCounters errors{};
     bool dmaReady = false;
     bool processAttached = false;
@@ -434,7 +905,10 @@ struct StatusSnapshot {
     PlayerInfoStats playerInfo{};
     LocalEntityStats localEntity{};
     RosterStats roster{};
+    SdkCacheStats sdkCache{};
     EntityScanDetailStats entityScanDetail{};
+    EntityPipelineScanStats entityPipelineScan{};
+    EntityPipelineProcessStats entityPipelineProcess{};
 };
 
 void Initialize(LogLevel minLevel = LogLevel::Info, const char* logPath = "./unleashed_diag.log");
@@ -470,8 +944,17 @@ void RecordRenderBox(bool fastPath);
 void RecordDmaRead(bool success, std::chrono::steady_clock::duration latency);
 void RecordDmaRead(bool success, uint64_t latencyUs);
 void RecordDmaRead(bool success, uint64_t latencyUs, DmaCallsite callsite);
+size_t DmaSampleCursor();
+DmaWindowStats GetDmaRangeStats(size_t beginCursor, size_t endCursor);
+std::vector<DmaSlowReadSample> GetDmaSlowReadSamples(
+    uint64_t windowMs,
+    uint64_t minLatencyUs,
+    size_t maxSamples);
 void RecordDecryptFailure();
 void RecordInvalidEntity();
+void RecordSdkComponentKeyCacheHit();
+void RecordSdkComponentKeyCacheMiss();
+void RecordSdkBeginFrame(SdkFrameSource source);
 
 // Frame timing — call once per frame from the render thread after Present().
 // Emits a SLOW_FRAME diagnostic line when total time exceeds the threshold.
@@ -484,6 +967,7 @@ void SetRenderThread();
 // milliseconds.  Scans a lock-free ring buffer — O(capacity) but intended
 // for diagnostic sampling, not per-frame use.
 DmaWindowStats GetDmaWindowStats(uint64_t windowMs);
+DmaReadStats SnapshotDmaReadStats();
 void RecordEntityScanCycle(size_t entityCount, double measuredHz = -1.0);
 void RecordEntityProcessCycle(double measuredHz);
 void RecordViewMatrixPublish();
@@ -512,6 +996,9 @@ void SetPlayerInfoStats(const PlayerInfoStats& stats);
 void SetLocalEntityStats(const LocalEntityStats& stats);
 void SetRosterStats(const RosterStats& stats);
 void SetEntityScanDetailStats(const EntityScanDetailStats& stats);
+EntityScanDetailStats SnapshotEntityScanDetailStats();
+void SetEntityPipelineScanStats(const EntityPipelineScanStats& stats);
+void SetEntityPipelineProcessStats(const EntityPipelineProcessStats& stats);
 
 StatusSnapshot Snapshot();
 void DumpStatus();

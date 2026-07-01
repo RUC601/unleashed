@@ -50,6 +50,7 @@ private:
     int                     m_menuAnchorX = 0;
     int                     m_menuAnchorY = 0;
     unsigned long long      m_lastCanvasBoundsRefreshMs = 0;
+    unsigned long long      m_lastMenuRenderMs = 0;
     bool                    m_menuAnchorValid = false;
     bool                    m_canHideMenuOnDeactivate = false;
     bool                    m_minimizedToTaskbar = false;

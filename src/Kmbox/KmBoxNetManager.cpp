@@ -247,6 +247,12 @@ namespace
             ? KmBoxRuntimeConfig::MouseButtonFlushIntervalMs
             : KmBoxRuntimeConfig::CommandFlushIntervalMs;
     }
+
+    void RecordFirstFailure(int& status, int result)
+    {
+        if (status == success && result != success)
+            status = result;
+    }
 }
 
 KmBoxNetManager::KmBoxNetManager()
@@ -986,55 +992,130 @@ int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int C
     }
 
     const int stateMask = payload.button;
-    const bool rightStateInvolved =
-        Cmd == cmd_mouse_right ||
-        ((previousStateMask | stateMask) & 0x02) != 0;
-    const unsigned int packetCmd = rightStateInvolved ? cmd_mouse_right : Cmd;
-    client_data packet = BuildPacket(packetCmd, NextRandom());
-    int commandLength = 0;
+    payload.button = stateMask;
+    payload.x = 0;
+    payload.y = 0;
+    payload.wheel = 0;
 
-    if (rightStateInvolved) {
-        payload.button = stateMask;
-        payload.x = 0;
-        payload.y = 0;
-        payload.wheel = 0;
-        Diagnostics::Aim("udp.mouse.button build cmd=0x%08X down=%d prevMask=0x%02X stateMask=0x%02X payloadButton=%d fullMask=1 force=%d",
-            packetCmd,
-            Down ? 1 : 0,
-            previousStateMask,
-            stateMask,
-            payload.button,
-            Force ? 1 : 0);
+    client_data packet = BuildPacket(Cmd, NextRandom());
+    Diagnostics::Aim("udp.mouse.button build cmd=0x%08X down=%d prevMask=0x%02X stateMask=0x%02X payloadButton=%d fullState=1 force=%d",
+        Cmd,
+        Down ? 1 : 0,
+        previousStateMask,
+        stateMask,
+        payload.button,
+        Force ? 1 : 0);
 
-        memcpy_s(&packet.cmd_mouse, sizeof(soft_mouse_t), &payload, sizeof(soft_mouse_t));
-        commandLength = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
-    } else {
-        const int buttonState = Down ? 1 : 0;
-        payload.button = buttonState;
-        Diagnostics::Aim("udp.mouse.button build cmd=0x%08X down=%d prevMask=0x%02X stateMask=0x%02X payloadButton=%d fullMask=0 force=%d",
-            packetCmd,
-            Down ? 1 : 0,
-            previousStateMask,
-            stateMask,
-            payload.button,
-            Force ? 1 : 0);
-
-        memcpy_s(&packet.cmd_mouse.button, sizeof(packet.cmd_mouse.button), &buttonState, sizeof(buttonState));
-        commandLength = sizeof(cmd_head_t) + sizeof(buttonState);
-    }
+    memcpy_s(&packet.cmd_mouse, sizeof(soft_mouse_t), &payload, sizeof(soft_mouse_t));
 
     KmBoxQueuedNetCommand command{};
     command.data = packet;
-    command.length = commandLength;
+    command.length = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
     command.type = KmBoxCommandType::MouseButton;
     command.mouseButtonStateMask = stateMask;
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
 }
 
+int KmBoxNetManager::RecoverMousePassthrough()
+{
+    if (!EnsureConnected())
+        return err_creat_socket;
+
+    Diagnostics::Info("[KMBOX-NET] Recovering mouse passthrough state.");
+    Diagnostics::Aim("kmbox.recover_mouse start");
+
+    int status = success;
+    const auto record = [&](int result) {
+        RecordFirstFailure(status, result);
+    };
+
+    const auto shortPause = []() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    };
+
+    const auto sendHeaderOnly = [&](unsigned int cmd, KmBoxCommandType type, const char* label) {
+        client_data packet = BuildPacket(cmd, NextRandom());
+        Diagnostics::Aim("kmbox.recover_mouse %s cmd=0x%08X payload=header", label, cmd);
+        record(SendSynchronousCommand(cmd, packet.head.rand, sizeof(cmd_head_t), type, &packet));
+    };
+
+    const auto sendShortButtonUp = [&](unsigned int cmd, const char* label) {
+        client_data packet = BuildPacket(cmd, NextRandom());
+        packet.cmd_mouse.button = 0;
+        Diagnostics::Aim("kmbox.recover_mouse %s cmd=0x%08X payload=int0", label, cmd);
+        record(SendSynchronousCommand(cmd, packet.head.rand,
+            sizeof(cmd_head_t) + sizeof(packet.cmd_mouse.button),
+            KmBoxCommandType::MouseButton,
+            &packet));
+    };
+
+    const auto sendMoveZeroShort = [&]() {
+        client_data packet = BuildPacket(cmd_mouse_move, NextRandom());
+        packet.cmd_mouse.button = 0;
+        packet.cmd_mouse.x = 0;
+        packet.cmd_mouse.y = 0;
+        packet.cmd_mouse.wheel = 0;
+        Diagnostics::Aim("kmbox.recover_mouse move_zero_short cmd=0x%08X payload=mouse16", cmd_mouse_move);
+        record(SendSynchronousCommand(cmd_mouse_move, packet.head.rand,
+            sizeof(cmd_head_t) + (sizeof(int) * 4),
+            KmBoxCommandType::MouseMove,
+            &packet));
+    };
+
+    const auto sendSoftMouseZero = [&](unsigned int cmd, KmBoxCommandType type, const char* label) {
+        client_data packet = BuildPacket(cmd, NextRandom());
+        soft_mouse_t payload{};
+        memcpy_s(&packet.cmd_mouse, sizeof(packet.cmd_mouse), &payload, sizeof(payload));
+        Diagnostics::Aim("kmbox.recover_mouse %s cmd=0x%08X payload=soft0", label, cmd);
+        record(SendSynchronousCommand(cmd, packet.head.rand,
+            sizeof(cmd_head_t) + sizeof(payload),
+            type,
+            &packet));
+    };
+
+    sendHeaderOnly(cmd_unmask_all, KmBoxCommandType::MouseUnmask, "unmask_begin");
+    shortPause();
+    sendShortButtonUp(cmd_mouse_left, "left_short_up");
+    sendShortButtonUp(cmd_mouse_right, "right_short_up");
+    sendShortButtonUp(cmd_mouse_middle, "middle_short_up");
+    shortPause();
+    sendMoveZeroShort();
+    shortPause();
+    sendSoftMouseZero(cmd_mouse_left, KmBoxCommandType::MouseButton, "left_soft_up");
+    sendSoftMouseZero(cmd_mouse_right, KmBoxCommandType::MouseButton, "right_soft_up");
+    sendSoftMouseZero(cmd_mouse_middle, KmBoxCommandType::MouseButton, "middle_soft_up");
+    shortPause();
+    sendSoftMouseZero(cmd_mouse_move, KmBoxCommandType::MouseMove, "move_zero_soft");
+    shortPause();
+    sendHeaderOnly(cmd_unmask_all, KmBoxCommandType::MouseUnmask, "unmask_end");
+
+    {
+        std::lock_guard<std::mutex> lock(mouseStateMutex);
+        Mouse.MouseData = {};
+    }
+
+    if (status == success) {
+        Diagnostics::Info("[KMBOX-NET] Mouse passthrough recovery succeeded.");
+        Diagnostics::Aim("kmbox.recover_mouse success");
+    } else {
+        Diagnostics::Warn("[KMBOX-NET] Mouse passthrough recovery completed with status=%d.", status);
+        Diagnostics::Aim("kmbox.recover_mouse partial_failure status=%d", status);
+    }
+
+    return status;
+}
+
 int KmBoxNetManager::ForceReleaseMouseButtons()
 {
-    return SetMouseButtonStateMask(0x00, true);
+    int status = SetMouseButton(0x01, false, cmd_mouse_left, true);
+    const int rightStatus = SetMouseButton(0x02, false, cmd_mouse_right, true);
+    const int middleStatus = SetMouseButton(0x04, false, cmd_mouse_middle, true);
+    if (status == success && rightStatus != success)
+        status = rightStatus;
+    if (status == success && middleStatus != success)
+        status = middleStatus;
+    return status;
 }
 
 int KmBoxNetManager::ForceReleaseMouseButton(int button)
@@ -1054,53 +1135,61 @@ int KmBoxNetManager::ForceReleaseMouseButton(int button)
         return err_net_cmd;
     }
 
-    unsigned int nextState = 0;
-    {
-        std::lock_guard<std::mutex> lock(mouseStateMutex);
-        nextState = static_cast<unsigned int>(Mouse.MouseData.button) & ~releaseMask;
+    unsigned int cmd = 0;
+    switch (releaseMask) {
+    case 0x01:
+        cmd = cmd_mouse_left;
+        break;
+    case 0x02:
+        cmd = cmd_mouse_right;
+        break;
+    case 0x04:
+        cmd = cmd_mouse_middle;
+        break;
+    default:
+        return err_net_cmd;
     }
-    return SetMouseButtonStateMask(nextState, true);
+
+    return SetMouseButton(releaseMask, false, cmd, true);
 }
 
 int KmBoxNetManager::SetMouseButtonStateMask(unsigned int StateMask, bool Force)
 {
-    const int next = static_cast<int>(StateMask & 0x07u);
-    soft_mouse_t payload{};
+    const unsigned int next = StateMask & 0x07u;
     int previousStateMask = 0;
     {
         std::lock_guard<std::mutex> lock(mouseStateMutex);
         previousStateMask = Mouse.MouseData.button;
-        if (!Force && next == previousStateMask) {
-            Diagnostics::Trace("[KMBOX-NET] coalesced redundant mouse button state mask=0x%02X",
-                next);
-            return success;
-        }
-
-        Mouse.MouseData.button = next;
-        payload = Mouse.MouseData;
     }
 
-    payload.button = next;
-    payload.x = 0;
-    payload.y = 0;
-    payload.wheel = 0;
+    if (!Force && next == static_cast<unsigned int>(previousStateMask)) {
+        Diagnostics::Trace("[KMBOX-NET] coalesced redundant mouse button state mask=0x%02X",
+            next);
+        return success;
+    }
 
-    client_data packet = BuildPacket(cmd_mouse_right, NextRandom());
-    memcpy_s(&packet.cmd_mouse, sizeof(soft_mouse_t), &payload, sizeof(soft_mouse_t));
-
-    Diagnostics::Aim("udp.mouse.button_state build prevMask=0x%02X stateMask=0x%02X payloadButton=%d force=%d",
+    Diagnostics::Aim("udp.mouse.button_state diff prevMask=0x%02X stateMask=0x%02X changed=0x%02X force=%d",
         previousStateMask,
         next,
-        payload.button,
+        (previousStateMask ^ static_cast<int>(next)) & 0x07,
         Force ? 1 : 0);
 
-    KmBoxQueuedNetCommand command{};
-    command.data = packet;
-    command.length = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
-    command.type = KmBoxCommandType::MouseButton;
-    command.mouseButtonStateMask = next;
-    command.enqueuedAt = std::chrono::steady_clock::now();
-    return EnqueueCommand(command);
+    int status = success;
+    const auto applyButton = [&](unsigned int mask, unsigned int cmd) {
+        const bool down = (next & mask) != 0;
+        const bool wasDown = (static_cast<unsigned int>(previousStateMask) & mask) != 0;
+        if (!Force && down == wasDown)
+            return;
+
+        const int result = SetMouseButton(mask, down, cmd, Force);
+        if (status == success && result != success)
+            status = result;
+    };
+
+    applyButton(0x01, cmd_mouse_left);
+    applyButton(0x02, cmd_mouse_right);
+    applyButton(0x04, cmd_mouse_middle);
+    return status;
 }
 
 int KmBoxNetManager::MaskMouse(unsigned int Mask)

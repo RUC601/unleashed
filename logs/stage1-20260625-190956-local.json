@@ -1,0 +1,434 @@
+{
+  "ok": true,
+  "schema_version": 1,
+  "timestamp_ms": 1782439797918,
+  "warnings": [
+    "local entity snapshot is unavailable",
+    "camera/view direction is unavailable"
+  ],
+  "local": {
+    "hero_id": null,
+    "hero_name": null,
+    "health": null,
+    "health_max": null,
+    "alive": null,
+    "position": null,
+    "camera_position": null,
+    "view_direction": null,
+    "link_base": null,
+    "skill_base": null,
+    "player_controller": null,
+    "ultimate_perk": {
+      "available": false,
+      "lookup_ready": false,
+      "policy": "safe_no338",
+      "seed_generated_at_utc": "2026-06-14T00:09:54Z",
+      "seed_trusted_rows": 202,
+      "seed_trusted_samples": 404,
+      "seed_source_holdout_known": 94,
+      "seed_source_holdout_samples": 404,
+      "seed_source_holdout_false_known": 0,
+      "skill_base": null,
+      "e44_read": false,
+      "e44_u32": "0x0",
+      "e44_u64": "0x0",
+      "e78_read": false,
+      "e78_u32": "0x0",
+      "e78_u64": "0x0",
+      "research_selected_boolean": {
+        "evidence": "20260615_live_validation_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "rule": null,
+        "raw": {
+          "skill_16c2_read": false,
+          "skill_16c2_u16": "0x0",
+          "symmetra_02e8_read": false,
+          "symmetra_02e8_u64": "0x0",
+          "component55_base": null,
+          "component55_270_read": false,
+          "component55_270_u32": "0x0"
+        }
+      },
+      "selected_boolean": {
+        "evidence": "20260615_merged_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "result": "unknown_no_selected_evidence",
+        "source": null,
+        "rule": null,
+        "used_signals": {
+          "raw": true,
+          "candidate_slots": true,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        }
+      },
+      "statescript_ea0c_selected_boolean": {
+        "evidence": "20260615_ea0c_10127_unique_candidate_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "result": "not_evaluated",
+        "resolution": "not_resolved",
+        "source_name": "skill_qword_c0_storage",
+        "hero_map_known": false,
+        "mapped_source_offset": null,
+        "map_consistent": false,
+        "known_candidate_count": 0,
+        "source_found": false,
+        "matched_source_offset": null,
+        "used_signals": {
+          "statescript_record_qwords": true,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        },
+        "records": {
+          "0x0000EA0C": {
+            "found": false,
+            "qword_0050_read": false,
+            "qword_0050": "0x0",
+            "qword_0058_read": false,
+            "qword_0058": "0x0"
+          },
+          "0x00010127": {
+            "found": false,
+            "qword_0050_read": false,
+            "qword_0050": "0x0",
+            "qword_0058_read": false,
+            "qword_0058": "0x0"
+          }
+        }
+      },
+      "ana_headshot_selected_boolean": {
+        "evidence": "20260616_ana_e44_not_no_pri_component21_02e8_headshot_major_right",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "result": "not_evaluated",
+        "primary_gate_e44_read": false,
+        "primary_gate_e44_u32": "0x0",
+        "primary_gate_active": false,
+        "major_selected_known": false,
+        "major_selected": false,
+        "skill_02e8_read": false,
+        "skill_02e8_u64": "0x0",
+        "skill_02e8_high32": "0x0",
+        "skill_02e8_low32": "0x0",
+        "skill_02e8_gate_known": false,
+        "skill_02e8_gate_active": false,
+        "skill_0348_target_read": false,
+        "skill_0348_target": null,
+        "skill_0348_target_plausible": false,
+        "skill_0348_target_01d4_read": false,
+        "skill_0348_target_01d4_u32": "0x0",
+        "skill_0348_target_01d4_qword_read": false,
+        "skill_0348_target_01d4_u64": "0x0",
+        "component21_base": null,
+        "component21_021c_read": false,
+        "component21_021c_u32": "0x0",
+        "component21_0228_read": false,
+        "component21_0228_u32": "0x0",
+        "component21_0228_qword_read": false,
+        "component21_0228_u64": "0x0",
+        "component21_02e0_read": false,
+        "component21_02e0_u32": "0x0",
+        "component21_02e8_read": false,
+        "component21_02e8_u32": "0x0",
+        "component21_02e8_qword_read": false,
+        "component21_02e8_u64": "0x0",
+        "component7f_base": null,
+        "component7f_d4_read": false,
+        "component7f_d4_u64": "0x0",
+        "component7f_d8_read": false,
+        "component7f_d8_u32": "0x0",
+        "component7f_d8_qword_read": false,
+        "component7f_d8_u64": "0x0",
+        "component7f_scan": {
+          "range_begin": "0x0",
+          "range_end_exclusive": "0x200",
+          "stride": "0x8",
+          "hash": "0x0",
+          "read_count": 0,
+          "nonzero_count": 0,
+          "nonzero_qwords": []
+        },
+        "component7f_raw_slot": {
+          "bitset_read": false,
+          "present": false,
+          "index_read": false,
+          "table_read": false,
+          "table_plausible": false,
+          "slot_read": false,
+          "slot_plausible": false,
+          "bitset": "0x0",
+          "index_base": "0x0",
+          "component_index": "0x0",
+          "table": null,
+          "base": null,
+          "d8_read": false,
+          "d8_u32": "0x0",
+          "d8_qword_read": false,
+          "d8_u64": "0x0",
+          "scan": {
+            "range_begin": "0x0",
+            "range_end_exclusive": "0x240",
+            "stride": "0x8",
+            "hash": "0x0",
+            "read_count": 0,
+            "nonzero_count": 0,
+            "nonzero_qwords": []
+          }
+        },
+        "candidate_diagnostics": {
+          "skill_09a_read": false,
+          "skill_09a_u16": "0x0",
+          "skill_592_read": false,
+          "skill_592_u16": "0x0",
+          "skill_0bd0_read": false,
+          "skill_0bd0_u64": "0x0",
+          "component22_base": null,
+          "component22_0140_read": false,
+          "component22_0140_u16": "0x0",
+          "component22_01f2_read": false,
+          "component22_01f2_u16": "0x0",
+          "component22_0200_read": false,
+          "component22_0200_u32": "0x0",
+          "component22_0202_read": false,
+          "component22_0202_u16": "0x0",
+          "component22_0203_read": false,
+          "component22_0203_u8": "0x0",
+          "component22_0350_read": false,
+          "component22_0350_u16": "0x0"
+        },
+        "used_signals": {
+          "statescript_major_selected": false,
+          "component21_02e8": true,
+          "component21_0228": false,
+          "e44_primary_gate": true,
+          "skill_0348_target_01d4": false,
+          "skill_02e8_gate": false,
+          "component7f_d4_d8": false,
+          "component7f_scan": false,
+          "component7f_raw_slot": false,
+          "ana_candidate_diagnostics": false,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        }
+      },
+      "raw_selected_boolean": {
+        "evidence": "20260615_raw_per_hero_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "rule": null,
+        "used_signals": {
+          "skill_16c2": true,
+          "symmetra_02e8": true,
+          "zarya_component55_270": true,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        }
+      },
+      "candidate_slot_selected_boolean": {
+        "evidence": "20260615_candidate_slot_family_fail_closed",
+        "supported_hero": false,
+        "available": false,
+        "selected": null,
+        "result": "unknown_missing_candidate_slots",
+        "family": null,
+        "confidence": "none",
+        "side": null,
+        "matched_offsets": [],
+        "used_signals": {
+          "candidate_slots": true,
+          "e78": false,
+          "ultimate_charge": false,
+          "legacy_keys": false
+        }
+      },
+      "candidate_slots": [
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        },
+        {
+          "offset": "0x0",
+          "qword_read": false,
+          "qword": "0x0",
+          "pointer_plausible": false,
+          "target_semantic_signature": "0x0",
+          "target_completion": {
+            "count_u32_read": false,
+            "count_u32": "0x0",
+            "count_plausible": false,
+            "values_read": 0,
+            "values_u32_hex": []
+          }
+        }
+      ],
+      "result": "unknown_missing",
+      "selected": null,
+      "tier": null,
+      "key": null,
+      "signatures": {
+        "ordered": "0x0",
+        "cluster": "0x0",
+        "unique_no338": "0x0",
+        "multiset": "0x0"
+      },
+      "keys": {
+        "ordered": "0x0",
+        "cluster": "0x0",
+        "unique_no338": "0x0",
+        "multiset": "0x0",
+        "state_code": "0x0"
+      },
+      "research_candidate_signatures": {},
+      "research_candidate_keys": {},
+      "checked": []
+    }
+  }
+}

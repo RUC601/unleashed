@@ -1,0 +1,987 @@
+﻿{
+    "started_at":  "2026-06-29T05:18:06.3446682-07:00",
+    "ended_at":  "2026-06-29T05:19:07.0571517-07:00",
+    "sample_count":  30,
+    "duration_seconds":  58.576,
+    "fps":  {
+                "avg":  98.995,
+                "min":  71.209,
+                "max":  276.402
+            },
+    "render_fps":  {
+                       "avg":  98.995,
+                       "min":  71.209,
+                       "max":  276.402
+                   },
+    "entity_process_hz":  {
+                              "avg":  5.021,
+                              "min":  3.724,
+                              "max":  5.845
+                          },
+    "entity_scan_hz":  {
+                           "avg":  0.146,
+                           "min":  0.117,
+                           "max":  0.168
+                       },
+    "entity_publish_hz":  {
+                              "avg":  6.781,
+                              "min":  0.969,
+                              "max":  12.82
+                          },
+    "entity_publish_age_ms":  {
+                                  "avg":  262,
+                                  "min":  16,
+                                  "max":  2093
+                              },
+    "scan_loop_hz":  {
+                         "avg":  0.146,
+                         "min":  0.117,
+                         "max":  0.175
+                     },
+    "scan_due_hz":  {
+                        "avg":  0.146,
+                        "min":  0.117,
+                        "max":  0.175
+                    },
+    "scan_started_hz":  {
+                            "avg":  0.146,
+                            "min":  0.117,
+                            "max":  0.175
+                        },
+    "scan_completed_hz":  {
+                              "avg":  0.146,
+                              "min":  0.117,
+                              "max":  0.175
+                          },
+    "scan_failed_delta":  0,
+    "scan_publish_attempt_delta":  9,
+    "scan_publish_success_delta":  9,
+    "scan_get_ow_entities_ms":  {
+                                    "avg":  6932.084,
+                                    "min":  5684.68,
+                                    "max":  8507.07
+                                },
+    "scan_pending_age_ms":  {
+                                "avg":  0,
+                                "min":  0,
+                                "max":  0
+                            },
+    "scan_root_ms":  {
+                         "avg":  156.148,
+                         "min":  0.39,
+                         "max":  930.444
+                     },
+    "scan_list_read_ms":  {
+                              "avg":  3.536,
+                              "min":  2.699,
+                              "max":  5.052
+                          },
+    "scan_slot_walk_ms":  {
+                              "avg":  0.005,
+                              "min":  0.001,
+                              "max":  0.013
+                          },
+    "scan_record_build_ms":  {
+                                 "avg":  2363.371,
+                                 "min":  2193.48,
+                                 "max":  3195.87
+                             },
+    "scan_match_link_ms":  {
+                               "avg":  3323.18,
+                               "min":  2393.94,
+                               "max":  5204.71
+                           },
+    "scan_cn_ne_target_map_ms":  {
+                                     "avg":  3195.838,
+                                     "min":  2286.92,
+                                     "max":  5074.5
+                                 },
+    "scan_cn_ne_self_validation_ms":  {
+                                          "avg":  29.242,
+                                          "min":  23.225,
+                                          "max":  46.612
+                                      },
+    "scan_component_only_validation_ms":  {
+                                              "avg":  1052.231,
+                                              "min":  977.251,
+                                              "max":  1787.52
+                                          },
+    "scan_dynamic_pair_ms":  {
+                                 "avg":  0.004,
+                                 "min":  0.002,
+                                 "max":  0.006
+                             },
+    "scan_finalize_ms":  {
+                             "avg":  0,
+                             "min":  0,
+                             "max":  0
+                         },
+    "scan_dma_reads_delta":  {
+                                 "avg":  21420.633,
+                                 "min":  19801,
+                                 "max":  22036
+                             },
+    "scan_dma_fail_delta":  {
+                                "avg":  478,
+                                "min":  403,
+                                "max":  597
+                            },
+    "scan_list_read_count":  {
+                                 "avg":  52,
+                                 "min":  52,
+                                 "max":  52
+                             },
+    "scan_list_read_fail_count":  {
+                                      "avg":  51,
+                                      "min":  51,
+                                      "max":  51
+                                  },
+    "scan_list_fallback_read_count":  {
+                                          "avg":  48,
+                                          "min":  48,
+                                          "max":  48
+                                      },
+    "scan_record_add_attempt_count":  {
+                                          "avg":  4096,
+                                          "min":  4096,
+                                          "max":  4096
+                                      },
+    "scan_record_duplicate_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "scan_record_header_read_count":  {
+                                          "avg":  1119.733,
+                                          "min":  1091,
+                                          "max":  1193
+                                      },
+    "scan_record_header_fail_count":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "scan_record_remote_fallback_read_count":  {
+                                                   "avg":  1119.733,
+                                                   "min":  1091,
+                                                   "max":  1193
+                                               },
+    "scan_pool_id_read_count":  {
+                                    "avg":  1119.733,
+                                    "min":  1091,
+                                    "max":  1193
+                                },
+    "scan_match_lookup_count":  {
+                                    "avg":  16.667,
+                                    "min":  15,
+                                    "max":  17
+                                },
+    "scan_match_lookup_hit_count":  {
+                                        "avg":  16.533,
+                                        "min":  15,
+                                        "max":  17
+                                    },
+    "scan_add_pair_attempt_count":  {
+                                        "avg":  41.433,
+                                        "min":  38,
+                                        "max":  43
+                                    },
+    "scan_add_pair_duplicate_count":  {
+                                          "avg":  16.533,
+                                          "min":  15,
+                                          "max":  17
+                                      },
+    "scan_link_decrypt_attempt_count":  {
+                                            "avg":  1170.467,
+                                            "min":  1140,
+                                            "max":  1245
+                                        },
+    "scan_link_decrypt_success_count":  {
+                                            "avg":  16.9,
+                                            "min":  16,
+                                            "max":  18
+                                        },
+    "scan_playable_validation_attempt_count":  {
+                                                   "avg":  1119.733,
+                                                   "min":  1091,
+                                                   "max":  1193
+                                               },
+    "scan_playable_validation_success_count":  {
+                                                   "avg":  0,
+                                                   "min":  0,
+                                                   "max":  0
+                                               },
+    "scan_cn_ne_map_candidate_count":  {
+                                           "avg":  2340.933,
+                                           "min":  2280,
+                                           "max":  2490
+                                       },
+    "scan_cn_ne_target_map_attempt_count":  {
+                                                "avg":  33.8,
+                                                "min":  32,
+                                                "max":  36
+                                            },
+    "scan_cn_ne_target_map_success_count":  {
+                                                "avg":  33.333,
+                                                "min":  30,
+                                                "max":  34
+                                            },
+    "scan_cn_ne_bucket_entry_scan_count":  {
+                                               "avg":  16.533,
+                                               "min":  15,
+                                               "max":  17
+                                           },
+    "scan_cn_ne_map_candidate_cache_enabled":  true,
+    "scan_cn_ne_map_candidate_cache_lookup_count":  {
+                                                        "avg":  2239.467,
+                                                        "min":  2182,
+                                                        "max":  2386
+                                                    },
+    "scan_cn_ne_map_candidate_cache_hit_count":  {
+                                                     "avg":  1119.733,
+                                                     "min":  1091,
+                                                     "max":  1193
+                                                 },
+    "scan_cn_ne_map_candidate_cache_miss_count":  {
+                                                      "avg":  1119.733,
+                                                      "min":  1091,
+                                                      "max":  1193
+                                                  },
+    "scan_component_only_validation_attempt_count":  {
+                                                         "avg":  1170.467,
+                                                         "min":  1140,
+                                                         "max":  1245
+                                                     },
+    "scan_component_only_validation_success_count":  {
+                                                         "avg":  4.233,
+                                                         "min":  3,
+                                                         "max":  5
+                                                     },
+    "scan_skip_pending_delta":  0,
+    "scan_skip_not_due_delta":  0,
+    "scan_overwritten_delta":  0,
+    "scan_detail_records":  {
+                                "avg":  1119.733,
+                                "min":  1091,
+                                "max":  1193
+                            },
+    "scan_detail_total_pairs":  {
+                                    "avg":  24.9,
+                                    "min":  23,
+                                    "max":  26
+                                },
+    "scan_light_scan_enabled":  false,
+    "scan_light_unvalidated_pairs":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "scan_light_cap_hits_delta":  0,
+    "entity_cycle_ms":  {
+                            "avg":  190.776,
+                            "min":  90.749,
+                            "max":  1024.15
+                        },
+    "phase_consume_scan_ms":  {
+                                  "avg":  0,
+                                  "min":  0,
+                                  "max":  0.001
+                              },
+    "phase_previous_snapshot_copy_ms":  {
+                                            "avg":  0.002,
+                                            "min":  0.001,
+                                            "max":  0.005
+                                        },
+    "phase_hot_scatter_prepare_ms":  {
+                                         "avg":  0.025,
+                                         "min":  0.018,
+                                         "max":  0.039
+                                     },
+    "phase_hot_scatter_execute_ms":  {
+                                         "avg":  13.326,
+                                         "min":  8.807,
+                                         "max":  21.497
+                                     },
+    "phase_base_cache_ms":  {
+                                "avg":  23.603,
+                                "min":  12.75,
+                                "max":  79.526
+                            },
+    "phase_base_decrypt_ms":  {
+                                  "avg":  18.248,
+                                  "min":  7.869,
+                                  "max":  40.126
+                              },
+    "phase_health_ms":  {
+                            "avg":  0,
+                            "min":  0,
+                            "max":  0.001
+                        },
+    "phase_hero_ms":  {
+                          "avg":  0,
+                          "min":  0,
+                          "max":  0.002
+                      },
+    "phase_visibility_ms":  {
+                                "avg":  0,
+                                "min":  0,
+                                "max":  0.001
+                            },
+    "phase_skeleton_ms":  {
+                              "avg":  19.137,
+                              "min":  13.415,
+                              "max":  51.188
+                          },
+    "phase_skill_ms":  {
+                           "avg":  25.504,
+                           "min":  0,
+                           "max":  184.451
+                       },
+    "phase_team_name_ms":  {
+                               "avg":  23.867,
+                               "min":  9.133,
+                               "max":  101.342
+                           },
+    "phase_local_select_ms":  {
+                                  "avg":  33.279,
+                                  "min":  0.255,
+                                  "max":  489.954
+                              },
+    "phase_publish_ms":  {
+                             "avg":  0.01,
+                             "min":  0.008,
+                             "max":  0.017
+                         },
+    "hot_scatter_requested_count":  {
+                                        "avg":  76.1,
+                                        "min":  69,
+                                        "max":  87
+                                    },
+    "hot_scatter_prepare_requested_count":  {
+                                                "avg":  76.1,
+                                                "min":  69,
+                                                "max":  87
+                                            },
+    "hot_scatter_prepare_success_count":  {
+                                              "avg":  76.1,
+                                              "min":  69,
+                                              "max":  87
+                                          },
+    "hot_scatter_prepare_fail_count":  {
+                                           "avg":  0,
+                                           "min":  0,
+                                           "max":  0
+                                       },
+    "hot_scatter_execute_count":  {
+                                      "avg":  6.8,
+                                      "min":  4,
+                                      "max":  11
+                                  },
+    "hot_scatter_execute_fail_count":  {
+                                           "avg":  0,
+                                           "min":  0,
+                                           "max":  0
+                                       },
+    "hot_scatter_execute_fail_delta":  0,
+    "hot_scatter_bytes_requested":  {
+                                        "avg":  73993.867,
+                                        "min":  65088,
+                                        "max":  86120
+                                    },
+    "hot_scatter_bytes_read":  {
+                                   "avg":  73993.867,
+                                   "min":  65088,
+                                   "max":  86120
+                               },
+    "hot_scatter_short_read_count":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "hot_scatter_short_read_delta":  0,
+    "hot_scatter_batch_items":  {
+                                    "avg":  15.233,
+                                    "min":  13,
+                                    "max":  17
+                                },
+    "hot_scatter_batch_requests":  {
+                                       "avg":  60.933,
+                                       "min":  52,
+                                       "max":  68
+                                   },
+    "hot_scatter_estimated_unique_pages":  {
+                                               "avg":  74.4,
+                                               "min":  69,
+                                               "max":  82
+                                           },
+    "hot_scatter_success_count":  {
+                                      "avg":  68.633,
+                                      "min":  63,
+                                      "max":  77
+                                  },
+    "hot_scatter_partial_count":  {
+                                      "avg":  0,
+                                      "min":  0,
+                                      "max":  0
+                                  },
+    "hot_scatter_partial_delta":  0,
+    "hot_scatter_fallback_read_count":  {
+                                            "avg":  0,
+                                            "min":  0,
+                                            "max":  0
+                                        },
+    "hot_scatter_fallback_read_delta":  0,
+    "visibility_scatter_hit_count":  {
+                                         "avg":  19.7,
+                                         "min":  18,
+                                         "max":  22
+                                     },
+    "visibility_scatter_hit_delta":  4,
+    "base_cache_hit_count":  {
+                                 "avg":  19.467,
+                                 "min":  18,
+                                 "max":  22
+                             },
+    "base_cache_hit_delta":  4,
+    "base_cache_miss_count":  {
+                                  "avg":  3.433,
+                                  "min":  0,
+                                  "max":  6
+                              },
+    "base_cache_miss_delta":  0,
+    "base_decrypt_attempt_count":  {
+                                       "avg":  79.767,
+                                       "min":  30,
+                                       "max":  119
+                                   },
+    "base_decrypt_attempt_delta":  0,
+    "base_decrypt_success_count":  {
+                                       "avg":  20.433,
+                                       "min":  9,
+                                       "max":  37
+                                   },
+    "base_decrypt_success_delta":  0,
+    "base_decrypt_fail_count":  {
+                                    "avg":  59.333,
+                                    "min":  15,
+                                    "max":  103
+                                },
+    "base_decrypt_fail_delta":  0,
+    "skeleton_cache_hit_count":  {
+                                     "avg":  18.967,
+                                     "min":  16,
+                                     "max":  22
+                                 },
+    "skeleton_cache_hit_delta":  4,
+    "skeleton_cache_miss_count":  {
+                                      "avg":  0.733,
+                                      "min":  0,
+                                      "max":  5
+                                  },
+    "skeleton_cache_miss_delta":  0,
+    "skeleton_block_read_bytes":  {
+                                      "avg":  37169.2,
+                                      "min":  31392,
+                                      "max":  42984
+                                  },
+    "skeleton_fallback_get_bone_pos_count":  {
+                                                 "avg":  0.667,
+                                                 "min":  0,
+                                                 "max":  5
+                                             },
+    "skeleton_fallback_get_bone_pos_delta":  0,
+    "visibility_fallback_count":  {
+                                      "avg":  0,
+                                      "min":  0,
+                                      "max":  0
+                                  },
+    "visibility_fallback_delta":  0,
+    "skill_due_count":  {
+                            "avg":  3.5,
+                            "min":  0,
+                            "max":  16
+                        },
+    "skill_read_count":  {
+                             "avg":  11.5,
+                             "min":  0,
+                             "max":  51
+                         },
+    "skill_read_delta":  48,
+    "skill_skipped_not_due_count":  {
+                                        "avg":  16.933,
+                                        "min":  6,
+                                        "max":  22
+                                    },
+    "skill_skipped_not_due_delta":  0,
+    "entity_record_created_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "entity_record_updated_actor_count":  {
+                                              "avg":  0,
+                                              "min":  0,
+                                              "max":  0
+                                          },
+    "entity_record_link_changed_count":  {
+                                             "avg":  8.033,
+                                             "min":  6,
+                                             "max":  11
+                                         },
+    "entity_record_link_changed_same_component_count":  {
+                                                            "avg":  8.033,
+                                                            "min":  6,
+                                                            "max":  11
+                                                        },
+    "entity_record_link_changed_component_changed_count":  {
+                                                               "avg":  0,
+                                                               "min":  0,
+                                                               "max":  0
+                                                           },
+    "entity_record_link_changed_same_hero_count":  {
+                                                       "avg":  8.033,
+                                                       "min":  6,
+                                                       "max":  11
+                                                   },
+    "entity_record_link_changed_hero_changed_count":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "entity_record_link_changed_hero_unknown_count":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "entity_record_link_changed_match_key_count":  {
+                                                       "avg":  8.033,
+                                                       "min":  6,
+                                                       "max":  11
+                                                   },
+    "entity_record_link_changed_link_key_count":  {
+                                                      "avg":  0,
+                                                      "min":  0,
+                                                      "max":  0
+                                                  },
+    "entity_record_link_changed_component_key_count":  {
+                                                           "avg":  0,
+                                                           "min":  0,
+                                                           "max":  0
+                                                       },
+    "entity_record_mark_missing_count":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "entity_record_mark_dead_count":  {
+                                          "avg":  0.067,
+                                          "min":  0,
+                                          "max":  2
+                                      },
+    "entity_record_expired_count":  {
+                                        "avg":  0.033,
+                                        "min":  0,
+                                        "max":  1
+                                    },
+    "component_cache_hit_count":  {
+                                      "avg":  19.467,
+                                      "min":  18,
+                                      "max":  22
+                                  },
+    "component_cache_miss_count":  {
+                                       "avg":  3.433,
+                                       "min":  0,
+                                       "max":  6
+                                   },
+    "component_cache_invalidate_interval_count":  {
+                                                      "avg":  1.767,
+                                                      "min":  0,
+                                                      "max":  4
+                                                  },
+    "component_cache_invalidate_interval_skipped_lifetime_count":  {
+                                                                       "avg":  18.233,
+                                                                       "min":  15,
+                                                                       "max":  22
+                                                                   },
+    "component_cache_invalidate_link_change_count":  {
+                                                         "avg":  9.467,
+                                                         "min":  6,
+                                                         "max":  12
+                                                     },
+    "component_cache_invalidate_health_resurrect_count":  {
+                                                              "avg":  0,
+                                                              "min":  0,
+                                                              "max":  0
+                                                          },
+    "component_cache_invalidate_hero_change_count":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "component_cache_link_change_previous_match_id_known_count":  {
+                                                                      "avg":  9.467,
+                                                                      "min":  6,
+                                                                      "max":  12
+                                                                  },
+    "component_cache_link_change_previous_match_id_zero_count":  {
+                                                                     "avg":  0,
+                                                                     "min":  0,
+                                                                     "max":  0
+                                                                 },
+    "component_cache_link_change_previous_match_id_unknown_count":  {
+                                                                        "avg":  0,
+                                                                        "min":  0,
+                                                                        "max":  0
+                                                                    },
+    "component_cache_link_change_record_alias_hit_count":  {
+                                                               "avg":  9.467,
+                                                               "min":  6,
+                                                               "max":  12
+                                                           },
+    "component_cache_link_change_record_alias_miss_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "component_cache_link_change_record_published_count":  {
+                                                               "avg":  9.033,
+                                                               "min":  6,
+                                                               "max":  11
+                                                           },
+    "component_cache_link_change_record_bases_valid_count":  {
+                                                                 "avg":  9.033,
+                                                                 "min":  6,
+                                                                 "max":  11
+                                                             },
+    "component_cache_link_change_record_match_key_count":  {
+                                                               "avg":  9.467,
+                                                               "min":  6,
+                                                               "max":  12
+                                                           },
+    "component_cache_link_change_record_link_key_count":  {
+                                                              "avg":  0,
+                                                              "min":  0,
+                                                              "max":  0
+                                                          },
+    "component_cache_link_change_record_component_key_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "component_cache_link_retain_attempt_count":  {
+                                                      "avg":  9.467,
+                                                      "min":  6,
+                                                      "max":  12
+                                                  },
+    "component_cache_link_retain_success_count":  {
+                                                      "avg":  7.8,
+                                                      "min":  6,
+                                                      "max":  11
+                                                  },
+    "component_cache_link_retain_rejected_disabled_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "component_cache_link_retain_rejected_record_store_disabled_count":  {
+                                                                             "avg":  0,
+                                                                             "min":  0,
+                                                                             "max":  0
+                                                                         },
+    "component_cache_link_retain_rejected_missing_record_count":  {
+                                                                      "avg":  0,
+                                                                      "min":  0,
+                                                                      "max":  0
+                                                                  },
+    "component_cache_link_retain_rejected_missing_match_id_count":  {
+                                                                        "avg":  0,
+                                                                        "min":  0,
+                                                                        "max":  0
+                                                                    },
+    "component_cache_link_retain_rejected_component_changed_count":  {
+                                                                         "avg":  0,
+                                                                         "min":  0,
+                                                                         "max":  0
+                                                                     },
+    "component_cache_link_retain_rejected_interval_count":  {
+                                                                "avg":  1.667,
+                                                                "min":  0,
+                                                                "max":  4
+                                                            },
+    "component_cache_link_retain_interval_bypassed_lifetime_count":  {
+                                                                         "avg":  6.767,
+                                                                         "min":  6,
+                                                                         "max":  11
+                                                                     },
+    "component_cache_link_retain_rejected_hero_changed_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_rejected_hero_unknown_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_rejected_decrypt_fail_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_cached_hero_validate_count":  {
+                                                                   "avg":  3.9,
+                                                                   "min":  3,
+                                                                   "max":  5
+                                                               },
+    "component_cache_link_retain_refresh_decrypt_attempt_count":  {
+                                                                      "avg":  23.4,
+                                                                      "min":  18,
+                                                                      "max":  33
+                                                                  },
+    "component_cache_link_retain_refresh_decrypt_success_count":  {
+                                                                      "avg":  11.7,
+                                                                      "min":  9,
+                                                                      "max":  18
+                                                                  },
+    "component_cache_link_retain_refresh_decrypt_fail_count":  {
+                                                                   "avg":  11.7,
+                                                                   "min":  9,
+                                                                   "max":  15
+                                                               },
+    "component_cache_link_retain_refresh_link_attempt_count":  {
+                                                                   "avg":  7.8,
+                                                                   "min":  6,
+                                                                   "max":  11
+                                                               },
+    "component_cache_link_retain_refresh_link_success_count":  {
+                                                                   "avg":  3.9,
+                                                                   "min":  3,
+                                                                   "max":  6
+                                                               },
+    "component_cache_link_retain_refresh_link_fail_count":  {
+                                                                "avg":  3.9,
+                                                                "min":  3,
+                                                                "max":  5
+                                                            },
+    "component_cache_link_retain_refresh_hero_attempt_count":  {
+                                                                   "avg":  7.8,
+                                                                   "min":  6,
+                                                                   "max":  11
+                                                               },
+    "component_cache_link_retain_refresh_hero_success_count":  {
+                                                                   "avg":  3.9,
+                                                                   "min":  3,
+                                                                   "max":  6
+                                                               },
+    "component_cache_link_retain_refresh_hero_fail_count":  {
+                                                                "avg":  3.9,
+                                                                "min":  3,
+                                                                "max":  5
+                                                            },
+    "component_cache_link_retain_refresh_visibility_attempt_count":  {
+                                                                         "avg":  7.8,
+                                                                         "min":  6,
+                                                                         "max":  11
+                                                                     },
+    "component_cache_link_retain_refresh_visibility_success_count":  {
+                                                                         "avg":  3.9,
+                                                                         "min":  3,
+                                                                         "max":  6
+                                                                     },
+    "component_cache_link_retain_refresh_visibility_fail_count":  {
+                                                                      "avg":  3.9,
+                                                                      "min":  3,
+                                                                      "max":  5
+                                                                  },
+    "component_cache_link_retain_refresh_angle_attempt_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_refresh_angle_success_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_refresh_angle_fail_count":  {
+                                                                 "avg":  0,
+                                                                 "min":  0,
+                                                                 "max":  0
+                                                             },
+    "component_cache_link_retain_refresh_angle_skipped_no_prior_count":  {
+                                                                             "avg":  7.8,
+                                                                             "min":  6,
+                                                                             "max":  11
+                                                                         },
+    "component_cache_link_retain_refresh_angle_prior_count":  {
+                                                                  "avg":  0,
+                                                                  "min":  0,
+                                                                  "max":  0
+                                                              },
+    "component_cache_link_retain_refresh_angle_prior_fail_rejected_count":  {
+                                                                                "avg":  0,
+                                                                                "min":  0,
+                                                                                "max":  0
+                                                                            },
+    "dynamic_cache_created_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "dynamic_cache_reused_count":  {
+                                       "avg":  4,
+                                       "min":  4,
+                                       "max":  4
+                                   },
+    "dynamic_cache_replaced_count":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "dynamic_cache_expired_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "record_store_enabled":  true,
+    "record_store_size":  {
+                              "avg":  21.867,
+                              "min":  21,
+                              "max":  25
+                          },
+    "record_store_fresh_count":  {
+                                     "avg":  19.833,
+                                     "min":  18,
+                                     "max":  21
+                                 },
+    "record_store_missing_count":  {
+                                       "avg":  0,
+                                       "min":  0,
+                                       "max":  0
+                                   },
+    "record_store_dead_count":  {
+                                    "avg":  2.033,
+                                    "min":  0,
+                                    "max":  5
+                                },
+    "record_store_expired_count":  {
+                                       "avg":  0,
+                                       "min":  0,
+                                       "max":  0
+                                   },
+    "record_store_bases_valid_count":  {
+                                           "avg":  16.733,
+                                           "min":  15,
+                                           "max":  18
+                                       },
+    "record_store_dynamic_valid_count":  {
+                                             "avg":  4,
+                                             "min":  4,
+                                             "max":  4
+                                         },
+    "record_store_published_valid_count":  {
+                                               "avg":  17.867,
+                                               "min":  17,
+                                               "max":  21
+                                           },
+    "sdk_component_key_cache_hit_delta":  0,
+    "sdk_component_key_cache_miss_delta":  0,
+    "sdk_begin_frame_scan_delta":  9,
+    "sdk_begin_frame_process_delta":  307,
+    "sdk_begin_frame_unknown_delta":  0,
+    "viewmatrix_publish_hz":  {
+                                  "avg":  60.735,
+                                  "min":  15.873,
+                                  "max":  66.666
+                              },
+    "viewmatrix_publish_age_ms":  {
+                                      "avg":  64.6,
+                                      "min":  0,
+                                      "max":  844
+                                  },
+    "render_viewmatrix_age_ms":  {
+                                     "avg":  61.433,
+                                     "min":  0,
+                                     "max":  844
+                                 },
+    "render_viewmatrix_max_age_ms":  {
+                                         "avg":  1359.567,
+                                         "min":  937,
+                                         "max":  1906
+                                     },
+    "render_viewmatrix_uses_delta":  5624,
+    "render_viewmatrix_over_16ms_delta":  818,
+    "render_viewmatrix_over_33ms_delta":  740,
+    "render_viewmatrix_over_50ms_delta":  696,
+    "render_viewmatrix_missing_publish_delta":  0,
+    "snapshot_entities_copy_ms":  {
+                                      "avg":  0.002,
+                                      "min":  0.001,
+                                      "max":  0.004
+                                  },
+    "snapshot_dynamic_copy_ms":  {
+                                     "avg":  0,
+                                     "min":  0,
+                                     "max":  0
+                                 },
+    "entity_count":  {
+                         "avg":  17.867,
+                         "min":  17,
+                         "max":  21
+                     },
+    "view_matrix_bad_samples":  0,
+    "resolved_screen_sizes":  [
+                                  "1920x1080"
+                              ],
+    "projection_jump_samples":  2,
+    "render_prediction_candidates":  {
+                                         "avg":  16.667,
+                                         "min":  15,
+                                         "max":  19
+                                     },
+    "render_prediction_applied":  {
+                                      "avg":  1.333,
+                                      "min":  0,
+                                      "max":  5
+                                  },
+    "render_prediction_world_delta_fallback":  {
+                                                   "avg":  0.3,
+                                                   "min":  0,
+                                                   "max":  1
+                                               },
+    "render_prediction_max_lead_ms":  {
+                                          "avg":  40,
+                                          "min":  0,
+                                          "max":  100
+                                      },
+    "render_prediction_max_offset_cm":  {
+                                            "avg":  18.033,
+                                            "min":  0,
+                                            "max":  46
+                                        },
+    "render_callback_ms":  {
+                               "avg":  8.101,
+                               "min":  0.736,
+                               "max":  11.524
+                           },
+    "present_ms":  {
+                       "avg":  2.822,
+                       "min":  1.876,
+                       "max":  6.941
+                   },
+    "render_frame_ms":  {
+                            "avg":  10.923,
+                            "min":  2.96,
+                            "max":  16.086
+                        },
+    "dma_reads_per_second":  3123.856,
+    "dma_fail_rate_percent":  2.264,
+    "dma_total_delta":  182984,
+    "dma_fail_delta":  4142,
+    "slow_frame_log_lines":  13,
+    "slow_frame_effective_count":  20,
+    "slow_frame_max_render_ms":  15.6,
+    "slow_frame_rt_dma_nonzero_lines":  0,
+    "slow_frame_render_canvas_nonzero_lines":  0,
+    "log_path":  "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}

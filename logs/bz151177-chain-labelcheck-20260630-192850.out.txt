@@ -1,0 +1,342 @@
+
+  ============================================
+     Unleashed DMA  --  Overwatch External
+  ============================================
+
+[INFO] DMA device config loaded: fpga -> fpga://algo=0
+[MAIN] Initialising DMA subsystem...
+[INFO] Loading DMA runtime libraries for device=fpga.
+[INFO] Loaded runtime library: FTD3XX.dll (0000000180000000).
+[INFO] Loaded runtime library: vmm.dll (00007FFC7DE80000).
+[INFO] Loaded runtime library: leechcore.dll (00007FFD16690000).
+[INFO] Loaded runtime library: Helper64.dll (00007FFC73560000).
+[INFO] Loaded runtime library: leechcore_driver.dll (00007FFD33B80000).
+[INFO] Runtime libraries loaded successfully.
+[INFO] DMA subsystem initialization started with device=fpga (fpga://algo=0).
+[INFO] Reusing physical memory map cache from current boot.
+[INFO] FPGA identifier: 9
+[INFO] Device identifier: 1536
+[INFO] VMMDLL_ConfigGet: ID=9 VERSION=4.11
+[INFO] FPGA PCIe register flag reset completed.
+[INFO] DMA subsystem initialization completed successfully.
+[MAIN] DMA subsystem ready.
+
+[2026-06-30 19:28:51.549] [INFO] Diagnostics initialized. log=./unleashed_diag.log level=INFO
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Meta] config_version=7 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotAutoshot=true from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotKeepFiring=false from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotPredictionMode=0 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimBehavior=1 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotFirePolicy=3 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotTriggerDelay=0.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotMaxHead=100.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotSmoothType=0 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotStickiness=100.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotSmoothY=50.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotPitchScale=1.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotMaxAim=100.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotMinCharge=5.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotMaxCharge=100.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotIgnoreInvisible=true from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotTrace=0 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotUnlock=0 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotLockTime=20.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotMaxDist=100.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotMinDist=0.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotAttack=0 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotTeam=0 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotPriority=0 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotTrackingDeadzone=0.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickShotClampMs=0.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickPostFireDelayMs=0.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickTrajectoryWait=false from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickTrajectoryWaitMs=120.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickTrajectoryApexWindowMs=60.0000 from config.ini.
+[2026-06-30 19:28:51.553] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndTriggerGate=true from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndBoxPadding=8.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndInnerRadius=34.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndInnerSmoothScale=0.5500 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndInnerMethod=2 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStage=false from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStageTriggerGate=true from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStageBoxPadding=8.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStageInnerRadius=34.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStageInnerSmoothScale=0.5500 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Meta] config_version=7 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimOvershootCurve=false from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimOvershootGain=0.2500 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimOvershootResetPixels=56.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] inputSource=1 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimDryRun=false from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimVerboseLog=false from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] aimDryRunLogIntervalMs=100 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotMode=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotKey=2 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotShotInterval=0.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotChargeAware=false from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotMinCharge=30.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotIgnoreInvisible=true from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotMode2=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotKey2=1 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotShotInterval2=0.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotChargeAware2=false from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotMinCharge2=30.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [Aimbot] triggerbotIgnoreInvisible2=true from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimMethod=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPidP=0.5000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPidI=0.0100 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPidD=0.1000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPidMaxIntegral=10.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPidDeadzone=1.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimBezierControlPoints=2 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimBezierCurvature=0.5000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimBezierSpeed=50.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseNearDegrees=2.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseMidDegrees=6.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseFarDegrees=12.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseNearScale=0.2000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseMidScale=0.4500 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseFarScale=0.7500 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimAccelLimitedAcceleration=0.1000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] aimConstantAngularSpeedDeg=30.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] trackingMethod=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] trackingBaseSpeed=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] trackingAcceleration=0.1000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] trackingMoveSplitEnabled=true from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] trackingMoveSplitMaxPixels=4 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] trackingMoveSplitDelayUs=800 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flickMethod=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flickBaseSpeed=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flickAcceleration=0.1000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flickMoveSplitEnabled=false from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flickMoveSplitMaxPixels=50 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flickMoveSplitDelayUs=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMethod=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flick2ndBaseSpeed=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flick2ndAcceleration=0.1000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMoveSplitEnabled=false from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMoveSplitMaxPixels=50 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMoveSplitDelayUs=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] reacquireMethod=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] reacquireBaseSpeed=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] reacquireAcceleration=0.1000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] reacquireMoveSplitEnabled=true from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] reacquireMoveSplitMaxPixels=4 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] reacquireMoveSplitDelayUs=800 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMethod=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] assistFlickBaseSpeed=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] assistFlickAcceleration=0.1000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMoveSplitEnabled=true from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMoveSplitMaxPixels=4 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMoveSplitDelayUs=800 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] linearAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] pidAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] bezierAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] piecewiseAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] accelLimitedAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] constantAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] methodPresetCount=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] behaviorPresetCount=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] dynamicFovPresetCount=0 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] trackingMethodPresetId=-1 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flickMethodPresetId=-1 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMethodPresetId=-1 from config.ini.
+[2026-06-30 19:28:51.554] [INFO] [CONFIG] Loaded [AimMethod] reacquireMethodPresetId=-1 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMethodPresetId=-1 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [AimMethod] aimBehaviorPresetId=-1 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [AimMethod] secondaryTrackingMethod=-1 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [AimMethod] secondaryFlickMethod=-1 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] draw_hp_pack=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] crosscircle=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] eyeray=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] draw_info=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] drawbattletag=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] drawhealth=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] healthbar=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] healthbar2=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] healthbartextsize=16.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] dist=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] visualMaxDist=100.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] name=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] ult=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] draw_skel=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] skillinfo=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] ultimateDisplayMode=1 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] skillDisplayMode=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] radarCorner=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] radar=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] radarline=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] drawline=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] draw_fov=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] drawTrackingDeadzones=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] boxPerfMode=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] boxPerfFastRect=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] targetPriority=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] MenuToggleKey=36 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] gafAsyncKeyStateOffset=0x0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] gafAsyncKeyStateSize=256 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] gafAsyncKeyStateSessionId=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] lastConfigProfile=config.ini from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] uiLanguage=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] manualScreenWidth=1920 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] manualScreenHeight=1080 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] EnemyColx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] EnemyColy=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] EnemyColz=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] EnemyColw=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] fovcolx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] fovcoly=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] fovcolz=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] fovcolw=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] invisenargbx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] invisenargby=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] invisenargbz=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] invisenargbw=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] enargbx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] enargby=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] enargbz=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] enargbw=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] targetargbx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] targetargby=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] targetargbz=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] targetargbw=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] allyargbx=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] allyargby=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] allyargbz=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Global] allyargbw=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Colorx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Colory=0.9200 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Colorz=0.2000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Colorx=0.1500 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Colory=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Colorz=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Colorx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Colory=0.3800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Colorz=0.7400 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Colorx=0.3500 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Colory=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Colorz=0.5500 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Colorx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Colory=0.5600 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Colorz=0.2200 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Colorx=0.6200 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Colory=0.5400 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Colorz=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Colorx=0.2400 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Colory=0.9200 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Colorz=0.8200 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Colorx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Colory=0.2800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Colorz=0.2800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Colorx=0.7600 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Colory=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Colorz=0.2600 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Colorx=0.3000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Colory=0.4800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Colorz=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Colorx=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Colory=0.7200 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Colorz=0.9000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Visible=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Colorx=0.6200 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Colory=1.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Colorz=0.3400 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Colorw=0.7800 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Thickness=1.5000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12LineStyle=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12ShowLabel=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxEnabled=true from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxDeviceType=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxIp=192.168.2.188 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxPort=8808 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxMonitorPort=8809 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxMac=12525C53 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxComPort=COM3 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxCountsPerRadian=1446.8656 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] gameMouseSensitivity=3.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] autoReadGameMouseSensitivity=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] referenceGameSensitivity=3.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] autoScaleByGameSensitivity=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] calibratedCountsPerRadian=1446.8656 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] calibratedPitchCountsPerRadian=0.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] hostMouseDpi=1600.0000 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxInputDelayMs=0 from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxDebugLog=false from config.ini.
+[2026-06-30 19:28:51.555] [INFO] [CONFIG] Loaded [KMBox] kmboxSuppressOutputWhileMenuOpen=false from config.ini.
+[2026-06-30 19:28:51.575] [INFO] [CONFIG] Loaded hero config JSON from D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma\build\Release\config\config.heroes.json.
+[2026-06-30 19:28:51.575] [INFO] [CONFIG] Loaded config for hero Unknown from D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma\build\Release\config\config.ini.
+[MAIN] Screen size: 1920x1080
+[2026-06-30 19:28:51.575] [INFO] Overlay box performance mode: enabled=0 fast_rect=1 cli=0.
+[2026-06-30 19:28:51.575] [INFO] timeBeginPeriod(1) enabled for KMBox queue timing.
+[KMBOX] Initialising network device 192.168.2.188:8808...
+[2026-06-30 19:28:51.576] [INFO] [KMBOX-NET] connection state disconnected -> connecting
+[2026-06-30 19:28:51.580] [INFO] [KMBOX-NET] connection state connecting -> connected
+[2026-06-30 19:28:51.580] [INFO] [KMBOX-NET] Recovering mouse passthrough state.
+[2026-06-30 19:28:51.595] [INFO] [KMBOX-NET] Mouse passthrough recovery succeeded.
+[KMBOX] Network device ready.
+[2026-06-30 19:28:51.595] [INFO] KMBox network device ready. ip=192.168.2.188 port=8808
+[2026-06-30 19:28:51.595] [INFO] [KMBOX-NET] monitor start requested. port=8809
+[2026-06-30 19:28:51.595] [INFO] [KMBOX-NET] monitor listener bound. port=8809
+[2026-06-30 19:28:51.596] [INFO] [KMBOX-NET] monitor start succeeded. port=8809
+[KMBOX] Monitor started on port 8809.
+[2026-06-30 19:28:51.596] [INFO] KMBox monitor started. port=8809
+[2026-06-30 19:28:51.596] [INFO] DMA subsystem ready. device=fpga://algo=0
+[2026-06-30 19:28:51.596] [INFO] Diagnostic status thread started with 5s interval.
+[MAIN] Test server ready on http://127.0.0.1:19550
+
+[MAIN] Process connector ready; overlay can ope

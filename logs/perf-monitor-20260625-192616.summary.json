@@ -1,0 +1,234 @@
+{
+  "started_at": "2026-06-25T19:24:45.5010283-07:00",
+  "ended_at": "2026-06-25T19:26:16.1523668-07:00",
+  "sample_count": 45,
+  "duration_seconds": 88.589,
+  "fps": {
+    "avg": 313.383,
+    "min": 58.91,
+    "max": 469.527
+  },
+  "render_fps": {
+    "avg": 313.383,
+    "min": 58.91,
+    "max": 469.527
+  },
+  "entity_process_hz": {
+    "avg": 6.357,
+    "min": 4.794,
+    "max": 40.844
+  },
+  "entity_scan_hz": {
+    "avg": 0.265,
+    "min": 0.231,
+    "max": 0.314
+  },
+  "entity_publish_hz": {
+    "avg": 5.505,
+    "min": 2.132,
+    "max": 9.09
+  },
+  "entity_publish_age_ms": {
+    "avg": 111.467,
+    "min": 16.0,
+    "max": 265.0
+  },
+  "scan_loop_hz": {
+    "avg": 0.265,
+    "min": 0.231,
+    "max": 0.314
+  },
+  "scan_due_hz": {
+    "avg": 0.265,
+    "min": 0.231,
+    "max": 0.314
+  },
+  "scan_started_hz": {
+    "avg": 0.265,
+    "min": 0.231,
+    "max": 0.314
+  },
+  "scan_completed_hz": {
+    "avg": 0.265,
+    "min": 0.231,
+    "max": 0.314
+  },
+  "scan_get_ow_entities_ms": {
+    "avg": 3804.581,
+    "min": 3179.36,
+    "max": 4322.13
+  },
+  "scan_pending_age_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "scan_skip_pending_delta": 0,
+  "scan_skip_not_due_delta": 0,
+  "scan_overwritten_delta": 0,
+  "entity_cycle_ms": {
+    "avg": 200.531,
+    "min": 110.379,
+    "max": 468.181
+  },
+  "phase_hot_scatter_prepare_ms": {
+    "avg": 0.018,
+    "min": 0.002,
+    "max": 0.033
+  },
+  "phase_hot_scatter_execute_ms": {
+    "avg": 10.386,
+    "min": 4.632,
+    "max": 19.174
+  },
+  "phase_base_decrypt_ms": {
+    "avg": 37.174,
+    "min": 13.934,
+    "max": 217.392
+  },
+  "phase_health_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.002
+  },
+  "phase_hero_ms": {
+    "avg": 0.003,
+    "min": 0.0,
+    "max": 0.012
+  },
+  "phase_visibility_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.002
+  },
+  "phase_skeleton_ms": {
+    "avg": 19.946,
+    "min": 9.266,
+    "max": 49.019
+  },
+  "phase_skill_ms": {
+    "avg": 43.53,
+    "min": 17.142,
+    "max": 115.172
+  },
+  "phase_team_name_ms": {
+    "avg": 16.385,
+    "min": 5.81,
+    "max": 38.033
+  },
+  "phase_local_select_ms": {
+    "avg": 17.925,
+    "min": 0.122,
+    "max": 225.136
+  },
+  "phase_publish_ms": {
+    "avg": 0.013,
+    "min": 0.009,
+    "max": 0.026
+  },
+  "hot_scatter_fallback_read_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "base_cache_miss_count": {
+    "avg": 11.978,
+    "min": 10.0,
+    "max": 26.0
+  },
+  "base_decrypt_attempt_count": {
+    "avg": 155.0,
+    "min": 120.0,
+    "max": 328.0
+  },
+  "skeleton_block_read_bytes": {
+    "avg": 34814.4,
+    "min": 31464.0,
+    "max": 36972.0
+  },
+  "skeleton_fallback_get_bone_pos_count": {
+    "avg": 0.378,
+    "min": 0.0,
+    "max": 2.0
+  },
+  "visibility_fallback_count": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "skill_read_count": {
+    "avg": 34.867,
+    "min": 18.0,
+    "max": 69.0
+  },
+  "viewmatrix_publish_hz": {
+    "avg": 64.629,
+    "min": 62.5,
+    "max": 66.666
+  },
+  "viewmatrix_publish_age_ms": {
+    "avg": 5.978,
+    "min": 0.0,
+    "max": 78.0
+  },
+  "render_viewmatrix_age_ms": {
+    "avg": 7.622,
+    "min": 0.0,
+    "max": 78.0
+  },
+  "render_viewmatrix_max_age_ms": {
+    "avg": 176.156,
+    "min": 157.0,
+    "max": 187.0
+  },
+  "render_viewmatrix_uses_delta": 28029,
+  "render_viewmatrix_over_16ms_delta": 621,
+  "render_viewmatrix_over_33ms_delta": 506,
+  "render_viewmatrix_over_50ms_delta": 441,
+  "render_viewmatrix_missing_publish_delta": 0,
+  "snapshot_entities_copy_ms": {
+    "avg": 0.002,
+    "min": 0.001,
+    "max": 0.006
+  },
+  "snapshot_dynamic_copy_ms": {
+    "avg": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "entity_count": {
+    "avg": 17.667,
+    "min": 17.0,
+    "max": 19.0
+  },
+  "view_matrix_bad_samples": 0,
+  "resolved_screen_sizes": [
+    "1920x1080"
+  ],
+  "projection_jump_samples": 15,
+  "render_callback_ms": {
+    "avg": 0.063,
+    "min": 0.041,
+    "max": 0.113
+  },
+  "present_ms": {
+    "avg": 3.674,
+    "min": 1.882,
+    "max": 10.434
+  },
+  "render_frame_ms": {
+    "avg": 3.737,
+    "min": 1.928,
+    "max": 10.52
+  },
+  "dma_reads_per_second": 6472.956,
+  "dma_fail_rate_percent": 1.765,
+  "dma_total_delta": 573435,
+  "dma_fail_delta": 10122,
+  "slow_frame_log_lines": 0,
+  "slow_frame_effective_count": 0,
+  "slow_frame_max_render_ms": null,
+  "slow_frame_rt_dma_nonzero_lines": 0,
+  "slow_frame_render_canvas_nonzero_lines": 0,
+  "log_path": "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}

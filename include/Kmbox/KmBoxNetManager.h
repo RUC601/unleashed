@@ -110,6 +110,7 @@ private:
 public:
     KmBoxNetManager();
     ~KmBoxNetManager();
+    int RecoverMousePassthrough();
     int ForceReleaseMouseButton(int button);
     int ForceReleaseMouseButtons();
     int SetMouseButtonStateMask(unsigned int StateMask, bool Force = false);

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cctype>
@@ -24,6 +25,7 @@
 #include "Game/BoneSlots.hpp"
 #include "Game/HeroPerkRuntime.hpp"
 #include "Game/HeroSkills.hpp"
+#include "Game/Motion.hpp"
 #include "Game/Target.hpp"
 #include "Kmbox/KmBoxMock.h"
 #include "Renderer/IconManager.hpp"
@@ -41,6 +43,8 @@ using namespace OW;
 // =========================================================================
 
 namespace OW {
+
+    inline size_t ProbeEntityTopologyCandidateCount();
 
     inline std::string HeroDisplayNameToSlug(const std::string& displayName) {
         static const std::unordered_map<std::string, std::string> specialCases = {
@@ -116,6 +120,18 @@ namespace OW {
     inline std::vector<std::pair<uint64_t, uint64_t>> ow_entities{};
     inline std::vector<std::pair<uint64_t, uint64_t>> ow_entities_scan{};
 
+    struct RawEntityScanSnapshot {
+        std::vector<std::pair<uint64_t, uint64_t>> raw_entities{};
+        uint64_t generation = 0;
+        std::chrono::steady_clock::time_point scan_started_at{};
+        std::chrono::steady_clock::time_point scan_finished_at{};
+        bool valid = false;
+    };
+
+    inline std::mutex raw_scan_mutex;
+    inline RawEntityScanSnapshot latest_raw_scan_snapshot{};
+    inline uint64_t last_consumed_raw_scan_generation = 0;
+
     // ---- Target/source screen used for projection ----
     inline float WX = 0.f, WY = 0.f;
     inline int detectedScreenWidth = 0;
@@ -142,6 +158,73 @@ namespace OW {
     inline constexpr DWORD kEntityFastRescanWindowMs = 2000;
     inline constexpr DWORD kEntityScannerIdleSleepMs = 5;
     inline DWORD entity_fast_scan_until_tick = 0;
+    inline uint64_t entity_topology_rescan_request_count = 0;
+    inline std::atomic<uint32_t> entity_scan_dma_active_depth{0};
+    inline std::atomic<DWORD> entity_scan_next_due_tick{0};
+    inline std::atomic<uint64_t> viewmatrix_scan_backoff_count{0};
+    inline std::atomic<uint64_t> viewmatrix_scan_due_guard_count{0};
+
+    struct ScopedEntityScanDmaActivity {
+        ScopedEntityScanDmaActivity() {
+            entity_scan_dma_active_depth.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        ~ScopedEntityScanDmaActivity() {
+            entity_scan_dma_active_depth.fetch_sub(1, std::memory_order_relaxed);
+        }
+
+        ScopedEntityScanDmaActivity(const ScopedEntityScanDmaActivity&) = delete;
+        ScopedEntityScanDmaActivity& operator=(const ScopedEntityScanDmaActivity&) = delete;
+    };
+
+    inline bool IsEntityScanDmaActive() {
+        return entity_scan_dma_active_depth.load(std::memory_order_relaxed) != 0;
+    }
+
+    inline void SetEntityScanNextDueTick(DWORD tick) {
+        entity_scan_next_due_tick.store(tick, std::memory_order_relaxed);
+    }
+
+    inline DWORD EntityScanNextDueTick() {
+        return entity_scan_next_due_tick.load(std::memory_order_relaxed);
+    }
+
+    inline DWORD EntityScanDueGuardSleepMs(DWORD now, DWORD guardMs) {
+        if (guardMs == 0)
+            return 0;
+
+        const DWORD dueTick = EntityScanNextDueTick();
+        if (dueTick == 0)
+            return 0;
+
+        const LONG deltaMs = static_cast<LONG>(dueTick - now);
+        if (deltaMs > static_cast<LONG>(guardMs))
+            return 0;
+        if (deltaMs < -static_cast<LONG>(guardMs))
+            return 0;
+
+        if (deltaMs <= 0)
+            return 1;
+
+        return static_cast<DWORD>((std::min)(static_cast<unsigned long>(guardMs),
+            static_cast<unsigned long>(deltaMs)));
+    }
+
+    inline void RecordViewMatrixScanBackoff() {
+        viewmatrix_scan_backoff_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    inline void RecordViewMatrixScanDueGuard() {
+        viewmatrix_scan_due_guard_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    inline uint64_t ViewMatrixScanBackoffCount() {
+        return viewmatrix_scan_backoff_count.load(std::memory_order_relaxed);
+    }
+
+    inline uint64_t ViewMatrixScanDueGuardCount() {
+        return viewmatrix_scan_due_guard_count.load(std::memory_order_relaxed);
+    }
 
     inline Vector2 ResolveScreenSize()
     {
@@ -196,6 +279,48 @@ namespace OW {
     inline bool PipelineDebugEnabled()
     {
         return Config::kmboxDebugLog;
+    }
+
+    inline int ReadEnvFlagState(const char* name)
+    {
+        char buffer[16] = {};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return -1;
+        return buffer[0] != '0' &&
+            buffer[0] != 'n' &&
+            buffer[0] != 'N' &&
+            buffer[0] != 'f' &&
+            buffer[0] != 'F'
+            ? 1
+            : 0;
+    }
+
+    inline bool EnvFlagEnabled(const char* name)
+    {
+        return ReadEnvFlagState(name) == 1;
+    }
+
+    inline bool EntityPipelineV2Enabled()
+    {
+        static const bool enabled = EnvFlagEnabled("UN_DMA_ENTITY_PIPELINE_V2");
+        return enabled;
+    }
+
+    inline bool ScanLatestWinsEnabled()
+    {
+        static const int scanFlag = ReadEnvFlagState("UN_DMA_SCAN_LATEST_WINS");
+        if (scanFlag >= 0)
+            return scanFlag == 1;
+        return EntityPipelineV2Enabled();
+    }
+
+    inline bool ColdTopologyScanEnabled()
+    {
+        static const int scanFlag = ReadEnvFlagState("UN_DMA_COLD_TOPOLOGY_SCAN");
+        if (scanFlag >= 0)
+            return scanFlag == 1;
+        return EntityPipelineV2Enabled();
     }
 
     inline bool IsMatrixNonIdentity(const Matrix& matrix)
@@ -544,6 +669,191 @@ namespace OW {
             lastLogTick = now;
         }
     }
+
+    inline bool ProjectRowMajorToScreen(
+        const Matrix& matrix,
+        const Vector3& world,
+        const Vector2& window,
+        float& x,
+        float& y)
+    {
+        if (window.X <= 0.0f || window.Y <= 0.0f)
+            return false;
+        if (!std::isfinite(world.X) || !std::isfinite(world.Y) || !std::isfinite(world.Z))
+            return false;
+
+        const float clipX = matrix.m11 * world.X + matrix.m12 * world.Y + matrix.m13 * world.Z + matrix.m14;
+        const float clipY = matrix.m21 * world.X + matrix.m22 * world.Y + matrix.m23 * world.Z + matrix.m24;
+        const float clipW = matrix.m41 * world.X + matrix.m42 * world.Y + matrix.m43 * world.Z + matrix.m44;
+        if (clipW < 0.001f || std::fabs(clipW) < 0.001f)
+            return false;
+
+        const float ndcX = clipX / clipW;
+        const float ndcY = clipY / clipW;
+        if (!std::isfinite(ndcX) || !std::isfinite(ndcY))
+            return false;
+
+        x = (ndcX + 1.0f) * 0.5f * window.X;
+        y = (1.0f - ndcY) * 0.5f * window.Y;
+        return x >= 0.0f && y >= 0.0f && x < window.X && y < window.Y;
+    }
+
+    inline Matrix TransposeMatrix(const Matrix& matrix)
+    {
+        Matrix transposed{};
+        transposed.m11 = matrix.m11; transposed.m12 = matrix.m21; transposed.m13 = matrix.m31; transposed.m14 = matrix.m41;
+        transposed.m21 = matrix.m12; transposed.m22 = matrix.m22; transposed.m23 = matrix.m32; transposed.m24 = matrix.m42;
+        transposed.m31 = matrix.m13; transposed.m32 = matrix.m23; transposed.m33 = matrix.m33; transposed.m34 = matrix.m43;
+        transposed.m41 = matrix.m14; transposed.m42 = matrix.m24; transposed.m43 = matrix.m34; transposed.m44 = matrix.m44;
+        return transposed;
+    }
+
+    struct DynamicBzMatrixSelection {
+        bool valid = false;
+        uint64_t offset = 0;
+        uint64_t address = 0;
+        size_t hits = 0;
+        size_t saneHeights = 0;
+        float avgHeight = 0.0f;
+        float score = 0.0f;
+        Matrix rowMajor{};
+    };
+
+    inline bool ScoreBz151177RowMajorMatrix(
+        const Matrix& matrix,
+        uint64_t offset,
+        uint64_t decoded,
+        const std::vector<c_entity>& entities,
+        const c_entity& local,
+        const Vector2& window,
+        DynamicBzMatrixSelection& score)
+    {
+        if (!IsMatrixNonIdentity(matrix))
+            return false;
+
+        size_t hits = 0;
+        size_t saneHeights = 0;
+        float heightSum = 0.0f;
+        for (const c_entity& entity : entities) {
+            if (!entity.Alive || !entity.Team)
+                continue;
+            if (!std::isfinite(entity.pos.X) || !std::isfinite(entity.head_pos.X))
+                continue;
+            if (std::isfinite(local.pos.X) && entity.pos.DistTo(local.pos) > 150.0f)
+                continue;
+
+            float headX = 0.0f, headY = 0.0f;
+            float rootX = 0.0f, rootY = 0.0f;
+            float chestX = 0.0f, chestY = 0.0f;
+            if (!ProjectRowMajorToScreen(matrix, entity.head_pos, window, headX, headY) ||
+                !ProjectRowMajorToScreen(matrix, entity.pos, window, rootX, rootY) ||
+                !ProjectRowMajorToScreen(matrix, entity.chest_pos, window, chestX, chestY)) {
+                continue;
+            }
+
+            const float height = std::fabs(rootY - headY);
+            if (!std::isfinite(height) || height <= 0.0f)
+                continue;
+            ++hits;
+            if (height >= 8.0f && height <= 180.0f)
+                ++saneHeights;
+            heightSum += height;
+        }
+
+        if (hits == 0)
+            return false;
+
+        score.valid = true;
+        score.offset = offset;
+        score.address = decoded + offset;
+        score.hits = hits;
+        score.saneHeights = saneHeights;
+        score.avgHeight = heightSum / static_cast<float>(hits);
+        score.score =
+            static_cast<float>(hits) * 1000.0f +
+            static_cast<float>(saneHeights) * 100.0f +
+            std::clamp(score.avgHeight, 0.0f, 120.0f);
+        score.rowMajor = matrix;
+        return true;
+    }
+
+    inline bool TrySelectBz151177DynamicViewProjection(
+        uint64_t decoded,
+        Matrix& selectedViewProjection,
+        uint64_t& selectedPtr)
+    {
+        static DWORD lastSelectTick = 0;
+        static uint64_t lastDecoded = 0;
+        static DynamicBzMatrixSelection lastSelection{};
+        static Matrix lastPublished{};
+
+        const DWORD now = GetTickCount();
+        auto reuseLastSelection = [&]() -> bool {
+            if (!lastSelection.valid || decoded != lastDecoded)
+                return false;
+            selectedViewProjection = lastPublished;
+            selectedPtr = lastSelection.address;
+            lastSelectTick = now;
+            return true;
+        };
+
+        if (lastSelection.valid && decoded == lastDecoded && now - lastSelectTick < 16)
+            return reuseLastSelection();
+
+        if (!SDK || !SDK->IsInitialized() || decoded == 0)
+            return reuseLastSelection();
+
+        constexpr uint64_t kSweepStart = 0x210;
+        constexpr uint64_t kSweepEnd = 0x1430;
+        constexpr uint64_t kSweepStride = 0x50;
+        constexpr size_t kSweepBytes =
+            static_cast<size_t>((kSweepEnd - kSweepStart) + sizeof(Matrix));
+
+        std::array<std::byte, kSweepBytes> bytes{};
+        if (!SDK->read_range(decoded + kSweepStart, bytes.data(), bytes.size()))
+            return reuseLastSelection();
+
+        const c_entity local = TargetingDetail::SnapshotLocalEntity();
+        const std::vector<c_entity> entities = TargetingDetail::SnapshotEntities();
+        if (entities.empty())
+            return reuseLastSelection();
+
+        const float width = WX > 0.0f
+            ? WX
+            : (Config::manualScreenWidth > 0 ? static_cast<float>(Config::manualScreenWidth) : 1920.0f);
+        const float height = WY > 0.0f
+            ? WY
+            : (Config::manualScreenHeight > 0 ? static_cast<float>(Config::manualScreenHeight) : 1080.0f);
+        const Vector2 window(width, height);
+
+        DynamicBzMatrixSelection best{};
+        DynamicBzMatrixSelection previousNow{};
+        for (uint64_t offset = kSweepStart; offset <= kSweepEnd; offset += kSweepStride) {
+            Matrix matrix{};
+            std::memcpy(&matrix, bytes.data() + static_cast<size_t>(offset - kSweepStart), sizeof(Matrix));
+            DynamicBzMatrixSelection candidate{};
+            if (!ScoreBz151177RowMajorMatrix(matrix, offset, decoded, entities, local, window, candidate))
+                continue;
+            if (!best.valid || candidate.score > best.score)
+                best = candidate;
+            if (lastSelection.valid && decoded == lastDecoded && offset == lastSelection.offset)
+                previousNow = candidate;
+        }
+
+        if (!best.valid)
+            return reuseLastSelection();
+
+        if (previousNow.valid && previousNow.score + 250.0f >= best.score)
+            best = previousNow;
+
+        lastSelection = best;
+        lastDecoded = decoded;
+        lastSelectTick = now;
+        lastPublished = TransposeMatrix(best.rowMajor);
+        selectedViewProjection = lastPublished;
+        selectedPtr = best.address;
+        return true;
+    }
 } // namespace OW
 
 inline std::mutex g_mutex;
@@ -554,15 +864,221 @@ inline std::mutex g_mutex;
 
 inline void entity_scan_thread() {
     Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::EntityScan);
-    Diagnostics::Info("Entity scan thread started. scan_interval_ms=%lu empty_interval_ms=%lu.",
+    const bool scanLatestWinsEnabled = OW::ScanLatestWinsEnabled();
+    const bool coldTopologyScanEnabled = OW::ColdTopologyScanEnabled();
+    Diagnostics::Info("Entity scan thread started. scan_interval_ms=%lu empty_interval_ms=%lu latest_wins=%d cold_topology_scan=%d startup_reconnect_scan_only=%d.",
         static_cast<unsigned long>(OW::kEntityScanIntervalMs),
-        static_cast<unsigned long>(OW::kEntityEmptyScanIntervalMs));
+        static_cast<unsigned long>(OW::kEntityEmptyScanIntervalMs),
+        scanLatestWinsEnabled ? 1 : 0,
+        coldTopologyScanEnabled ? 1 : 0,
+        coldTopologyScanEnabled ? 1 : 0);
+    OW::SetEntityScanNextDueTick(GetTickCount());
     size_t lastLoggedScanCount = static_cast<size_t>(-1);
     DWORD lastScanLogTick = 0;
     DWORD lastScanTick = 0;
     DWORD lastScanCycleTick = 0;
     double entityScanHz = 0.0;
     std::unordered_map<uint64_t, std::pair<std::pair<uint64_t, uint64_t>, DWORD>> cnNeStableScanPairs{};
+    uint64_t scanLoopCount = 0;
+    uint64_t scanDueCount = 0;
+    uint64_t scanSkipPendingCount = 0;
+    uint64_t scanSkipNotDueCount = 0;
+    uint64_t scanSkipStableTopologyCount = 0;
+    uint64_t scanStartedCount = 0;
+    uint64_t scanCompletedCount = 0;
+    uint64_t scanFailedCount = 0;
+    uint64_t scanPublishAttemptCount = 0;
+    uint64_t scanPublishSuccessCount = 0;
+    uint64_t scanOverwrittenCount = 0;
+    uint64_t scanGeneration = 0;
+    uint64_t scanTopologyRescanRequestCount = 0;
+    uint64_t scanTopologyCountProbeCount = 0;
+    uint64_t scanTopologyCountProbeChangeCount = 0;
+    size_t scanTopologyCandidateCount = 0;
+    uint64_t previousScanLoopCount = 0;
+    uint64_t previousScanDueCount = 0;
+    uint64_t previousScanStartedCount = 0;
+    uint64_t previousScanCompletedCount = 0;
+    DWORD scanRateTick = GetTickCount();
+    DWORD scanPendingSinceTick = 0;
+    DWORD lastScanSuccessTick = 0;
+    uint64_t scanPendingGeneration = 0;
+    double scanLoopHz = 0.0;
+    double scanDueHz = 0.0;
+    double scanStartedHz = 0.0;
+    double scanCompletedHz = 0.0;
+    double scanGetOwEntitiesMs = 0.0;
+    size_t scanResultRawCount = 0;
+    double scanMaxGetOwEntitiesMs = 0.0;
+    uint64_t scanMaxGetOwEntitiesGeneration = 0;
+    Diagnostics::EntityScanDetailStats scanMaxGetOwEntitiesDetail{};
+    DWORD lastTopologyCountProbeTick = 0;
+    bool hasTopologyCandidateBaseline = false;
+
+    auto readDwordEnv = [](const char* name, DWORD fallback, DWORD minValue, DWORD maxValue) {
+        char buffer[32] = {};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return fallback;
+
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(buffer, &end, 10);
+        if (end == buffer || (end && *end != '\0'))
+            return fallback;
+
+        const DWORD value = static_cast<DWORD>(parsed);
+        return std::clamp(value, minValue, maxValue);
+    };
+    const DWORD topologyCountProbeIntervalMs =
+        readDwordEnv("UN_DMA_TOPOLOGY_COUNT_PROBE_MS", 5000, 0, 60000);
+    const DWORD topologyCountProbeDeltaThreshold =
+        readDwordEnv("UN_DMA_TOPOLOGY_COUNT_PROBE_DELTA", 128, 1, 4096);
+
+    auto publishScanPipelineStats = [&]() {
+        const DWORD statsNow = GetTickCount();
+        const DWORD elapsed = statsNow - scanRateTick;
+        if (elapsed >= 1000) {
+            scanLoopHz = static_cast<double>(scanLoopCount - previousScanLoopCount) * 1000.0 /
+                static_cast<double>(elapsed);
+            scanDueHz = static_cast<double>(scanDueCount - previousScanDueCount) * 1000.0 /
+                static_cast<double>(elapsed);
+            scanStartedHz = static_cast<double>(scanStartedCount - previousScanStartedCount) * 1000.0 /
+                static_cast<double>(elapsed);
+            scanCompletedHz = static_cast<double>(scanCompletedCount - previousScanCompletedCount) * 1000.0 /
+                static_cast<double>(elapsed);
+            previousScanLoopCount = scanLoopCount;
+            previousScanDueCount = scanDueCount;
+            previousScanStartedCount = scanStartedCount;
+            previousScanCompletedCount = scanCompletedCount;
+            scanRateTick = statsNow;
+        }
+
+        Diagnostics::EntityPipelineScanStats stats{};
+        stats.loopCount = scanLoopCount;
+        stats.dueCount = scanDueCount;
+        stats.skipPendingCount = scanSkipPendingCount;
+        stats.skipNotDueCount = scanSkipNotDueCount;
+        stats.skipStableTopologyCount = scanSkipStableTopologyCount;
+        stats.startedCount = scanStartedCount;
+        stats.completedCount = scanCompletedCount;
+        stats.failedCount = scanFailedCount;
+        stats.publishAttemptCount = scanPublishAttemptCount;
+        stats.publishSuccessCount = scanPublishSuccessCount;
+        stats.overwrittenCount = scanOverwrittenCount;
+        stats.generation = scanGeneration;
+        stats.loopHz = scanLoopHz;
+        stats.dueHz = scanDueHz;
+        stats.startedHz = scanStartedHz;
+        stats.completedHz = scanCompletedHz;
+        stats.getOwEntitiesMs = scanGetOwEntitiesMs;
+        stats.maxGetOwEntitiesMs = scanMaxGetOwEntitiesMs;
+        stats.maxGetOwEntitiesGeneration = scanMaxGetOwEntitiesGeneration;
+        stats.maxGetOwEntitiesRecords = scanMaxGetOwEntitiesDetail.records;
+        stats.maxGetOwEntitiesPairs = scanMaxGetOwEntitiesDetail.totalPairs;
+        stats.maxGetOwEntitiesRecordBuildMs =
+            scanMaxGetOwEntitiesDetail.scanRecordBuildMs;
+        stats.maxGetOwEntitiesMatchLinkMs =
+            scanMaxGetOwEntitiesDetail.scanMatchLinkMs;
+        stats.maxGetOwEntitiesTargetMapMs =
+            scanMaxGetOwEntitiesDetail.scanCnNeTargetMapMs;
+        stats.maxGetOwEntitiesComponentValidationMs =
+            scanMaxGetOwEntitiesDetail.scanComponentOnlyValidationMs;
+        stats.maxGetOwEntitiesDmaReadsDelta =
+            scanMaxGetOwEntitiesDetail.scanDmaReadsDelta;
+        stats.maxGetOwEntitiesDmaFailDelta =
+            scanMaxGetOwEntitiesDetail.scanDmaFailDelta;
+        stats.maxGetOwEntitiesDmaRangeDiagEnabled =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeDiagEnabled;
+        stats.maxGetOwEntitiesDmaRangeReads =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeReads;
+        stats.maxGetOwEntitiesDmaRangeFailed =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeFailed;
+        stats.maxGetOwEntitiesDmaRangeMaxLatencyUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeMaxLatencyUs;
+        stats.maxGetOwEntitiesDmaRangeMaxCallsite =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeMaxCallsite;
+        stats.maxGetOwEntitiesDmaRangeScannerReads =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeScannerReads;
+        stats.maxGetOwEntitiesDmaRangeScannerMaxLatencyUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeScannerMaxLatencyUs;
+        stats.maxGetOwEntitiesDmaRangeScannerMaxCallsite =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeScannerMaxCallsite;
+        stats.maxGetOwEntitiesDmaRangeForeignReads =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeForeignReads;
+        stats.maxGetOwEntitiesDmaRangeForeignMaxLatencyUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeForeignMaxLatencyUs;
+        stats.maxGetOwEntitiesDmaRangeForeignMaxCallsite =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeForeignMaxCallsite;
+        stats.maxGetOwEntitiesDmaRangeRootMaxUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeRootMaxUs;
+        stats.maxGetOwEntitiesDmaRangeListReadMaxUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeListReadMaxUs;
+        stats.maxGetOwEntitiesDmaRangeRecordHeaderMaxUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeRecordHeaderMaxUs;
+        stats.maxGetOwEntitiesDmaRangeRecordPoolIdMaxUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeRecordPoolIdMaxUs;
+        stats.maxGetOwEntitiesDmaRangeTargetMapMaxUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeTargetMapMaxUs;
+        stats.maxGetOwEntitiesDmaRangeComponentValidationMaxUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeComponentValidationMaxUs;
+        stats.maxGetOwEntitiesDmaRangeViewMatrixMaxUs =
+            scanMaxGetOwEntitiesDetail.scanDmaRangeViewMatrixMaxUs;
+        stats.maxGetOwEntitiesRootCacheHitCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListRootCacheHitCount;
+        stats.maxGetOwEntitiesRootCacheReadCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListRootCacheReadCount;
+        stats.maxGetOwEntitiesRootCacheStoreCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListRootCacheStoreCount;
+        stats.maxGetOwEntitiesRootCacheExpiredCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListRootCacheExpiredCount;
+        stats.maxGetOwEntitiesRootCacheStaleHitCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListRootCacheStaleHitCount;
+        stats.maxGetOwEntitiesListReadSkippedCount =
+            scanMaxGetOwEntitiesDetail.listReadSkippedCount;
+        stats.maxGetOwEntitiesListReadNegativeCacheHitCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListReadNegativeCacheHitCount;
+        stats.maxGetOwEntitiesListReadNegativeCacheStoreCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListReadNegativeCacheStoreCount;
+        stats.maxGetOwEntitiesListReadNegativeCacheExpiredCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListReadNegativeCacheExpiredCount;
+        stats.maxGetOwEntitiesListReadNegativeCacheStaleHitCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListReadNegativeCacheStaleHitCount;
+        stats.maxGetOwEntitiesListReadCacheHitCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListReadCacheHitCount;
+        stats.maxGetOwEntitiesListReadCacheStoreCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListReadCacheStoreCount;
+        stats.maxGetOwEntitiesListReadCacheExpiredCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListReadCacheExpiredCount;
+        stats.maxGetOwEntitiesListReadCacheStaleHitCount =
+            scanMaxGetOwEntitiesDetail.cnNeEntityListReadCacheStaleHitCount;
+        stats.maxGetOwEntitiesRecordMatchIdDirectReadCount =
+            scanMaxGetOwEntitiesDetail.recordMatchIdDirectReadCount;
+        stats.maxGetOwEntitiesRecordMatchIdDirectZeroCount =
+            scanMaxGetOwEntitiesDetail.recordMatchIdDirectZeroCount;
+        stats.maxGetOwEntitiesRecordMatchIdHeaderHitCount =
+            scanMaxGetOwEntitiesDetail.recordMatchIdHeaderHitCount;
+        stats.maxGetOwEntitiesRecordMatchIdHeaderMissCount =
+            scanMaxGetOwEntitiesDetail.recordMatchIdHeaderMissCount;
+        stats.maxGetOwEntitiesRecordMatchIdHeaderMatchCount =
+            scanMaxGetOwEntitiesDetail.recordMatchIdHeaderMatchCount;
+        stats.maxGetOwEntitiesRecordMatchIdHeaderMismatchCount =
+            scanMaxGetOwEntitiesDetail.recordMatchIdHeaderMismatchCount;
+        stats.maxGetOwEntitiesRecordMatchIdHeaderUseCount =
+            scanMaxGetOwEntitiesDetail.recordMatchIdHeaderUseCount;
+        stats.maxGetOwEntitiesPersistentRefreshCount =
+            scanMaxGetOwEntitiesDetail.cnNeMapCandidatePersistentCacheRefreshCount;
+        stats.maxGetOwEntitiesPersistentStaleHitCount =
+            scanMaxGetOwEntitiesDetail.cnNeMapCandidatePersistentCacheStaleHitCount;
+        stats.resultRawCount = scanResultRawCount;
+        stats.pendingAgeMs = scanPendingSinceTick != 0 ? statsNow - scanPendingSinceTick : 0;
+        stats.lastSuccessAgeMs = lastScanSuccessTick != 0 ? statsNow - lastScanSuccessTick : 0;
+        stats.coldTopologyScanEnabled = coldTopologyScanEnabled;
+        stats.topologyRescanRequestCount = scanTopologyRescanRequestCount;
+        stats.topologyCountProbeCount = scanTopologyCountProbeCount;
+        stats.topologyCountProbeChangeCount = scanTopologyCountProbeChangeCount;
+        stats.topologyCandidateCount = scanTopologyCandidateCount;
+        Diagnostics::SetEntityPipelineScanStats(stats);
+    };
 
     auto scanPairKey = [](const std::pair<uint64_t, uint64_t>& pair) {
         const uint64_t first = pair.first >> 4;
@@ -580,9 +1096,38 @@ inline void entity_scan_thread() {
         return true;
     };
 
+    auto updateScanPendingAge = [&](DWORD observedNow) {
+        bool pending = false;
+        uint64_t pendingGeneration = 0;
+        if (scanLatestWinsEnabled) {
+            std::lock_guard<std::mutex> lock(OW::raw_scan_mutex);
+            pending = OW::latest_raw_scan_snapshot.valid &&
+                OW::latest_raw_scan_snapshot.generation !=
+                    OW::last_consumed_raw_scan_generation;
+            pendingGeneration = pending ? OW::latest_raw_scan_snapshot.generation : 0;
+        } else {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            pending = OW::abletotread != 0;
+            pendingGeneration = pending ? scanGeneration : 0;
+        }
+
+        if (pending) {
+            if (scanPendingSinceTick == 0 || scanPendingGeneration != pendingGeneration) {
+                scanPendingSinceTick = observedNow;
+                scanPendingGeneration = pendingGeneration;
+            }
+        } else {
+            scanPendingSinceTick = 0;
+            scanPendingGeneration = 0;
+        }
+    };
+
     while (OW::Config::doingentity == 1) {
+        ++scanLoopCount;
         if (!OW::ProcessConnection::IsConnected()) {
+            OW::SetEntityScanNextDueTick(0);
             Diagnostics::RecordEntityScanCycle(0, 0.0);
+            publishScanPipelineStats();
             Sleep(100);
             continue;
         }
@@ -591,27 +1136,96 @@ inline void entity_scan_thread() {
         bool pending_scan = false;
         bool known_entities_empty = true;
         bool fast_rescan = false;
+        bool latest_raw_entities_empty = true;
+        uint64_t topologyRescanRequestCountSnapshot = 0;
+        if (scanLatestWinsEnabled) {
+            std::lock_guard<std::mutex> lock(OW::raw_scan_mutex);
+            pending_scan = OW::latest_raw_scan_snapshot.valid &&
+                OW::latest_raw_scan_snapshot.generation != OW::last_consumed_raw_scan_generation;
+            latest_raw_entities_empty =
+                !OW::latest_raw_scan_snapshot.valid ||
+                OW::latest_raw_scan_snapshot.raw_entities.empty();
+        }
         {
             std::lock_guard<std::mutex> lock(g_mutex);
-            pending_scan = OW::abletotread != 0;
-            known_entities_empty = OW::ow_entities.empty() && OW::ow_entities_scan.empty();
+            if (!scanLatestWinsEnabled) {
+                pending_scan = OW::abletotread != 0;
+                latest_raw_entities_empty = OW::ow_entities_scan.empty();
+            }
+            known_entities_empty = OW::ow_entities.empty() && latest_raw_entities_empty;
             fast_rescan = OW::entity_fast_scan_until_tick != 0 &&
                 now < OW::entity_fast_scan_until_tick;
+            topologyRescanRequestCountSnapshot =
+                OW::entity_topology_rescan_request_count;
+        }
+        scanTopologyRescanRequestCount = topologyRescanRequestCountSnapshot;
+
+        const bool stableTopologyCanReuse =
+            coldTopologyScanEnabled &&
+            lastScanTick != 0 &&
+            !known_entities_empty &&
+            !fast_rescan;
+        if (stableTopologyCanReuse) {
+            if (topologyCountProbeIntervalMs > 0 &&
+                (lastTopologyCountProbeTick == 0 ||
+                 now - lastTopologyCountProbeTick >= topologyCountProbeIntervalMs)) {
+                lastTopologyCountProbeTick = now;
+                ++scanTopologyCountProbeCount;
+                const size_t candidateCount = OW::ProbeEntityTopologyCandidateCount();
+                if (hasTopologyCandidateBaseline) {
+                    const size_t delta = candidateCount > scanTopologyCandidateCount
+                        ? candidateCount - scanTopologyCandidateCount
+                        : scanTopologyCandidateCount - candidateCount;
+                    if (delta >= topologyCountProbeDeltaThreshold) {
+                        ++scanTopologyCountProbeChangeCount;
+                    }
+                }
+                scanTopologyCandidateCount = candidateCount;
+                hasTopologyCandidateBaseline = true;
+            }
+            ++scanSkipStableTopologyCount;
+            updateScanPendingAge(now);
+            publishScanPipelineStats();
+            Sleep(OW::kEntityScannerIdleSleepMs);
+            continue;
         }
 
         const DWORD scanInterval = (known_entities_empty || fast_rescan)
             ? OW::kEntityEmptyScanIntervalMs
             : OW::kEntityScanIntervalMs;
+        OW::SetEntityScanNextDueTick(lastScanTick == 0 ? now : lastScanTick + scanInterval);
         const bool scanDue = lastScanTick == 0 || now - lastScanTick >= scanInterval;
-        if (!pending_scan && scanDue) {
+        updateScanPendingAge(now);
+        if (scanDue)
+            ++scanDueCount;
+        else
+            ++scanSkipNotDueCount;
+        if ((scanLatestWinsEnabled || !pending_scan) && scanDue) {
             if (lastScanCycleTick != 0) {
                 const DWORD elapsed = now - lastScanCycleTick;
                 entityScanHz = elapsed > 0 ? (1000.0 / static_cast<double>(elapsed)) : 0.0;
             }
             lastScanCycleTick = now;
             lastScanTick = now;
+            OW::SetEntityScanNextDueTick(now + scanInterval);
 
-            std::vector<std::pair<uint64_t, uint64_t>> scanned = OW::get_ow_entities();
+            ++scanStartedCount;
+            const auto getOwEntitiesStartedAt = std::chrono::steady_clock::now();
+            std::vector<std::pair<uint64_t, uint64_t>> scanned{};
+            {
+                OW::ScopedEntityScanDmaActivity scanDmaActivity;
+                scanned = OW::get_ow_entities();
+            }
+            scanGetOwEntitiesMs = static_cast<double>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - getOwEntitiesStartedAt).count()) / 1000.0;
+            ++scanCompletedCount;
+            ++scanGeneration;
+            if (scanGetOwEntitiesMs > scanMaxGetOwEntitiesMs) {
+                scanMaxGetOwEntitiesMs = scanGetOwEntitiesMs;
+                scanMaxGetOwEntitiesGeneration = scanGeneration;
+                scanMaxGetOwEntitiesDetail = Diagnostics::SnapshotEntityScanDetailStats();
+            }
             if (OW::offset::IsCnNeProfile()) {
                 const DWORD stableNow = GetTickCount();
                 for (const auto& pair : scanned) {
@@ -648,6 +1262,9 @@ inline void entity_scan_thread() {
                         cnNeStableScanPairs.size());
                 }
             }
+            scanResultRawCount = scanned.size();
+            if (scanned.empty())
+                ++scanFailedCount;
             Diagnostics::RecordEntityScanCycle(scanned.size(), entityScanHz);
             Diagnostics::Trace("Entity scan cycle found %zu raw entities.", scanned.size());
             if (OW::PipelineDebugEnabled()) {
@@ -662,14 +1279,48 @@ inline void entity_scan_thread() {
                     lastScanLogTick = logNow;
                 }
             }
-            {
+            ++scanPublishAttemptCount;
+            if (scanLatestWinsEnabled) {
+                if (!scanned.empty()) {
+                    OW::RawEntityScanSnapshot snapshot{};
+                    snapshot.raw_entities = std::move(scanned);
+                    snapshot.generation = scanGeneration;
+                    snapshot.scan_started_at = getOwEntitiesStartedAt;
+                    snapshot.scan_finished_at = std::chrono::steady_clock::now();
+                    snapshot.valid = true;
+                    {
+                        std::lock_guard<std::mutex> lock(OW::raw_scan_mutex);
+                        if (OW::latest_raw_scan_snapshot.valid &&
+                            OW::latest_raw_scan_snapshot.generation !=
+                                OW::last_consumed_raw_scan_generation) {
+                            ++scanOverwrittenCount;
+                        }
+                        OW::latest_raw_scan_snapshot = std::move(snapshot);
+                    }
+                    ++scanPublishSuccessCount;
+                    lastScanSuccessTick = GetTickCount();
+                }
+            } else {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 if (OW::abletotread == 0) {
                     OW::ow_entities_scan = std::move(scanned);
                     OW::abletotread = 1;
+                    ++scanPublishSuccessCount;
+                    lastScanSuccessTick = GetTickCount();
                 }
             }
+            if (coldTopologyScanEnabled && fast_rescan) {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (OW::entity_topology_rescan_request_count ==
+                    topologyRescanRequestCountSnapshot) {
+                    OW::entity_fast_scan_until_tick = 0;
+                }
+            }
+        } else if (pending_scan && scanDue) {
+            ++scanSkipPendingCount;
         }
+        updateScanPendingAge(GetTickCount());
+        publishScanPipelineStats();
         Sleep(OW::kEntityScannerIdleSleepMs);
     }
     Diagnostics::Info("Entity scan thread stopping.");
@@ -681,12 +1332,62 @@ inline void entity_scan_thread() {
 
 inline void entity_thread() {
     Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::EntityDecrypt);
-    Diagnostics::Info("Entity processing thread started. process_interval_ms=%lu health_interval_ms=%lu team_name_interval_ms=%lu skill_status_interval_ms=%lu local_skill_interval_ms=%lu visibility=scatter_cn_ne_with_fallback.",
+    const bool scanLatestWinsEnabled = OW::ScanLatestWinsEnabled();
+    const bool coldTopologyScanEnabled = OW::ColdTopologyScanEnabled();
+    const bool entityRecordStoreStartupEnabled = []() {
+        char buffer[16] = {};
+        const DWORD length = GetEnvironmentVariableA(
+            "UN_DMA_ENTITY_RECORD_STORE",
+            buffer,
+            static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return false;
+        return buffer[0] != '0' &&
+            buffer[0] != 'n' &&
+            buffer[0] != 'N' &&
+            buffer[0] != 'f' &&
+            buffer[0] != 'F';
+    }() || coldTopologyScanEnabled;
+    const bool linkRetainStartupEnabled = []() {
+        char buffer[16] = {};
+        const DWORD length = GetEnvironmentVariableA(
+            "UN_DMA_RETAIN_BASE_ON_LINK_CHANGE",
+            buffer,
+            static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return false;
+        return buffer[0] != '0' &&
+            buffer[0] != 'n' &&
+            buffer[0] != 'N' &&
+            buffer[0] != 'f' &&
+            buffer[0] != 'F';
+    }() || coldTopologyScanEnabled;
+    const bool baseDecryptLifetimeStartupEnabled = []() {
+        char buffer[16] = {};
+        const DWORD length = GetEnvironmentVariableA(
+            "UN_DMA_BASE_DECRYPT_LIFETIME_ONLY",
+            buffer,
+            static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return false;
+        return buffer[0] != '0' &&
+            buffer[0] != 'n' &&
+            buffer[0] != 'N' &&
+            buffer[0] != 'f' &&
+            buffer[0] != 'F';
+    }() || coldTopologyScanEnabled;
+    Diagnostics::Info("Entity processing thread started. process_interval_ms=%lu health_interval_ms=%lu team_name_interval_ms=%lu skill_status_interval_ms=%lu local_skill_interval_ms=%lu visibility=scatter_cn_ne_with_fallback latest_wins=%d cold_topology_scan=%d startup_reconnect_scan_only=%d record_store=%d link_retain=%d base_lifetime=%d.",
         static_cast<unsigned long>(OW::kEntityProcessIntervalMs),
         static_cast<unsigned long>(OW::kEntityHealthIntervalMs),
         static_cast<unsigned long>(OW::kEntityTeamNameIntervalMs),
         static_cast<unsigned long>(OW::kEntitySkillStatusIntervalMs),
-        static_cast<unsigned long>(OW::kEntityLocalSkillIntervalMs));
+        static_cast<unsigned long>(OW::kEntityLocalSkillIntervalMs),
+        scanLatestWinsEnabled ? 1 : 0,
+        coldTopologyScanEnabled ? 1 : 0,
+        coldTopologyScanEnabled ? 1 : 0,
+        entityRecordStoreStartupEnabled ? 1 : 0,
+        linkRetainStartupEnabled ? 1 : 0,
+        baseDecryptLifetimeStartupEnabled ? 1 : 0);
     DWORD lastProcessTick = 0;
     Vector3 lastpos{};
     size_t lastLoggedRawCount = static_cast<size_t>(-1);
@@ -734,8 +1435,10 @@ inline void entity_thread() {
         bool nameTeamValid = false;
         DWORD skillUpdateTick = 0;
         bool skillValid = false;
+        uint8_t skillRefreshCursor = 0;
         DWORD localSkillUpdateTick = 0;
         bool localSkillValid = false;
+        uint8_t localSkillRefreshCursor = 0;
         bool isEnemy = false;
         bool vis = false;
         bool skill1act = false;
@@ -746,6 +1449,34 @@ inline void entity_thread() {
         bool reloading = false;
         std::string heroName = "Unknown";
         OW::c_entity::SkeletonBoneCache skeletonCache{};
+        std::array<OW::Vector3, 18> cachedSkeletonBones{};
+        std::array<bool, 18> cachedSkeletonBoneValid{};
+        OW::Vector3 cachedSkeletonPos{};
+        OW::Vector3 cachedBotChestBone{};
+        bool cachedBotChestBoneValid = false;
+        bool cachedSkeletonValid = false;
+        DWORD skeletonUpdateTick = 0;
+        bool retainedAcrossLinkChange = false;
+        DWORD linkRetainTick = 0;
+        size_t linkRetainCount = 0;
+    };
+    struct BaseDecryptCycleKey {
+        uint64_t parent = 0;
+        uint32_t type = 0;
+
+        bool operator==(const BaseDecryptCycleKey& other) const {
+            return parent == other.parent && type == other.type;
+        }
+    };
+    struct BaseDecryptCycleKeyHash {
+        size_t operator()(const BaseDecryptCycleKey& key) const {
+            uint64_t mixed = key.parent;
+            mixed ^= static_cast<uint64_t>(key.type) +
+                0x9E3779B97F4A7C15ull +
+                (mixed << 6) +
+                (mixed >> 2);
+            return static_cast<size_t>(mixed ^ (mixed >> 32));
+        }
     };
     std::unordered_map<uint64_t, ComponentBaseCache> componentBaseCache{};
     componentBaseCache.reserve(128);
@@ -760,6 +1491,34 @@ inline void entity_thread() {
     };
     std::unordered_map<uint64_t, DynamicEntityCache> dynamicEntityCache{};
     dynamicEntityCache.reserve(64);
+
+    enum class EntityRecordLifecycleState {
+        Fresh,
+        Missing,
+        Dead,
+        Expired,
+    };
+
+    struct EntityRecord {
+        uint64_t rosterKey = 0;
+        uint64_t componentParent = 0;
+        uint64_t linkParent = 0;
+        uint32_t matchId = 0;
+        EntityRecordLifecycleState state = EntityRecordLifecycleState::Missing;
+        DWORD firstSeenTick = 0;
+        DWORD lastSeenTick = 0;
+        DWORD missingSinceTick = 0;
+        ComponentBaseCache bases{};
+        bool basesValid = false;
+        DynamicEntityCache dynamic{};
+        bool dynamicValid = false;
+        OW::c_entity published{};
+        bool publishedValid = false;
+    };
+    std::unordered_map<uint64_t, EntityRecord> entityRecordStore{};
+    entityRecordStore.reserve(128);
+    std::unordered_map<uint64_t, uint64_t> entityRecordKeyByComponent{};
+    entityRecordKeyByComponent.reserve(128);
 
     auto readDwordEnv = [](const char* name, DWORD fallback, DWORD minValue, DWORD maxValue) {
         char buffer[32] = {};
@@ -790,8 +1549,24 @@ inline void entity_thread() {
 
     const bool entityHotPagePrefetchEnabled =
         readBoolEnv("UNLEASHED_DMA_PREFETCH_HOT_PAGES");
+    const bool entityRecordStoreEnabled =
+        coldTopologyScanEnabled ||
+        readBoolEnv("UN_DMA_ENTITY_RECORD_STORE");
+    const bool linkChangeBaseRetainEnabled =
+        coldTopologyScanEnabled ||
+        readBoolEnv("UN_DMA_RETAIN_BASE_ON_LINK_CHANGE");
+    const bool baseDecryptLifetimeOnlyEnabled =
+        entityRecordStoreEnabled &&
+        (coldTopologyScanEnabled ||
+         readBoolEnv("UN_DMA_BASE_DECRYPT_LIFETIME_ONLY"));
     const DWORD entityHotPagePrefetchMaxPages =
         readDwordEnv("UNLEASHED_DMA_PREFETCH_MAX_PAGES", 128, 8, 512);
+    const DWORD teamNameRefreshBudgetPerCycle =
+        readDwordEnv("UN_DMA_TEAM_NAME_REFRESH_BUDGET", 2, 1, 64);
+    const DWORD skillRefreshBudgetPerCycle =
+        readDwordEnv("UN_DMA_SKILL_REFRESH_BUDGET", 2, 1, 64);
+    const DWORD skeletonRefreshBudgetPerCycle =
+        readDwordEnv("UN_DMA_SKELETON_REFRESH_BUDGET", 4, 1, 64);
     DWORD lastPrefetchLogTick = 0;
 
     auto prefetchKnownEntityHotPages =
@@ -900,10 +1675,276 @@ inline void entity_thread() {
         return kRosterComponentPrefix ^ componentParent;
     };
 
+    enum class RosterKeyKind {
+        Unknown,
+        Match,
+        Link,
+        Component,
+    };
+
+    auto rosterKeyKind = [&](uint64_t rosterKey) {
+        constexpr uint64_t kRosterPrefixMask = 0xF000000000000000ull;
+        switch (rosterKey & kRosterPrefixMask) {
+        case kRosterMatchPrefix:
+            return RosterKeyKind::Match;
+        case kRosterLinkPrefix:
+            return RosterKeyKind::Link;
+        case kRosterComponentPrefix:
+            return RosterKeyKind::Component;
+        default:
+            return RosterKeyKind::Unknown;
+        }
+    };
+
     auto resetRosterCycleFlags = [&]() {
         for (auto& rosterPair : entityRoster)
             rosterPair.second.seenThisCycle = false;
     };
+
+    auto recordStateFromRoster = [](OW::EntityRosterState state) {
+        switch (state) {
+        case OW::EntityRosterState::Fresh:
+            return EntityRecordLifecycleState::Fresh;
+        case OW::EntityRosterState::Dead:
+            return EntityRecordLifecycleState::Dead;
+        case OW::EntityRosterState::Missing:
+            return EntityRecordLifecycleState::Missing;
+        default:
+            return EntityRecordLifecycleState::Missing;
+        }
+    };
+
+    auto ensureEntityRecord =
+        [&](uint64_t rosterKey,
+            uint64_t componentParent,
+            uint64_t linkParent,
+            uint32_t matchId,
+            DWORD now) -> EntityRecord* {
+            if (!entityRecordStoreEnabled || rosterKey == 0)
+                return nullptr;
+
+            EntityRecord& record = entityRecordStore[rosterKey];
+            if (record.rosterKey == 0) {
+                record.rosterKey = rosterKey;
+                record.firstSeenTick = now;
+            }
+            if (record.componentParent != 0 &&
+                record.componentParent != componentParent) {
+                const auto aliasIt = entityRecordKeyByComponent.find(record.componentParent);
+                if (aliasIt != entityRecordKeyByComponent.end() &&
+                    aliasIt->second == rosterKey) {
+                    entityRecordKeyByComponent.erase(aliasIt);
+                }
+            }
+            record.componentParent = componentParent;
+            record.linkParent = linkParent;
+            record.matchId = matchId;
+            record.lastSeenTick = now;
+            if (componentParent != 0)
+                entityRecordKeyByComponent[componentParent] = rosterKey;
+            return &record;
+        };
+
+    auto updateEntityRecordBases =
+        [&](uint64_t rosterKey,
+            uint64_t componentParent,
+            uint64_t linkParent,
+            uint32_t matchId,
+            const ComponentBaseCache& bases,
+            DWORD now) {
+            EntityRecord* record =
+                ensureEntityRecord(rosterKey, componentParent, linkParent, matchId, now);
+            if (!record)
+                return;
+            record->bases = bases;
+            record->basesValid = true;
+        };
+
+    auto updateEntityRecordDynamic =
+        [&](uint64_t componentParent,
+            uint64_t linkParent,
+            const DynamicEntityCache& dynamic,
+            DWORD now) {
+            const uint64_t recordKey = makeRosterKey(0, linkParent, componentParent);
+            EntityRecord* record =
+                ensureEntityRecord(recordKey, componentParent, linkParent, 0, now);
+            if (!record)
+                return;
+            record->dynamic = dynamic;
+            record->dynamicValid = true;
+            record->state = EntityRecordLifecycleState::Fresh;
+        };
+
+    auto invalidateEntityRecordBasesForComponent = [&](uint64_t componentParent) {
+        if (!entityRecordStoreEnabled || componentParent == 0)
+            return;
+        const auto aliasIt = entityRecordKeyByComponent.find(componentParent);
+        if (aliasIt == entityRecordKeyByComponent.end())
+            return;
+        const auto recordIt = entityRecordStore.find(aliasIt->second);
+        if (recordIt != entityRecordStore.end())
+            recordIt->second.basesValid = false;
+    };
+
+    auto invalidateEntityRecordDynamicForComponent = [&](uint64_t componentParent) {
+        if (!entityRecordStoreEnabled || componentParent == 0)
+            return;
+        const auto aliasIt = entityRecordKeyByComponent.find(componentParent);
+        if (aliasIt == entityRecordKeyByComponent.end())
+            return;
+        const auto recordIt = entityRecordStore.find(aliasIt->second);
+        if (recordIt != entityRecordStore.end())
+            recordIt->second.dynamicValid = false;
+    };
+
+    auto invalidateAllEntityRecordBases = [&]() {
+        if (!entityRecordStoreEnabled)
+            return;
+        for (auto& recordPair : entityRecordStore)
+            recordPair.second.basesValid = false;
+    };
+
+    auto invalidateAllEntityRecordDynamic = [&]() {
+        if (!entityRecordStoreEnabled)
+            return;
+        for (auto& recordPair : entityRecordStore)
+            recordPair.second.dynamicValid = false;
+    };
+
+    auto updateEntityRecordPublished = [&](const OW::c_entity& entity, DWORD now) {
+        EntityRecord* record = ensureEntityRecord(
+            entity.roster_key,
+            entity.address,
+            entity.LinkParent,
+            entity.match_id,
+            now);
+        if (!record)
+            return;
+        record->state = recordStateFromRoster(entity.roster_state);
+        record->lastSeenTick = entity.last_seen_tick_ms ? entity.last_seen_tick_ms : now;
+        record->missingSinceTick = entity.missing_since_tick_ms;
+        record->published = entity;
+        record->publishedValid = true;
+    };
+
+    auto syncEntityRecordStoreFromRoster =
+        [&](DWORD now, Diagnostics::EntityLifecycleStats& lifecycleStats) {
+            lifecycleStats.recordStoreEnabled = entityRecordStoreEnabled;
+            if (!entityRecordStoreEnabled)
+                return;
+
+            for (const auto& rosterPair : entityRoster)
+                updateEntityRecordPublished(rosterPair.second.entity, now);
+
+            for (auto it = entityRecordStore.begin(); it != entityRecordStore.end();) {
+                const bool hasRoster = entityRoster.find(it->first) != entityRoster.end();
+                if (!hasRoster && !it->second.dynamicValid) {
+                    if (it->second.componentParent != 0) {
+                        const auto aliasIt = entityRecordKeyByComponent.find(it->second.componentParent);
+                        if (aliasIt != entityRecordKeyByComponent.end() &&
+                            aliasIt->second == it->first) {
+                            entityRecordKeyByComponent.erase(aliasIt);
+                        }
+                    }
+                    it->second.state = EntityRecordLifecycleState::Expired;
+                    it = entityRecordStore.erase(it);
+                    continue;
+                }
+                ++it;
+            }
+
+            lifecycleStats.recordStoreSize = entityRecordStore.size();
+            for (const auto& recordPair : entityRecordStore) {
+                const EntityRecord& record = recordPair.second;
+                switch (record.state) {
+                case EntityRecordLifecycleState::Fresh:
+                    ++lifecycleStats.recordStoreFreshCount;
+                    break;
+                case EntityRecordLifecycleState::Dead:
+                    ++lifecycleStats.recordStoreDeadCount;
+                    break;
+                case EntityRecordLifecycleState::Expired:
+                    ++lifecycleStats.recordStoreExpiredCount;
+                    break;
+                case EntityRecordLifecycleState::Missing:
+                default:
+                    ++lifecycleStats.recordStoreMissingCount;
+                    break;
+                }
+                if (record.basesValid)
+                    ++lifecycleStats.recordStoreBasesValidCount;
+                if (record.dynamicValid)
+                    ++lifecycleStats.recordStoreDynamicValidCount;
+                if (record.publishedValid)
+                    ++lifecycleStats.recordStorePublishedValidCount;
+            }
+        };
+
+    auto recordRosterLinkChangeKeyKind =
+        [&](uint64_t rosterKey, Diagnostics::EntityLifecycleStats& lifecycleStats) {
+            switch (rosterKeyKind(rosterKey)) {
+            case RosterKeyKind::Match:
+                ++lifecycleStats.entityRecordLinkChangedMatchKeyCount;
+                break;
+            case RosterKeyKind::Link:
+                ++lifecycleStats.entityRecordLinkChangedLinkKeyCount;
+                break;
+            case RosterKeyKind::Component:
+                ++lifecycleStats.entityRecordLinkChangedComponentKeyCount;
+                break;
+            case RosterKeyKind::Unknown:
+            default:
+                break;
+            }
+        };
+
+    auto recordComponentCacheLinkChangeDetails =
+        [&](uint64_t componentParent,
+            const ComponentBaseCache& cache,
+            Diagnostics::EntityLifecycleStats& lifecycleStats) {
+            if (cache.matchIdValid) {
+                if (cache.matchId != 0)
+                    ++lifecycleStats.componentCacheLinkChangePreviousMatchIdKnownCount;
+                else
+                    ++lifecycleStats.componentCacheLinkChangePreviousMatchIdZeroCount;
+            } else {
+                ++lifecycleStats.componentCacheLinkChangePreviousMatchIdUnknownCount;
+            }
+
+            if (!entityRecordStoreEnabled)
+                return;
+
+            const auto aliasIt = entityRecordKeyByComponent.find(componentParent);
+            if (aliasIt == entityRecordKeyByComponent.end()) {
+                ++lifecycleStats.componentCacheLinkChangeRecordAliasMissCount;
+                return;
+            }
+
+            ++lifecycleStats.componentCacheLinkChangeRecordAliasHitCount;
+            const uint64_t recordKey = aliasIt->second;
+            const auto recordIt = entityRecordStore.find(recordKey);
+            if (recordIt != entityRecordStore.end()) {
+                if (recordIt->second.publishedValid)
+                    ++lifecycleStats.componentCacheLinkChangeRecordPublishedCount;
+                if (recordIt->second.basesValid)
+                    ++lifecycleStats.componentCacheLinkChangeRecordBasesValidCount;
+            }
+
+            switch (rosterKeyKind(recordKey)) {
+            case RosterKeyKind::Match:
+                ++lifecycleStats.componentCacheLinkChangeRecordMatchKeyCount;
+                break;
+            case RosterKeyKind::Link:
+                ++lifecycleStats.componentCacheLinkChangeRecordLinkKeyCount;
+                break;
+            case RosterKeyKind::Component:
+                ++lifecycleStats.componentCacheLinkChangeRecordComponentKeyCount;
+                break;
+            case RosterKeyKind::Unknown:
+            default:
+                break;
+            }
+        };
 
     auto sanitizeStaleRosterEntity = [](OW::c_entity& entity) {
         entity.Alive = false;
@@ -1060,7 +2101,10 @@ inline void entity_thread() {
         return suppressed;
     };
 
-    auto publishRosterSnapshot = [&](DWORD now, size_t heroChanged, std::vector<OW::c_entity>& published) {
+    auto publishRosterSnapshot = [&](DWORD now,
+                                     size_t heroChanged,
+                                     std::vector<OW::c_entity>& published,
+                                     Diagnostics::EntityLifecycleStats* lifecycleStats = nullptr) {
         Diagnostics::RosterStats rosterStats{};
         rosterStats.heroChanged = heroChanged;
         published.clear();
@@ -1075,6 +2119,8 @@ inline void entity_thread() {
             if (!seen && lastSeen != 0 && unseenAge > OW::kEntityRosterTtlMs) {
                 it = entityRoster.erase(it);
                 rosterStats.expired++;
+                if (lifecycleStats)
+                    ++lifecycleStats->entityRecordExpiredCount;
                 continue;
             }
 
@@ -1091,6 +2137,10 @@ inline void entity_thread() {
             if (!seen &&
                 !keepFreshDuringCnNeGrace &&
                 rosterEntity.roster_state != OW::EntityRosterState::Dead) {
+                if (rosterEntity.roster_state != OW::EntityRosterState::Missing &&
+                    lifecycleStats) {
+                    ++lifecycleStats->entityRecordMarkMissingCount;
+                }
                 if (rosterEntity.missing_since_tick_ms == 0)
                     rosterEntity.missing_since_tick_ms = now;
                 rosterEntity.roster_state = OW::EntityRosterState::Missing;
@@ -1106,6 +2156,8 @@ inline void entity_thread() {
                 !hasRenderableAnchor(rosterEntity)) {
                 it = entityRoster.erase(it);
                 rosterStats.expired++;
+                if (lifecycleStats)
+                    ++lifecycleStats->entityRecordExpiredCount;
                 continue;
             }
 
@@ -1266,6 +2318,89 @@ inline void entity_thread() {
         resetDmaFieldWindow(now);
     };
 
+    struct ScopedPipelinePhaseTimer {
+        double& targetMs;
+        std::chrono::steady_clock::time_point startedAt;
+
+        explicit ScopedPipelinePhaseTimer(double& target)
+            : targetMs(target),
+              startedAt(std::chrono::steady_clock::now())
+        {
+        }
+
+        ~ScopedPipelinePhaseTimer()
+        {
+            const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - startedAt).count();
+            targetMs += static_cast<double>(elapsedUs) / 1000.0;
+        }
+    };
+
+    auto finalizePipelineProcessStats = [](
+        Diagnostics::EntityPipelineProcessStats& stats,
+        const Diagnostics::DmaReadStats& dmaStart,
+        const std::chrono::steady_clock::time_point& cycleStartedAt) {
+        const Diagnostics::DmaReadStats dmaEnd = Diagnostics::SnapshotDmaReadStats();
+        stats.entityCycleMs = static_cast<double>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - cycleStartedAt).count()) / 1000.0;
+        const double entityLoopKnownMs =
+            stats.phase.entityLoopSetupMs +
+            stats.phase.entityHeaderSpecialMs +
+            stats.phase.entityCacheApplyMs +
+            stats.phase.entityHotFieldsMs +
+            stats.phase.entityRotationPositionMs +
+            stats.phase.baseCacheMs +
+            stats.phase.baseDecryptMs +
+            stats.phase.healthMs +
+            stats.phase.heroMs +
+            stats.phase.visibilityMs +
+            stats.phase.skeletonMs +
+            stats.phase.skillMs +
+            stats.phase.teamNameMs +
+            stats.phase.localSelectMs;
+        stats.phase.entityLoopGapMs =
+            stats.phase.entityLoopWallMs > entityLoopKnownMs
+                ? stats.phase.entityLoopWallMs - entityLoopKnownMs
+                : 0.0;
+        const double measuredPhaseMs =
+            stats.phase.beginFrameMs +
+            stats.phase.consumeScanMs +
+            stats.phase.previousSnapshotCopyMs +
+            stats.phase.prefetchMs +
+            stats.phase.previousIndexMs +
+            stats.phase.hotScatterPrepareMs +
+            stats.phase.hotScatterExecuteMs +
+            stats.phase.baseCacheMs +
+            stats.phase.baseDecryptMs +
+            stats.phase.healthMs +
+            stats.phase.heroMs +
+            stats.phase.visibilityMs +
+            stats.phase.skeletonMs +
+            stats.phase.skillMs +
+            stats.phase.teamNameMs +
+            stats.phase.localSelectMs +
+            stats.phase.publishMs +
+            stats.phase.recordSyncMs +
+            stats.phase.entityLoopSetupMs +
+            stats.phase.entityHeaderSpecialMs +
+            stats.phase.entityCacheApplyMs +
+            stats.phase.entityHotFieldsMs +
+            stats.phase.entityRotationPositionMs +
+            stats.phase.entityLoopGapMs;
+        stats.phase.cycleGapMs =
+            stats.entityCycleMs > measuredPhaseMs
+                ? stats.entityCycleMs - measuredPhaseMs
+                : 0.0;
+        stats.dmaReadsDelta = dmaEnd.total >= dmaStart.total
+            ? dmaEnd.total - dmaStart.total
+            : 0;
+        stats.dmaFailDelta = dmaEnd.failed >= dmaStart.failed
+            ? dmaEnd.failed - dmaStart.failed
+            : 0;
+        Diagnostics::SetEntityPipelineProcessStats(stats);
+    };
+
     while (OW::Config::doingentity == 1) {
         if (!OW::ProcessConnection::IsConnected()) {
             Sleep(100);
@@ -1279,24 +2414,54 @@ inline void entity_thread() {
         }
         lastProcessTick = cycleNow;
 
-        SDK->BeginFrame();
+        const auto pipelineCycleStartedAt = std::chrono::steady_clock::now();
+        const Diagnostics::DmaReadStats pipelineDmaStart = Diagnostics::SnapshotDmaReadStats();
+        Diagnostics::EntityPipelineProcessStats pipelineStats{};
+        Diagnostics::EntityLifecycleStats& lifecycleStats = pipelineStats.lifecycle;
 
         {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            if (OW::abletotread) {
-                OW::ow_entities = OW::ow_entities_scan;
-                OW::abletotread = 0;
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.beginFrameMs);
+            SDK->BeginFrame(Diagnostics::SdkFrameSource::Process);
+        }
+
+        std::vector<std::pair<uint64_t, uint64_t>> consumedLatestRawEntities;
+        bool consumedLatestRawScan = false;
+        {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.consumeScanMs);
+            if (scanLatestWinsEnabled) {
+                std::lock_guard<std::mutex> lock(OW::raw_scan_mutex);
+                if (OW::latest_raw_scan_snapshot.valid &&
+                    OW::latest_raw_scan_snapshot.generation !=
+                        OW::last_consumed_raw_scan_generation) {
+                    consumedLatestRawEntities = OW::latest_raw_scan_snapshot.raw_entities;
+                    OW::last_consumed_raw_scan_generation =
+                        OW::latest_raw_scan_snapshot.generation;
+                    consumedLatestRawScan = true;
+                }
+            } else {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (OW::abletotread) {
+                    OW::ow_entities = OW::ow_entities_scan;
+                    OW::abletotread = 0;
+                }
             }
         }
 
         std::vector<std::pair<uint64_t, uint64_t>> raw_entities;
         std::vector<OW::c_entity> previous_entities;
         {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.previousSnapshotCopyMs);
             std::lock_guard<std::mutex> lock(g_mutex);
+            if (scanLatestWinsEnabled && consumedLatestRawScan)
+                OW::ow_entities = std::move(consumedLatestRawEntities);
             raw_entities = OW::ow_entities;
             previous_entities = OW::entities;
         }
         const DWORD processLoopTick = GetTickCount();
+        auto requestTopologyRescan = [&](DWORD, bool = false) {
+            // Full component/link topology scans are limited to startup and
+            // reconnect, where the raw topology cache is empty.
+        };
         resetRosterCycleFlags();
 
         // No entities available
@@ -1304,20 +2469,44 @@ inline void entity_thread() {
             Diagnostics::EntityProcessStats stats{};
             Diagnostics::LocalEntityStats localStats{};
             std::vector<OW::c_entity> published_entities{};
-            Diagnostics::RosterStats rosterStats = publishRosterSnapshot(processLoopTick, 0, published_entities);
+            Diagnostics::RosterStats rosterStats =
+                publishRosterSnapshot(processLoopTick, 0, published_entities, &lifecycleStats);
             previousProcessedValidCount = 0;
             if (componentBaseCache.size() > 512)
+            {
+                invalidateAllEntityRecordBases();
                 componentBaseCache.clear();
-            if (dynamicEntityCache.size() > 512)
+            }
+            if (dynamicEntityCache.size() > 512) {
+                lifecycleStats.dynamicCacheExpiredCount += dynamicEntityCache.size();
+                invalidateAllEntityRecordDynamic();
                 dynamicEntityCache.clear();
+            }
             const bool requestFastRescan =
                 rosterStats.fresh > 0 || rosterStats.missing > 0 || rosterStats.dead > 0;
-            const size_t published_count = OW::TargetingDetail::PublishEntitySnapshots(
-                std::move(published_entities),
-                std::vector<OW::hpanddy>{});
+            size_t published_count = 0;
+            {
+                ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.publishMs);
+                published_count = OW::TargetingDetail::PublishEntitySnapshots(
+                    std::move(published_entities),
+                    std::vector<OW::hpanddy>{});
+            }
+            pipelineStats.rawCount = 0;
+            pipelineStats.validatedCount = 0;
+            pipelineStats.publishedCount = published_count;
             if (requestFastRescan) {
-                std::lock_guard<std::mutex> lock(g_mutex);
-                OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
+                const DWORD requestTick = GetTickCount();
+                if (coldTopologyScanEnabled) {
+                    requestTopologyRescan(requestTick, true);
+                } else {
+                    std::lock_guard<std::mutex> lock(g_mutex);
+                    OW::entity_fast_scan_until_tick =
+                        requestTick + OW::kEntityFastRescanWindowMs;
+                }
+            }
+            {
+                ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.recordSyncMs);
+                syncEntityRecordStoreFromRoster(processLoopTick, lifecycleStats);
             }
             Diagnostics::SetEntityCount(rosterStats.fresh + rosterStats.dead + rosterStats.missing);
             Diagnostics::SetEntityProcessStats(stats);
@@ -1340,22 +2529,46 @@ inline void entity_thread() {
                 }
             }
             recordEntityCycle();
+            finalizePipelineProcessStats(pipelineStats, pipelineDmaStart, pipelineCycleStartedAt);
             Sleep(16);
             continue;
         }
-        if (componentBaseCache.size() > 512)
+        if (componentBaseCache.size() > 512) {
+            invalidateAllEntityRecordBases();
             componentBaseCache.clear();
-        if (dynamicEntityCache.size() > 512)
+        }
+        if (dynamicEntityCache.size() > 512) {
+            invalidateAllEntityRecordDynamic();
             dynamicEntityCache.clear();
+        }
 
-        prefetchKnownEntityHotPages(raw_entities, processLoopTick);
+        {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.prefetchMs);
+            prefetchKnownEntityHotPages(raw_entities, processLoopTick);
+        }
 
         std::vector<OW::c_entity> tmp_entities{};
         std::vector<OW::hpanddy> hpdy_entities{};
         OW::c_entity lastentity{};
         Diagnostics::EntityProcessStats processStats{};
         processStats.raw = raw_entities.size();
+        pipelineStats.rawCount = raw_entities.size();
         Diagnostics::LocalEntityStats localStats{};
+        size_t teamNameRefreshBudget =
+            static_cast<size_t>(teamNameRefreshBudgetPerCycle);
+        size_t skillRefreshBudget =
+            static_cast<size_t>(skillRefreshBudgetPerCycle);
+        size_t skeletonRefreshBudget =
+            static_cast<size_t>(skeletonRefreshBudgetPerCycle);
+        std::unordered_map<BaseDecryptCycleKey, size_t, BaseDecryptCycleKeyHash>
+            baseDecryptCycleKeyCounts{};
+        baseDecryptCycleKeyCounts.reserve(raw_entities.size() * 16 + 16);
+        auto consumeCycleBudget = [](size_t& budget) {
+            if (budget == 0)
+                return false;
+            --budget;
+            return true;
+        };
         size_t heroChangedThisCycle = 0;
         bool sampledBoneCandidateHasAngle = false;
         const bool detailedProcessLog = OW::PipelineDebugEnabled() &&
@@ -1368,6 +2581,23 @@ inline void entity_thread() {
         localStats.cameraXCm = std::isfinite(cameraLocation.X) ? static_cast<int>(cameraLocation.X * 100.0f) : 0;
         localStats.cameraYCm = std::isfinite(cameraLocation.Y) ? static_cast<int>(cameraLocation.Y * 100.0f) : 0;
         localStats.cameraZCm = std::isfinite(cameraLocation.Z) ? static_cast<int>(cameraLocation.Z * 100.0f) : 0;
+
+        constexpr uint64_t kScatterPageMask = ~0xFFFull;
+        std::unordered_set<uint64_t> hotScatterPages{};
+        hotScatterPages.reserve(raw_entities.size() * 4);
+        auto recordHotScatterPrepare = [&](uint64_t address, size_t size, bool prepared) {
+            pipelineStats.hotScatterPrepareRequestedCount++;
+            pipelineStats.hotScatterBytesRequested += size;
+            if (prepared)
+                pipelineStats.hotScatterPrepareSuccessCount++;
+            else
+                pipelineStats.hotScatterPrepareFailCount++;
+            if (!address || size == 0)
+                return;
+            hotScatterPages.insert(address & kScatterPageMask);
+            hotScatterPages.insert((address + size - 1) & kScatterPageMask);
+            pipelineStats.hotScatterEstimatedUniquePages = hotScatterPages.size();
+        };
 
         struct EntityHotFieldReads {
             OW::velocity_compo_t velocity{};
@@ -1410,54 +2640,83 @@ inline void entity_thread() {
             }
         };
 
-        auto prepareHotFields = [](VMMDLL_SCATTER_HANDLE handle,
-                                   EntityHotFieldReads& reads,
-                                   uint64_t velocityBase,
-                                   bool readVelocity,
-                                   uint64_t healthBase,
-                                   bool readHealth,
-                                   uint64_t heroBase,
-                                   bool readHero,
-                                   uint64_t visibilityValueAddress,
-                                   bool readVisibility) {
+        auto recordHotScatterReadResults = [&](const EntityHotFieldReads& reads) {
+            auto recordField = [&](bool requested, DWORD bytesRead, size_t expectedBytes) {
+                if (!requested)
+                    return;
+                pipelineStats.hotScatterBytesRead += bytesRead;
+                if (bytesRead != expectedBytes)
+                    pipelineStats.hotScatterShortReadCount++;
+            };
+            recordField(reads.velocityRequested, reads.velocityBytes, sizeof(OW::velocity_compo_t));
+            recordField(reads.healthRequested, reads.healthBytes, sizeof(OW::health_compo_t));
+            recordField(reads.heroRequested, reads.heroBytes, sizeof(OW::hero_compo_t));
+            recordField(reads.visibilityRequested, reads.visibilityBytes, sizeof(uint64_t));
+        };
+
+        auto countHotFieldRequests = [](const EntityHotFieldReads& reads) {
+            return static_cast<size_t>(reads.velocityRequested ? 1 : 0) +
+                static_cast<size_t>(reads.healthRequested ? 1 : 0) +
+                static_cast<size_t>(reads.heroRequested ? 1 : 0) +
+                static_cast<size_t>(reads.visibilityRequested ? 1 : 0);
+        };
+
+        auto prepareHotFields = [&](VMMDLL_SCATTER_HANDLE handle,
+                                    EntityHotFieldReads& reads,
+                                    uint64_t velocityBase,
+                                    bool readVelocity,
+                                    uint64_t healthBase,
+                                    bool readHealth,
+                                    uint64_t heroBase,
+                                    bool readHero,
+                                    uint64_t visibilityValueAddress,
+                                    bool readVisibility) {
             if (!handle)
                 return false;
 
             if (readVelocity && velocityBase) {
+                ++pipelineStats.hotScatterRequestedCount;
                 reads.velocityRequested = true;
-                mem.AddScatterReadRequest(
+                const bool prepared = mem.AddScatterReadRequest(
                     handle,
                     velocityBase,
                     &reads.velocity,
                     sizeof(reads.velocity),
                     &reads.velocityBytes);
+                recordHotScatterPrepare(velocityBase, sizeof(reads.velocity), prepared);
             }
             if (readHealth && healthBase) {
+                ++pipelineStats.hotScatterRequestedCount;
                 reads.healthRequested = true;
-                mem.AddScatterReadRequest(
+                const bool prepared = mem.AddScatterReadRequest(
                     handle,
                     healthBase,
                     &reads.health,
                     sizeof(reads.health),
                     &reads.healthBytes);
+                recordHotScatterPrepare(healthBase, sizeof(reads.health), prepared);
             }
             if (readHero && heroBase) {
+                ++pipelineStats.hotScatterRequestedCount;
                 reads.heroRequested = true;
-                mem.AddScatterReadRequest(
+                const bool prepared = mem.AddScatterReadRequest(
                     handle,
                     heroBase,
                     &reads.hero,
                     sizeof(reads.hero),
                     &reads.heroBytes);
+                recordHotScatterPrepare(heroBase, sizeof(reads.hero), prepared);
             }
             if (readVisibility && visibilityValueAddress) {
+                ++pipelineStats.hotScatterRequestedCount;
                 reads.visibilityRequested = true;
-                mem.AddScatterReadRequest(
+                const bool prepared = mem.AddScatterReadRequest(
                     handle,
                     visibilityValueAddress,
                     &reads.visibilityRaw,
                     sizeof(reads.visibilityRaw),
                     &reads.visibilityBytes);
+                recordHotScatterPrepare(visibilityValueAddress, sizeof(reads.visibilityRaw), prepared);
             }
 
             return reads.velocityRequested ||
@@ -1491,7 +2750,14 @@ inline void entity_thread() {
             }
 
             reads.scatterExecuted = true;
-            reads.scatterOk = mem.ExecuteReadScatter(handle);
+            {
+                ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.hotScatterExecuteMs);
+                reads.scatterOk = mem.ExecuteReadScatter(handle);
+            }
+            pipelineStats.hotScatterExecuteCount++;
+            if (!reads.scatterOk)
+                pipelineStats.hotScatterExecuteFailCount++;
+            recordHotScatterReadResults(reads);
             return reads;
         };
 
@@ -1577,14 +2843,17 @@ inline void entity_thread() {
         static bool matchIdLogEnabled = true;
 
         std::unordered_map<uint64_t, const OW::c_entity*> previousEntityByAddress;
-        previousEntityByAddress.reserve(previous_entities.size());
         std::unordered_map<uint64_t, const OW::c_entity*> previousEntityByRosterKey;
-        previousEntityByRosterKey.reserve(previous_entities.size());
-        for (const OW::c_entity& previous : previous_entities) {
-            if (previous.address)
-                previousEntityByAddress.emplace(previous.address, &previous);
-            if (previous.roster_key)
-                previousEntityByRosterKey.emplace(previous.roster_key, &previous);
+        {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.previousIndexMs);
+            previousEntityByAddress.reserve(previous_entities.size());
+            previousEntityByRosterKey.reserve(previous_entities.size());
+            for (const OW::c_entity& previous : previous_entities) {
+                if (previous.address)
+                    previousEntityByAddress.emplace(previous.address, &previous);
+                if (previous.roster_key)
+                    previousEntityByRosterKey.emplace(previous.roster_key, &previous);
+            }
         }
 
         VMMDLL_SCATTER_HANDLE hotFieldScatter = mem.CreateScatterHandle();
@@ -1599,81 +2868,99 @@ inline void entity_thread() {
         hotFieldBatchIndex.reserve(raw_entities.size());
         const auto& activeOffsetsForHotBatch = offset::Active();
 
-        for (const auto& [componentParent, linkParent] : raw_entities) {
-            if (!hotFieldScatter || !componentParent || !linkParent)
-                continue;
-            if (hotFieldBatchIndex.find(componentParent) != hotFieldBatchIndex.end())
-                continue;
+        {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.hotScatterPrepareMs);
+            for (const auto& [componentParent, linkParent] : raw_entities) {
+                if (!hotFieldScatter || !componentParent || !linkParent)
+                    continue;
+                if (hotFieldBatchIndex.find(componentParent) != hotFieldBatchIndex.end())
+                    continue;
 
-            const auto dynamicCacheIt = dynamicEntityCache.find(componentParent);
-            if (dynamicCacheIt != dynamicEntityCache.end() &&
-                dynamicCacheIt->second.valid &&
-                dynamicCacheIt->second.linkParent == linkParent) {
-                continue;
+                const auto dynamicCacheIt = dynamicEntityCache.find(componentParent);
+                if (dynamicCacheIt != dynamicEntityCache.end() &&
+                    dynamicCacheIt->second.valid &&
+                    dynamicCacheIt->second.linkParent == linkParent) {
+                    continue;
+                }
+
+                const auto cacheIt = componentBaseCache.find(componentParent);
+                if (cacheIt == componentBaseCache.end())
+                    continue;
+                const ComponentBaseCache& cached = cacheIt->second;
+                if (cached.linkParent != linkParent ||
+                    !cached.alive ||
+                    cached.baseUpdateTick == 0 ||
+                    !cached.health) {
+                    continue;
+                }
+
+                const DWORD refreshInterval = cached.alive
+                    ? OW::kEntityLiveComponentRefreshMs
+                    : OW::kEntityDeadComponentRefreshMs;
+                if (processLoopTick - cached.baseUpdateTick >= refreshInterval &&
+                    !(baseDecryptLifetimeOnlyEnabled && cached.alive)) {
+                    continue;
+                }
+
+                const bool refreshHealth =
+                    !cached.healthValid ||
+                    processLoopTick - cached.healthUpdateTick >= OW::kEntityHealthIntervalMs;
+                const bool refreshHero =
+                    cached.hero &&
+                    (!cached.heroValid ||
+                     cached.heroUpdateTick == 0 ||
+                     processLoopTick - cached.heroUpdateTick >= OW::kEntityHeroIntervalMs);
+                const bool scatterCnNeVisibility =
+                    offset::IsCnNeProfile() &&
+                    activeOffsetsForHotBatch.VisibilityValueOffset != 0 &&
+                    cached.visibility != 0;
+                const uint64_t visibilityValueAddress = scatterCnNeVisibility
+                    ? cached.visibility + activeOffsetsForHotBatch.VisibilityValueOffset
+                    : 0;
+
+                const size_t itemIndex = hotFieldBatchItems.size();
+                HotFieldBatchItem& item = hotFieldBatchItems.emplace_back();
+                item.componentParent = componentParent;
+                item.linkParent = linkParent;
+                if (!prepareHotFields(
+                        hotFieldScatter,
+                        item.reads,
+                        cached.velocity,
+                        cached.velocity != 0,
+                        cached.health,
+                        refreshHealth,
+                        cached.hero,
+                        refreshHero,
+                        visibilityValueAddress,
+                        scatterCnNeVisibility)) {
+                    hotFieldBatchItems.pop_back();
+                    continue;
+                }
+                hotFieldBatchIndex.emplace(componentParent, itemIndex);
             }
-
-            const auto cacheIt = componentBaseCache.find(componentParent);
-            if (cacheIt == componentBaseCache.end())
-                continue;
-            const ComponentBaseCache& cached = cacheIt->second;
-            if (cached.linkParent != linkParent ||
-                !cached.alive ||
-                cached.baseUpdateTick == 0 ||
-                !cached.health) {
-                continue;
-            }
-
-            const DWORD refreshInterval = cached.alive
-                ? OW::kEntityLiveComponentRefreshMs
-                : OW::kEntityDeadComponentRefreshMs;
-            if (processLoopTick - cached.baseUpdateTick >= refreshInterval)
-                continue;
-
-            const bool refreshHealth =
-                !cached.healthValid ||
-                processLoopTick - cached.healthUpdateTick >= OW::kEntityHealthIntervalMs;
-            const bool refreshHero =
-                cached.hero &&
-                (!cached.heroValid ||
-                 cached.heroUpdateTick == 0 ||
-                 processLoopTick - cached.heroUpdateTick >= OW::kEntityHeroIntervalMs);
-            const bool scatterCnNeVisibility =
-                offset::IsCnNeProfile() &&
-                activeOffsetsForHotBatch.VisibilityValueOffset != 0 &&
-                cached.visibility != 0;
-            const uint64_t visibilityValueAddress = scatterCnNeVisibility
-                ? cached.visibility + activeOffsetsForHotBatch.VisibilityValueOffset
-                : 0;
-
-            const size_t itemIndex = hotFieldBatchItems.size();
-            HotFieldBatchItem& item = hotFieldBatchItems.emplace_back();
-            item.componentParent = componentParent;
-            item.linkParent = linkParent;
-            if (!prepareHotFields(
-                    hotFieldScatter,
-                    item.reads,
-                    cached.velocity,
-                    cached.velocity != 0,
-                    cached.health,
-                    refreshHealth,
-                    cached.hero,
-                    refreshHero,
-                    visibilityValueAddress,
-                    scatterCnNeVisibility)) {
-                hotFieldBatchItems.pop_back();
-                continue;
-            }
-            hotFieldBatchIndex.emplace(componentParent, itemIndex);
+            pipelineStats.hotScatterBatchItems = hotFieldBatchItems.size();
+            for (const HotFieldBatchItem& item : hotFieldBatchItems)
+                pipelineStats.hotScatterBatchRequests += countHotFieldRequests(item.reads);
         }
 
         if (!hotFieldBatchItems.empty()) {
-            const bool hotBatchOk = mem.ExecuteReadScatter(hotFieldScatter);
+            bool hotBatchOk = false;
+            {
+                ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.hotScatterExecuteMs);
+                Diagnostics::ScopedDmaCallsite dmaTag(
+                    Diagnostics::DmaCallsite::EntityHotScatter);
+                hotBatchOk = mem.ExecuteReadScatter(hotFieldScatter);
+            }
+            pipelineStats.hotScatterExecuteCount++;
+            if (!hotBatchOk)
+                pipelineStats.hotScatterExecuteFailCount++;
             dmaFieldWindow.hotScatterExecute++;
             if (!hotBatchOk)
                 dmaFieldWindow.hotScatterExecuteFail++;
             for (HotFieldBatchItem& item : hotFieldBatchItems) {
                 item.reads.scatterExecuted = false;
                 item.reads.scatterOk = hotBatchOk;
+                recordHotScatterReadResults(item.reads);
             }
         }
 
@@ -1730,9 +3017,16 @@ inline void entity_thread() {
             entity.previous_cached_bot_chest_bone_valid = previous.cached_bot_chest_bone_valid;
         };
 
+        {
+        ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.entityLoopWallMs);
         for (size_t i = 0; i < raw_entities.size(); i++) {
             OW::c_entity entity{};
             const bool progressLog = detailedProcessLog && (i < 3 || (i % 16) == 0);
+            uint64_t ComponentParent = 0;
+            uint64_t LinkParent = 0;
+            bool dynamicCacheExpiredByLinkChange = false;
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.entityLoopSetupMs);
             if (progressLog) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu/%zu start component=0x%llX link=0x%llX.",
                     i,
@@ -1747,7 +3041,8 @@ inline void entity_thread() {
             }
             if (i >= raw_entities.size()) continue;
 
-            const auto& [ComponentParent, LinkParent] = raw_entities[i];
+            ComponentParent = raw_entities[i].first;
+            LinkParent = raw_entities[i].second;
             entity.address = ComponentParent;
             entity.LinkParent = LinkParent;
             if (!entity.address || !LinkParent) {
@@ -1758,10 +3053,14 @@ inline void entity_thread() {
             auto dynamicCacheIt = dynamicEntityCache.find(ComponentParent);
             if (dynamicCacheIt != dynamicEntityCache.end() &&
                 dynamicCacheIt->second.linkParent != LinkParent) {
+                ++lifecycleStats.dynamicCacheExpiredCount;
+                dynamicCacheExpiredByLinkChange = true;
+                invalidateEntityRecordDynamicForComponent(ComponentParent);
                 dynamicEntityCache.erase(dynamicCacheIt);
                 dynamicCacheIt = dynamicEntityCache.end();
             }
             if (dynamicCacheIt != dynamicEntityCache.end() && dynamicCacheIt->second.valid) {
+                ++lifecycleStats.dynamicCacheReusedCount;
                 DynamicEntityCache& cachedDynamic = dynamicCacheIt->second;
                 if (cachedDynamic.meshBase &&
                     (cachedDynamic.updateTick == 0 ||
@@ -1778,60 +3077,281 @@ inline void entity_thread() {
                 hpdyentity.MeshBase = cachedDynamic.meshBase;
                 hpdyentity.POS = cachedDynamic.pos;
                 hpdy_entities.push_back(hpdyentity);
+                updateEntityRecordDynamic(
+                    ComponentParent,
+                    LinkParent,
+                    cachedDynamic,
+                    processLoopTick);
                 processStats.dynamic++;
                 continue;
             }
+            }
 
-            auto cacheIt = componentBaseCache.find(ComponentParent);
-            bool componentCacheHit =
-                cacheIt != componentBaseCache.end() &&
-                cacheIt->second.linkParent == LinkParent;
+            auto cacheIt = componentBaseCache.end();
+            bool componentCacheHit = false;
+            {
+                ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.baseCacheMs);
+                cacheIt = componentBaseCache.find(ComponentParent);
+                const bool componentCacheFound = cacheIt != componentBaseCache.end();
+                if (componentCacheFound && cacheIt->second.linkParent != LinkParent) {
+                    ++lifecycleStats.componentCacheInvalidateLinkChangeCount;
+                    recordComponentCacheLinkChangeDetails(
+                        ComponentParent,
+                        cacheIt->second,
+                        lifecycleStats);
 
-            if (componentCacheHit && !cacheIt->second.alive && cacheIt->second.health) {
-                OW::health_compo_t cachedHealth{};
-                if (SDK->read_range(cacheIt->second.health, &cachedHealth, sizeof(cachedHealth))) {
-                    const Vector2 cachedHealthExt = cachedHealth.health_ext;
-                    const float cachedTotalHealth =
-                        cachedHealth.health + cachedHealth.armor + cachedHealth.barrier + cachedHealthExt.Y;
-                    if (cachedTotalHealth > 0.0f) {
+                    bool retainedLinkChange = false;
+                    ++lifecycleStats.componentCacheLinkRetainAttemptCount;
+                    ComponentBaseCache& cachedBases = cacheIt->second;
+                    const DWORD refreshInterval = cachedBases.alive
+                        ? OW::kEntityLiveComponentRefreshMs
+                        : OW::kEntityDeadComponentRefreshMs;
+                    if (!linkChangeBaseRetainEnabled) {
+                        ++lifecycleStats.componentCacheLinkRetainRejectedDisabledCount;
+                    } else if (!entityRecordStoreEnabled) {
+                        ++lifecycleStats.componentCacheLinkRetainRejectedRecordStoreDisabledCount;
+                    } else if (!cachedBases.matchIdValid || cachedBases.matchId == 0) {
+                        ++lifecycleStats.componentCacheLinkRetainRejectedMissingMatchIdCount;
+                    } else if (cachedBases.baseUpdateTick == 0) {
+                        ++lifecycleStats.componentCacheLinkRetainRejectedIntervalCount;
+                    } else if (processLoopTick - cachedBases.baseUpdateTick >= refreshInterval &&
+                               !(baseDecryptLifetimeOnlyEnabled && cachedBases.alive)) {
+                        ++lifecycleStats.componentCacheLinkRetainRejectedIntervalCount;
+                    } else {
+                        if (baseDecryptLifetimeOnlyEnabled &&
+                            cachedBases.alive &&
+                            processLoopTick - cachedBases.baseUpdateTick >= refreshInterval) {
+                            ++lifecycleStats.componentCacheLinkRetainIntervalBypassedLifetimeCount;
+                        }
+                        const auto aliasIt = entityRecordKeyByComponent.find(ComponentParent);
+                        if (aliasIt == entityRecordKeyByComponent.end()) {
+                            ++lifecycleStats.componentCacheLinkRetainRejectedMissingRecordCount;
+                        } else {
+                            const auto recordIt = entityRecordStore.find(aliasIt->second);
+                            if (recordIt == entityRecordStore.end() ||
+                                !recordIt->second.basesValid ||
+                                !recordIt->second.publishedValid) {
+                                ++lifecycleStats.componentCacheLinkRetainRejectedMissingRecordCount;
+                            } else if (recordIt->second.componentParent != ComponentParent) {
+                                ++lifecycleStats.componentCacheLinkRetainRejectedComponentChangedCount;
+                            } else {
+                                OW::EntityHeaderSnapshot retainedLinkHeader{};
+                                if (!retainedLinkHeader.Read(LinkParent))
+                                    retainedLinkHeader = OW::EntityHeaderSnapshot{};
+                                const OW::EntityHeaderSnapshot* retainedLinkSnapshot =
+                                    retainedLinkHeader.valid ? &retainedLinkHeader : nullptr;
+
+                                auto refreshLinkBase =
+                                    [&](uint32_t type,
+                                        size_t& typeAttemptCount,
+                                        size_t& typeSuccessCount,
+                                        size_t& typeFailCount) {
+                                    ++pipelineStats.baseDecryptAttemptCount;
+                                    ++lifecycleStats.componentCacheLinkRetainRefreshDecryptAttemptCount;
+                                    ++typeAttemptCount;
+                                    const uint64_t value =
+                                        OW::DecryptComponent(LinkParent, type, retainedLinkSnapshot);
+                                    if (value) {
+                                        ++pipelineStats.baseDecryptSuccessCount;
+                                        ++lifecycleStats.componentCacheLinkRetainRefreshDecryptSuccessCount;
+                                        ++typeSuccessCount;
+                                    } else {
+                                        ++pipelineStats.baseDecryptFailCount;
+                                        ++lifecycleStats.componentCacheLinkRetainRefreshDecryptFailCount;
+                                        ++typeFailCount;
+                                    }
+                                    return value;
+                                };
+
+                                ScopedPipelinePhaseTimer retainDecryptTimer(pipelineStats.phase.baseDecryptMs);
+                                const uint64_t refreshedLink =
+                                    refreshLinkBase(
+                                        OW::TYPE_LINK,
+                                        lifecycleStats.componentCacheLinkRetainRefreshLinkAttemptCount,
+                                        lifecycleStats.componentCacheLinkRetainRefreshLinkSuccessCount,
+                                        lifecycleStats.componentCacheLinkRetainRefreshLinkFailCount);
+                                const uint64_t refreshedHero =
+                                    refreshLinkBase(
+                                        OW::TYPE_P_HEROID,
+                                        lifecycleStats.componentCacheLinkRetainRefreshHeroAttemptCount,
+                                        lifecycleStats.componentCacheLinkRetainRefreshHeroSuccessCount,
+                                        lifecycleStats.componentCacheLinkRetainRefreshHeroFailCount);
+                                const uint64_t refreshedVisibility =
+                                    refreshLinkBase(
+                                        OW::TYPE_P_VISIBILITY,
+                                        lifecycleStats.componentCacheLinkRetainRefreshVisibilityAttemptCount,
+                                        lifecycleStats.componentCacheLinkRetainRefreshVisibilitySuccessCount,
+                                        lifecycleStats.componentCacheLinkRetainRefreshVisibilityFailCount);
+                                const bool shouldRefreshAngle =
+                                    cachedBases.angle != 0 ||
+                                    recordIt->second.published.AngleBase != 0;
+                                uint64_t refreshedAngle = 0;
+                                if (shouldRefreshAngle) {
+                                    ++lifecycleStats.componentCacheLinkRetainRefreshAnglePriorCount;
+                                    refreshedAngle =
+                                        refreshLinkBase(
+                                            OW::TYPE_PLAYERCONTROLLER,
+                                            lifecycleStats.componentCacheLinkRetainRefreshAngleAttemptCount,
+                                            lifecycleStats.componentCacheLinkRetainRefreshAngleSuccessCount,
+                                            lifecycleStats.componentCacheLinkRetainRefreshAngleFailCount);
+                                } else {
+                                    ++lifecycleStats.componentCacheLinkRetainRefreshAngleSkippedNoPriorCount;
+                                }
+                                uint64_t previousHeroId = cachedBases.heroValid
+                                    ? cachedBases.heroId
+                                    : 0;
+                                if (previousHeroId == 0)
+                                    previousHeroId = recordIt->second.published.HeroID;
+
+                                uint64_t validatedHeroId = 0;
+                                const bool refreshedLinkBasesComplete =
+                                    refreshedLink && refreshedHero &&
+                                    refreshedVisibility &&
+                                    (!shouldRefreshAngle || refreshedAngle);
+                                if (refreshedHero) {
+                                    OW::hero_compo_t refreshedHeroCompo{};
+                                    if (SDK->read_range(
+                                            refreshedHero,
+                                            &refreshedHeroCompo,
+                                            sizeof(refreshedHeroCompo))) {
+                                        validatedHeroId = refreshedHeroCompo.heroid;
+                                    }
+                                }
+
+                                bool validatedFromCachedHero = false;
+                                if (validatedHeroId == 0 && cachedBases.hero) {
+                                    OW::hero_compo_t cachedHeroCompo{};
+                                    if (SDK->read_range(
+                                            cachedBases.hero,
+                                            &cachedHeroCompo,
+                                            sizeof(cachedHeroCompo))) {
+                                        validatedHeroId = cachedHeroCompo.heroid;
+                                        validatedFromCachedHero = validatedHeroId != 0;
+                                    }
+                                }
+
+                                if (previousHeroId == 0 || validatedHeroId == 0) {
+                                    ++lifecycleStats.componentCacheLinkRetainRejectedHeroUnknownCount;
+                                } else if (previousHeroId != validatedHeroId) {
+                                    ++lifecycleStats.componentCacheLinkRetainRejectedHeroChangedCount;
+                                } else {
+                                    bool canRetainLinkChange = false;
+                                    if (shouldRefreshAngle && !refreshedAngle) {
+                                        ++lifecycleStats.componentCacheLinkRetainRefreshAnglePriorFailRejectedCount;
+                                        ++lifecycleStats.componentCacheLinkRetainRejectedDecryptFailCount;
+                                    } else if (refreshedLinkBasesComplete) {
+                                        canRetainLinkChange = true;
+                                    } else if (validatedFromCachedHero) {
+                                        canRetainLinkChange = true;
+                                        ++lifecycleStats.componentCacheLinkRetainCachedHeroValidateCount;
+                                    } else {
+                                        ++lifecycleStats.componentCacheLinkRetainRejectedDecryptFailCount;
+                                    }
+
+                                    if (canRetainLinkChange) {
+                                        cachedBases.linkParent = LinkParent;
+                                        if (refreshedLinkBasesComplete) {
+                                            cachedBases.link = refreshedLink;
+                                            cachedBases.hero = refreshedHero;
+                                            cachedBases.visibility = refreshedVisibility;
+                                            if (shouldRefreshAngle)
+                                                cachedBases.angle = refreshedAngle;
+                                        }
+                                        cachedBases.heroId = validatedHeroId;
+                                        cachedBases.heroValid = true;
+                                        cachedBases.heroUpdateTick = processLoopTick;
+                                        cachedBases.nameTeamValid = false;
+                                        cachedBases.nameTeamUpdateTick = 0;
+                                        cachedBases.heroName = "Unknown";
+                                        cachedBases.retainedAcrossLinkChange = true;
+                                        cachedBases.linkRetainTick = processLoopTick;
+                                        ++cachedBases.linkRetainCount;
+                                        ++lifecycleStats.componentCacheLinkRetainSuccessCount;
+                                        retainedLinkChange = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!retainedLinkChange)
+                        invalidateEntityRecordBasesForComponent(ComponentParent);
+                }
+                componentCacheHit =
+                    componentCacheFound &&
+                    cacheIt->second.linkParent == LinkParent;
+
+                if (componentCacheHit && !cacheIt->second.alive && cacheIt->second.health) {
+                    OW::health_compo_t cachedHealth{};
+                    if (SDK->read_range(cacheIt->second.health, &cachedHealth, sizeof(cachedHealth))) {
+                        const Vector2 cachedHealthExt = cachedHealth.health_ext;
+                        const float cachedTotalHealth =
+                            cachedHealth.health + cachedHealth.armor + cachedHealth.barrier + cachedHealthExt.Y;
+                        if (cachedTotalHealth > 0.0f) {
+                            ++lifecycleStats.componentCacheInvalidateHealthResurrectCount;
+                            requestTopologyRescan(processLoopTick);
+                            invalidateEntityRecordBasesForComponent(ComponentParent);
+                            componentBaseCache.erase(cacheIt);
+                            cacheIt = componentBaseCache.end();
+                            componentCacheHit = false;
+                        }
+                    }
+                }
+                if (componentCacheHit) {
+                    const ComponentBaseCache& cachedBases = cacheIt->second;
+                    const DWORD refreshInterval = cachedBases.alive
+                        ? OW::kEntityLiveComponentRefreshMs
+                        : OW::kEntityDeadComponentRefreshMs;
+                    if (cachedBases.baseUpdateTick == 0 ||
+                        (processLoopTick - cachedBases.baseUpdateTick >= refreshInterval &&
+                         !(baseDecryptLifetimeOnlyEnabled && cachedBases.alive))) {
+                        ++lifecycleStats.componentCacheInvalidateIntervalCount;
+                        invalidateEntityRecordBasesForComponent(ComponentParent);
                         componentBaseCache.erase(cacheIt);
                         cacheIt = componentBaseCache.end();
                         componentCacheHit = false;
+                    } else if (baseDecryptLifetimeOnlyEnabled &&
+                               cachedBases.alive &&
+                               processLoopTick - cachedBases.baseUpdateTick >= refreshInterval) {
+                        ++lifecycleStats.componentCacheInvalidateIntervalSkippedLifetimeCount;
                     }
                 }
             }
             if (componentCacheHit) {
-                const ComponentBaseCache& cachedBases = cacheIt->second;
-                const DWORD refreshInterval = cachedBases.alive
-                    ? OW::kEntityLiveComponentRefreshMs
-                    : OW::kEntityDeadComponentRefreshMs;
-                if (cachedBases.baseUpdateTick == 0 ||
-                    processLoopTick - cachedBases.baseUpdateTick >= refreshInterval) {
-                    componentBaseCache.erase(cacheIt);
-                    cacheIt = componentBaseCache.end();
-                    componentCacheHit = false;
-                }
-            }
-            if (componentCacheHit)
                 dmaFieldWindow.componentCacheHit++;
-            else
+                pipelineStats.baseCacheHitCount++;
+                lifecycleStats.componentCacheHitCount++;
+            } else {
                 dmaFieldWindow.componentCacheMiss++;
+                pipelineStats.baseCacheMissCount++;
+                lifecycleStats.componentCacheMissCount++;
+            }
 
             OW::EntityHeaderSnapshot componentHeader{};
             OW::EntityHeaderSnapshot linkHeader{};
             const OW::EntityHeaderSnapshot* componentSnapshot = nullptr;
             const OW::EntityHeaderSnapshot* linkSnapshot = nullptr;
 
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.entityHeaderSpecialMs);
+            Diagnostics::ScopedDmaCallsite dmaTag(
+                Diagnostics::DmaCallsite::EntityHeaderSpecial);
             if (!componentCacheHit) {
                 dmaFieldWindow.componentHeaderRead++;
-                if (!componentHeader.Read(ComponentParent))
-                    dmaFieldWindow.componentHeaderReadFail++;
+                {
+                    ScopedPipelinePhaseTimer headerTimer(pipelineStats.phase.entityHeaderComponentMs);
+                    if (!componentHeader.Read(ComponentParent))
+                        dmaFieldWindow.componentHeaderReadFail++;
+                }
                 componentSnapshot = componentHeader.valid ? &componentHeader : nullptr;
                 linkSnapshot = componentSnapshot;
                 if (LinkParent != ComponentParent) {
                     dmaFieldWindow.linkHeaderRead++;
-                    if (!linkHeader.Read(LinkParent))
-                        dmaFieldWindow.linkHeaderReadFail++;
+                    {
+                        ScopedPipelinePhaseTimer headerTimer(pipelineStats.phase.entityHeaderLinkMs);
+                        if (!linkHeader.Read(LinkParent))
+                            dmaFieldWindow.linkHeaderReadFail++;
+                    }
                     linkSnapshot = linkHeader.valid ? &linkHeader : nullptr;
                 }
                 if (progressLog) {
@@ -1846,6 +3366,7 @@ inline void entity_thread() {
 
             // Check for special entity IDs (HP packs, Bob, etc.)
             if (!componentCacheHit) {
+                ScopedPipelinePhaseTimer specialTimer(pipelineStats.phase.entitySpecialProbeMs);
                 uint64_t ptrValue = 0;
                 if (!componentHeader.ReadParentOffset(0x30, ptrValue))
                     ptrValue = SDK->RPM<uint64_t>(ComponentParent + 0x30);
@@ -1872,61 +3393,138 @@ inline void entity_thread() {
                         dynamicCache.meshBase = hpdyentity.MeshBase;
                         dynamicCache.pos = hpdyentity.POS;
                         dynamicCache.updateTick = processLoopTick;
+                        const bool dynamicCacheReplacing =
+                            dynamicCacheExpiredByLinkChange ||
+                            dynamicEntityCache.find(ComponentParent) != dynamicEntityCache.end();
+                        if (dynamicCacheReplacing)
+                            ++lifecycleStats.dynamicCacheReplacedCount;
+                        else
+                            ++lifecycleStats.dynamicCacheCreatedCount;
                         dynamicEntityCache.insert_or_assign(ComponentParent, dynamicCache);
+                        updateEntityRecordDynamic(
+                            ComponentParent,
+                            LinkParent,
+                            dynamicCache,
+                            processLoopTick);
                         hpdy_entities.push_back(hpdyentity);
                         processStats.dynamic++;
                         continue;
                     }
                 }
             }
+            }
 
             // Component bases are stable for a live entity; cache them to avoid
             // repeating the expensive component-table decrypt path every cycle.
             if (!componentCacheHit) {
+                ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.baseDecryptMs);
+                Diagnostics::ScopedDmaCallsite dmaTag(
+                    Diagnostics::DmaCallsite::EntityBaseDecrypt);
+                constexpr double kBaseDecryptSlowCallThresholdMs = 50.0;
+                auto decryptBase = [&](uint64_t parent,
+                                       uint32_t type,
+                                       const OW::EntityHeaderSnapshot* snapshot,
+                                       bool fallback = false) {
+                    ++pipelineStats.baseDecryptAttemptCount;
+                    BaseDecryptCycleKey decryptKey{ parent, type };
+                    auto keyIt = baseDecryptCycleKeyCounts.find(decryptKey);
+                    if (keyIt == baseDecryptCycleKeyCounts.end()) {
+                        keyIt = baseDecryptCycleKeyCounts.emplace(decryptKey, 0).first;
+                        ++pipelineStats.baseDecryptUniqueKeyCount;
+                    } else {
+                        ++pipelineStats.baseDecryptDuplicateKeyCount;
+                    }
+                    const size_t keyCount = ++keyIt->second;
+                    if (keyCount > pipelineStats.baseDecryptMaxDuplicateKeyCount) {
+                        pipelineStats.baseDecryptMaxDuplicateKeyCount = keyCount;
+                        pipelineStats.baseDecryptMaxDuplicateKeyType = type;
+                        pipelineStats.baseDecryptMaxDuplicateKeyParent = parent;
+                    }
+                    if (fallback)
+                        ++pipelineStats.baseDecryptFallbackAttemptCount;
+                    const auto decryptStartedAt = std::chrono::steady_clock::now();
+                    const uint64_t value = OW::DecryptComponent(parent, type, snapshot);
+                    const double decryptElapsedMs = static_cast<double>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - decryptStartedAt).count()) / 1000.0;
+                    if (decryptElapsedMs >= kBaseDecryptSlowCallThresholdMs)
+                        ++pipelineStats.baseDecryptSlowCallCount;
+                    if (decryptElapsedMs > pipelineStats.baseDecryptMaxCallMs) {
+                        pipelineStats.baseDecryptMaxCallMs = decryptElapsedMs;
+                        pipelineStats.baseDecryptMaxCallType = type;
+                        pipelineStats.baseDecryptMaxCallParent = parent;
+                        pipelineStats.baseDecryptMaxCallSuccess = value != 0;
+                    }
+                    if (value) {
+                        ++pipelineStats.baseDecryptSuccessCount;
+                        if (fallback)
+                            ++pipelineStats.baseDecryptFallbackSuccessCount;
+                    } else {
+                        ++pipelineStats.baseDecryptFailCount;
+                        if (fallback)
+                            ++pipelineStats.baseDecryptFallbackFailCount;
+                    }
+                    return value;
+                };
                 ComponentBaseCache cache{};
                 cache.linkParent = LinkParent;
                 cache.baseUpdateTick = processLoopTick;
-                cache.health     = OW::DecryptComponent(ComponentParent, OW::TYPE_HEALTH, componentSnapshot);
-                cache.link       = OW::DecryptComponent(LinkParent, OW::TYPE_LINK, linkSnapshot);
-                cache.team       = OW::DecryptComponent(ComponentParent, OW::TYPE_TEAM, componentSnapshot);
-                cache.transform  = OW::DecryptComponent(ComponentParent, OW::TYPE_TRANSFORM, componentSnapshot);
-                cache.velocity   = OW::DecryptComponent(ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
-                cache.hero       = OW::DecryptComponent(LinkParent, OW::TYPE_P_HEROID, linkSnapshot);
-                cache.bone       = OW::DecryptComponent(ComponentParent, OW::TYPE_BONE, componentSnapshot);
-                cache.rotation   = OW::DecryptComponent(ComponentParent, OW::TYPE_ROTATION, componentSnapshot);
-                cache.skill      = OW::DecryptComponent(ComponentParent, OW::TYPE_SKILL, componentSnapshot);
-                cache.visibility = OW::DecryptComponent(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
-                cache.angle      = OW::DecryptComponent(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
-                cache.enemyAngle = OW::DecryptComponent(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
+                cache.health     = decryptBase(ComponentParent, OW::TYPE_HEALTH, componentSnapshot);
+                cache.link       = decryptBase(LinkParent, OW::TYPE_LINK, linkSnapshot);
+                cache.team       = decryptBase(ComponentParent, OW::TYPE_TEAM, componentSnapshot);
+                cache.transform  = decryptBase(ComponentParent, OW::TYPE_TRANSFORM, componentSnapshot);
+                cache.velocity   = decryptBase(ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
+                cache.hero       = decryptBase(LinkParent, OW::TYPE_P_HEROID, linkSnapshot);
+                cache.bone       = decryptBase(ComponentParent, OW::TYPE_BONE, componentSnapshot);
+                cache.rotation   = decryptBase(ComponentParent, OW::TYPE_ROTATION, componentSnapshot);
+                cache.skill      = decryptBase(ComponentParent, OW::TYPE_SKILL, componentSnapshot);
+                cache.visibility = decryptBase(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
+                cache.angle      = decryptBase(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
+                cache.enemyAngle = decryptBase(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
                 if (LinkParent != ComponentParent) {
                     if (!cache.health)
-                        cache.health = OW::DecryptComponent(LinkParent, OW::TYPE_HEALTH, linkSnapshot);
+                        cache.health = decryptBase(LinkParent, OW::TYPE_HEALTH, linkSnapshot, true);
                     if (!cache.team)
-                        cache.team = OW::DecryptComponent(LinkParent, OW::TYPE_TEAM, linkSnapshot);
+                        cache.team = decryptBase(LinkParent, OW::TYPE_TEAM, linkSnapshot, true);
                     if (!cache.transform)
-                        cache.transform = OW::DecryptComponent(LinkParent, OW::TYPE_TRANSFORM, linkSnapshot);
+                        cache.transform = decryptBase(LinkParent, OW::TYPE_TRANSFORM, linkSnapshot, true);
                     if (!cache.velocity)
-                        cache.velocity = OW::DecryptComponent(LinkParent, OW::TYPE_VELOCITY, linkSnapshot);
+                        cache.velocity = decryptBase(LinkParent, OW::TYPE_VELOCITY, linkSnapshot, true);
                     if (!cache.bone)
-                        cache.bone = OW::DecryptComponent(LinkParent, OW::TYPE_BONE, linkSnapshot);
+                        cache.bone = decryptBase(LinkParent, OW::TYPE_BONE, linkSnapshot, true);
                     if (!cache.rotation)
-                        cache.rotation = OW::DecryptComponent(LinkParent, OW::TYPE_ROTATION, linkSnapshot);
+                        cache.rotation = decryptBase(LinkParent, OW::TYPE_ROTATION, linkSnapshot, true);
                     if (!cache.skill)
-                        cache.skill = OW::DecryptComponent(LinkParent, OW::TYPE_SKILL, linkSnapshot);
+                        cache.skill = decryptBase(LinkParent, OW::TYPE_SKILL, linkSnapshot, true);
                     if (!cache.enemyAngle)
-                        cache.enemyAngle = OW::DecryptComponent(LinkParent, OW::TYPE_ANGLE, linkSnapshot);
+                        cache.enemyAngle = decryptBase(LinkParent, OW::TYPE_ANGLE, linkSnapshot, true);
                 }
                 cacheIt = componentBaseCache.insert_or_assign(ComponentParent, cache).first;
             }
 
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.entityCacheApplyMs);
             if (cacheIt->second.matchIdValid) {
                 entity.match_id = cacheIt->second.matchId;
             } else {
-                entity.match_id = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
+                {
+                    ScopedPipelinePhaseTimer matchIdTimer(pipelineStats.phase.entityCacheMatchIdMs);
+                    entity.match_id = SDK->RPM<uint32_t>(entity.address + offset::Entity_MatchId);
+                }
                 cacheIt->second.matchId = entity.match_id;
                 cacheIt->second.matchIdValid = true;
             }
             entity.roster_key = makeRosterKey(entity.match_id, LinkParent, ComponentParent);
+            {
+                ScopedPipelinePhaseTimer recordTimer(pipelineStats.phase.entityCacheRecordUpdateMs);
+                updateEntityRecordBases(
+                    entity.roster_key,
+                    ComponentParent,
+                    LinkParent,
+                    entity.match_id,
+                    cacheIt->second,
+                    processLoopTick);
+            }
 
             entity.HealthBase     = cacheIt->second.health;
             entity.LinkBase       = cacheIt->second.link;
@@ -1952,6 +3550,7 @@ inline void entity_thread() {
             if (!entity.LinkBase) {
                 cacheIt->second.baseUpdateTick = 0;
                 processStats.linkBaseFail++;
+                requestTopologyRescan(processLoopTick);
             }
 
             // Skip duplicates
@@ -1960,90 +3559,114 @@ inline void entity_thread() {
                 continue;
             }
             lastentity = entity;
+            }
 
             ComponentBaseCache& componentCache = cacheIt->second;
-            const bool refreshHealth =
+            bool refreshHealth = false;
+            bool refreshHero = false;
+            bool scatterCnNeVisibility = false;
+            uint64_t visibilityValueAddress = 0;
+            EntityHotFieldReads hotReads{};
+            OW::velocity_compo_t velo_compo{};
+            bool velocityRead = false;
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.entityHotFieldsMs);
+            Diagnostics::ScopedDmaCallsite dmaTag(
+                Diagnostics::DmaCallsite::EntityHotFields);
+            refreshHealth =
                 entity.HealthBase &&
                 (!componentCache.healthValid ||
                  processLoopTick - componentCache.healthUpdateTick >= OW::kEntityHealthIntervalMs);
-            const bool refreshHero =
+            refreshHero =
                 entity.HeroBase &&
                 (!componentCache.heroValid ||
                  componentCache.heroUpdateTick == 0 ||
                  processLoopTick - componentCache.heroUpdateTick >= OW::kEntityHeroIntervalMs);
             const auto& activeOffsets = offset::Active();
-            const bool scatterCnNeVisibility =
+            scatterCnNeVisibility =
                 offset::IsCnNeProfile() &&
                 activeOffsets.VisibilityValueOffset != 0 &&
                 entity.VisBase != 0;
-            const uint64_t visibilityValueAddress = scatterCnNeVisibility
+            visibilityValueAddress = scatterCnNeVisibility
                 ? entity.VisBase + activeOffsets.VisibilityValueOffset
                 : 0;
-            EntityHotFieldReads hotReads{};
-            bool hotReadsFromBatch = false;
-            if (componentCacheHit) {
-                const auto hotBatchIt = hotFieldBatchIndex.find(ComponentParent);
-                if (hotBatchIt != hotFieldBatchIndex.end()) {
-                    HotFieldBatchItem& item = hotFieldBatchItems[hotBatchIt->second];
-                    if (item.linkParent == LinkParent) {
-                        hotReads = item.reads;
-                        hotReadsFromBatch = true;
+                bool hotReadsFromBatch = false;
+                if (componentCacheHit) {
+                    const auto hotBatchIt = hotFieldBatchIndex.find(ComponentParent);
+                    if (hotBatchIt != hotFieldBatchIndex.end()) {
+                        HotFieldBatchItem& item = hotFieldBatchItems[hotBatchIt->second];
+                        if (item.linkParent == LinkParent) {
+                            hotReads = item.reads;
+                            hotReadsFromBatch = true;
+                        }
                     }
                 }
-            }
-            if (!hotReadsFromBatch) {
-                hotReads = readHotFields(
-                    hotFieldScatter,
-                    entity.VelocityBase,
-                    entity.VelocityBase != 0,
-                    entity.HealthBase,
-                    refreshHealth,
-                    entity.HeroBase,
-                    refreshHero,
-                    visibilityValueAddress,
-                    scatterCnNeVisibility);
-            }
+                if (!hotReadsFromBatch) {
+                    hotReads = readHotFields(
+                        hotFieldScatter,
+                        entity.VelocityBase,
+                        entity.VelocityBase != 0,
+                        entity.HealthBase,
+                        refreshHealth,
+                        entity.HeroBase,
+                        refreshHero,
+                        visibilityValueAddress,
+                        scatterCnNeVisibility);
+                }
 
-            if (hotReads.scatterExecuted) {
-                dmaFieldWindow.hotScatterExecute++;
-                if (!hotReads.scatterOk)
-                    dmaFieldWindow.hotScatterExecuteFail++;
-            }
+                if (hotReads.scatterExecuted) {
+                    dmaFieldWindow.hotScatterExecute++;
+                    if (!hotReads.scatterOk)
+                        dmaFieldWindow.hotScatterExecuteFail++;
+                }
 
-            OW::velocity_compo_t velo_compo = hotReads.velocity;
-            bool velocityRead = hotReads.VelocityRead();
-            if (entity.VelocityBase) {
-                dmaFieldWindow.velocityRequested++;
-                if (velocityRead)
-                    dmaFieldWindow.velocityScatterHit++;
-                else if (hotReads.velocityRequested && hotReads.scatterOk)
-                    dmaFieldWindow.velocityScatterPartial++;
-            }
-            if (entity.VelocityBase && !velocityRead) {
-                dmaFieldWindow.velocityFallback++;
-                velocityRead =
-                    SDK->read_range(entity.VelocityBase, &velo_compo, sizeof(velo_compo));
-                if (!velocityRead)
-                    dmaFieldWindow.velocityReadFail++;
+                velo_compo = hotReads.velocity;
+                velocityRead = hotReads.VelocityRead();
+                if (entity.VelocityBase) {
+                    dmaFieldWindow.velocityRequested++;
+                    if (velocityRead) {
+                        dmaFieldWindow.velocityScatterHit++;
+                        pipelineStats.hotScatterSuccessCount++;
+                    } else if (hotReads.velocityRequested && hotReads.scatterOk) {
+                        dmaFieldWindow.velocityScatterPartial++;
+                        pipelineStats.hotScatterPartialCount++;
+                    }
+                }
+                if (entity.VelocityBase && !velocityRead) {
+                    dmaFieldWindow.velocityFallback++;
+                    pipelineStats.hotScatterFallbackReadCount++;
+                    velocityRead =
+                        SDK->read_range(entity.VelocityBase, &velo_compo, sizeof(velo_compo));
+                    if (!velocityRead)
+                        dmaFieldWindow.velocityReadFail++;
+                }
             }
 
             // ---- Health ----
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.healthMs);
             if (entity.HealthBase) {
                 if (refreshHealth) {
                     dmaFieldWindow.healthRequested++;
                     OW::health_compo_t health_compo = hotReads.health;
                     bool healthRead = hotReads.HealthRead();
-                    if (healthRead)
+                    if (healthRead) {
                         dmaFieldWindow.healthScatterHit++;
-                    else if (hotReads.healthRequested && hotReads.scatterOk)
+                        pipelineStats.hotScatterSuccessCount++;
+                    } else if (hotReads.healthRequested && hotReads.scatterOk) {
                         dmaFieldWindow.healthScatterPartial++;
+                        pipelineStats.hotScatterPartialCount++;
+                    }
                     if (!healthRead) {
                         dmaFieldWindow.healthFallback++;
+                        pipelineStats.hotScatterFallbackReadCount++;
                         healthRead =
                             SDK->read_range(entity.HealthBase, &health_compo, sizeof(health_compo));
                     }
                     if (!healthRead) {
                         dmaFieldWindow.healthReadFail++;
+                        requestTopologyRescan(processLoopTick);
+                        invalidateEntityRecordBasesForComponent(ComponentParent);
                         componentBaseCache.erase(ComponentParent);
                         processStats.healthBaseFail++;
                         processStats.healthReadFail++;
@@ -2065,6 +3688,8 @@ inline void entity_thread() {
                         totalHealth <= totalHealthMax + 2000.0f;
                     if (offset::IsCnNeProfile() && !plausibleHealthLayout) {
                         dmaFieldWindow.healthLayoutFail++;
+                        requestTopologyRescan(processLoopTick);
+                        invalidateEntityRecordBasesForComponent(ComponentParent);
                         componentBaseCache.erase(ComponentParent);
                         processStats.healthBaseFail++;
                         processStats.healthReadFail++;
@@ -2111,12 +3736,27 @@ inline void entity_thread() {
                 entity.barrprot = componentCache.barrprot;
             } else {
                 dmaFieldWindow.healthBaseMissing++;
+                requestTopologyRescan(processLoopTick);
                 processStats.healthBaseFail++;
                 processStats.healthBaseMissing++;
                 recordHealthFailureSample(entity, ComponentParent, LinkParent, false);
                 Diagnostics::RecordInvalidEntity();
                 continue;
             }
+            }
+            auto isPlausibleBzPosition = [](const OW::Vector3& position) {
+                return std::isfinite(position.X) &&
+                       std::isfinite(position.Y) &&
+                       std::isfinite(position.Z) &&
+                       std::fabs(position.X) < 5000.0f &&
+                       std::fabs(position.Y) < 5000.0f &&
+                       std::fabs(position.Z) < 5000.0f &&
+                       position.DistTo(OW::Vector3(0, 0, 0)) > 1.0f;
+            };
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.entityRotationPositionMs);
+            Diagnostics::ScopedDmaCallsite dmaTag(
+                Diagnostics::DmaCallsite::EntityRotationPosition);
             entity.last_seen_tick_ms = processLoopTick;
             entity.missing_since_tick_ms = 0;
             entity.roster_state = entity.Alive
@@ -2132,15 +3772,6 @@ inline void entity_thread() {
             }
 
             // ---- Velocity / position / bones ----
-            auto isPlausibleBzPosition = [](const OW::Vector3& position) {
-                return std::isfinite(position.X) &&
-                       std::isfinite(position.Y) &&
-                       std::isfinite(position.Z) &&
-                       std::fabs(position.X) < 5000.0f &&
-                       std::fabs(position.Y) < 5000.0f &&
-                       std::fabs(position.Z) < 5000.0f &&
-                       position.DistTo(OW::Vector3(0, 0, 0)) > 1.0f;
-            };
             if (velocityRead) {
                 entity.pos      = Vector3(velo_compo.location.x, velo_compo.location.y - 1.f, velo_compo.location.z);
                 entity.velocity = Vector3(velo_compo.velocity.x, velo_compo.velocity.y, velo_compo.velocity.z);
@@ -2161,19 +3792,26 @@ inline void entity_thread() {
                     continue;
                 }
             }
+            }
 
             // ---- Hero ID ----
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.heroMs);
             if (entity.HeroBase) {
                 if (refreshHero) {
                     dmaFieldWindow.heroRequested++;
                     OW::hero_compo_t hero_compo = hotReads.hero;
                     bool heroRead = hotReads.HeroRead();
-                    if (heroRead)
+                    if (heroRead) {
                         dmaFieldWindow.heroScatterHit++;
-                    else if (hotReads.heroRequested && hotReads.scatterOk)
+                        pipelineStats.hotScatterSuccessCount++;
+                    } else if (hotReads.heroRequested && hotReads.scatterOk) {
                         dmaFieldWindow.heroScatterPartial++;
+                        pipelineStats.hotScatterPartialCount++;
+                    }
                     if (!heroRead) {
                         dmaFieldWindow.heroFallback++;
+                        pipelineStats.hotScatterFallbackReadCount++;
                         heroRead =
                             SDK->read_range(entity.HeroBase, &hero_compo, sizeof(hero_compo));
                     }
@@ -2192,6 +3830,8 @@ inline void entity_thread() {
                                 previousHeroId != 0 &&
                                 previousHeroId != newHeroId;
                             if (heroChanged) {
+                                ++lifecycleStats.componentCacheInvalidateHeroChangeCount;
+                                requestTopologyRescan(processLoopTick, true);
                                 componentCache.nameTeamValid = false;
                                 componentCache.nameTeamUpdateTick = 0;
                                 componentCache.skillValid = false;
@@ -2226,6 +3866,7 @@ inline void entity_thread() {
                         entity.HeroID = componentCache.heroId;
                     } else {
                         dmaFieldWindow.heroReadFail++;
+                        requestTopologyRescan(processLoopTick);
                     }
                 } else {
                     entity.HeroID = componentCache.heroId;
@@ -2283,9 +3924,11 @@ inline void entity_thread() {
                 } else {
                     dmaFieldWindow.heroFallbackFail++;
                     processStats.heroFallbackFail++;
+                    requestTopologyRescan(processLoopTick);
                     Diagnostics::RecordInvalidEntity();
                     continue;
                 }
+            }
             }
             if (progressLog) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu hero=0x%llX health=%.1f pos=(%.2f,%.2f,%.2f).",
@@ -2302,6 +3945,8 @@ inline void entity_thread() {
                 !entity.HeroBase &&
                 OW::GameData::IsTrainingBotHeroId(entity.HeroID);
 
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.skeletonMs);
             if (entity.VelocityBase &&
                 entity.HeroID != 0x16dd &&
                 entity.HeroID != 0x16ee &&
@@ -2310,9 +3955,48 @@ inline void entity_thread() {
                 if (entity.BoneBase)
                     processStats.boneBaseNonZero++;
 
-                const uint64_t velocityBoneData = velocityRead
-                    ? velo_compo.bonedata
-                    : SDK->RPM<uint64_t>(entity.VelocityBase + 0x8B0);
+                ComponentBaseCache& skeletonSlowCache = cacheIt->second;
+                constexpr double kSkeletonSlowCallThresholdMs = 50.0;
+                auto recordSkeletonCall = [&](double elapsedMs,
+                                              uint32_t op,
+                                              uint64_t observedVelocityBoneData,
+                                              bool cacheHit,
+                                              bool success) {
+                    if (elapsedMs >= kSkeletonSlowCallThresholdMs)
+                        ++pipelineStats.skeletonSlowCallCount;
+                    if (elapsedMs > pipelineStats.skeletonMaxCallMs) {
+                        pipelineStats.skeletonMaxCallMs = elapsedMs;
+                        pipelineStats.skeletonMaxCallOp = op;
+                        pipelineStats.skeletonMaxCallHeroId = entity.HeroID;
+                        pipelineStats.skeletonMaxCallEntity = entity.address;
+                        pipelineStats.skeletonMaxCallBoneBase = entity.BoneBase;
+                        pipelineStats.skeletonMaxCallVelocityBase = entity.VelocityBase;
+                        pipelineStats.skeletonMaxCallVelocityBoneData = observedVelocityBoneData;
+                        pipelineStats.skeletonMaxCallCacheHit = cacheHit;
+                        pipelineStats.skeletonMaxCallCacheValid =
+                            skeletonSlowCache.skeletonCache.valid;
+                        pipelineStats.skeletonMaxCallFallback =
+                            !skeletonSlowCache.skeletonCache.valid ||
+                            skeletonSlowCache.skeletonCache.maxMappedIndex < 0;
+                        pipelineStats.skeletonMaxCallMaxMappedIndex =
+                            skeletonSlowCache.skeletonCache.maxMappedIndex;
+                        pipelineStats.skeletonMaxCallSuccess = success;
+                    }
+                };
+
+                uint64_t velocityBoneData = 0;
+                if (velocityRead) {
+                    velocityBoneData = velo_compo.bonedata;
+                } else {
+                    const auto velocityReadStartedAt = std::chrono::steady_clock::now();
+                    velocityBoneData = SDK->RPM<uint64_t>(entity.VelocityBase + 0x8B0);
+                    const double velocityReadMs = static_cast<double>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - velocityReadStartedAt).count()) /
+                        1000.0;
+                    pipelineStats.phase.skeletonVelocityReadMs += velocityReadMs;
+                    recordSkeletonCall(velocityReadMs, 1, velocityBoneData, false, velocityBoneData != 0);
+                }
 
                 if (detailedProcessLog) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu bone_start hero=0x%llX velocity=0x%llX bone=0x%llX vbd=0x%llX bones_base=0x%llX.",
@@ -2323,7 +4007,82 @@ inline void entity_thread() {
                         static_cast<unsigned long long>(velocityBoneData),
                         0ull);
                 }
-                entity.CacheSkeletonBones(cacheIt->second.skeletonCache, velocityBoneData);
+                const bool forceLocalSkeletonRefresh = entity.AngleBase != 0;
+                const bool refreshSkeleton =
+                    forceLocalSkeletonRefresh ||
+                    consumeCycleBudget(skeletonRefreshBudget);
+                if (!refreshSkeleton && skeletonSlowCache.cachedSkeletonValid) {
+                    entity.skeleton_bones = skeletonSlowCache.cachedSkeletonBones;
+                    entity.skeleton_bone_valid = skeletonSlowCache.cachedSkeletonBoneValid;
+                    entity.cached_bot_chest_bone = skeletonSlowCache.cachedBotChestBone;
+                    entity.cached_bot_chest_bone_valid =
+                        skeletonSlowCache.cachedBotChestBoneValid;
+                    if (entity.pos != OW::Vector3(0, 0, 0) &&
+                        skeletonSlowCache.cachedSkeletonPos != OW::Vector3(0, 0, 0)) {
+                        const OW::Vector3 skeletonDelta =
+                            entity.pos - skeletonSlowCache.cachedSkeletonPos;
+                        for (size_t boneIndex = 0;
+                             boneIndex < entity.skeleton_bones.size();
+                             ++boneIndex) {
+                            if (entity.skeleton_bone_valid[boneIndex])
+                                entity.skeleton_bones[boneIndex] += skeletonDelta;
+                        }
+                        if (entity.cached_bot_chest_bone_valid)
+                            entity.cached_bot_chest_bone += skeletonDelta;
+                    }
+                } else {
+                    const bool skeletonCacheHit =
+                        skeletonSlowCache.skeletonCache.valid &&
+                        skeletonSlowCache.skeletonCache.heroId == entity.HeroID &&
+                        (!velocityBoneData ||
+                         skeletonSlowCache.skeletonCache.boneData == velocityBoneData);
+                    if (skeletonCacheHit)
+                        pipelineStats.skeletonCacheHitCount++;
+                    else
+                        pipelineStats.skeletonCacheMissCount++;
+                    const auto cacheSkeletonStartedAt = std::chrono::steady_clock::now();
+                    entity.CacheSkeletonBones(
+                        skeletonSlowCache.skeletonCache,
+                        velocityBoneData);
+                    const double cacheSkeletonMs = static_cast<double>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - cacheSkeletonStartedAt).count()) /
+                        1000.0;
+                    pipelineStats.phase.skeletonCacheCallMs += cacheSkeletonMs;
+                    const bool refreshedAnyBoneValid = std::any_of(
+                        entity.skeleton_bone_valid.begin(),
+                        entity.skeleton_bone_valid.end(),
+                        [](bool valid) { return valid; });
+                    recordSkeletonCall(
+                        cacheSkeletonMs,
+                        2,
+                        velocityBoneData,
+                        skeletonCacheHit,
+                        refreshedAnyBoneValid);
+                    if (skeletonSlowCache.skeletonCache.valid &&
+                        skeletonSlowCache.skeletonCache.maxMappedIndex >= 0) {
+                        constexpr size_t kObservedBoneStride = 0x30;
+                        pipelineStats.skeletonBlockReadBytes +=
+                            kObservedBoneStride *
+                            static_cast<size_t>(
+                                skeletonSlowCache.skeletonCache.maxMappedIndex) +
+                            sizeof(XMFLOAT3);
+                    } else {
+                        pipelineStats.skeletonFallbackGetBonePosCount++;
+                        pipelineStats.skeletonExactBoneReadCount += 3;
+                    }
+
+                    skeletonSlowCache.cachedSkeletonBones = entity.skeleton_bones;
+                    skeletonSlowCache.cachedSkeletonBoneValid =
+                        entity.skeleton_bone_valid;
+                    skeletonSlowCache.cachedSkeletonPos = entity.pos;
+                    skeletonSlowCache.cachedBotChestBone =
+                        entity.cached_bot_chest_bone;
+                    skeletonSlowCache.cachedBotChestBoneValid =
+                        entity.cached_bot_chest_bone_valid;
+                    skeletonSlowCache.cachedSkeletonValid = refreshedAnyBoneValid;
+                    skeletonSlowCache.skeletonUpdateTick = processLoopTick;
+                }
 
                 if (entity.debugHeadBoneData)
                     processStats.velocityBoneDataNonZero++;
@@ -2451,21 +4210,49 @@ inline void entity_thread() {
             if (entity.HeroID == OW::eHero::HERO_WRECKINGBALL) {
                 entity.head_pos.Y += 0.02f;
             }
+            }
 
             ComponentBaseCache& slowCache = cacheIt->second;
+            const auto teamNamePhaseStartedAt = std::chrono::steady_clock::now();
+            constexpr double kTeamNameSlowCallThresholdMs = 50.0;
+            auto recordTeamNameCall = [&](double elapsedMs, uint32_t op, bool success) {
+                if (elapsedMs >= kTeamNameSlowCallThresholdMs)
+                    ++pipelineStats.teamNameSlowCallCount;
+                if (elapsedMs > pipelineStats.teamNameMaxCallMs) {
+                    pipelineStats.teamNameMaxCallMs = elapsedMs;
+                    pipelineStats.teamNameMaxCallOp = op;
+                    pipelineStats.teamNameMaxCallHeroId = entity.HeroID;
+                    pipelineStats.teamNameMaxCallLinkBase = entity.LinkBase;
+                    pipelineStats.teamNameMaxCallTeamBase = entity.TeamBase;
+                    pipelineStats.teamNameMaxCallSuccess = success;
+                }
+            };
             const DWORD slowNow = GetTickCount();
-            const bool refreshNameTeam =
+            bool refreshNameTeam =
                 !slowCache.nameTeamValid ||
                 slowNow - slowCache.nameTeamUpdateTick >= OW::kEntityTeamNameIntervalMs;
-            const bool refreshSkillStatus =
+            if (refreshNameTeam && !consumeCycleBudget(teamNameRefreshBudget))
+                refreshNameTeam = false;
+            bool refreshSkillStatus =
                 !slowCache.skillValid ||
                 slowNow - slowCache.skillUpdateTick >= OW::kEntitySkillStatusIntervalMs;
+            if (refreshSkillStatus && !consumeCycleBudget(skillRefreshBudget))
+                refreshSkillStatus = false;
             const bool refreshLocalSkillStatus =
                 !slowCache.localSkillValid ||
                 slowNow - slowCache.localSkillUpdateTick >= OW::kEntityLocalSkillIntervalMs;
-            std::string name = refreshNameTeam
-                ? OW::GetHeroEngNames(entity.HeroID, entity.LinkBase)
-                : slowCache.heroName;
+            std::string name;
+            if (refreshNameTeam) {
+                const auto heroLookupStartedAt = std::chrono::steady_clock::now();
+                name = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
+                const double heroLookupMs = static_cast<double>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - heroLookupStartedAt).count()) / 1000.0;
+                pipelineStats.phase.teamNameHeroLookupMs += heroLookupMs;
+                recordTeamNameCall(heroLookupMs, 1, !name.empty());
+            } else {
+                name = slowCache.heroName;
+            }
             if (name.empty())
                 name = "Unknown";
 
@@ -2478,10 +4265,16 @@ inline void entity_thread() {
 
             bool isStandardBot = OW::GameData::IsTrainingBotHeroId(entity.HeroID);
             if (isStandardBot) {
+                const auto botAdjustStartedAt = std::chrono::steady_clock::now();
                 if (entity.cached_bot_chest_bone_valid)
                     entity.chest_pos = entity.cached_bot_chest_bone;
                 else
                     entity.chest_pos = entity.GetBonePos(83);
+                const double botAdjustMs = static_cast<double>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - botAdjustStartedAt).count()) / 1000.0;
+                pipelineStats.phase.teamNameBotAdjustMs += botAdjustMs;
+                recordTeamNameCall(botAdjustMs, 2, true);
             }
             if (detailedProcessLog && processStats.boneCandidates > 0) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu post_bone_adjust.", i);
@@ -2489,6 +4282,7 @@ inline void entity_thread() {
 
             // ---- BattleTag (optional) ----
             if (OW::Config::drawbattletag) {
+                const auto battleTagStartedAt = std::chrono::steady_clock::now();
                 entity.statcombase = OW::DecryptComponent(LinkParent, OW::TYPE_STAT, linkSnapshot);
                 if (entity.statcombase && entity != localCycleSnapshot) {
                     uintptr_t off = SDK->RPM<uintptr_t>(entity.statcombase + 0xE0);
@@ -2496,6 +4290,11 @@ inline void entity_thread() {
                     SDK->read_buf(off, buffer, sizeof(buffer));
                     entity.battletag = buffer;
                 }
+                const double battleTagMs = static_cast<double>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - battleTagStartedAt).count()) / 1000.0;
+                pipelineStats.phase.teamNameBattleTagMs += battleTagMs;
+                recordTeamNameCall(battleTagMs, 3, entity.statcombase != 0);
             }
             if (detailedProcessLog && processStats.boneCandidates > 0) {
                 Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu post_battletag.", i);
@@ -2507,15 +4306,21 @@ inline void entity_thread() {
             } else if (entity.TeamBase) {
                 dmaFieldWindow.teamRefresh++;
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
-                    Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu team_start team_base=0x%llX local_team_base=0x%llX.",
+                Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu team_start team_base=0x%llX local_team_base=0x%llX.",
                         i,
                         static_cast<unsigned long long>(entity.TeamBase),
                         static_cast<unsigned long long>(localCycleSnapshot.TeamBase));
                 }
+                const auto teamReadStartedAt = std::chrono::steady_clock::now();
                 auto team = entity.GetTeam();
                 entity.Team = (team == OW::eTeam::TEAM_DEATHMATCH || !entity.SameTeamAs(localCycleSnapshot));
                 if (OW::offset::IsCnNeProfile() && OW::GameData::IsFriendlyTrainingBotHeroId(entity.HeroID))
                     entity.Team = false;
+                const double teamReadMs = static_cast<double>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - teamReadStartedAt).count()) / 1000.0;
+                pipelineStats.phase.teamNameTeamReadMs += teamReadMs;
+                recordTeamNameCall(teamReadMs, 4, true);
                 slowCache.isEnemy = entity.Team;
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu team_done team=%d enemy=%d.",
@@ -2524,10 +4329,15 @@ inline void entity_thread() {
                         entity.Team ? 1 : 0);
                 }
             }
+            pipelineStats.phase.teamNameMs += static_cast<double>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - teamNamePhaseStartedAt).count()) / 1000.0;
 
             // ---- Visibility (refreshed every frame) ----
             // DecryptVis owns profile-specific polarity. CN/NE uses visComp+0x98
             // as a live-verified raw bool state: raw == 1 means visible.
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.visibilityMs);
             if (entity.VisBase) {
                 uint64_t rawVis = 0;
                 bool rawVisRead = false;
@@ -2537,10 +4347,16 @@ inline void entity_thread() {
                     rawVisRead = hotReads.VisibilityRead();
                     if (rawVisRead) {
                         dmaFieldWindow.visibilityScatterHit++;
+                        pipelineStats.hotScatterSuccessCount++;
+                        pipelineStats.visibilityScatterHitCount++;
                     } else {
-                        if (hotReads.visibilityRequested && hotReads.scatterOk)
+                        if (hotReads.visibilityRequested && hotReads.scatterOk) {
                             dmaFieldWindow.visibilityScatterPartial++;
+                            pipelineStats.hotScatterPartialCount++;
+                        }
                         dmaFieldWindow.visibilityFallback++;
+                        pipelineStats.hotScatterFallbackReadCount++;
+                        pipelineStats.visibilityFallbackCount++;
                         rawVisRead = SDK->read_range(
                             visibilityValueAddress,
                             &rawVis,
@@ -2571,32 +4387,53 @@ inline void entity_thread() {
             } else {
                 dmaFieldWindow.visibilityBaseMissing++;
             }
+            }
 
             // ---- Skills ----
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.skillMs);
             if (!refreshSkillStatus) {
+                pipelineStats.skillSkippedNotDueCount++;
                 entity.skill1act = slowCache.skill1act;
                 entity.skill2act = slowCache.skill2act;
                 entity.ultimate = slowCache.ultimate;
                 entity.skillcd1 = slowCache.skillcd1;
                 entity.skillcd2 = slowCache.skillcd2;
             } else if (entity.SkillBase) {
+                pipelineStats.skillDueCount++;
                 dmaFieldWindow.skillRefresh++;
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu skill_start skill_base=0x%llX.",
                         i,
                         static_cast<unsigned long long>(entity.SkillBase));
                 }
-                entity.skill1act = OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E3);
-                entity.skill2act = OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E9);
-                entity.ultimate  = OW::readult(entity.SkillBase + 0x40, 0, 0x1e32);
-                slowCache.skill1act = entity.skill1act;
-                slowCache.skill2act = entity.skill2act;
-                slowCache.ultimate = entity.ultimate;
-                slowCache.skillUpdateTick = slowNow;
-                slowCache.skillValid = true;
+                switch (slowCache.skillRefreshCursor % 3) {
+                case 0:
+                    slowCache.skill1act =
+                        OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E3);
+                    break;
+                case 1:
+                    slowCache.skill2act =
+                        OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E9);
+                    break;
+                default:
+                    slowCache.ultimate =
+                        OW::readult(entity.SkillBase + 0x40, 0, 0x1e32);
+                    break;
+                }
+                ++slowCache.skillRefreshCursor;
+                pipelineStats.skillReadCount++;
+                if (slowCache.skillRefreshCursor % 3 == 0) {
+                    slowCache.skillUpdateTick = slowNow;
+                    slowCache.skillValid = true;
+                }
+                entity.skill1act = slowCache.skill1act;
+                entity.skill2act = slowCache.skill2act;
+                entity.ultimate = slowCache.ultimate;
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu skill_done.", i);
                 }
+            }
             }
 
             // Sombra stealth affects the effective visibility state, so keep it
@@ -2610,6 +4447,8 @@ inline void entity_thread() {
             // AngleBase is produced from the PlayerController component and is
             // the primary local-player anchor. Camera proximity remains a
             // secondary diagnostic fallback.
+            {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.localSelectMs);
             if (entity.AngleBase) {
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_start angle=0x%llX.",
@@ -2674,25 +4513,49 @@ inline void entity_thread() {
                     (isNearCamera && hasKnownName);
 
                 if (shouldSelectLocal) {
-                    if (refreshLocalSkillStatus && !refreshSkillStatus && entity.SkillBase) {
+                    if (refreshLocalSkillStatus && entity.SkillBase) {
+                        pipelineStats.skillDueCount++;
                         dmaFieldWindow.skillRefresh++;
-                        entity.skill1act = OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E3);
-                        entity.skill2act = OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E9);
-                        entity.ultimate = OW::readult(entity.SkillBase + 0x40, 0, 0x1e32);
-                        slowCache.skill1act = entity.skill1act;
-                        slowCache.skill2act = entity.skill2act;
-                        slowCache.ultimate = entity.ultimate;
-                        slowCache.skillUpdateTick = slowNow;
-                        slowCache.skillValid = true;
+                        switch (slowCache.localSkillRefreshCursor % 6) {
+                        case 0:
+                            slowCache.skillcd1 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x189c);
+                            break;
+                        case 1:
+                            slowCache.skillcd2 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x1f89);
+                            break;
+                        case 2:
+                            slowCache.reloading = OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x4BF);
+                            break;
+                        case 3:
+                            slowCache.skill1act = OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E3);
+                            slowCache.skillValid = true;
+                            slowCache.skillUpdateTick = slowNow;
+                            break;
+                        case 4:
+                            slowCache.skill2act = OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E9);
+                            slowCache.skillValid = true;
+                            slowCache.skillUpdateTick = slowNow;
+                            break;
+                        default:
+                            slowCache.ultimate = OW::readult(entity.SkillBase + 0x40, 0, 0x1e32);
+                            slowCache.skillValid = true;
+                            slowCache.skillUpdateTick = slowNow;
+                            break;
+                        }
+                        ++slowCache.localSkillRefreshCursor;
+                        pipelineStats.skillReadCount++;
+                        slowCache.localSkillUpdateTick = slowNow;
+                        slowCache.localSkillValid = true;
                     }
+                    entity.skill1act = slowCache.skill1act;
+                    entity.skill2act = slowCache.skill2act;
+                    entity.ultimate = slowCache.ultimate;
                     if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_start skill_base=0x%llX hero=%s.",
                             i,
                             static_cast<unsigned long long>(entity.SkillBase),
                             localHeroName.c_str());
                     }
-                    if (refreshLocalSkillStatus)
-                        slowCache.skillcd1 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x189c);
                     entity.skillcd1 = slowCache.skillcd1;
                     if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_done value=%.3f.",
@@ -2702,8 +4565,6 @@ inline void entity_thread() {
                     if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd2_start.", i);
                     }
-                    if (refreshLocalSkillStatus)
-                        slowCache.skillcd2 = OW::readskillcd(entity.SkillBase + 0x40, 0, 0x1f89);
                     entity.skillcd2 = slowCache.skillcd2;
                     if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd2_done value=%.3f.",
@@ -2724,23 +4585,18 @@ inline void entity_thread() {
                     if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select reload_start.", i);
                     }
-                    if (refreshLocalSkillStatus)
-                        slowCache.reloading = OW::IsSkillActivate1(entity.SkillBase + 0x40, 0, 0x4BF);
                     OW::Config::reloading = slowCache.reloading;
-                    if (refreshLocalSkillStatus) {
-                        slowCache.localSkillUpdateTick = slowNow;
-                        slowCache.localSkillValid = true;
-                    }
                     if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select reload_done.", i);
                     }
-                    if (entity.GetTeam() == OW::eTeam::TEAM_DEATHMATCH)
-                        entity.Team = false;
+                    entity.Team = false;
+                    slowCache.isEnemy = false;
                 }
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_done selected=%zu.",
                         i, localStats.selected);
                 }
+            }
             }
 
             // Add to list if valid
@@ -2769,6 +4625,37 @@ inline void entity_thread() {
                 entity.missing_since_tick_ms = 0;
                 if (entity.roster_state == OW::EntityRosterState::Dead)
                     sanitizeStaleRosterEntity(entity);
+                const auto existingRosterIt = entityRoster.find(entity.roster_key);
+                if (existingRosterIt == entityRoster.end()) {
+                    ++lifecycleStats.entityRecordCreatedCount;
+                    if (entity.roster_state == OW::EntityRosterState::Dead)
+                        ++lifecycleStats.entityRecordMarkDeadCount;
+                } else {
+                    const OW::c_entity& previousRosterEntity = existingRosterIt->second.entity;
+                    if (previousRosterEntity.address != 0 &&
+                        previousRosterEntity.address != entity.address) {
+                        ++lifecycleStats.entityRecordUpdatedActorCount;
+                    }
+                    if (previousRosterEntity.LinkParent != 0 &&
+                        previousRosterEntity.LinkParent != entity.LinkParent) {
+                        ++lifecycleStats.entityRecordLinkChangedCount;
+                        if (previousRosterEntity.address == entity.address)
+                            ++lifecycleStats.entityRecordLinkChangedSameComponentCount;
+                        else
+                            ++lifecycleStats.entityRecordLinkChangedComponentChangedCount;
+                        if (previousRosterEntity.HeroID == 0 || entity.HeroID == 0)
+                            ++lifecycleStats.entityRecordLinkChangedHeroUnknownCount;
+                        else if (previousRosterEntity.HeroID == entity.HeroID)
+                            ++lifecycleStats.entityRecordLinkChangedSameHeroCount;
+                        else
+                            ++lifecycleStats.entityRecordLinkChangedHeroChangedCount;
+                        recordRosterLinkChangeKeyKind(entity.roster_key, lifecycleStats);
+                    }
+                    if (entity.roster_state == OW::EntityRosterState::Dead &&
+                        previousRosterEntity.roster_state != OW::EntityRosterState::Dead) {
+                        ++lifecycleStats.entityRecordMarkDeadCount;
+                    }
+                }
                 RosterEntry& rosterEntry = entityRoster[entity.roster_key];
 
                 if (entity.roster_state == OW::EntityRosterState::Fresh &&
@@ -2827,6 +4714,8 @@ inline void entity_thread() {
             }
         }
 
+        }
+
         if (hotFieldScatter)
             mem.CloseScatterHandle(hotFieldScatter);
 
@@ -2836,9 +4725,28 @@ inline void entity_thread() {
         processStats.validated = valid_count;
         processStats.dynamic = dynamic_count;
         std::vector<OW::c_entity> published_entities{};
-        Diagnostics::RosterStats rosterStats =
-            publishRosterSnapshot(processLoopTick, heroChangedThisCycle, published_entities);
-        const size_t published_count = published_entities.size();
+        Diagnostics::RosterStats rosterStats{};
+        size_t published_count = 0;
+        {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.publishMs);
+            rosterStats =
+                publishRosterSnapshot(
+                    processLoopTick,
+                    heroChangedThisCycle,
+                    published_entities,
+                    &lifecycleStats);
+            published_count = published_entities.size();
+            OW::TargetingDetail::PublishEntitySnapshots(
+                std::move(published_entities),
+                std::move(hpdy_entities));
+        }
+        {
+            ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.recordSyncMs);
+            syncEntityRecordStoreFromRoster(processLoopTick, lifecycleStats);
+        }
+        pipelineStats.rawCount = raw_entities.size();
+        pipelineStats.validatedCount = valid_count;
+        pipelineStats.publishedCount = published_count;
         dmaFieldWindow.cycles++;
         dmaFieldWindow.raw += raw_entities.size();
         dmaFieldWindow.validated += valid_count;
@@ -2851,12 +4759,13 @@ inline void entity_thread() {
         const bool suspectStaleScan =
             (valid_count == 0 && !raw_entities.empty()) ||
             (previousProcessedValidCount > 0 && valid_count + 1 < previousProcessedValidCount);
-        OW::TargetingDetail::PublishEntitySnapshots(
-            std::move(published_entities),
-            std::move(hpdy_entities));
         if (suspectStaleScan) {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
+            if (coldTopologyScanEnabled) {
+                requestTopologyRescan(processLoopTick, true);
+            } else {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
+            }
         }
         previousProcessedValidCount = valid_count;
         Diagnostics::SetEntityCount(published_count);
@@ -2866,6 +4775,7 @@ inline void entity_thread() {
         maybeLogDmaFieldWindow(processLoopTick);
         if (matchIdLogEnabled)
             matchIdLogEnabled = false;
+        finalizePipelineProcessStats(pipelineStats, pipelineDmaStart, pipelineCycleStartedAt);
         Diagnostics::Trace("Entity process cycle: valid=%zu hp_dynamic=%zu raw=%zu.",
             valid_count, dynamic_count, raw_entities.size());
         if (OW::PipelineDebugEnabled()) {
@@ -2998,8 +4908,71 @@ inline void entity_thread() {
 // View matrix reader thread
 // =========================================================================
 
+inline DWORD ViewMatrixPollSleepMs() {
+    static const DWORD cachedSleepMs = []() -> DWORD {
+        char buffer[32] = {};
+        const DWORD length = GetEnvironmentVariableA(
+            "UN_DMA_VIEWMATRIX_SLEEP_MS",
+            buffer,
+            static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return 5;
+
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(buffer, &end, 0);
+        if (end == buffer || value == 0)
+            return 5;
+
+        return static_cast<DWORD>((std::min)(100UL, (std::max)(1UL, value)));
+    }();
+    return cachedSleepMs;
+}
+
+inline DWORD ViewMatrixScanBackoffMs() {
+    static const DWORD cachedBackoffMs = []() -> DWORD {
+        char buffer[32] = {};
+        const DWORD length = GetEnvironmentVariableA(
+            "UN_DMA_VIEWMATRIX_SCAN_BACKOFF_MS",
+            buffer,
+            static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return 0;
+
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(buffer, &end, 0);
+        if (end == buffer || (end && *end != '\0'))
+            return 0;
+
+        return static_cast<DWORD>((std::min)(100UL, value));
+    }();
+    return cachedBackoffMs;
+}
+
+inline DWORD ViewMatrixScanDueGuardMs() {
+    static const DWORD cachedGuardMs = []() -> DWORD {
+        char buffer[32] = {};
+        const DWORD length = GetEnvironmentVariableA(
+            "UN_DMA_VIEWMATRIX_SCAN_DUE_GUARD_MS",
+            buffer,
+            static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0 || length >= sizeof(buffer))
+            return 0;
+
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(buffer, &end, 0);
+        if (end == buffer || (end && *end != '\0'))
+            return 0;
+
+        return static_cast<DWORD>((std::min)(100UL, value));
+    }();
+    return cachedGuardMs;
+}
+
 inline void viewmatrix_thread() {
     Diagnostics::ScopedDmaCallsite::Push(Diagnostics::DmaCallsite::ViewMatrix);
+    const DWORD pollSleepMs = ViewMatrixPollSleepMs();
+    const DWORD scanBackoffMs = ViewMatrixScanBackoffMs();
+    const DWORD scanDueGuardMs = ViewMatrixScanDueGuardMs();
     DWORD lastViewMatrixLogTick = 0;
     bool hasLastViewMatrixStatus = false;
     bool lastViewMatrixValid = false;
@@ -3011,6 +4984,20 @@ inline void viewmatrix_thread() {
                 Diagnostics::SetViewMatrixStatus(false, false);
                 publishState = {};
                 Sleep(100);
+                continue;
+            }
+
+            if (scanBackoffMs > 0 && OW::IsEntityScanDmaActive()) {
+                OW::RecordViewMatrixScanBackoff();
+                Sleep(scanBackoffMs);
+                continue;
+            }
+
+            const DWORD scanDueGuardSleepMs =
+                OW::EntityScanDueGuardSleepMs(GetTickCount(), scanDueGuardMs);
+            if (scanDueGuardSleepMs > 0) {
+                OW::RecordViewMatrixScanDueGuard();
+                Sleep(scanDueGuardSleepMs);
                 continue;
             }
 
@@ -3035,7 +5022,7 @@ inline void viewmatrix_thread() {
                     directViewMatrixRoot ? "direct root pointer" : "encrypted base pointer",
                     root,
                     lastViewMatrixLogTick);
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
             uint64_t dec = directViewMatrixRoot
@@ -3048,7 +5035,7 @@ inline void viewmatrix_thread() {
                         ^ activeOffsets.offset_viewmatrix_xor_key2));
             if (!dec) {
                 OW::RecordViewMatrixUnresolved("decoded base pointer", dec, lastViewMatrixLogTick);
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
 
@@ -3060,11 +5047,25 @@ inline void viewmatrix_thread() {
                     ? dec + activeOffsets.VM_ViewMatrix
                     : 0;
 
-                OW::Matrix renderViewProjection = SDK->RPM<OW::Matrix>(viewMatrixPtr);
+                OW::Matrix renderViewProjection{};
+                if (OW::offset::ActiveProfile() == OW::offset::RuntimeProfile::WorldBz &&
+                    activeOffsets.VM_DirectMatrix == OW::offset::Bz151177_DirectViewProjectionMatrix) {
+                    uint64_t dynamicViewMatrixPtr = 0;
+                    if (OW::TrySelectBz151177DynamicViewProjection(
+                            dec,
+                            renderViewProjection,
+                            dynamicViewMatrixPtr)) {
+                        viewMatrixPtr = dynamicViewMatrixPtr;
+                    } else {
+                        renderViewProjection = SDK->RPM<OW::Matrix>(viewMatrixPtr);
+                    }
+                } else {
+                    renderViewProjection = SDK->RPM<OW::Matrix>(viewMatrixPtr);
+                }
                 const bool renderViewProjectionValid = OW::IsMatrixNonIdentity(renderViewProjection);
                 if (!renderViewProjectionValid) {
                     OW::RecordViewMatrixUnresolved("direct render view-projection", viewMatrixPtr, lastViewMatrixLogTick);
-                    Sleep(5);
+                    Sleep(pollSleepMs);
                     continue;
                 }
 
@@ -3093,7 +5094,7 @@ inline void viewmatrix_thread() {
                         hasLastViewMatrixStatus,
                         lastViewMatrixValid,
                         lastViewMatrixLogTick);
-                    Sleep(5);
+                    Sleep(pollSleepMs);
                     continue;
                 }
 
@@ -3106,20 +5107,20 @@ inline void viewmatrix_thread() {
                     lastViewMatrixValid,
                     lastViewMatrixLogTick);
 
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
 
             uint64_t p1 = SDK->RPM<uint64_t>(dec + activeOffsets.VM_P1);
             if (!p1) {
                 OW::RecordViewMatrixUnresolved("p1", p1, lastViewMatrixLogTick);
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
             uint64_t p2 = SDK->RPM<uint64_t>(p1 + activeOffsets.VM_P2);
             if (!p2) {
                 OW::RecordViewMatrixUnresolved("p2", p2, lastViewMatrixLogTick);
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
 
@@ -3128,14 +5129,14 @@ inline void viewmatrix_thread() {
             const uint64_t p3 = SDK->RPM<uint64_t>(p2 + activeOffsets.VM_ViewProjectionParent);
             if (!p3) {
                 OW::RecordViewMatrixUnresolved("view projection p3", p3, lastViewMatrixLogTick);
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
 
             const uint64_t p4 = SDK->RPM<uint64_t>(p3 + activeOffsets.VM_ViewProjectionPtr);
             if (!p4) {
                 OW::RecordViewMatrixUnresolved("view projection p4", p4, lastViewMatrixLogTick);
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
 
@@ -3177,7 +5178,7 @@ inline void viewmatrix_thread() {
                     "render view-projection invalid",
                     viewMatrixPtr,
                     lastViewMatrixLogTick);
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
             OW::Matrix publishedCameraView{};
@@ -3197,7 +5198,7 @@ inline void viewmatrix_thread() {
                     hasLastViewMatrixStatus,
                     lastViewMatrixValid,
                     lastViewMatrixLogTick);
-                Sleep(5);
+                Sleep(pollSleepMs);
                 continue;
             }
 
@@ -3211,7 +5212,7 @@ inline void viewmatrix_thread() {
                 lastViewMatrixValid,
                 lastViewMatrixLogTick);
 
-            Sleep(5);
+            Sleep(pollSleepMs);
         }
     } __except (1) {}
     Diagnostics::ScopedDmaCallsite::Pop();
@@ -3335,8 +5336,10 @@ namespace OverlayRenderDetail {
 
     struct RenderPredictionInfo {
         bool trainingBot = false;
+        bool shortExtrapolationCandidate = false;
         bool velocityReasonable = false;
         bool applied = false;
+        bool usedWorldDeltaFallback = false;
         int leadMs = 0;
         int offsetCm = 0;
     };
@@ -3351,17 +5354,23 @@ namespace OverlayRenderDetail {
         }
 
         const DWORD ageMs = now - entity.render_sample_tick_ms;
-        if (ageMs < 12 || ageMs > 160)
+        if (ageMs < 12 || ageMs > 220)
+            return false;
+        if (predictionInfo)
+            predictionInfo->shortExtrapolationCandidate = true;
+
+        const OW::Motion::EntityMotionEstimate motion = OW::Motion::EstimateEntityMotion(entity);
+        if (!motion.valid)
             return false;
 
         float speed = 0.0f;
-        if (!IsReasonableRenderVelocity(entity.velocity, &speed))
+        if (!IsReasonableRenderVelocity(motion.effectiveVelocity, &speed))
             return false;
 
         constexpr float kMaxLeadSeconds = 0.10f;
         constexpr float kMaxOffsetMeters = 1.35f;
         float leadSeconds = (std::min)(static_cast<float>(ageMs) / 1000.0f, kMaxLeadSeconds);
-        Vector3 offset = entity.velocity * leadSeconds;
+        Vector3 offset = motion.effectiveVelocity * leadSeconds;
         float offsetSize = offset.Size();
         if (!std::isfinite(offsetSize) || offsetSize < 0.005f)
             return false;
@@ -3388,6 +5397,7 @@ namespace OverlayRenderDetail {
             predictionInfo->trainingBot = OW::GameData::IsTrainingBotHeroId(entity.HeroID);
             predictionInfo->velocityReasonable = true;
             predictionInfo->applied = true;
+            predictionInfo->usedWorldDeltaFallback = motion.usedWorldDeltaFallback;
             predictionInfo->leadMs = static_cast<int>(std::lround(leadSeconds * 1000.0f));
             predictionInfo->offsetCm = static_cast<int>(std::lround(offsetSize * 100.0f));
         }
@@ -4526,6 +6536,20 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
     OW::GetViewMatricesSnapshot(renderViewMatrix, renderViewMatrixXor);
     Diagnostics::RecordRenderViewMatrixUse();
 
+    const auto camLoc = renderViewMatrixXor.get_location();
+    const Vector3 cameraDistanceOrigin(camLoc.x, camLoc.y, camLoc.z);
+    const bool cameraDistanceOriginValid =
+        OverlayRenderDetail::IsFiniteVector(cameraDistanceOrigin) &&
+        OverlayRenderDetail::IsNonZeroVector(cameraDistanceOrigin);
+    const Vector3 localDistanceOrigin =
+        (OverlayRenderDetail::IsFiniteVector(local_snapshot.pos) &&
+         OverlayRenderDetail::IsNonZeroVector(local_snapshot.pos))
+            ? local_snapshot.pos
+            : local_snapshot.head_pos;
+    const bool localDistanceOriginValid =
+        OverlayRenderDetail::IsFiniteVector(localDistanceOrigin) &&
+        OverlayRenderDetail::IsNonZeroVector(localDistanceOrigin);
+
     auto publishStats = [&]() {
         const auto playerInfoEnd = std::chrono::steady_clock::now();
         renderStats.elapsedMs = std::chrono::duration<double, std::milli>(
@@ -4683,12 +6707,33 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
         trainingBotPredictionTracks.insert_or_assign(address, next);
     };
 
+    auto trackRenderPrediction = [&](uint64_t address,
+                                     const OverlayRenderDetail::RenderPredictionInfo& info) {
+        if (address == 0)
+            return;
+
+        if (info.shortExtrapolationCandidate || info.trainingBot)
+            renderStats.renderPredictionCandidates++;
+
+        if (!info.applied)
+            return;
+
+        renderStats.renderPredictionApplied++;
+        if (info.usedWorldDeltaFallback)
+            renderStats.renderPredictionWorldDeltaFallback++;
+        renderStats.renderPredictionMaxLeadMs =
+            (std::max)(renderStats.renderPredictionMaxLeadMs, info.leadMs);
+        renderStats.renderPredictionMaxOffsetCm =
+            (std::max)(renderStats.renderPredictionMaxOffsetCm, info.offsetCm);
+    };
+
     for (size_t index = 0; index < entity_snapshot.size(); ++index) {
         OverlayRenderDetail::RenderPredictionInfo predictionInfo{};
         OW::c_entity entity = OverlayRenderDetail::InterpolateEntityForRender(
             entity_snapshot[index],
             renderTick,
             &predictionInfo);
+        trackRenderPrediction(entity.address, predictionInfo);
         trackTrainingBotPrediction(entity.address, predictionInfo);
         if (entity.roster_state != OW::EntityRosterState::Fresh || !entity.Alive) {
             renderStats.skippedDead++;
@@ -4704,8 +6749,9 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
         }
 
         Vector3 Vec3 = entity.head_pos;
-        const auto camLoc = renderViewMatrixXor.get_location();
-        float dist = Vector3(camLoc.x, camLoc.y, camLoc.z).DistTo(Vec3);
+        const float dist = cameraDistanceOriginValid
+            ? cameraDistanceOrigin.DistTo(Vec3)
+            : (localDistanceOriginValid ? localDistanceOrigin.DistTo(Vec3) : 0.0f);
         if (!OverlayRenderDetail::ShouldRenderAtDistance(dist)) {
             renderStats.skippedDistance++;
             continue;

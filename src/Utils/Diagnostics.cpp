@@ -63,6 +63,7 @@ namespace {
 struct DmaSample {
     uint64_t timestampMs;
     uint64_t latencyUs;
+    uint32_t threadId;
     DmaCallsite callsite;
     bool success;
 };
@@ -112,6 +113,7 @@ void RecordDmaSample(DmaCallsite callsite, bool success, uint64_t latencyUs) {
     const size_t idx = g_dmaRingWrite.fetch_add(1, std::memory_order_relaxed) % kDmaRingCapacity;
     g_dmaRing[idx].timestampMs = GetTickCount64();
     g_dmaRing[idx].latencyUs = latencyUs;
+    g_dmaRing[idx].threadId = GetCurrentThreadId();
     g_dmaRing[idx].callsite = callsite;
     g_dmaRing[idx].success = success;
 
@@ -123,6 +125,41 @@ void RecordDmaSample(DmaCallsite callsite, bool success, uint64_t latencyUs) {
                 g_frameDmaFailures.fetch_add(1, std::memory_order_relaxed);
             g_frameDmaTotalUs.fetch_add(latencyUs, std::memory_order_relaxed);
             UpdateAtomicMax(g_frameDmaMaxUs, latencyUs);
+        }
+    }
+}
+
+void AccumulateDmaSample(DmaWindowStats& stats, const DmaSample& sample) {
+    stats.totalReads++;
+    const bool slowRead = sample.latencyUs >= stats.slowThresholdUs;
+    if (!sample.success)
+        stats.failedReads++;
+    if (slowRead) {
+        stats.slowReads++;
+        if (!sample.success)
+            stats.slowFailedReads++;
+    }
+    if (sample.latencyUs > stats.maxLatencyUs)
+        stats.maxLatencyUs = sample.latencyUs;
+
+    const int ci = static_cast<int>(sample.callsite);
+    if (ci >= 0 && ci < static_cast<int>(DmaCallsite::Count)) {
+        stats.perCallsiteReads[ci]++;
+        if (!sample.success)
+            stats.perCallsiteFailedReads[ci]++;
+        if (sample.latencyUs > stats.perCallsiteMaxUs[ci])
+            stats.perCallsiteMaxUs[ci] = sample.latencyUs;
+        if (sample.success) {
+            if (sample.latencyUs > stats.perCallsiteSuccessMaxUs[ci])
+                stats.perCallsiteSuccessMaxUs[ci] = sample.latencyUs;
+        } else {
+            if (sample.latencyUs > stats.perCallsiteFailedMaxUs[ci])
+                stats.perCallsiteFailedMaxUs[ci] = sample.latencyUs;
+        }
+        if (slowRead) {
+            stats.perCallsiteSlowReads[ci]++;
+            if (!sample.success)
+                stats.perCallsiteSlowFailedReads[ci]++;
         }
     }
 }
@@ -202,6 +239,11 @@ std::atomic<uint64_t> g_rosterDead{ 0 };
 std::atomic<uint64_t> g_rosterMissing{ 0 };
 std::atomic<uint64_t> g_rosterExpired{ 0 };
 std::atomic<uint64_t> g_rosterHeroChanged{ 0 };
+std::atomic<uint64_t> g_sdkComponentKeyCacheHit{ 0 };
+std::atomic<uint64_t> g_sdkComponentKeyCacheMiss{ 0 };
+std::atomic<uint64_t> g_sdkBeginFrameScan{ 0 };
+std::atomic<uint64_t> g_sdkBeginFrameProcess{ 0 };
+std::atomic<uint64_t> g_sdkBeginFrameUnknown{ 0 };
 std::atomic<uint64_t> g_framesRendered{ 0 };
 
 std::atomic<bool> g_dmaReady{ false };
@@ -354,6 +396,11 @@ std::atomic<int> g_playerInfoSampleDrawnHeight{ 0 };
 std::atomic<int> g_playerInfoSampleDrawnCenterX{ 0 };
 std::atomic<int> g_playerInfoSampleDrawnBottom{ 0 };
 std::atomic<int> g_playerInfoSampleDrawnDistanceM{ 0 };
+std::atomic<uint64_t> g_playerInfoRenderPredictionCandidates{ 0 };
+std::atomic<uint64_t> g_playerInfoRenderPredictionApplied{ 0 };
+std::atomic<uint64_t> g_playerInfoRenderPredictionWorldDeltaFallback{ 0 };
+std::atomic<int> g_playerInfoRenderPredictionMaxLeadMs{ 0 };
+std::atomic<int> g_playerInfoRenderPredictionMaxOffsetCm{ 0 };
 std::atomic<uint64_t> g_playerInfoTrainingBotPredictionCandidates{ 0 };
 std::atomic<uint64_t> g_playerInfoTrainingBotPredictionApplied{ 0 };
 std::atomic<uint64_t> g_playerInfoTrainingBotPredictionLeadDrops{ 0 };
@@ -390,6 +437,9 @@ std::atomic<int> g_localCameraZCm{ 0 };
 
 std::mutex g_entityScanDetailMutex;
 EntityScanDetailStats g_entityScanDetail{};
+std::mutex g_entityPipelineMutex;
+EntityPipelineScanStats g_entityPipelineScan{};
+EntityPipelineProcessStats g_entityPipelineProcess{};
 
 std::mutex g_fpsMutex;
 std::chrono::steady_clock::time_point g_lastFpsTime = std::chrono::steady_clock::now();
@@ -581,6 +631,26 @@ SnapshotCopyStats BuildSnapshotCopyStats(const std::atomic<uint64_t>& copies,
     return stats;
 }
 
+DmaReadStats BuildDmaReadStats()
+{
+    DmaReadStats stats{};
+    stats.succeeded = g_dmaReadSucceeded.load(std::memory_order_relaxed);
+    stats.failed = g_dmaReadFailed.load(std::memory_order_relaxed);
+    stats.total = stats.succeeded + stats.failed;
+    stats.maxLatencyUs = g_dmaReadLatencyMaxUs.load(std::memory_order_relaxed);
+
+    const uint64_t minLatency = g_dmaReadLatencyMinUs.load(std::memory_order_relaxed);
+    stats.minLatencyUs =
+        stats.total == 0 || minLatency == (std::numeric_limits<uint64_t>::max)()
+            ? 0
+            : minLatency;
+    stats.avgLatencyUs =
+        stats.total == 0
+            ? 0
+            : g_dmaReadLatencyTotalUs.load(std::memory_order_relaxed) / stats.total;
+    return stats;
+}
+
 ViewMatrixConsumerStats BuildViewMatrixConsumerStats()
 {
     ViewMatrixConsumerStats stats{};
@@ -612,15 +682,45 @@ const char* ToString(LogLevel level)
 const char* ToString(DmaCallsite cs)
 {
     switch (cs) {
-    case DmaCallsite::EntityScan:   return "EntityScan";
-    case DmaCallsite::EntityDecrypt:return "EntityDecrypt";
-    case DmaCallsite::ViewMatrix:   return "ViewMatrix";
-    case DmaCallsite::BoneChain:    return "BoneChain";
-    case DmaCallsite::KeyState:     return "KeyState";
-    case DmaCallsite::Aimbot:       return "Aimbot";
-    case DmaCallsite::RenderCanvas: return "RenderCanvas";
-    case DmaCallsite::EntityPrefetch: return "EntityPrefetch";
-    default:                        return "Unknown";
+    case DmaCallsite::EntityScan:             return "EntityScan";
+    case DmaCallsite::EntityScanRoot:         return "EntityScanRoot";
+    case DmaCallsite::EntityScanListRead:     return "EntityScanListRead";
+    case DmaCallsite::EntityScanRecordBuild:  return "EntityScanRecordBuild";
+    case DmaCallsite::EntityScanRecordMatchId:return "EntityScanRecordMatchId";
+    case DmaCallsite::EntityScanRecordHeader: return "EntityScanRecordHeader";
+    case DmaCallsite::EntityScanRecordPoolPtr:return "EntityScanRecordPoolPtr";
+    case DmaCallsite::EntityScanRecordPoolId: return "EntityScanRecordPoolId";
+    case DmaCallsite::EntityScanMatchLink:    return "EntityScanMatchLink";
+    case DmaCallsite::EntityScanTargetMap:    return "EntityScanTargetMap";
+    case DmaCallsite::EntityScanMapCandidate: return "EntityScanMapCandidate";
+    case DmaCallsite::EntityScanLinkTargetResolve:
+        return "EntityScanLinkTargetResolve";
+    case DmaCallsite::EntityScanSelfValidation:
+        return "EntityScanSelfValidation";
+    case DmaCallsite::EntityScanComponentValidation:
+        return "EntityScanComponentValidation";
+    case DmaCallsite::EntityDecrypt:          return "EntityDecrypt";
+    case DmaCallsite::EntityBaseDecrypt:      return "EntityBaseDecrypt";
+    case DmaCallsite::EntityHeaderSpecial:    return "EntityHeaderSpecial";
+    case DmaCallsite::EntityHotScatter:       return "EntityHotScatter";
+    case DmaCallsite::EntityHotFields:        return "EntityHotFields";
+    case DmaCallsite::EntityRotationPosition: return "EntityRotationPosition";
+    case DmaCallsite::ViewMatrix:             return "ViewMatrix";
+    case DmaCallsite::BoneChain:              return "BoneChain";
+    case DmaCallsite::KeyState:               return "KeyState";
+    case DmaCallsite::Aimbot:                 return "Aimbot";
+    case DmaCallsite::RenderCanvas:           return "RenderCanvas";
+    case DmaCallsite::EntityPrefetch:         return "EntityPrefetch";
+    default:                                  return "Unknown";
+    }
+}
+
+const char* ToString(SdkFrameSource source)
+{
+    switch (source) {
+    case SdkFrameSource::Scan:    return "scan";
+    case SdkFrameSource::Process: return "process";
+    default:                      return "unknown";
     }
 }
 
@@ -888,6 +988,11 @@ void RecordDmaRead(bool success, uint64_t latencyUs, DmaCallsite callsite)
     RecordDmaSample(callsite, success, latencyUs);
 }
 
+size_t DmaSampleCursor()
+{
+    return g_dmaRingWrite.load(std::memory_order_acquire);
+}
+
 void RecordDecryptFailure()
 {
     g_decryptFailures.fetch_add(1, std::memory_order_relaxed);
@@ -896,6 +1001,36 @@ void RecordDecryptFailure()
 void RecordInvalidEntity()
 {
     g_invalidEntities.fetch_add(1, std::memory_order_relaxed);
+}
+
+void RecordSdkComponentKeyCacheHit()
+{
+    g_sdkComponentKeyCacheHit.fetch_add(1, std::memory_order_relaxed);
+}
+
+void RecordSdkComponentKeyCacheMiss()
+{
+    g_sdkComponentKeyCacheMiss.fetch_add(1, std::memory_order_relaxed);
+}
+
+void RecordSdkBeginFrame(SdkFrameSource source)
+{
+    switch (source) {
+    case SdkFrameSource::Scan:
+        g_sdkBeginFrameScan.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case SdkFrameSource::Process:
+        g_sdkBeginFrameProcess.fetch_add(1, std::memory_order_relaxed);
+        break;
+    default:
+        g_sdkBeginFrameUnknown.fetch_add(1, std::memory_order_relaxed);
+        break;
+    }
+}
+
+DmaReadStats SnapshotDmaReadStats()
+{
+    return BuildDmaReadStats();
 }
 
 void RecordEntityScanCycle(size_t entityCount, double measuredHz)
@@ -1191,6 +1326,24 @@ void SetEntityScanDetailStats(const EntityScanDetailStats& stats)
     g_entityScanDetail = stats;
 }
 
+EntityScanDetailStats SnapshotEntityScanDetailStats()
+{
+    std::lock_guard<std::mutex> lock(g_entityScanDetailMutex);
+    return g_entityScanDetail;
+}
+
+void SetEntityPipelineScanStats(const EntityPipelineScanStats& stats)
+{
+    std::lock_guard<std::mutex> lock(g_entityPipelineMutex);
+    g_entityPipelineScan = stats;
+}
+
+void SetEntityPipelineProcessStats(const EntityPipelineProcessStats& stats)
+{
+    std::lock_guard<std::mutex> lock(g_entityPipelineMutex);
+    g_entityPipelineProcess = stats;
+}
+
 void SetPlayerInfoStats(const PlayerInfoStats& stats)
 {
     g_playerInfoBoxPerfMode.store(stats.boxPerfMode, std::memory_order_relaxed);
@@ -1229,6 +1382,16 @@ void SetPlayerInfoStats(const PlayerInfoStats& stats)
     g_playerInfoSampleDrawnCenterX.store(stats.sampleDrawnCenterX, std::memory_order_relaxed);
     g_playerInfoSampleDrawnBottom.store(stats.sampleDrawnBottom, std::memory_order_relaxed);
     g_playerInfoSampleDrawnDistanceM.store(stats.sampleDrawnDistanceM, std::memory_order_relaxed);
+    g_playerInfoRenderPredictionCandidates.store(
+        static_cast<uint64_t>(stats.renderPredictionCandidates), std::memory_order_relaxed);
+    g_playerInfoRenderPredictionApplied.store(
+        static_cast<uint64_t>(stats.renderPredictionApplied), std::memory_order_relaxed);
+    g_playerInfoRenderPredictionWorldDeltaFallback.store(
+        static_cast<uint64_t>(stats.renderPredictionWorldDeltaFallback), std::memory_order_relaxed);
+    g_playerInfoRenderPredictionMaxLeadMs.store(
+        stats.renderPredictionMaxLeadMs, std::memory_order_relaxed);
+    g_playerInfoRenderPredictionMaxOffsetCm.store(
+        stats.renderPredictionMaxOffsetCm, std::memory_order_relaxed);
     g_playerInfoTrainingBotPredictionCandidates.store(
         static_cast<uint64_t>(stats.trainingBotPredictionCandidates), std::memory_order_relaxed);
     g_playerInfoTrainingBotPredictionApplied.store(
@@ -1294,6 +1457,16 @@ StatusSnapshot Snapshot()
     snapshot.roster.missing = static_cast<size_t>(g_rosterMissing.load(std::memory_order_relaxed));
     snapshot.roster.expired = static_cast<size_t>(g_rosterExpired.load(std::memory_order_relaxed));
     snapshot.roster.heroChanged = static_cast<size_t>(g_rosterHeroChanged.load(std::memory_order_relaxed));
+    snapshot.sdkCache.componentKeyCacheHitCount =
+        g_sdkComponentKeyCacheHit.load(std::memory_order_relaxed);
+    snapshot.sdkCache.componentKeyCacheMissCount =
+        g_sdkComponentKeyCacheMiss.load(std::memory_order_relaxed);
+    snapshot.sdkCache.beginFrameScanCount =
+        g_sdkBeginFrameScan.load(std::memory_order_relaxed);
+    snapshot.sdkCache.beginFrameProcessCount =
+        g_sdkBeginFrameProcess.load(std::memory_order_relaxed);
+    snapshot.sdkCache.beginFrameUnknownCount =
+        g_sdkBeginFrameUnknown.load(std::memory_order_relaxed);
     snapshot.fps = currentFps;
     snapshot.viewMatrixPublish = BuildPublishStats(
         g_viewMatrixPublishCycles,
@@ -1321,20 +1494,8 @@ StatusSnapshot Snapshot()
         g_dynamicSnapshotCopyMaxUs);
     snapshot.renderViewMatrixUse = BuildViewMatrixConsumerStats();
 
-    snapshot.dmaReads.succeeded = g_dmaReadSucceeded.load(std::memory_order_relaxed);
-    snapshot.dmaReads.failed = g_dmaReadFailed.load(std::memory_order_relaxed);
-    snapshot.dmaReads.total = snapshot.dmaReads.succeeded + snapshot.dmaReads.failed;
-    snapshot.dmaReads.maxLatencyUs = g_dmaReadLatencyMaxUs.load(std::memory_order_relaxed);
-
-    const uint64_t minLatency = g_dmaReadLatencyMinUs.load(std::memory_order_relaxed);
-    snapshot.dmaReads.minLatencyUs =
-        snapshot.dmaReads.total == 0 || minLatency == (std::numeric_limits<uint64_t>::max)()
-            ? 0
-            : minLatency;
-    snapshot.dmaReads.avgLatencyUs =
-        snapshot.dmaReads.total == 0
-            ? 0
-            : g_dmaReadLatencyTotalUs.load(std::memory_order_relaxed) / snapshot.dmaReads.total;
+    snapshot.dmaReads = BuildDmaReadStats();
+    snapshot.dmaWindow = GetDmaWindowStats(2500);
 
     snapshot.errors.failedDmaReads = snapshot.dmaReads.failed;
     snapshot.errors.decryptFailures = g_decryptFailures.load(std::memory_order_relaxed);
@@ -1526,6 +1687,16 @@ StatusSnapshot Snapshot()
     snapshot.playerInfo.sampleDrawnCenterX = g_playerInfoSampleDrawnCenterX.load(std::memory_order_relaxed);
     snapshot.playerInfo.sampleDrawnBottom = g_playerInfoSampleDrawnBottom.load(std::memory_order_relaxed);
     snapshot.playerInfo.sampleDrawnDistanceM = g_playerInfoSampleDrawnDistanceM.load(std::memory_order_relaxed);
+    snapshot.playerInfo.renderPredictionCandidates =
+        static_cast<size_t>(g_playerInfoRenderPredictionCandidates.load(std::memory_order_relaxed));
+    snapshot.playerInfo.renderPredictionApplied =
+        static_cast<size_t>(g_playerInfoRenderPredictionApplied.load(std::memory_order_relaxed));
+    snapshot.playerInfo.renderPredictionWorldDeltaFallback =
+        static_cast<size_t>(g_playerInfoRenderPredictionWorldDeltaFallback.load(std::memory_order_relaxed));
+    snapshot.playerInfo.renderPredictionMaxLeadMs =
+        g_playerInfoRenderPredictionMaxLeadMs.load(std::memory_order_relaxed);
+    snapshot.playerInfo.renderPredictionMaxOffsetCm =
+        g_playerInfoRenderPredictionMaxOffsetCm.load(std::memory_order_relaxed);
     snapshot.playerInfo.trainingBotPredictionCandidates =
         static_cast<size_t>(g_playerInfoTrainingBotPredictionCandidates.load(std::memory_order_relaxed));
     snapshot.playerInfo.trainingBotPredictionApplied =
@@ -1572,6 +1743,11 @@ StatusSnapshot Snapshot()
         std::lock_guard<std::mutex> lock(g_entityScanDetailMutex);
         snapshot.entityScanDetail = g_entityScanDetail;
     }
+    {
+        std::lock_guard<std::mutex> lock(g_entityPipelineMutex);
+        snapshot.entityPipelineScan = g_entityPipelineScan;
+        snapshot.entityPipelineProcess = g_entityPipelineProcess;
+    }
     return snapshot;
 }
 
@@ -1606,6 +1782,13 @@ void DumpStatus()
         static_cast<unsigned long long>(snapshot.globalKey2),
         snapshot.dmaReady ? "ready" : "not-ready",
         snapshot.processAttached ? "attached" : "not-attached");
+
+    Info("STATUS-SDK begin_frame[scan/process/unknown]=%llu/%llu/%llu component_key_cache[hit/miss]=%llu/%llu.",
+        static_cast<unsigned long long>(snapshot.sdkCache.beginFrameScanCount),
+        static_cast<unsigned long long>(snapshot.sdkCache.beginFrameProcessCount),
+        static_cast<unsigned long long>(snapshot.sdkCache.beginFrameUnknownCount),
+        static_cast<unsigned long long>(snapshot.sdkCache.componentKeyCacheHitCount),
+        static_cast<unsigned long long>(snapshot.sdkCache.componentKeyCacheMissCount));
 
     Info("STATUS-CADENCE render_fps=%.1f viewmatrix_pub_hz=%.1f age_ms=%llu interval_ms[last/max]=%llu/%llu render_vm_age_ms[last/max]=%llu/%llu stale[16/33/50]=%llu/%llu/%llu entity_pub_hz=%.1f age_ms=%llu count=%zu interval_ms[last/max]=%llu/%llu snapshot_copy_ms[entities last/max=%.3f/%.3f dynamic last/max=%.3f/%.3f].",
         snapshot.fps,
@@ -1735,9 +1918,73 @@ void RecordFrameTiming(const FrameTiming& timing, double slowThresholdMs)
          callsiteDetail);
 }
 
+DmaWindowStats GetDmaRangeStats(size_t beginCursor, size_t endCursor)
+{
+    DmaWindowStats stats{};
+    if (endCursor <= beginCursor)
+        return stats;
+
+    size_t start = beginCursor;
+    if (endCursor - start > kDmaRingCapacity)
+        start = endCursor - kDmaRingCapacity;
+
+    for (size_t cursor = start; cursor < endCursor; ++cursor) {
+        const size_t idx = cursor % kDmaRingCapacity;
+        AccumulateDmaSample(stats, g_dmaRing[idx]);
+    }
+
+    return stats;
+}
+
+std::vector<DmaSlowReadSample> GetDmaSlowReadSamples(
+    uint64_t windowMs,
+    uint64_t minLatencyUs,
+    size_t maxSamples)
+{
+    std::vector<DmaSlowReadSample> samples;
+    if (maxSamples == 0)
+        return samples;
+
+    maxSamples = (std::min<size_t>)(maxSamples, 128);
+
+    const uint64_t now = GetTickCount64();
+    const uint64_t cutoff = (now > windowMs) ? (now - windowMs) : 0;
+    const size_t writeIdx = g_dmaRingWrite.load(std::memory_order_acquire);
+    const size_t start = (writeIdx >= kDmaRingCapacity) ? (writeIdx - kDmaRingCapacity) : 0;
+    const size_t count = (writeIdx >= kDmaRingCapacity) ? kDmaRingCapacity : writeIdx;
+
+    samples.reserve((std::min<size_t>)(maxSamples, count));
+    for (size_t i = 0; i < count; ++i) {
+        const size_t cursor = start + i;
+        const size_t idx = cursor % kDmaRingCapacity;
+        const DmaSample& s = g_dmaRing[idx];
+        if (s.timestampMs == 0 || s.timestampMs < cutoff || s.latencyUs < minLatencyUs)
+            continue;
+
+        DmaSlowReadSample sample{};
+        sample.sequence = static_cast<uint64_t>(cursor);
+        sample.threadId = s.threadId;
+        sample.completedTickMs = s.timestampMs;
+        sample.startedTickMs = s.timestampMs >= ((s.latencyUs + 999) / 1000)
+            ? s.timestampMs - ((s.latencyUs + 999) / 1000)
+            : 0;
+        sample.completedAgeMs = now >= s.timestampMs ? now - s.timestampMs : 0;
+        sample.startedAgeMs = sample.completedAgeMs + ((s.latencyUs + 999) / 1000);
+        sample.latencyUs = s.latencyUs;
+        sample.callsite = s.callsite;
+        sample.success = s.success;
+        samples.push_back(sample);
+        if (samples.size() > maxSamples)
+            samples.erase(samples.begin());
+    }
+
+    return samples;
+}
+
 DmaWindowStats GetDmaWindowStats(uint64_t windowMs)
 {
     DmaWindowStats stats{};
+    stats.windowMs = windowMs;
     const uint64_t now = GetTickCount64();
     const uint64_t cutoff = (now > windowMs) ? (now - windowMs) : 0;
 
@@ -1751,18 +1998,7 @@ DmaWindowStats GetDmaWindowStats(uint64_t windowMs)
         if (s.timestampMs < cutoff)
             continue;
 
-        stats.totalReads++;
-        if (!s.success)
-            stats.failedReads++;
-        if (s.latencyUs > stats.maxLatencyUs)
-            stats.maxLatencyUs = s.latencyUs;
-
-        const int ci = static_cast<int>(s.callsite);
-        if (ci >= 0 && ci < static_cast<int>(DmaCallsite::Count)) {
-            stats.perCallsiteReads[ci]++;
-            if (s.latencyUs > stats.perCallsiteMaxUs[ci])
-                stats.perCallsiteMaxUs[ci] = s.latencyUs;
-        }
+        AccumulateDmaSample(stats, s);
     }
 
     return stats;

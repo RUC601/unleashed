@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "schema_version": 1,
+  "timestamp_ms": 1782439175920,
+  "query": {
+    "max_distance_m": 50,
+    "team": "enemy",
+    "include_dead": false,
+    "limit": 32
+  },
+  "entities": []
+}

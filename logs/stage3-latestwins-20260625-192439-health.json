@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "schema_version": 1,
+  "timestamp_ms": 1782440679720,
+  "process": {
+    "connected": true,
+    "connecting": false,
+    "pid": 3860,
+    "base_address": "0x7FF742F80000",
+    "status_text": "Connected to Overwatch.exe (cn/ne 150818)"
+  },
+  "test_server": {
+    "read_only": true,
+    "write_armed": false,
+    "bind": "127.0.0.1",
+    "port": 19550,
+    "cors_mode": "disabled"
+  }
+}

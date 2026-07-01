@@ -1,0 +1,2293 @@
+﻿{
+    "label":  "live-gated-no-vmbackoff",
+    "preflight":  {
+                      "base_url":  "http://127.0.0.1:19550",
+                      "health_ok":  true,
+                      "diagnostics_ok":  true,
+                      "health_error":  null,
+                      "diagnostics_error":  null,
+                      "process_connected":  true,
+                      "process_status":  null,
+                      "entity_count":  12,
+                      "entity_scan_hz":  3.559,
+                      "entity_publish_hz":  9.09,
+                      "env_gates":  {
+                                        "UN_DMA_ENTITY_PIPELINE_V2":  null,
+                                        "UN_DMA_LIGHT_SCAN":  null,
+                                        "UN_DMA_LIGHT_SCAN_MAX_CANDIDATES":  null,
+                                        "UN_DMA_CN_NE_STAGE4B_MAP_CACHE":  "1",
+                                        "UN_DMA_CN_NE_STAGE4B_MAP_CACHE_PERSIST_MS":  "2000",
+                                        "UN_DMA_CN_NE_STAGE4B_MAP_CACHE_REFRESH_BUDGET":  "4",
+                                        "UN_DMA_CN_NE_RECORD_MATCH_ID_FROM_HEADER":  "1",
+                                        "UN_DMA_CN_NE_ENTITY_LIST_ROOT_CACHE_MS":  "10000",
+                                        "UN_DMA_CN_NE_ENTITY_LIST_READ_NEGATIVE_CACHE_MS":  "2000",
+                                        "UN_DMA_CN_NE_ENTITY_LIST_READ_CACHE_MS":  "250",
+                                        "UN_DMA_CN_NE_SCANNER_STALE_METADATA_MS":  "10000",
+                                        "UN_DMA_CN_NE_SCANNER_STALE_METADATA_ONLY":  "1",
+                                        "UN_DMA_CN_NE_ENTITY_LIST_CHUNK_SIZE":  null,
+                                        "UN_DMA_CN_NE_RECORD_SNAPSHOT_CACHE_MS":  "2000",
+                                        "UN_DMA_CN_NE_RECORD_SNAPSHOT_CACHE_REFRESH_BUDGET":  "1",
+                                        "UN_DMA_CN_NE_COMPONENT_NEGATIVE_CACHE_MS":  "2000",
+                                        "UN_DMA_CN_NE_COMPONENT_NEGATIVE_CACHE_REFRESH_BUDGET":  "1",
+                                        "UN_DMA_SCAN_DMA_RANGE_DIAG":  null,
+                                        "UN_DMA_VIEWMATRIX_SLEEP_MS":  null,
+                                        "UN_DMA_VIEWMATRIX_SCAN_BACKOFF_MS":  null,
+                                        "UN_DMA_VIEWMATRIX_SCAN_DUE_GUARD_MS":  null,
+                                        "UN_DMA_CN_NE_MAP_DIAG":  null,
+                                        "UN_DMA_ENTITY_RECORD_STORE":  null,
+                                        "UN_DMA_BASE_DECRYPT_LIFETIME_ONLY":  null,
+                                        "UN_DMA_SKILL_REFRESH_BUDGET":  null,
+                                        "UN_DMA_TEAM_NAME_REFRESH_BUDGET":  null,
+                                        "UN_DMA_SKELETON_REFRESH_BUDGET":  null
+                                    },
+                      "runtime_gates":  {
+                                            "viewmatrix_poll_sleep_ms":  5,
+                                            "viewmatrix_scan_backoff_ms":  0,
+                                            "viewmatrix_scan_due_guard_ms":  0,
+                                            "scan_cold_topology_enabled":  false,
+                                            "light_scan_enabled":  false,
+                                            "cn_ne_map_candidate_cache_enabled":  true,
+                                            "cn_ne_map_candidate_persistent_cache_enabled":  true,
+                                            "cn_ne_map_candidate_persistent_cache_ttl_ms":  2000,
+                                            "cn_ne_map_candidate_persistent_cache_refresh_budget":  4,
+                                            "cn_ne_map_diag_enabled":  false,
+                                            "cn_ne_record_match_id_from_header_enabled":  true,
+                                            "cn_ne_entity_list_root_cache_enabled":  true,
+                                            "cn_ne_entity_list_root_cache_ttl_ms":  10000,
+                                            "cn_ne_entity_list_read_negative_cache_enabled":  true,
+                                            "cn_ne_entity_list_read_negative_cache_ttl_ms":  2000,
+                                            "cn_ne_entity_list_read_cache_enabled":  true,
+                                            "cn_ne_entity_list_read_cache_ttl_ms":  250,
+                                            "cn_ne_scanner_stale_metadata_ms":  10000,
+                                            "cn_ne_scanner_stale_metadata_only_enabled":  true,
+                                            "cn_ne_entity_list_chunk_size":  65536,
+                                            "cn_ne_record_snapshot_cache_enabled":  true,
+                                            "cn_ne_record_snapshot_cache_ttl_ms":  2000,
+                                            "cn_ne_record_snapshot_cache_refresh_budget":  1,
+                                            "cn_ne_link_decrypt_negative_cache_enabled":  true,
+                                            "cn_ne_link_decrypt_negative_cache_ttl_ms":  2000,
+                                            "cn_ne_component_negative_cache_enabled":  true,
+                                            "cn_ne_component_negative_cache_ttl_ms":  2000,
+                                            "cn_ne_component_negative_cache_refresh_budget":  1,
+                                            "record_store_enabled":  false
+                                        }
+                  },
+    "started_at":  "2026-06-29T19:03:16.7283311-07:00",
+    "ended_at":  "2026-06-29T19:05:17.3233469-07:00",
+    "sample_count":  118,
+    "duration_seconds":  119.494,
+    "fps":  {
+                "avg":  177.737,
+                "min":  122.173,
+                "max":  383.813
+            },
+    "render_fps":  {
+                       "avg":  177.737,
+                       "min":  122.173,
+                       "max":  383.813
+                   },
+    "entity_process_hz":  {
+                              "avg":  8.277,
+                              "min":  5.606,
+                              "max":  10.185
+                          },
+    "entity_scan_hz":  {
+                           "avg":  3.92,
+                           "min":  0.634,
+                           "max":  5.348
+                       },
+    "entity_publish_hz":  {
+                              "avg":  10.4,
+                              "min":  0.771,
+                              "max":  21.739
+                          },
+    "entity_publish_age_ms":  {
+                                  "avg":  141.669,
+                                  "min":  0,
+                                  "max":  1203
+                              },
+    "scan_loop_hz":  {
+                         "avg":  26.721,
+                         "min":  2.753,
+                         "max":  126.091
+                     },
+    "scan_due_hz":  {
+                        "avg":  26.227,
+                        "min":  2.753,
+                        "max":  126.091
+                    },
+    "scan_started_hz":  {
+                            "avg":  3.598,
+                            "min":  0.66,
+                            "max":  4.575
+                        },
+    "scan_completed_hz":  {
+                              "avg":  3.598,
+                              "min":  0.66,
+                              "max":  4.575
+                          },
+    "scan_failed_delta":  0,
+    "scan_publish_attempt_delta":  410,
+    "scan_publish_success_delta":  410,
+    "scan_skip_stable_topology_count":  {
+                                            "avg":  0,
+                                            "min":  0,
+                                            "max":  0
+                                        },
+    "scan_skip_stable_topology_delta":  0,
+    "scan_get_ow_entities_ms":  {
+                                    "avg":  249.316,
+                                    "min":  186.38,
+                                    "max":  1437
+                                },
+    "scan_max_get_ow_entities_ms":  {
+                                        "avg":  4519.5,
+                                        "min":  4519.5,
+                                        "max":  4519.5
+                                    },
+    "scan_max_get_ow_entities_generation":  {
+                                                "avg":  1,
+                                                "min":  1,
+                                                "max":  1
+                                            },
+    "scan_max_get_ow_entities_records":  {
+                                             "avg":  1171,
+                                             "min":  1171,
+                                             "max":  1171
+                                         },
+    "scan_max_get_ow_entities_pairs":  {
+                                           "avg":  26,
+                                           "min":  26,
+                                           "max":  26
+                                       },
+    "scan_max_record_build_ms":  {
+                                     "avg":  1598.34,
+                                     "min":  1598.34,
+                                     "max":  1598.34
+                                 },
+    "scan_max_match_link_ms":  {
+                                   "avg":  2475.29,
+                                   "min":  2475.29,
+                                   "max":  2475.29
+                               },
+    "scan_max_cn_ne_target_map_ms":  {
+                                         "avg":  2424.78,
+                                         "min":  2424.78,
+                                         "max":  2424.78
+                                     },
+    "scan_max_component_only_validation_ms":  {
+                                                  "avg":  426.128,
+                                                  "min":  426.128,
+                                                  "max":  426.128
+                                              },
+    "scan_max_dma_reads_delta":  {
+                                     "avg":  9711,
+                                     "min":  9711,
+                                     "max":  9711
+                                 },
+    "scan_max_dma_fail_delta":  {
+                                    "avg":  471,
+                                    "min":  471,
+                                    "max":  471
+                                },
+    "scan_max_dma_range_diag_enabled":  false,
+    "scan_max_dma_range_reads":  {
+                                     "avg":  0,
+                                     "min":  0,
+                                     "max":  0
+                                 },
+    "scan_max_dma_range_failed":  {
+                                      "avg":  0,
+                                      "min":  0,
+                                      "max":  0
+                                  },
+    "scan_max_dma_range_max_latency_us":  {
+                                              "avg":  0,
+                                              "min":  0,
+                                              "max":  0
+                                          },
+    "scan_max_dma_range_max_callsite":  "Unknown",
+    "scan_max_dma_range_scanner_reads":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "scan_max_dma_range_scanner_max_latency_us":  {
+                                                      "avg":  0,
+                                                      "min":  0,
+                                                      "max":  0
+                                                  },
+    "scan_max_dma_range_scanner_max_callsite":  "Unknown",
+    "scan_max_dma_range_foreign_reads":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "scan_max_dma_range_foreign_max_latency_us":  {
+                                                      "avg":  0,
+                                                      "min":  0,
+                                                      "max":  0
+                                                  },
+    "scan_max_dma_range_foreign_max_callsite":  "Unknown",
+    "scan_max_dma_range_root_max_us":  {
+                                           "avg":  0,
+                                           "min":  0,
+                                           "max":  0
+                                       },
+    "scan_max_dma_range_list_read_max_us":  {
+                                                "avg":  0,
+                                                "min":  0,
+                                                "max":  0
+                                            },
+    "scan_max_dma_range_record_header_max_us":  {
+                                                    "avg":  0,
+                                                    "min":  0,
+                                                    "max":  0
+                                                },
+    "scan_max_dma_range_record_pool_id_max_us":  {
+                                                     "avg":  0,
+                                                     "min":  0,
+                                                     "max":  0
+                                                 },
+    "scan_max_dma_range_target_map_max_us":  {
+                                                 "avg":  0,
+                                                 "min":  0,
+                                                 "max":  0
+                                             },
+    "scan_max_dma_range_component_validation_max_us":  {
+                                                           "avg":  0,
+                                                           "min":  0,
+                                                           "max":  0
+                                                       },
+    "scan_max_dma_range_viewmatrix_max_us":  {
+                                                 "avg":  0,
+                                                 "min":  0,
+                                                 "max":  0
+                                             },
+    "scan_max_cn_ne_entity_list_root_cache_hit_count":  {
+                                                            "avg":  0,
+                                                            "min":  0,
+                                                            "max":  0
+                                                        },
+    "scan_max_cn_ne_entity_list_root_cache_read_count":  {
+                                                             "avg":  1,
+                                                             "min":  1,
+                                                             "max":  1
+                                                         },
+    "scan_max_cn_ne_entity_list_root_cache_store_count":  {
+                                                              "avg":  1,
+                                                              "min":  1,
+                                                              "max":  1
+                                                          },
+    "scan_max_cn_ne_entity_list_root_cache_expired_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "scan_max_cn_ne_entity_list_root_cache_stale_hit_count":  {
+                                                                  "avg":  0,
+                                                                  "min":  0,
+                                                                  "max":  0
+                                                              },
+    "scan_max_list_read_skipped_count":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "scan_max_cn_ne_entity_list_read_negative_cache_hit_count":  {
+                                                                     "avg":  0,
+                                                                     "min":  0,
+                                                                     "max":  0
+                                                                 },
+    "scan_max_cn_ne_entity_list_read_negative_cache_store_count":  {
+                                                                       "avg":  51,
+                                                                       "min":  51,
+                                                                       "max":  51
+                                                                   },
+    "scan_max_cn_ne_entity_list_read_negative_cache_expired_count":  {
+                                                                         "avg":  0,
+                                                                         "min":  0,
+                                                                         "max":  0
+                                                                     },
+    "scan_max_cn_ne_entity_list_read_negative_cache_stale_hit_count":  {
+                                                                           "avg":  0,
+                                                                           "min":  0,
+                                                                           "max":  0
+                                                                       },
+    "scan_max_cn_ne_entity_list_read_cache_hit_count":  {
+                                                            "avg":  0,
+                                                            "min":  0,
+                                                            "max":  0
+                                                        },
+    "scan_max_cn_ne_entity_list_read_cache_store_count":  {
+                                                              "avg":  1,
+                                                              "min":  1,
+                                                              "max":  1
+                                                          },
+    "scan_max_cn_ne_entity_list_read_cache_expired_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "scan_max_cn_ne_entity_list_read_cache_stale_hit_count":  {
+                                                                  "avg":  0,
+                                                                  "min":  0,
+                                                                  "max":  0
+                                                              },
+    "scan_max_record_match_id_direct_read_count":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "scan_max_record_match_id_direct_zero_count":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "scan_max_record_match_id_header_hit_count":  {
+                                                      "avg":  1171,
+                                                      "min":  1171,
+                                                      "max":  1171
+                                                  },
+    "scan_max_record_match_id_header_miss_count":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "scan_max_record_match_id_header_match_count":  {
+                                                        "avg":  0,
+                                                        "min":  0,
+                                                        "max":  0
+                                                    },
+    "scan_max_record_match_id_header_mismatch_count":  {
+                                                           "avg":  0,
+                                                           "min":  0,
+                                                           "max":  0
+                                                       },
+    "scan_max_record_match_id_header_use_count":  {
+                                                      "avg":  1171,
+                                                      "min":  1171,
+                                                      "max":  1171
+                                                  },
+    "scan_max_persistent_refresh_count":  {
+                                              "avg":  1171,
+                                              "min":  1171,
+                                              "max":  1171
+                                          },
+    "scan_max_persistent_stale_hit_count":  {
+                                                "avg":  0,
+                                                "min":  0,
+                                                "max":  0
+                                            },
+    "scan_pending_age_ms":  {
+                                "avg":  49.831,
+                                "min":  0,
+                                "max":  1110
+                            },
+    "scan_cold_topology_enabled":  false,
+    "scan_topology_rescan_request_count":  {
+                                               "avg":  0,
+                                               "min":  0,
+                                               "max":  0
+                                           },
+    "scan_topology_rescan_request_delta":  0,
+    "scan_topology_count_probe_count":  {
+                                            "avg":  0,
+                                            "min":  0,
+                                            "max":  0
+                                        },
+    "scan_topology_count_probe_delta":  0,
+    "scan_topology_count_probe_change_count":  {
+                                                   "avg":  0,
+                                                   "min":  0,
+                                                   "max":  0
+                                               },
+    "scan_topology_count_probe_change_delta":  0,
+    "scan_topology_candidate_count":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "scan_root_ms":  {
+                         "avg":  0.013,
+                         "min":  0.009,
+                         "max":  0.038
+                     },
+    "scan_list_read_ms":  {
+                              "avg":  0,
+                              "min":  0,
+                              "max":  0
+                          },
+    "scan_slot_walk_ms":  {
+                              "avg":  0,
+                              "min":  0,
+                              "max":  0.013
+                          },
+    "scan_record_build_ms":  {
+                                 "avg":  0.06,
+                                 "min":  0.003,
+                                 "max":  0.296
+                             },
+    "scan_match_link_ms":  {
+                               "avg":  198.372,
+                               "min":  135.91,
+                               "max":  1386.47
+                           },
+    "scan_cn_ne_target_map_ms":  {
+                                     "avg":  143.767,
+                                     "min":  95.418,
+                                     "max":  1326.26
+                                 },
+    "scan_cn_ne_self_validation_ms":  {
+                                          "avg":  28.827,
+                                          "min":  20.499,
+                                          "max":  133.636
+                                      },
+    "scan_component_only_validation_ms":  {
+                                              "avg":  19.274,
+                                              "min":  5.065,
+                                              "max":  963.229
+                                          },
+    "scan_dynamic_pair_ms":  {
+                                 "avg":  0.003,
+                                 "min":  0.002,
+                                 "max":  0.023
+                             },
+    "scan_finalize_ms":  {
+                             "avg":  0,
+                             "min":  0,
+                             "max":  0.002
+                         },
+    "scan_dma_reads_delta":  {
+                                 "avg":  775.72,
+                                 "min":  658,
+                                 "max":  905
+                             },
+    "scan_dma_fail_delta":  {
+                                "avg":  1.017,
+                                "min":  0,
+                                "max":  8
+                            },
+    "scan_dma_range_diag_enabled":  false,
+    "scan_dma_range_reads":  {
+                                 "avg":  0,
+                                 "min":  0,
+                                 "max":  0
+                             },
+    "scan_dma_range_failed":  {
+                                  "avg":  0,
+                                  "min":  0,
+                                  "max":  0
+                              },
+    "scan_dma_range_max_latency_us":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "scan_dma_range_max_callsite":  "Unknown",
+    "scan_dma_range_scanner_reads":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "scan_dma_range_scanner_max_latency_us":  {
+                                                  "avg":  0,
+                                                  "min":  0,
+                                                  "max":  0
+                                              },
+    "scan_dma_range_scanner_max_callsite":  "Unknown",
+    "scan_dma_range_foreign_reads":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "scan_dma_range_foreign_max_latency_us":  {
+                                                  "avg":  0,
+                                                  "min":  0,
+                                                  "max":  0
+                                              },
+    "scan_dma_range_foreign_max_callsite":  "Unknown",
+    "scan_dma_range_root_max_us":  {
+                                       "avg":  0,
+                                       "min":  0,
+                                       "max":  0
+                                   },
+    "scan_dma_range_list_read_max_us":  {
+                                            "avg":  0,
+                                            "min":  0,
+                                            "max":  0
+                                        },
+    "scan_dma_range_record_header_max_us":  {
+                                                "avg":  0,
+                                                "min":  0,
+                                                "max":  0
+                                            },
+    "scan_dma_range_record_pool_id_max_us":  {
+                                                 "avg":  0,
+                                                 "min":  0,
+                                                 "max":  0
+                                             },
+    "scan_dma_range_target_map_max_us":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "scan_dma_range_component_validation_max_us":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "scan_dma_range_viewmatrix_max_us":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "scan_list_read_count":  {
+                                 "avg":  0,
+                                 "min":  0,
+                                 "max":  0
+                             },
+    "scan_list_read_fail_count":  {
+                                      "avg":  0,
+                                      "min":  0,
+                                      "max":  0
+                                  },
+    "scan_list_fallback_read_count":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "scan_list_read_skipped_count":  {
+                                         "avg":  51,
+                                         "min":  51,
+                                         "max":  51
+                                     },
+    "scan_cn_ne_entity_list_chunk_size":  {
+                                              "avg":  65536,
+                                              "min":  65536,
+                                              "max":  65536
+                                          },
+    "scan_record_add_attempt_count":  {
+                                          "avg":  4096,
+                                          "min":  4096,
+                                          "max":  4096
+                                      },
+    "scan_record_duplicate_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "scan_record_header_read_count":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "scan_record_header_fail_count":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "scan_record_remote_fallback_read_count":  {
+                                                   "avg":  0,
+                                                   "min":  0,
+                                                   "max":  0
+                                               },
+    "scan_record_match_id_direct_read_count":  {
+                                                   "avg":  0,
+                                                   "min":  0,
+                                                   "max":  0
+                                               },
+    "scan_record_match_id_direct_zero_count":  {
+                                                   "avg":  0,
+                                                   "min":  0,
+                                                   "max":  0
+                                               },
+    "scan_record_match_id_header_hit_count":  {
+                                                  "avg":  0,
+                                                  "min":  0,
+                                                  "max":  0
+                                              },
+    "scan_record_match_id_header_miss_count":  {
+                                                   "avg":  0,
+                                                   "min":  0,
+                                                   "max":  0
+                                               },
+    "scan_record_match_id_header_match_count":  {
+                                                    "avg":  0,
+                                                    "min":  0,
+                                                    "max":  0
+                                                },
+    "scan_record_match_id_header_mismatch_count":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "scan_record_match_id_header_use_count":  {
+                                                  "avg":  0,
+                                                  "min":  0,
+                                                  "max":  0
+                                              },
+    "scan_cn_ne_record_match_id_from_header_enabled":  true,
+    "scan_cn_ne_entity_list_root_cache_enabled":  true,
+    "scan_cn_ne_entity_list_root_cache_ttl_ms":  {
+                                                     "avg":  10000,
+                                                     "min":  10000,
+                                                     "max":  10000
+                                                 },
+    "scan_cn_ne_entity_list_root_cache_hit_count":  {
+                                                        "avg":  0,
+                                                        "min":  0,
+                                                        "max":  0
+                                                    },
+    "scan_cn_ne_entity_list_root_cache_read_count":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "scan_cn_ne_entity_list_root_cache_store_count":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "scan_cn_ne_entity_list_root_cache_expired_count":  {
+                                                            "avg":  1,
+                                                            "min":  1,
+                                                            "max":  1
+                                                        },
+    "scan_cn_ne_entity_list_root_cache_stale_hit_count":  {
+                                                              "avg":  1,
+                                                              "min":  1,
+                                                              "max":  1
+                                                          },
+    "scan_cn_ne_entity_list_read_negative_cache_enabled":  true,
+    "scan_cn_ne_entity_list_read_negative_cache_ttl_ms":  {
+                                                              "avg":  2000,
+                                                              "min":  2000,
+                                                              "max":  2000
+                                                          },
+    "scan_cn_ne_entity_list_read_negative_cache_lookup_count":  {
+                                                                    "avg":  51,
+                                                                    "min":  51,
+                                                                    "max":  51
+                                                                },
+    "scan_cn_ne_entity_list_read_negative_cache_hit_count":  {
+                                                                 "avg":  51,
+                                                                 "min":  51,
+                                                                 "max":  51
+                                                             },
+    "scan_cn_ne_entity_list_read_negative_cache_store_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "scan_cn_ne_entity_list_read_negative_cache_expired_count":  {
+                                                                     "avg":  0,
+                                                                     "min":  0,
+                                                                     "max":  0
+                                                                 },
+    "scan_cn_ne_entity_list_read_negative_cache_stale_hit_count":  {
+                                                                       "avg":  51,
+                                                                       "min":  51,
+                                                                       "max":  51
+                                                                   },
+    "scan_cn_ne_entity_list_read_cache_enabled":  true,
+    "scan_cn_ne_entity_list_read_cache_ttl_ms":  {
+                                                     "avg":  250,
+                                                     "min":  250,
+                                                     "max":  250
+                                                 },
+    "scan_cn_ne_entity_list_read_cache_lookup_count":  {
+                                                           "avg":  52,
+                                                           "min":  52,
+                                                           "max":  52
+                                                       },
+    "scan_cn_ne_entity_list_read_cache_hit_count":  {
+                                                        "avg":  1,
+                                                        "min":  1,
+                                                        "max":  1
+                                                    },
+    "scan_cn_ne_entity_list_read_cache_store_count":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "scan_cn_ne_entity_list_read_cache_expired_count":  {
+                                                            "avg":  1,
+                                                            "min":  1,
+                                                            "max":  1
+                                                        },
+    "scan_cn_ne_entity_list_read_cache_stale_hit_count":  {
+                                                              "avg":  1,
+                                                              "min":  1,
+                                                              "max":  1
+                                                          },
+    "scan_cn_ne_scanner_stale_metadata_ms":  {
+                                                 "avg":  10000,
+                                                 "min":  10000,
+                                                 "max":  10000
+                                             },
+    "scan_cn_ne_scanner_stale_metadata_only_enabled":  true,
+    "scan_cn_ne_record_snapshot_cache_enabled":  true,
+    "scan_cn_ne_record_snapshot_cache_ttl_ms":  {
+                                                    "avg":  2000,
+                                                    "min":  2000,
+                                                    "max":  2000
+                                                },
+    "scan_cn_ne_record_snapshot_cache_lookup_count":  {
+                                                          "avg":  1171,
+                                                          "min":  1171,
+                                                          "max":  1171
+                                                      },
+    "scan_cn_ne_record_snapshot_cache_hit_count":  {
+                                                       "avg":  1171,
+                                                       "min":  1171,
+                                                       "max":  1171
+                                                   },
+    "scan_cn_ne_record_snapshot_cache_store_count":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "scan_cn_ne_record_snapshot_cache_expired_count":  {
+                                                           "avg":  0,
+                                                           "min":  0,
+                                                           "max":  0
+                                                       },
+    "scan_cn_ne_record_snapshot_cache_refresh_budget":  {
+                                                            "avg":  1,
+                                                            "min":  1,
+                                                            "max":  1
+                                                        },
+    "scan_cn_ne_record_snapshot_cache_refresh_count":  {
+                                                           "avg":  0,
+                                                           "min":  0,
+                                                           "max":  0
+                                                       },
+    "scan_cn_ne_record_snapshot_cache_stale_hit_count":  {
+                                                             "avg":  1171,
+                                                             "min":  1171,
+                                                             "max":  1171
+                                                         },
+    "scan_pool_id_read_count":  {
+                                    "avg":  0,
+                                    "min":  0,
+                                    "max":  0
+                                },
+    "scan_match_lookup_count":  {
+                                    "avg":  12.161,
+                                    "min":  12,
+                                    "max":  14
+                                },
+    "scan_match_lookup_hit_count":  {
+                                        "avg":  12.153,
+                                        "min":  12,
+                                        "max":  13
+                                    },
+    "scan_add_pair_attempt_count":  {
+                                        "avg":  30.314,
+                                        "min":  30,
+                                        "max":  33
+                                    },
+    "scan_add_pair_duplicate_count":  {
+                                          "avg":  12.153,
+                                          "min":  12,
+                                          "max":  13
+                                      },
+    "scan_link_decrypt_attempt_count":  {
+                                            "avg":  12.169,
+                                            "min":  12,
+                                            "max":  14
+                                        },
+    "scan_link_decrypt_success_count":  {
+                                            "avg":  12.161,
+                                            "min":  12,
+                                            "max":  14
+                                        },
+    "scan_cn_ne_link_decrypt_negative_cache_enabled":  true,
+    "scan_cn_ne_link_decrypt_negative_cache_ttl_ms":  {
+                                                          "avg":  2000,
+                                                          "min":  2000,
+                                                          "max":  2000
+                                                      },
+    "scan_cn_ne_link_decrypt_negative_cache_lookup_count":  {
+                                                                "avg":  1222,
+                                                                "min":  1222,
+                                                                "max":  1222
+                                                            },
+    "scan_cn_ne_link_decrypt_negative_cache_hit_count":  {
+                                                             "avg":  1209.831,
+                                                             "min":  1208,
+                                                             "max":  1210
+                                                         },
+    "scan_cn_ne_link_decrypt_negative_cache_store_count":  {
+                                                               "avg":  0.008,
+                                                               "min":  0,
+                                                               "max":  1
+                                                           },
+    "scan_cn_ne_link_decrypt_negative_cache_expired_count":  {
+                                                                 "avg":  0,
+                                                                 "min":  0,
+                                                                 "max":  0
+                                                             },
+    "scan_cn_ne_link_decrypt_negative_cache_stale_hit_count":  {
+                                                                   "avg":  1209.814,
+                                                                   "min":  1208,
+                                                                   "max":  1210
+                                                               },
+    "scan_playable_validation_attempt_count":  {
+                                                   "avg":  1171,
+                                                   "min":  1171,
+                                                   "max":  1171
+                                               },
+    "scan_playable_validation_success_count":  {
+                                                   "avg":  0,
+                                                   "min":  0,
+                                                   "max":  0
+                                               },
+    "scan_cn_ne_map_candidate_count":  {
+                                           "avg":  2444,
+                                           "min":  2444,
+                                           "max":  2444
+                                       },
+    "scan_cn_ne_target_map_attempt_count":  {
+                                                "avg":  24.322,
+                                                "min":  24,
+                                                "max":  28
+                                            },
+    "scan_cn_ne_target_map_success_count":  {
+                                                "avg":  24.322,
+                                                "min":  24,
+                                                "max":  28
+                                            },
+    "scan_cn_ne_bucket_entry_scan_count":  {
+                                               "avg":  12.153,
+                                               "min":  12,
+                                               "max":  13
+                                           },
+    "scan_cn_ne_map_candidate_cache_enabled":  true,
+    "scan_cn_ne_map_candidate_cache_lookup_count":  {
+                                                        "avg":  2342,
+                                                        "min":  2342,
+                                                        "max":  2342
+                                                    },
+    "scan_cn_ne_map_candidate_cache_hit_count":  {
+                                                     "avg":  1171,
+                                                     "min":  1171,
+                                                     "max":  1171
+                                                 },
+    "scan_cn_ne_map_candidate_cache_miss_count":  {
+                                                      "avg":  1171,
+                                                      "min":  1171,
+                                                      "max":  1171
+                                                  },
+    "scan_cn_ne_map_candidate_persistent_cache_enabled":  true,
+    "scan_cn_ne_map_candidate_persistent_cache_ttl_ms":  {
+                                                             "avg":  2000,
+                                                             "min":  2000,
+                                                             "max":  2000
+                                                         },
+    "scan_cn_ne_map_candidate_persistent_cache_lookup_count":  {
+                                                                   "avg":  1171,
+                                                                   "min":  1171,
+                                                                   "max":  1171
+                                                               },
+    "scan_cn_ne_map_candidate_persistent_cache_hit_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "scan_cn_ne_map_candidate_persistent_cache_miss_count":  {
+                                                                 "avg":  0,
+                                                                 "min":  0,
+                                                                 "max":  0
+                                                             },
+    "scan_cn_ne_map_candidate_persistent_cache_store_count":  {
+                                                                  "avg":  0,
+                                                                  "min":  0,
+                                                                  "max":  0
+                                                              },
+    "scan_cn_ne_map_candidate_persistent_cache_expired_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "scan_cn_ne_map_candidate_persistent_cache_refresh_budget":  {
+                                                                     "avg":  4,
+                                                                     "min":  4,
+                                                                     "max":  4
+                                                                 },
+    "scan_cn_ne_map_candidate_persistent_cache_refresh_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "scan_cn_ne_map_candidate_persistent_cache_stale_hit_count":  {
+                                                                      "avg":  1171,
+                                                                      "min":  1171,
+                                                                      "max":  1171
+                                                                  },
+    "scan_cn_ne_component_negative_cache_enabled":  true,
+    "scan_cn_ne_component_negative_cache_ttl_ms":  {
+                                                       "avg":  2000,
+                                                       "min":  2000,
+                                                       "max":  2000
+                                                   },
+    "scan_cn_ne_component_negative_cache_lookup_count":  {
+                                                             "avg":  1222,
+                                                             "min":  1222,
+                                                             "max":  1222
+                                                         },
+    "scan_cn_ne_component_negative_cache_hit_count":  {
+                                                          "avg":  1220,
+                                                          "min":  1220,
+                                                          "max":  1220
+                                                      },
+    "scan_cn_ne_component_negative_cache_store_count":  {
+                                                            "avg":  0,
+                                                            "min":  0,
+                                                            "max":  0
+                                                        },
+    "scan_cn_ne_component_negative_cache_expired_count":  {
+                                                              "avg":  0,
+                                                              "min":  0,
+                                                              "max":  0
+                                                          },
+    "scan_cn_ne_component_negative_cache_refresh_budget":  {
+                                                               "avg":  1,
+                                                               "min":  1,
+                                                               "max":  1
+                                                           },
+    "scan_cn_ne_component_negative_cache_refresh_count":  {
+                                                              "avg":  2,
+                                                              "min":  2,
+                                                              "max":  2
+                                                          },
+    "scan_cn_ne_component_negative_cache_stale_hit_count":  {
+                                                                "avg":  1220,
+                                                                "min":  1220,
+                                                                "max":  1220
+                                                            },
+    "scan_cn_ne_map_diag_enabled":  false,
+    "scan_cn_ne_map_candidate_parent_lookup_count":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "scan_cn_ne_map_candidate_unique_parent_count":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "scan_cn_ne_map_candidate_duplicate_parent_count":  {
+                                                            "avg":  0,
+                                                            "min":  0,
+                                                            "max":  0
+                                                        },
+    "scan_cn_ne_map_candidate_direct_source_count":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "scan_cn_ne_map_candidate_plus8_source_count":  {
+                                                        "avg":  0,
+                                                        "min":  0,
+                                                        "max":  0
+                                                    },
+    "scan_cn_ne_map_candidate_wrapper_source_count":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "scan_component_only_validation_attempt_count":  {
+                                                         "avg":  1222,
+                                                         "min":  1222,
+                                                         "max":  1222
+                                                     },
+    "scan_component_only_validation_success_count":  {
+                                                         "avg":  2,
+                                                         "min":  2,
+                                                         "max":  2
+                                                     },
+    "scan_skip_pending_delta":  2628,
+    "scan_skip_not_due_delta":  52,
+    "scan_overwritten_delta":  0,
+    "scan_detail_records":  {
+                                "avg":  1171,
+                                "min":  1171,
+                                "max":  1171
+                            },
+    "scan_detail_total_pairs":  {
+                                    "avg":  18.161,
+                                    "min":  18,
+                                    "max":  20
+                                },
+    "scan_light_scan_enabled":  false,
+    "scan_light_unvalidated_pairs":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "scan_light_cap_hits_delta":  0,
+    "entity_cycle_ms":  {
+                            "avg":  133.21,
+                            "min":  50.193,
+                            "max":  1306.86
+                        },
+    "phase_begin_frame_ms":  {
+                                 "avg":  0,
+                                 "min":  0,
+                                 "max":  0.001
+                             },
+    "phase_consume_scan_ms":  {
+                                  "avg":  0,
+                                  "min":  0,
+                                  "max":  0
+                              },
+    "phase_previous_snapshot_copy_ms":  {
+                                            "avg":  0.001,
+                                            "min":  0,
+                                            "max":  0.004
+                                        },
+    "phase_prefetch_ms":  {
+                              "avg":  0,
+                              "min":  0,
+                              "max":  0.001
+                          },
+    "phase_previous_index_ms":  {
+                                    "avg":  0.001,
+                                    "min":  0,
+                                    "max":  0.005
+                                },
+    "phase_hot_scatter_prepare_ms":  {
+                                         "avg":  0.016,
+                                         "min":  0.001,
+                                         "max":  0.029
+                                     },
+    "phase_hot_scatter_execute_ms":  {
+                                         "avg":  18.151,
+                                         "min":  6.164,
+                                         "max":  964.752
+                                     },
+    "phase_base_cache_ms":  {
+                                "avg":  0.031,
+                                "min":  0,
+                                "max":  2.046
+                            },
+    "phase_base_decrypt_ms":  {
+                                  "avg":  36.345,
+                                  "min":  11.044,
+                                  "max":  189.134
+                              },
+    "phase_health_ms":  {
+                            "avg":  0,
+                            "min":  0,
+                            "max":  0.003
+                        },
+    "phase_hero_ms":  {
+                          "avg":  0.001,
+                          "min":  0,
+                          "max":  0.005
+                      },
+    "phase_visibility_ms":  {
+                                "avg":  0,
+                                "min":  0,
+                                "max":  0.002
+                            },
+    "phase_skeleton_ms":  {
+                              "avg":  12.572,
+                              "min":  4.57,
+                              "max":  36.964
+                          },
+    "phase_skeleton_velocity_read_ms":  {
+                                            "avg":  0,
+                                            "min":  0,
+                                            "max":  0
+                                        },
+    "phase_skeleton_cache_call_ms":  {
+                                         "avg":  12.564,
+                                         "min":  4.562,
+                                         "max":  36.954
+                                     },
+    "phase_skill_ms":  {
+                           "avg":  4.643,
+                           "min":  0.98,
+                           "max":  21.456
+                       },
+    "phase_team_name_ms":  {
+                               "avg":  4.668,
+                               "min":  1.437,
+                               "max":  31.798
+                           },
+    "phase_team_name_hero_lookup_ms":  {
+                                           "avg":  0.001,
+                                           "min":  0,
+                                           "max":  0.058
+                                       },
+    "phase_team_name_bot_adjust_ms":  {
+                                          "avg":  0.202,
+                                          "min":  0,
+                                          "max":  8.379
+                                      },
+    "phase_team_name_battle_tag_ms":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "phase_team_name_team_read_ms":  {
+                                         "avg":  4.462,
+                                         "min":  1.435,
+                                         "max":  31.795
+                                     },
+    "phase_local_select_ms":  {
+                                  "avg":  1.47,
+                                  "min":  0,
+                                  "max":  21.531
+                              },
+    "phase_publish_ms":  {
+                             "avg":  0.006,
+                             "min":  0.004,
+                             "max":  0.013
+                         },
+    "phase_record_sync_ms":  {
+                                 "avg":  0,
+                                 "min":  0,
+                                 "max":  0.001
+                             },
+    "phase_entity_loop_wall_ms":  {
+                                      "avg":  120.956,
+                                      "min":  44.906,
+                                      "max":  1302.44
+                                  },
+    "phase_entity_loop_setup_ms":  {
+                                       "avg":  5.487,
+                                       "min":  1.257,
+                                       "max":  106.553
+                                   },
+    "phase_entity_header_special_ms":  {
+                                           "avg":  11.527,
+                                           "min":  3.728,
+                                           "max":  153.683
+                                       },
+    "phase_entity_header_component_ms":  {
+                                             "avg":  5.06,
+                                             "min":  1.395,
+                                             "max":  94.552
+                                         },
+    "phase_entity_header_link_ms":  {
+                                        "avg":  2.457,
+                                        "min":  0.554,
+                                        "max":  55.428
+                                    },
+    "phase_entity_special_probe_ms":  {
+                                          "avg":  4.004,
+                                          "min":  0.976,
+                                          "max":  92.941
+                                      },
+    "phase_entity_cache_apply_ms":  {
+                                        "avg":  3.474,
+                                        "min":  0.971,
+                                        "max":  13.597
+                                    },
+    "phase_entity_cache_match_id_ms":  {
+                                           "avg":  3.468,
+                                           "min":  0.968,
+                                           "max":  13.577
+                                       },
+    "phase_entity_cache_record_update_ms":  {
+                                                "avg":  0,
+                                                "min":  0,
+                                                "max":  0.001
+                                            },
+    "phase_entity_hot_fields_ms":  {
+                                       "avg":  5.995,
+                                       "min":  2.219,
+                                       "max":  68.905
+                                   },
+    "phase_entity_rotation_position_ms":  {
+                                              "avg":  32.6,
+                                              "min":  8.811,
+                                              "max":  1154.44
+                                          },
+    "phase_entity_loop_gap_ms":  {
+                                     "avg":  2.143,
+                                     "min":  0.59,
+                                     "max":  33.63
+                                 },
+    "phase_cycle_gap_ms":  {
+                               "avg":  0,
+                               "min":  0,
+                               "max":  0
+                           },
+    "hot_scatter_requested_count":  {
+                                        "avg":  49.254,
+                                        "min":  42,
+                                        "max":  63
+                                    },
+    "hot_scatter_prepare_requested_count":  {
+                                                "avg":  49.254,
+                                                "min":  42,
+                                                "max":  63
+                                            },
+    "hot_scatter_prepare_success_count":  {
+                                              "avg":  49.254,
+                                              "min":  42,
+                                              "max":  63
+                                          },
+    "hot_scatter_prepare_fail_count":  {
+                                           "avg":  0,
+                                           "min":  0,
+                                           "max":  0
+                                       },
+    "hot_scatter_execute_count":  {
+                                      "avg":  5.805,
+                                      "min":  5,
+                                      "max":  16
+                                  },
+    "hot_scatter_execute_fail_count":  {
+                                           "avg":  0,
+                                           "min":  0,
+                                           "max":  0
+                                       },
+    "hot_scatter_execute_fail_delta":  0,
+    "hot_scatter_bytes_requested":  {
+                                        "avg":  51152.881,
+                                        "min":  48520,
+                                        "max":  66432
+                                    },
+    "hot_scatter_bytes_read":  {
+                                   "avg":  51152.881,
+                                   "min":  48520,
+                                   "max":  66432
+                               },
+    "hot_scatter_short_read_count":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "hot_scatter_short_read_delta":  0,
+    "hot_scatter_batch_items":  {
+                                    "avg":  9.636,
+                                    "min":  0,
+                                    "max":  11
+                                },
+    "hot_scatter_batch_requests":  {
+                                       "avg":  34.593,
+                                       "min":  0,
+                                       "max":  40
+                                   },
+    "hot_scatter_estimated_unique_pages":  {
+                                               "avg":  53.331,
+                                               "min":  47,
+                                               "max":  68
+                                           },
+    "hot_scatter_success_count":  {
+                                      "avg":  44.983,
+                                      "min":  38,
+                                      "max":  55
+                                  },
+    "hot_scatter_partial_count":  {
+                                      "avg":  0,
+                                      "min":  0,
+                                      "max":  0
+                                  },
+    "hot_scatter_partial_delta":  0,
+    "hot_scatter_fallback_read_count":  {
+                                            "avg":  0,
+                                            "min":  0,
+                                            "max":  0
+                                        },
+    "hot_scatter_fallback_read_delta":  0,
+    "visibility_scatter_hit_count":  {
+                                         "avg":  8.195,
+                                         "min":  8,
+                                         "max":  9
+                                     },
+    "visibility_scatter_hit_delta":  0,
+    "base_cache_hit_count":  {
+                                 "avg":  9.72,
+                                 "min":  0,
+                                 "max":  13
+                             },
+    "base_cache_hit_delta":  0,
+    "base_cache_miss_count":  {
+                                  "avg":  4.78,
+                                  "min":  4,
+                                  "max":  15
+                              },
+    "base_cache_miss_delta":  0,
+    "base_decrypt_attempt_count":  {
+                                       "avg":  58.288,
+                                       "min":  48,
+                                       "max":  181
+                                   },
+    "base_decrypt_attempt_delta":  0,
+    "base_decrypt_success_count":  {
+                                       "avg":  45.475,
+                                       "min":  38,
+                                       "max":  156
+                                   },
+    "base_decrypt_success_delta":  0,
+    "base_decrypt_fail_count":  {
+                                    "avg":  12.814,
+                                    "min":  10,
+                                    "max":  78
+                                },
+    "base_decrypt_fail_delta":  0,
+    "base_decrypt_slow_call_count":  {
+                                         "avg":  0.051,
+                                         "min":  0,
+                                         "max":  2
+                                     },
+    "base_decrypt_fallback_attempt_count":  {
+                                                "avg":  0.932,
+                                                "min":  0,
+                                                "max":  37
+                                            },
+    "base_decrypt_fallback_attempt_delta":  0,
+    "base_decrypt_fallback_success_count":  {
+                                                "avg":  0.492,
+                                                "min":  0,
+                                                "max":  23
+                                            },
+    "base_decrypt_fallback_success_delta":  0,
+    "base_decrypt_fallback_fail_count":  {
+                                             "avg":  0.441,
+                                             "min":  0,
+                                             "max":  14
+                                         },
+    "base_decrypt_fallback_fail_delta":  0,
+    "base_decrypt_unique_key_count":  {
+                                          "avg":  42.288,
+                                          "min":  32,
+                                          "max":  165
+                                      },
+    "base_decrypt_duplicate_key_count":  {
+                                             "avg":  16,
+                                             "min":  16,
+                                             "max":  16
+                                         },
+    "base_decrypt_max_duplicate_key_count":  {
+                                                 "avg":  2,
+                                                 "min":  2,
+                                                 "max":  2
+                                             },
+    "base_decrypt_max_call_ms":  {
+                                     "avg":  6.704,
+                                     "min":  0.604,
+                                     "max":  88.486
+                                 },
+    "team_name_slow_call_count":  {
+                                      "avg":  0,
+                                      "min":  0,
+                                      "max":  0
+                                  },
+    "team_name_max_call_ms":  {
+                                  "avg":  2.822,
+                                  "min":  0.741,
+                                  "max":  21.776
+                              },
+    "skeleton_cache_hit_count":  {
+                                     "avg":  3.771,
+                                     "min":  0,
+                                     "max":  4
+                                 },
+    "skeleton_cache_hit_delta":  0,
+    "skeleton_cache_miss_count":  {
+                                      "avg":  2.356,
+                                      "min":  2,
+                                      "max":  9
+                                  },
+    "skeleton_cache_miss_delta":  0,
+    "skeleton_block_read_bytes":  {
+                                      "avg":  14893.831,
+                                      "min":  12828,
+                                      "max":  20268
+                                  },
+    "skeleton_slow_call_count":  {
+                                     "avg":  0,
+                                     "min":  0,
+                                     "max":  0
+                                 },
+    "skeleton_max_call_ms":  {
+                                 "avg":  4.82,
+                                 "min":  1.554,
+                                 "max":  14.482
+                             },
+    "skeleton_fallback_get_bone_pos_count":  {
+                                                 "avg":  0.025,
+                                                 "min":  0,
+                                                 "max":  1
+                                             },
+    "skeleton_fallback_get_bone_pos_delta":  0,
+    "visibility_fallback_count":  {
+                                      "avg":  0,
+                                      "min":  0,
+                                      "max":  0
+                                  },
+    "visibility_fallback_delta":  0,
+    "skill_due_count":  {
+                            "avg":  2.178,
+                            "min":  2,
+                            "max":  3
+                        },
+    "skill_read_count":  {
+                             "avg":  2.178,
+                             "min":  2,
+                             "max":  3
+                         },
+    "skill_read_delta":  0,
+    "skill_skipped_not_due_count":  {
+                                        "avg":  8.271,
+                                        "min":  8,
+                                        "max":  10
+                                    },
+    "skill_skipped_not_due_delta":  0,
+    "entity_record_created_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "entity_record_updated_actor_count":  {
+                                              "avg":  0,
+                                              "min":  0,
+                                              "max":  0
+                                          },
+    "entity_record_link_changed_count":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "entity_record_link_changed_same_component_count":  {
+                                                            "avg":  0,
+                                                            "min":  0,
+                                                            "max":  0
+                                                        },
+    "entity_record_link_changed_component_changed_count":  {
+                                                               "avg":  0,
+                                                               "min":  0,
+                                                               "max":  0
+                                                           },
+    "entity_record_link_changed_same_hero_count":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "entity_record_link_changed_hero_changed_count":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "entity_record_link_changed_hero_unknown_count":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "entity_record_link_changed_match_key_count":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "entity_record_link_changed_link_key_count":  {
+                                                      "avg":  0,
+                                                      "min":  0,
+                                                      "max":  0
+                                                  },
+    "entity_record_link_changed_component_key_count":  {
+                                                           "avg":  0,
+                                                           "min":  0,
+                                                           "max":  0
+                                                       },
+    "entity_record_mark_missing_count":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "entity_record_mark_dead_count":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "entity_record_expired_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "component_cache_hit_count":  {
+                                      "avg":  9.72,
+                                      "min":  0,
+                                      "max":  13
+                                  },
+    "component_cache_miss_count":  {
+                                       "avg":  4.78,
+                                       "min":  4,
+                                       "max":  15
+                                   },
+    "component_cache_invalidate_interval_count":  {
+                                                      "avg":  0.78,
+                                                      "min":  0,
+                                                      "max":  11
+                                                  },
+    "component_cache_invalidate_interval_skipped_lifetime_count":  {
+                                                                       "avg":  0,
+                                                                       "min":  0,
+                                                                       "max":  0
+                                                                   },
+    "component_cache_invalidate_link_change_count":  {
+                                                         "avg":  4,
+                                                         "min":  4,
+                                                         "max":  4
+                                                     },
+    "component_cache_invalidate_health_resurrect_count":  {
+                                                              "avg":  0,
+                                                              "min":  0,
+                                                              "max":  0
+                                                          },
+    "component_cache_invalidate_hero_change_count":  {
+                                                         "avg":  0.017,
+                                                         "min":  0,
+                                                         "max":  1
+                                                     },
+    "component_cache_link_change_previous_match_id_known_count":  {
+                                                                      "avg":  4,
+                                                                      "min":  4,
+                                                                      "max":  4
+                                                                  },
+    "component_cache_link_change_previous_match_id_zero_count":  {
+                                                                     "avg":  0,
+                                                                     "min":  0,
+                                                                     "max":  0
+                                                                 },
+    "component_cache_link_change_previous_match_id_unknown_count":  {
+                                                                        "avg":  0,
+                                                                        "min":  0,
+                                                                        "max":  0
+                                                                    },
+    "component_cache_link_change_record_alias_hit_count":  {
+                                                               "avg":  0,
+                                                               "min":  0,
+                                                               "max":  0
+                                                           },
+    "component_cache_link_change_record_alias_miss_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "component_cache_link_change_record_published_count":  {
+                                                               "avg":  0,
+                                                               "min":  0,
+                                                               "max":  0
+                                                           },
+    "component_cache_link_change_record_bases_valid_count":  {
+                                                                 "avg":  0,
+                                                                 "min":  0,
+                                                                 "max":  0
+                                                             },
+    "component_cache_link_change_record_match_key_count":  {
+                                                               "avg":  0,
+                                                               "min":  0,
+                                                               "max":  0
+                                                           },
+    "component_cache_link_change_record_link_key_count":  {
+                                                              "avg":  0,
+                                                              "min":  0,
+                                                              "max":  0
+                                                          },
+    "component_cache_link_change_record_component_key_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "component_cache_link_retain_attempt_count":  {
+                                                      "avg":  4,
+                                                      "min":  4,
+                                                      "max":  4
+                                                  },
+    "component_cache_link_retain_success_count":  {
+                                                      "avg":  0,
+                                                      "min":  0,
+                                                      "max":  0
+                                                  },
+    "component_cache_link_retain_rejected_disabled_count":  {
+                                                                "avg":  4,
+                                                                "min":  4,
+                                                                "max":  4
+                                                            },
+    "component_cache_link_retain_rejected_record_store_disabled_count":  {
+                                                                             "avg":  0,
+                                                                             "min":  0,
+                                                                             "max":  0
+                                                                         },
+    "component_cache_link_retain_rejected_missing_record_count":  {
+                                                                      "avg":  0,
+                                                                      "min":  0,
+                                                                      "max":  0
+                                                                  },
+    "component_cache_link_retain_rejected_missing_match_id_count":  {
+                                                                        "avg":  0,
+                                                                        "min":  0,
+                                                                        "max":  0
+                                                                    },
+    "component_cache_link_retain_rejected_component_changed_count":  {
+                                                                         "avg":  0,
+                                                                         "min":  0,
+                                                                         "max":  0
+                                                                     },
+    "component_cache_link_retain_rejected_interval_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "component_cache_link_retain_interval_bypassed_lifetime_count":  {
+                                                                         "avg":  0,
+                                                                         "min":  0,
+                                                                         "max":  0
+                                                                     },
+    "component_cache_link_retain_rejected_hero_changed_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_rejected_hero_unknown_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_rejected_decrypt_fail_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_cached_hero_validate_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "component_cache_link_retain_refresh_decrypt_attempt_count":  {
+                                                                      "avg":  0,
+                                                                      "min":  0,
+                                                                      "max":  0
+                                                                  },
+    "component_cache_link_retain_refresh_decrypt_success_count":  {
+                                                                      "avg":  0,
+                                                                      "min":  0,
+                                                                      "max":  0
+                                                                  },
+    "component_cache_link_retain_refresh_decrypt_fail_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "component_cache_link_retain_refresh_link_attempt_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "component_cache_link_retain_refresh_link_success_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "component_cache_link_retain_refresh_link_fail_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "component_cache_link_retain_refresh_hero_attempt_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "component_cache_link_retain_refresh_hero_success_count":  {
+                                                                   "avg":  0,
+                                                                   "min":  0,
+                                                                   "max":  0
+                                                               },
+    "component_cache_link_retain_refresh_hero_fail_count":  {
+                                                                "avg":  0,
+                                                                "min":  0,
+                                                                "max":  0
+                                                            },
+    "component_cache_link_retain_refresh_visibility_attempt_count":  {
+                                                                         "avg":  0,
+                                                                         "min":  0,
+                                                                         "max":  0
+                                                                     },
+    "component_cache_link_retain_refresh_visibility_success_count":  {
+                                                                         "avg":  0,
+                                                                         "min":  0,
+                                                                         "max":  0
+                                                                     },
+    "component_cache_link_retain_refresh_visibility_fail_count":  {
+                                                                      "avg":  0,
+                                                                      "min":  0,
+                                                                      "max":  0
+                                                                  },
+    "component_cache_link_retain_refresh_angle_attempt_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_refresh_angle_success_count":  {
+                                                                    "avg":  0,
+                                                                    "min":  0,
+                                                                    "max":  0
+                                                                },
+    "component_cache_link_retain_refresh_angle_fail_count":  {
+                                                                 "avg":  0,
+                                                                 "min":  0,
+                                                                 "max":  0
+                                                             },
+    "component_cache_link_retain_refresh_angle_skipped_no_prior_count":  {
+                                                                             "avg":  0,
+                                                                             "min":  0,
+                                                                             "max":  0
+                                                                         },
+    "component_cache_link_retain_refresh_angle_prior_count":  {
+                                                                  "avg":  0,
+                                                                  "min":  0,
+                                                                  "max":  0
+                                                              },
+    "component_cache_link_retain_refresh_angle_prior_fail_rejected_count":  {
+                                                                                "avg":  0,
+                                                                                "min":  0,
+                                                                                "max":  0
+                                                                            },
+    "dynamic_cache_created_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "dynamic_cache_reused_count":  {
+                                       "avg":  4,
+                                       "min":  4,
+                                       "max":  4
+                                   },
+    "dynamic_cache_replaced_count":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "dynamic_cache_expired_count":  {
+                                        "avg":  0,
+                                        "min":  0,
+                                        "max":  0
+                                    },
+    "record_store_enabled":  false,
+    "record_store_size":  {
+                              "avg":  0,
+                              "min":  0,
+                              "max":  0
+                          },
+    "record_store_fresh_count":  {
+                                     "avg":  0,
+                                     "min":  0,
+                                     "max":  0
+                                 },
+    "record_store_missing_count":  {
+                                       "avg":  0,
+                                       "min":  0,
+                                       "max":  0
+                                   },
+    "record_store_dead_count":  {
+                                    "avg":  0,
+                                    "min":  0,
+                                    "max":  0
+                                },
+    "record_store_expired_count":  {
+                                       "avg":  0,
+                                       "min":  0,
+                                       "max":  0
+                                   },
+    "record_store_bases_valid_count":  {
+                                           "avg":  0,
+                                           "min":  0,
+                                           "max":  0
+                                       },
+    "record_store_dynamic_valid_count":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "record_store_published_valid_count":  {
+                                               "avg":  0,
+                                               "min":  0,
+                                               "max":  0
+                                           },
+    "sdk_component_key_cache_hit_delta":  0,
+    "sdk_component_key_cache_miss_delta":  0,
+    "sdk_begin_frame_scan_delta":  409,
+    "sdk_begin_frame_process_delta":  995,
+    "sdk_begin_frame_unknown_delta":  0,
+    "viewmatrix_poll_sleep_ms":  {
+                                     "avg":  5,
+                                     "min":  5,
+                                     "max":  5
+                                 },
+    "viewmatrix_scan_backoff_ms":  {
+                                       "avg":  0,
+                                       "min":  0,
+                                       "max":  0
+                                   },
+    "viewmatrix_scan_due_guard_ms":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "viewmatrix_scan_backoff_delta":  0,
+    "viewmatrix_scan_due_guard_delta":  0,
+    "viewmatrix_publish_hz":  {
+                                  "avg":  60.383,
+                                  "min":  1.031,
+                                  "max":  66.666
+                              },
+    "viewmatrix_publish_age_ms":  {
+                                      "avg":  59.839,
+                                      "min":  0,
+                                      "max":  1047
+                                  },
+    "render_viewmatrix_age_ms":  {
+                                     "avg":  61.008,
+                                     "min":  0,
+                                     "max":  1047
+                                 },
+    "render_viewmatrix_max_age_ms":  {
+                                         "avg":  1109,
+                                         "min":  1109,
+                                         "max":  1109
+                                     },
+    "render_viewmatrix_uses_delta":  21018,
+    "render_viewmatrix_over_16ms_delta":  2903,
+    "render_viewmatrix_over_33ms_delta":  2623,
+    "render_viewmatrix_over_50ms_delta":  2431,
+    "render_viewmatrix_missing_publish_delta":  0,
+    "snapshot_entities_copy_ms":  {
+                                      "avg":  0.001,
+                                      "min":  0,
+                                      "max":  0.006
+                                  },
+    "snapshot_dynamic_copy_ms":  {
+                                     "avg":  0,
+                                     "min":  0,
+                                     "max":  0
+                                 },
+    "entity_count":  {
+                         "avg":  8.551,
+                         "min":  8,
+                         "max":  12
+                     },
+    "view_matrix_bad_samples":  0,
+    "resolved_screen_sizes":  [
+                                  "1920x1080"
+                              ],
+    "projection_jump_samples":  0,
+    "render_prediction_candidates":  {
+                                         "avg":  8.025,
+                                         "min":  6,
+                                         "max":  11
+                                     },
+    "render_prediction_applied":  {
+                                      "avg":  0.559,
+                                      "min":  0,
+                                      "max":  1
+                                  },
+    "render_prediction_world_delta_fallback":  {
+                                                   "avg":  0.559,
+                                                   "min":  0,
+                                                   "max":  1
+                                               },
+    "render_prediction_max_lead_ms":  {
+                                          "avg":  55.305,
+                                          "min":  0,
+                                          "max":  100
+                                      },
+    "render_prediction_max_offset_cm":  {
+                                            "avg":  23.314,
+                                            "min":  0,
+                                            "max":  52
+                                        },
+    "render_callback_ms":  {
+                               "avg":  3.316,
+                               "min":  0.413,
+                               "max":  5.653
+                           },
+    "present_ms":  {
+                       "avg":  2.234,
+                       "min":  1.742,
+                       "max":  3.711
+                   },
+    "render_frame_ms":  {
+                            "avg":  5.55,
+                            "min":  2.23,
+                            "max":  8.107
+                        },
+    "dma_reads_per_second":  3082.008,
+    "dma_fail_rate_percent":  0.138,
+    "dma_total_delta":  368282,
+    "dma_fail_delta":  508,
+    "dma_window_total":  {
+                             "avg":  7272.703,
+                             "min":  4575,
+                             "max":  8192
+                         },
+    "dma_window_failed":  {
+                              "avg":  10.415,
+                              "min":  0,
+                              "max":  43
+                          },
+    "dma_window_max_latency_us":  {
+                                      "avg":  235927.602,
+                                      "min":  5645,
+                                      "max":  958950
+                                  },
+    "dma_window_slow_threshold_us":  {
+                                         "avg":  50000,
+                                         "min":  50000,
+                                         "max":  50000
+                                     },
+    "dma_window_slow_reads":  {
+                                  "avg":  3.72,
+                                  "min":  0,
+                                  "max":  17
+                              },
+    "dma_window_slow_failed":  {
+                                   "avg":  0,
+                                   "min":  0,
+                                   "max":  0
+                               },
+    "dma_slow_samples_count":  {
+                                   "avg":  3.703,
+                                   "min":  0,
+                                   "max":  16
+                               },
+    "dma_slowest_sample_latency_us":  {
+                                          "avg":  227106.78,
+                                          "min":  0,
+                                          "max":  958950
+                                      },
+    "dma_slowest_sample_callsite":  "Aimbot",
+    "dma_slowest_sample_success":  true,
+    "dma_slowest_sample_thread_id":  13404,
+    "dma_slowest_sample_started_tick_ms":  85352384,
+    "dma_slowest_sample_completed_tick_ms":  85353343,
+    "dma_slowest_sample_completed_age_ms":  {
+                                                "avg":  490.203,
+                                                "min":  0,
+                                                "max":  2484
+                                            },
+    "dma_slowest_sample_started_age_ms":  {
+                                              "avg":  717.475,
+                                              "min":  0,
+                                              "max":  3334
+                                          },
+    "dma_window_entity_scan_reads":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "dma_window_entity_scan_max_us":  {
+                                          "avg":  0,
+                                          "min":  0,
+                                          "max":  0
+                                      },
+    "dma_window_entity_scan_root_reads":  {
+                                              "avg":  0,
+                                              "min":  0,
+                                              "max":  0
+                                          },
+    "dma_window_entity_scan_root_max_us":  {
+                                               "avg":  0,
+                                               "min":  0,
+                                               "max":  0
+                                           },
+    "dma_window_entity_scan_list_read_reads":  {
+                                                   "avg":  0,
+                                                   "min":  0,
+                                                   "max":  0
+                                               },
+    "dma_window_entity_scan_list_read_failed":  {
+                                                    "avg":  0,
+                                                    "min":  0,
+                                                    "max":  0
+                                                },
+    "dma_window_entity_scan_list_read_max_us":  {
+                                                    "avg":  0,
+                                                    "min":  0,
+                                                    "max":  0
+                                                },
+    "dma_window_entity_scan_list_read_success_max_us":  {
+                                                            "avg":  0,
+                                                            "min":  0,
+                                                            "max":  0
+                                                        },
+    "dma_window_entity_scan_list_read_failed_max_us":  {
+                                                           "avg":  0,
+                                                           "min":  0,
+                                                           "max":  0
+                                                       },
+    "dma_window_entity_scan_list_read_slow_reads":  {
+                                                        "avg":  0,
+                                                        "min":  0,
+                                                        "max":  0
+                                                    },
+    "dma_window_entity_scan_list_read_slow_failed":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "dma_window_entity_scan_record_build_reads":  {
+                                                      "avg":  0,
+                                                      "min":  0,
+                                                      "max":  0
+                                                  },
+    "dma_window_entity_scan_record_build_max_us":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "dma_window_entity_scan_record_match_id_reads":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "dma_window_entity_scan_record_match_id_max_us":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "dma_window_entity_scan_record_header_reads":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "dma_window_entity_scan_record_header_max_us":  {
+                                                        "avg":  0,
+                                                        "min":  0,
+                                                        "max":  0
+                                                    },
+    "dma_window_entity_scan_record_pool_ptr_reads":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "dma_window_entity_scan_record_pool_ptr_max_us":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "dma_window_entity_scan_record_pool_id_reads":  {
+                                                        "avg":  0,
+                                                        "min":  0,
+                                                        "max":  0
+                                                    },
+    "dma_window_entity_scan_record_pool_id_max_us":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "dma_window_entity_scan_match_link_reads":  {
+                                                    "avg":  522.576,
+                                                    "min":  289,
+                                                    "max":  642
+                                                },
+    "dma_window_entity_scan_match_link_max_us":  {
+                                                     "avg":  93118.864,
+                                                     "min":  2573,
+                                                     "max":  955828
+                                                 },
+    "dma_window_entity_scan_target_map_reads":  {
+                                                    "avg":  0,
+                                                    "min":  0,
+                                                    "max":  0
+                                                },
+    "dma_window_entity_scan_target_map_failed":  {
+                                                     "avg":  0,
+                                                     "min":  0,
+                                                     "max":  0
+                                                 },
+    "dma_window_entity_scan_target_map_max_us":  {
+                                                     "avg":  0,
+                                                     "min":  0,
+                                                     "max":  0
+                                                 },
+    "dma_window_entity_scan_target_map_success_max_us":  {
+                                                             "avg":  0,
+                                                             "min":  0,
+                                                             "max":  0
+                                                         },
+    "dma_window_entity_scan_target_map_failed_max_us":  {
+                                                            "avg":  0,
+                                                            "min":  0,
+                                                            "max":  0
+                                                        },
+    "dma_window_entity_scan_target_map_slow_reads":  {
+                                                         "avg":  0,
+                                                         "min":  0,
+                                                         "max":  0
+                                                     },
+    "dma_window_entity_scan_target_map_slow_failed":  {
+                                                          "avg":  0,
+                                                          "min":  0,
+                                                          "max":  0
+                                                      },
+    "dma_window_entity_scan_map_candidate_reads":  {
+                                                       "avg":  0,
+                                                       "min":  0,
+                                                       "max":  0
+                                                   },
+    "dma_window_entity_scan_map_candidate_max_us":  {
+                                                        "avg":  0,
+                                                        "min":  0,
+                                                        "max":  0
+                                                    },
+    "dma_window_entity_scan_map_candidate_slow_reads":  {
+                                                            "avg":  0,
+                                                            "min":  0,
+                                                            "max":  0
+                                                        },
+    "dma_window_entity_scan_link_target_resolve_reads":  {
+                                                             "avg":  1652.737,
+                                                             "min":  910,
+                                                             "max":  2028
+                                                         },
+    "dma_window_entity_scan_link_target_resolve_max_us":  {
+                                                              "avg":  100013.932,
+                                                              "min":  3776,
+                                                              "max":  957086
+                                                          },
+    "dma_window_entity_scan_link_target_resolve_slow_reads":  {
+                                                                  "avg":  0.483,
+                                                                  "min":  0,
+                                                                  "max":  3
+                                                              },
+    "dma_window_entity_scan_self_validation_reads":  {
+                                                         "avg":  271.254,
+                                                         "min":  135,
+                                                         "max":  347
+                                                     },
+    "dma_window_entity_scan_self_validation_max_us":  {
+                                                          "avg":  8712.441,
+                                                          "min":  2502,
+                                                          "max":  88601
+                                                      },
+    "dma_window_entity_scan_component_validation_reads":  {
+                                                              "avg":  129.5,
+                                                              "min":  64,
+                                                              "max":  160
+                                                          },
+    "dma_window_entity_scan_component_validation_max_us":  {
+                                                               "avg":  28404.212,
+                                                               "min":  1521,
+                                                               "max":  954431
+                                                           },
+    "dma_window_entity_decrypt_reads":  {
+                                            "avg":  909.28,
+                                            "min":  466,
+                                            "max":  1125
+                                        },
+    "dma_window_entity_decrypt_max_us":  {
+                                             "avg":  75686.551,
+                                             "min":  3156,
+                                             "max":  956600
+                                         },
+    "dma_window_entity_base_decrypt_reads":  {
+                                                 "avg":  891.449,
+                                                 "min":  563,
+                                                 "max":  1189
+                                             },
+    "dma_window_entity_base_decrypt_max_us":  {
+                                                  "avg":  35992.458,
+                                                  "min":  3158,
+                                                  "max":  953897
+                                              },
+    "dma_window_entity_header_special_reads":  {
+                                                   "avg":  240.703,
+                                                   "min":  147,
+                                                   "max":  372
+                                               },
+    "dma_window_entity_header_special_max_us":  {
+                                                    "avg":  64202.737,
+                                                    "min":  2097,
+                                                    "max":  954635
+                                                },
+    "dma_window_entity_hot_scatter_reads":  {
+                                                "avg":  18.364,
+                                                "min":  8,
+                                                "max":  24
+                                            },
+    "dma_window_entity_hot_scatter_max_us":  {
+                                                 "avg":  22160.644,
+                                                 "min":  4290,
+                                                 "max":  955782
+                                             },
+    "dma_window_entity_hot_fields_reads":  {
+                                               "avg":  95.085,
+                                               "min":  58,
+                                               "max":  148
+                                           },
+    "dma_window_entity_hot_fields_max_us":  {
+                                                "avg":  31989.551,
+                                                "min":  2578,
+                                                "max":  956306
+                                            },
+    "dma_window_entity_rotation_position_reads":  {
+                                                      "avg":  560.958,
+                                                      "min":  308,
+                                                      "max":  696
+                                                  },
+    "dma_window_entity_rotation_position_max_us":  {
+                                                       "avg":  74770.034,
+                                                       "min":  2648,
+                                                       "max":  955872
+                                                   },
+    "dma_window_entity_prefetch_reads":  {
+                                             "avg":  0,
+                                             "min":  0,
+                                             "max":  0
+                                         },
+    "dma_window_entity_prefetch_max_us":  {
+                                              "avg":  0,
+                                              "min":  0,
+                                              "max":  0
+                                          },
+    "dma_window_viewmatrix_reads":  {
+                                        "avg":  1404.356,
+                                        "min":  876,
+                                        "max":  1656
+                                    },
+    "dma_window_viewmatrix_failed":  {
+                                         "avg":  0,
+                                         "min":  0,
+                                         "max":  0
+                                     },
+    "dma_window_viewmatrix_max_us":  {
+                                         "avg":  233323.415,
+                                         "min":  4287,
+                                         "max":  955954
+                                     },
+    "dma_window_viewmatrix_success_max_us":  {
+                                                 "avg":  233323.415,
+                                                 "min":  4287,
+                                                 "max":  955954
+                                             },
+    "dma_window_viewmatrix_failed_max_us":  {
+                                                "avg":  0,
+                                                "min":  0,
+                                                "max":  0
+                                            },
+    "dma_window_viewmatrix_slow_reads":  {
+                                             "avg":  0.864,
+                                             "min":  0,
+                                             "max":  4
+                                         },
+    "dma_window_viewmatrix_slow_failed":  {
+                                              "avg":  0,
+                                              "min":  0,
+                                              "max":  0
+                                          },
+    "slow_frame_log_lines":  0,
+    "slow_frame_effective_count":  0,
+    "slow_frame_max_render_ms":  null,
+    "slow_frame_rt_dma_nonzero_lines":  0,
+    "slow_frame_render_canvas_nonzero_lines":  0,
+    "log_path":  "D:\\Desktop\\SenseZen\\ECS_O\\01_PRODUCTS\\un-dma\\build\\Release\\unleashed_diag.log"
+}

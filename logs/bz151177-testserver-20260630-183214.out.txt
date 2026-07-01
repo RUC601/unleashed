@@ -1,0 +1,572 @@
+
+  ============================================
+     Unleashed DMA  --  Overwatch External
+  ============================================
+
+[INFO] DMA device config loaded: fpga -> fpga://algo=0
+[MAIN] Initialising DMA subsystem...
+[INFO] Loading DMA runtime libraries for device=fpga.
+[INFO] Loaded runtime library: FTD3XX.dll (0000000180000000).
+[INFO] Loaded runtime library: vmm.dll (00007FFC8AEC0000).
+[INFO] Loaded runtime library: leechcore.dll (00007FFCF5470000).
+[INFO] Loaded runtime library: Helper64.dll (00007FFC6DD20000).
+[INFO] Loaded runtime library: leechcore_driver.dll (00007FFCF2260000).
+[INFO] Runtime libraries loaded successfully.
+[INFO] DMA subsystem initialization started with device=fpga (fpga://algo=0).
+[INFO] Reusing physical memory map cache from current boot.
+[INFO] FPGA identifier: 9
+[INFO] Device identifier: 1536
+[INFO] VMMDLL_ConfigGet: ID=9 VERSION=4.11
+[INFO] FPGA PCIe register flag reset completed.
+[INFO] DMA subsystem initialization completed successfully.
+[MAIN] DMA subsystem ready.
+
+[2026-06-30 18:32:15.455] [INFO] Diagnostics initialized. log=./unleashed_diag.log level=INFO
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Meta] config_version=7 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotAutoshot=true from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotKeepFiring=false from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotPredictionMode=0 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimBehavior=1 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotFirePolicy=3 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotTriggerDelay=0.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotMaxHead=100.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotSmoothType=0 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotStickiness=100.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotSmoothY=50.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotPitchScale=1.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotMaxAim=100.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotMinCharge=5.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotMaxCharge=100.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotIgnoreInvisible=true from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotTrace=0 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotUnlock=0 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotLockTime=20.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotMaxDist=100.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotMinDist=0.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotAttack=0 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotTeam=0 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotPriority=0 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotTrackingDeadzone=0.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickShotClampMs=0.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickPostFireDelayMs=0.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickTrajectoryWait=false from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickTrajectoryWaitMs=120.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlickTrajectoryApexWindowMs=60.0000 from config.ini.
+[2026-06-30 18:32:15.458] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndTriggerGate=true from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndBoxPadding=8.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndInnerRadius=34.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndInnerSmoothScale=0.5500 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotFlick2ndInnerMethod=2 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStage=false from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStageTriggerGate=true from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStageBoxPadding=8.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStageInnerRadius=34.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimbotTwoStageInnerSmoothScale=0.5500 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Meta] config_version=7 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimOvershootCurve=false from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimOvershootGain=0.2500 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimOvershootResetPixels=56.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] inputSource=1 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimDryRun=false from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimVerboseLog=false from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] aimDryRunLogIntervalMs=100 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotMode=0 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotKey=2 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotShotInterval=0.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotChargeAware=false from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotMinCharge=30.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotIgnoreInvisible=true from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotMode2=0 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotKey2=1 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotShotInterval2=0.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotChargeAware2=false from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotMinCharge2=30.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [Aimbot] triggerbotIgnoreInvisible2=true from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimMethod=0 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimPidP=0.5000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimPidI=0.0100 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimPidD=0.1000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimPidMaxIntegral=10.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimPidDeadzone=1.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimBezierControlPoints=2 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimBezierCurvature=0.5000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimBezierSpeed=50.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseNearDegrees=2.0000 from config.ini.
+[2026-06-30 18:32:15.459] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseMidDegrees=6.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseFarDegrees=12.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseNearScale=0.2000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseMidScale=0.4500 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] aimPiecewiseFarScale=0.7500 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] aimAccelLimitedAcceleration=0.1000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] aimConstantAngularSpeedDeg=30.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] trackingMethod=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] trackingBaseSpeed=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] trackingAcceleration=0.1000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] trackingMoveSplitEnabled=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] trackingMoveSplitMaxPixels=4 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] trackingMoveSplitDelayUs=800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flickMethod=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flickBaseSpeed=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flickAcceleration=0.1000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flickMoveSplitEnabled=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flickMoveSplitMaxPixels=50 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flickMoveSplitDelayUs=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMethod=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flick2ndBaseSpeed=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flick2ndAcceleration=0.1000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMoveSplitEnabled=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMoveSplitMaxPixels=50 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMoveSplitDelayUs=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] reacquireMethod=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] reacquireBaseSpeed=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] reacquireAcceleration=0.1000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] reacquireMoveSplitEnabled=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] reacquireMoveSplitMaxPixels=4 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] reacquireMoveSplitDelayUs=800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMethod=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] assistFlickBaseSpeed=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] assistFlickAcceleration=0.1000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMoveSplitEnabled=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMoveSplitMaxPixels=4 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMoveSplitDelayUs=800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] linearAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] pidAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] bezierAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] piecewiseAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] accelLimitedAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] constantAngularSpeedScale=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] methodPresetCount=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] behaviorPresetCount=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] dynamicFovPresetCount=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] trackingMethodPresetId=-1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flickMethodPresetId=-1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] flick2ndMethodPresetId=-1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] reacquireMethodPresetId=-1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] assistFlickMethodPresetId=-1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] aimBehaviorPresetId=-1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] secondaryTrackingMethod=-1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [AimMethod] secondaryFlickMethod=-1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] draw_hp_pack=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] crosscircle=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] eyeray=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] draw_info=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] drawbattletag=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] drawhealth=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] healthbar=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] healthbar2=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] healthbartextsize=16.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] dist=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] visualMaxDist=100.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] name=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] ult=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] draw_skel=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] skillinfo=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] ultimateDisplayMode=1 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] skillDisplayMode=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] radarCorner=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] radar=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] radarline=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] drawline=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] draw_fov=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] drawTrackingDeadzones=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] boxPerfMode=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] boxPerfFastRect=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] targetPriority=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] MenuToggleKey=36 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] gafAsyncKeyStateOffset=0x0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] gafAsyncKeyStateSize=256 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] gafAsyncKeyStateSessionId=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] lastConfigProfile=config.ini from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] uiLanguage=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] manualScreenWidth=1920 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] manualScreenHeight=1080 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] EnemyColx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] EnemyColy=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] EnemyColz=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] EnemyColw=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] fovcolx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] fovcoly=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] fovcolz=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] fovcolw=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] invisenargbx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] invisenargby=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] invisenargbz=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] invisenargbw=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] enargbx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] enargby=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] enargbz=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] enargbw=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] targetargbx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] targetargby=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] targetargbz=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] targetargbw=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] allyargbx=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] allyargby=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] allyargbz=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Global] allyargbw=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Colorx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Colory=0.9200 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Colorz=0.2000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot1ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Colorx=0.1500 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Colory=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Colorz=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot2ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Colorx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Colory=0.3800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Colorz=0.7400 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot3ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Colorx=0.3500 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Colory=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Colorz=0.5500 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot4ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Colorx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Colory=0.5600 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Colorz=0.2200 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot5ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Colorx=0.6200 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Colory=0.5400 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Colorz=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot6ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Colorx=0.2400 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Colory=0.9200 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Colorz=0.8200 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot7ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Colorx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Colory=0.2800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Colorz=0.2800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot8ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Colorx=0.7600 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Colory=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Colorz=0.2600 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot9ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Colorx=0.3000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Colory=0.4800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Colorz=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot10ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Colorx=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Colory=0.7200 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Colorz=0.9000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot11ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Visible=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Colorx=0.6200 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Colory=1.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Colorz=0.3400 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Colorw=0.7800 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12Thickness=1.5000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12LineStyle=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [Theme.FovRings] aimSlot12ShowLabel=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxEnabled=true from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxDeviceType=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxIp=192.168.2.188 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxPort=8808 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxMonitorPort=8809 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxMac=12525C53 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxComPort=COM3 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxCountsPerRadian=1446.8656 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] gameMouseSensitivity=3.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] autoReadGameMouseSensitivity=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] referenceGameSensitivity=3.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] autoScaleByGameSensitivity=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] calibratedCountsPerRadian=1446.8656 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] calibratedPitchCountsPerRadian=0.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] hostMouseDpi=1600.0000 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxInputDelayMs=0 from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxDebugLog=false from config.ini.
+[2026-06-30 18:32:15.460] [INFO] [CONFIG] Loaded [KMBox] kmboxSuppressOutputWhileMenuOpen=false from config.ini.
+[2026-06-30 18:32:15.478] [INFO] [CONFIG] Loaded hero config JSON from D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma\build\Release\config\config.heroes.json.
+[2026-06-30 18:32:15.479] [INFO] [CONFIG] Loaded config for hero Unknown from D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma\build\Release\config\config.ini.
+[MAIN] Screen size: 1920x1080
+[MAIN] Box performance mode enabled (fast rect box path).
+[2026-06-30 18:32:15.479] [INFO] Overlay box performance mode: enabled=1 fast_rect=1 cli=1.
+[2026-06-30 18:32:15.479] [INFO] timeBeginPeriod(1) enabled for KMBox queue timing.
+[KMBOX] Initialising network device 192.168.2.188:8808...
+[2026-06-30 18:32:15.480] [INFO] [KMBOX-NET] connection state disconnected -> connecting
+[2026-06-30 18:32:15.484] [INFO] [KMBOX-NET] connection state connecting -> connected
+[2026-06-30 18:32:15.484] [INFO] [KMBOX-NET] Recovering mouse passthrough state.
+[2026-06-30 18:32:15.500] [INFO] [KMBOX-NET] Mouse passthrough recovery succeeded.
+[KMBOX] Network device ready.
+[2026-06-30 18:32:15.500] [INFO] KMBox network device ready. ip=192.168.2.188 port=8808
+[2026-06-30 18:32:15.500] [INFO] [KMBOX-NET] monitor start requested. port=8809
+[2026-06-30 18:32:15.500] [INFO] [KMBOX-NET] monitor listener bound. port=8809
+[2026-06-30 18:32:15.501] [INFO] [KMBOX-NET] monitor start succeeded. port=8809
+[KMBOX] Monitor started on port 8809.
+[2026-06-30 18:32:15.501] [INFO] KMBox monitor started. port=8809
+[2026-06-30 18:32:15.501] [INFO] DMA subsystem ready. device=fpga://algo=0
+[2026-06-30 18:32:15.501] [INFO] Diagnostic status thread started with 5s interval.
+[MAIN] Test server ready on http://127.0.0.1:19550
+
+[2026-06-30 18:32:15.501] [INFO] Unleashed target history sampler started at ~125 Hz.
+[2026-06-30 18:32:15.501] [INFO] Unleashed test server listening on 127.0.0.1:19550.
+[MAIN] Process connector ready; overlay can open before Overwatch.exe.
+
+[2026-06-30 18:32:15.502] [INFO] Process connector ready; waiting for Overwatch.exe in background.
+[MAIN] Skipping global key resolution (not used by current decrypt).
+
+[2026-06-30 18:32:15.502] [INFO] Global key resolution skipped; current decrypt path reads key material directly.
+[MAIN] Initialising overlay...
+[2026-06-30 18:32:15.502] [INFO] Initialising overlay.
+[2026-06-30 18:32:15.502] [INFO] Process connection thread started. target=Overwatch.exe interval_ms=1000.
+[2026-06-30 18:32:15.502] [INFO] Automatic process connect attempt. target=Overwatch.exe pid=19832
+[2026-06-30 18:32:15.509] [INFO] Offset profile selected: world/bz 151177 reason=Neac process not detected (world fallback) pid=0 name=<none>.
+[MAIN] Offset profile: world/bz 151177 (world fallback)
+[MAIN] Overlay ready.
+
+[2026-06-30 18:32:15.697] [INFO] Overlay ready.
+[MAIN] Hero avatars loaded: 52/52.
+[2026-06-30 18:32:15.766] [INFO] Hero avatars loaded: 52/52.
+[2026-06-30 18:32:15.802] [INFO] Ability icon preload complete. heroes=52/52.
+[MAIN] Ability icons preloaded for 52/52 hero entries.
+[MAIN] Entering message loop.  Press HOME to toggle menu.
+[MAIN] Close the canvas process/window to exit.
+
+[2026-06-30 18:32:15.802] [INFO] Entering overlay message loop.
+[2026-06-30 18:32:15.802] [INFO] Render thread registered. tid=42156
+[2026-06-30 18:32:15.821] [WARN] SLOW_FRAME total=17.7ms render=4.1ms present=13.6ms slowCount=1 max[total=17.7ms render=4.1ms present=13.6ms rtDmaReads=0 rtDmaMax=0us] rtDma[reads=0 fail=0 total=0us max=0us] dma100ms[reads=0 fail=0 max=0us] (no DMA in window)
+[INFO] CR3 remediation completed for Overwatch.exe.
+[INFO] Base address resolved for Overwatch.exe at 0x00007FF702B20000.
+[INFO] Image size resolved for Overwatch.exe at 0x47b2000.
+[INFO] Target process attached.
+[INFO] Process: Overwatch.exe
+[INFO] PID: 19832
+[INFO] Base address: 0x7ff702b20000
+[INFO] Image size: 0x47b2000
+[INFO] Base address resolved for Overwatch.exe at 0x00007FF702B20000.
+[SDK] Attached to Overwatch.exe @ 0x7FF702B20000
+[2026-06-30 18:32:16.525] [INFO] Process attached: Overwatch.exe pid=19832 base=0x7FF702B20000.
+[MAIN] Overwatch.exe attached. PID=19832 base=0x7FF702B20000
+[MAIN] Starting background threads...
+[2026-06-30 18:32:16.525] [INFO] Starting background threads.
+  [+] viewmatrix_thread
+  [+] entity_scan_thread
+  [+] entity_thread
+  [+] aimbot_thread
+  [+] hero_skill_runtime_thread
+  [+] configsavenloadthread
+  [+] looprpmthread
+[2026-06-30 18:32:16.525] [INFO] Entity processing thread started. process_interval_ms=16 health_interval_ms=16 team_name_interval_ms=1000 skill_status_interval_ms=1000 local_skill_interval_ms=500 visibility=scatter_cn_ne_with_fallback latest_wins=0 cold_topology_scan=0 startup_reconnect_scan_only=0 record_store=0 link_retain=0 base_lifetime=0.
+[2026-06-30 18:32:16.525] [INFO] Entity scan thread started. scan_interval_ms=250 empty_interval_ms=50 latest_wins=0 cold_topology_scan=0 startup_reconnect_scan_only=0.
+[2026-06-30 18:32:16.872] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+  [+] keystate_thread (pending resolver)
+
+[2026-06-30 18:32:16.899] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:17.347] [INFO] [MATCHID] entity=0x2854B1AA290 MatchId=0x800001B3(2147484083) hero=Unknown angle=0x28548F32020 dist=223.1m.
+[2026-06-30 18:32:20.501] [INFO] STATUS entities=7 last_scan=22 scan_cycles=3 process_cycles=144 scan_hz=0.8 process_hz=36.9 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=454.6 dma_reads=29985 ok=24533 fail=5452 latency_us[min/avg/max]=0/273/12530 errors[dma/decrypt/invalid]=5452/12/7615 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:32:20.501] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=4/145/0 component_key_cache[hit/miss]=243/8.
+[2026-06-30 18:32:20.501] [INFO] STATUS-CADENCE render_fps=454.6 viewmatrix_pub_hz=66.7 age_ms=16 interval_ms[last/max]=15/16 render_vm_age_ms[last/max]=0/16 stale[16/33/50]=0/0/0 entity_pub_hz=31.2 age_ms=31 count=7 interval_ms[last/max]=32/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:32:21.902] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:22.321] [INFO] [DMA-FIELD] window_ms=5000 cycles=172 raw=3784 validated=1177 published=1195 hot_scatter=190 fail=0.
+[2026-06-30 18:32:22.321] [INFO] [DMA-FIELD] component cache_hit=1183 cache_miss=36 header=36 fail=0 link_header=21 fail=0.
+[2026-06-30 18:32:22.321] [INFO] [DMA-FIELD] velocity req=1204 scatter_hit=1204 partial=0 fallback=0 fail=0 health req=1204 scatter_hit=1204 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:32:22.321] [INFO] [DMA-FIELD] hero req=490 scatter_hit=490 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:32:22.321] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1204 any=1204 head=1204.
+[2026-06-30 18:32:25.502] [INFO] STATUS entities=7 last_scan=22 scan_cycles=7 process_cycles=319 scan_hz=0.8 process_hz=36.9 roster[fresh/dead/missing/expired/hero_change]=6/0/1/0/0 fps=427.2 dma_reads=66614 ok=54622 fail=11992 latency_us[min/avg/max]=0/298/160215 errors[dma/decrypt/invalid]=11992/29/17790 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:32:25.503] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=8/320/0 component_key_cache[hit/miss]=572/18.
+[2026-06-30 18:32:25.503] [INFO] STATUS-CADENCE render_fps=427.2 viewmatrix_pub_hz=66.7 age_ms=16 interval_ms[last/max]=15/157 render_vm_age_ms[last/max]=0/157 stale[16/33/50]=62/55/47 entity_pub_hz=21.3 age_ms=16 count=7 interval_ms[last/max]=47/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:32:26.910] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:27.316] [INFO] [DMA-FIELD] window_ms=5000 cycles=176 raw=3872 validated=1214 published=1232 hot_scatter=188 fail=0.
+[2026-06-30 18:32:27.316] [INFO] [DMA-FIELD] component cache_hit=1218 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:32:27.316] [INFO] [DMA-FIELD] velocity req=1232 scatter_hit=1232 partial=0 fallback=0 fail=0 health req=1232 scatter_hit=1232 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:32:27.316] [INFO] [DMA-FIELD] hero req=483 scatter_hit=483 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:32:27.316] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=115 bones candidates=1232 any=1232 head=1232.
+[2026-06-30 18:32:30.503] [INFO] STATUS entities=7 last_scan=22 scan_cycles=10 process_cycles=494 scan_hz=0.6 process_hz=36.2 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=446.3 dma_reads=103461 ok=84936 fail=18525 latency_us[min/avg/max]=0/304/162871 errors[dma/decrypt/invalid]=18525/41/25431 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:32:30.503] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=11/495/0 component_key_cache[hit/miss]=800/25.
+[2026-06-30 18:32:30.503] [INFO] STATUS-CADENCE render_fps=446.3 viewmatrix_pub_hz=66.7 age_ms=16 interval_ms[last/max]=15/157 render_vm_age_ms[last/max]=0/157 stale[16/33/50]=122/109/95 entity_pub_hz=31.2 age_ms=31 count=7 interval_ms[last/max]=32/1016 snapshot_copy_ms[entities last/max=0.000/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:32:31.918] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:32.324] [INFO] [DMA-FIELD] window_ms=5000 cycles=182 raw=4004 validated=1247 published=1274 hot_scatter=200 fail=0.
+[2026-06-30 18:32:32.325] [INFO] [DMA-FIELD] component cache_hit=1253 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:32:32.325] [INFO] [DMA-FIELD] velocity req=1274 scatter_hit=1274 partial=0 fallback=0 fail=0 health req=1274 scatter_hit=1274 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:32:32.325] [INFO] [DMA-FIELD] hero req=518 scatter_hit=518 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:32:32.325] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1274 any=1274 head=1274.
+[2026-06-30 18:32:35.504] [INFO] STATUS entities=7 last_scan=22 scan_cycles=14 process_cycles=677 scan_hz=0.8 process_hz=38.0 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=451.6 dma_reads=141789 ok=116649 fail=25140 latency_us[min/avg/max]=0/301/162871 errors[dma/decrypt/invalid]=25140/58/35609 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:32:35.504] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=15/678/0 component_key_cache[hit/miss]=1129/35.
+[2026-06-30 18:32:35.504] [INFO] STATUS-CADENCE render_fps=451.6 viewmatrix_pub_hz=66.7 age_ms=16 interval_ms[last/max]=15/157 render_vm_age_ms[last/max]=16/157 stale[16/33/50]=122/109/95 entity_pub_hz=32.3 age_ms=16 count=7 interval_ms[last/max]=31/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:32:37.377] [INFO] [DMA-FIELD] window_ms=5000 cycles=173 raw=3806 validated=1193 published=1211 hot_scatter=185 fail=0.
+[2026-06-30 18:32:37.377] [INFO] [DMA-FIELD] component cache_hit=1197 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:32:37.377] [INFO] [DMA-FIELD] velocity req=1211 scatter_hit=1211 partial=0 fallback=0 fail=0 health req=1211 scatter_hit=1211 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:32:37.377] [INFO] [DMA-FIELD] hero req=476 scatter_hit=476 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:32:37.377] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=115 bones candidates=1211 any=1211 head=1211.
+[2026-06-30 18:32:37.559] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:40.504] [INFO] STATUS entities=7 last_scan=22 scan_cycles=18 process_cycles=842 scan_hz=0.8 process_hz=35.9 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=460.7 dma_reads=176054 ok=144810 fail=31244 latency_us[min/avg/max]=0/311/166395 errors[dma/decrypt/invalid]=31244/74/45780 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:32:40.505] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=19/843/0 component_key_cache[hit/miss]=1383/43.
+[2026-06-30 18:32:40.505] [INFO] STATUS-CADENCE render_fps=460.7 viewmatrix_pub_hz=66.7 age_ms=16 interval_ms[last/max]=15/344 render_vm_age_ms[last/max]=16/328 stale[16/33/50]=258/238/218 entity_pub_hz=31.2 age_ms=31 count=7 interval_ms[last/max]=32/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:32:41.927] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:42.335] [INFO] [DMA-FIELD] window_ms=5015 cycles=174 raw=3828 validated=1191 published=1218 hot_scatter=192 fail=0.
+[2026-06-30 18:32:42.335] [INFO] [DMA-FIELD] component cache_hit=1197 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:32:42.335] [INFO] [DMA-FIELD] velocity req=1218 scatter_hit=1218 partial=0 fallback=0 fail=0 health req=1218 scatter_hit=1218 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:32:42.335] [INFO] [DMA-FIELD] hero req=490 scatter_hit=490 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:32:42.335] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1218 any=1218 head=1218.
+[2026-06-30 18:32:45.505] [INFO] STATUS entities=7 last_scan=22 scan_cycles=22 process_cycles=1024 scan_hz=0.8 process_hz=38.8 roster[fresh/dead/missing/expired/hero_change]=4/0/3/0/0 fps=456.2 dma_reads=214815 ok=176651 fail=38164 latency_us[min/avg/max]=0/307/166395 errors[dma/decrypt/invalid]=38164/90/55958 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:32:45.505] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=23/1025/0 component_key_cache[hit/miss]=1713/53.
+[2026-06-30 18:32:45.505] [INFO] STATUS-CADENCE render_fps=456.2 viewmatrix_pub_hz=66.7 age_ms=16 interval_ms[last/max]=15/344 render_vm_age_ms[last/max]=16/328 stale[16/33/50]=258/238/218 entity_pub_hz=32.3 age_ms=16 count=7 interval_ms[last/max]=31/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:32:46.939] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:47.354] [INFO] [DMA-FIELD] window_ms=5016 cycles=189 raw=4158 validated=1305 published=1323 hot_scatter=201 fail=0.
+[2026-06-30 18:32:47.354] [INFO] [DMA-FIELD] component cache_hit=1309 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:32:47.354] [INFO] [DMA-FIELD] velocity req=1323 scatter_hit=1323 partial=0 fallback=0 fail=0 health req=1323 scatter_hit=1323 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:32:47.354] [INFO] [DMA-FIELD] hero req=518 scatter_hit=518 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:32:47.354] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=115 bones candidates=1323 any=1323 head=1323.
+[2026-06-30 18:32:50.506] [INFO] STATUS entities=7 last_scan=22 scan_cycles=25 process_cycles=1206 scan_hz=0.6 process_hz=38.8 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=449.0 dma_reads=251157 ok=206873 fail=44284 latency_us[min/avg/max]=0/309/166395 errors[dma/decrypt/invalid]=44284/102/63601 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:32:50.506] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=26/1207/0 component_key_cache[hit/miss]=1942/59.
+[2026-06-30 18:32:50.506] [INFO] STATUS-CADENCE render_fps=449.0 viewmatrix_pub_hz=66.7 age_ms=16 interval_ms[last/max]=15/344 render_vm_age_ms[last/max]=16/328 stale[16/33/50]=321/294/267 entity_pub_hz=66.7 age_ms=16 count=7 interval_ms[last/max]=15/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:32:52.213] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:52.345] [INFO] [DMA-FIELD] window_ms=5000 cycles=174 raw=3828 validated=1191 published=1218 hot_scatter=192 fail=0.
+[2026-06-30 18:32:52.345] [INFO] [DMA-FIELD] component cache_hit=1197 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:32:52.345] [INFO] [DMA-FIELD] velocity req=1218 scatter_hit=1218 partial=0 fallback=0 fail=0 health req=1218 scatter_hit=1218 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:32:52.345] [INFO] [DMA-FIELD] hero req=504 scatter_hit=504 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:32:52.345] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1218 any=1218 head=1218.
+[2026-06-30 18:32:55.506] [INFO] STATUS entities=7 last_scan=22 scan_cycles=29 process_cycles=1387 scan_hz=0.8 process_hz=38.8 roster[fresh/dead/missing/expired/hero_change]=4/0/3/0/0 fps=451.9 dma_reads=288857 ok=237884 fail=50973 latency_us[min/avg/max]=0/308/166395 errors[dma/decrypt/invalid]=50973/118/73791 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:32:55.506] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=30/1388/0 component_key_cache[hit/miss]=2271/68.
+[2026-06-30 18:32:55.506] [INFO] STATUS-CADENCE render_fps=451.9 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=321/294/267 entity_pub_hz=31.2 age_ms=31 count=7 interval_ms[last/max]=32/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:32:56.944] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:32:57.348] [INFO] [DMA-FIELD] window_ms=5000 cycles=186 raw=4092 validated=1284 published=1302 hot_scatter=198 fail=0.
+[2026-06-30 18:32:57.348] [INFO] [DMA-FIELD] component cache_hit=1288 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:32:57.348] [INFO] [DMA-FIELD] velocity req=1302 scatter_hit=1302 partial=0 fallback=0 fail=0 health req=1302 scatter_hit=1302 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:32:57.348] [INFO] [DMA-FIELD] hero req=504 scatter_hit=504 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:32:57.348] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=115 bones candidates=1302 any=1302 head=1302.
+[2026-06-30 18:33:00.507] [INFO] STATUS entities=7 last_scan=22 scan_cycles=33 process_cycles=1564 scan_hz=0.6 process_hz=38.0 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=451.3 dma_reads=325623 ok=268090 fail=57533 latency_us[min/avg/max]=0/309/166395 errors[dma/decrypt/invalid]=57533/134/83953 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:00.507] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=34/1565/0 component_key_cache[hit/miss]=2521/78.
+[2026-06-30 18:33:00.507] [INFO] STATUS-CADENCE render_fps=451.3 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=16/328 stale[16/33/50]=385/351/317 entity_pub_hz=31.2 age_ms=31 count=7 interval_ms[last/max]=32/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:01.945] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:02.368] [INFO] [DMA-FIELD] window_ms=5000 cycles=175 raw=3850 validated=1198 published=1225 hot_scatter=193 fail=0.
+[2026-06-30 18:33:02.369] [INFO] [DMA-FIELD] component cache_hit=1204 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:33:02.369] [INFO] [DMA-FIELD] velocity req=1225 scatter_hit=1225 partial=0 fallback=0 fail=0 health req=1225 scatter_hit=1225 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:02.369] [INFO] [DMA-FIELD] hero req=504 scatter_hit=504 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:02.369] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1225 any=1225 head=1225.
+[2026-06-30 18:33:05.507] [INFO] STATUS entities=7 last_scan=22 scan_cycles=36 process_cycles=1732 scan_hz=0.8 process_hz=36.9 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=411.3 dma_reads=363200 ok=299692 fail=63508 latency_us[min/avg/max]=0/311/166395 errors[dma/decrypt/invalid]=63508/146/91594 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:05.507] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=37/1733/0 component_key_cache[hit/miss]=2792/87.
+[2026-06-30 18:33:05.507] [INFO] STATUS-CADENCE render_fps=411.3 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=385/351/317 entity_pub_hz=16.1 age_ms=94 count=7 interval_ms[last/max]=62/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:07.395] [INFO] [DMA-FIELD] window_ms=5016 cycles=137 raw=3014 validated=941 published=959 hot_scatter=149 fail=0.
+[2026-06-30 18:33:07.395] [INFO] [DMA-FIELD] component cache_hit=945 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:33:07.395] [INFO] [DMA-FIELD] velocity req=959 scatter_hit=959 partial=0 fallback=0 fail=0 health req=959 scatter_hit=959 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:07.395] [INFO] [DMA-FIELD] hero req=434 scatter_hit=434 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:07.395] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=114 bones candidates=959 any=959 head=959.
+[2026-06-30 18:33:07.401] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:10.508] [INFO] STATUS entities=7 last_scan=22 scan_cycles=39 process_cycles=1881 scan_hz=0.6 process_hz=34.9 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=449.9 dma_reads=398110 ok=329235 fail=68875 latency_us[min/avg/max]=0/317/166395 errors[dma/decrypt/invalid]=68875/158/99231 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:10.508] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=40/1882/0 component_key_cache[hit/miss]=3056/94.
+[2026-06-30 18:33:10.508] [INFO] STATUS-CADENCE render_fps=449.9 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=450/410/369 entity_pub_hz=66.7 age_ms=16 count=7 interval_ms[last/max]=15/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:11.958] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:12.380] [INFO] [DMA-FIELD] window_ms=5000 cycles=182 raw=4004 validated=1247 published=1274 hot_scatter=200 fail=0.
+[2026-06-30 18:33:12.380] [INFO] [DMA-FIELD] component cache_hit=1253 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:33:12.380] [INFO] [DMA-FIELD] velocity req=1274 scatter_hit=1274 partial=0 fallback=0 fail=0 health req=1274 scatter_hit=1274 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:12.380] [INFO] [DMA-FIELD] hero req=525 scatter_hit=525 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:12.380] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=116 bones candidates=1274 any=1274 head=1274.
+[2026-06-30 18:33:15.509] [INFO] STATUS entities=7 last_scan=22 scan_cycles=43 process_cycles=2058 scan_hz=0.8 process_hz=33.1 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=445.3 dma_reads=435074 ok=359707 fail=75367 latency_us[min/avg/max]=0/316/166395 errors[dma/decrypt/invalid]=75367/175/109411 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:15.509] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=44/2059/0 component_key_cache[hit/miss]=3385/105.
+[2026-06-30 18:33:15.509] [INFO] STATUS-CADENCE render_fps=445.3 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=514/468/419 entity_pub_hz=62.5 age_ms=78 count=7 interval_ms[last/max]=16/1016 snapshot_copy_ms[entities last/max=0.003/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:16.969] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:17.380] [INFO] [DMA-FIELD] window_ms=5000 cycles=178 raw=3916 validated=1228 published=1246 hot_scatter=190 fail=0.
+[2026-06-30 18:33:17.380] [INFO] [DMA-FIELD] component cache_hit=1232 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:33:17.380] [INFO] [DMA-FIELD] velocity req=1246 scatter_hit=1246 partial=0 fallback=0 fail=0 health req=1246 scatter_hit=1246 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:17.381] [INFO] [DMA-FIELD] hero req=504 scatter_hit=504 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:17.381] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=115 bones candidates=1246 any=1246 head=1246.
+[2026-06-30 18:33:20.510] [INFO] STATUS entities=7 last_scan=22 scan_cycles=47 process_cycles=2232 scan_hz=0.8 process_hz=31.7 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=441.0 dma_reads=471707 ok=389616 fail=82091 latency_us[min/avg/max]=0/316/166395 errors[dma/decrypt/invalid]=82091/195/119594 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:20.510] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=48/2233/0 component_key_cache[hit/miss]=3638/113.
+[2026-06-30 18:33:20.510] [INFO] STATUS-CADENCE render_fps=441.0 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=579/527/471 entity_pub_hz=32.3 age_ms=0 count=7 interval_ms[last/max]=31/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:22.249] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:22.374] [INFO] [DMA-FIELD] window_ms=5000 cycles=166 raw=3652 validated=1135 published=1162 hot_scatter=184 fail=0.
+[2026-06-30 18:33:22.374] [INFO] [DMA-FIELD] component cache_hit=1141 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:33:22.374] [INFO] [DMA-FIELD] velocity req=1162 scatter_hit=1162 partial=0 fallback=0 fail=0 health req=1162 scatter_hit=1162 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:22.374] [INFO] [DMA-FIELD] hero req=490 scatter_hit=490 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:22.374] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1162 any=1162 head=1162.
+[2026-06-30 18:33:25.510] [INFO] STATUS entities=7 last_scan=22 scan_cycles=50 process_cycles=2409 scan_hz=0.7 process_hz=37.3 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=404.8 dma_reads=509065 ok=420604 fail=88461 latency_us[min/avg/max]=0/316/166395 errors[dma/decrypt/invalid]=88461/208/127238 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:25.510] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=51/2410/0 component_key_cache[hit/miss]=3931/122.
+[2026-06-30 18:33:25.510] [INFO] STATUS-CADENCE render_fps=404.8 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=580/527/471 entity_pub_hz=66.7 age_ms=63 count=7 interval_ms[last/max]=15/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:26.982] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:27.375] [INFO] [DMA-FIELD] window_ms=5000 cycles=186 raw=4092 validated=1284 published=1302 hot_scatter=198 fail=0.
+[2026-06-30 18:33:27.375] [INFO] [DMA-FIELD] component cache_hit=1288 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:33:27.375] [INFO] [DMA-FIELD] velocity req=1302 scatter_hit=1302 partial=0 fallback=0 fail=0 health req=1302 scatter_hit=1302 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:27.375] [INFO] [DMA-FIELD] hero req=511 scatter_hit=511 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:27.375] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=115 bones candidates=1302 any=1302 head=1302.
+[2026-06-30 18:33:30.510] [INFO] STATUS entities=7 last_scan=22 scan_cycles=54 process_cycles=2586 scan_hz=0.8 process_hz=32.3 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=425.5 dma_reads=545683 ok=450820 fail=94863 latency_us[min/avg/max]=0/316/166395 errors[dma/decrypt/invalid]=94863/224/137398 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:30.510] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=55/2587/0 component_key_cache[hit/miss]=4196/131.
+[2026-06-30 18:33:30.510] [INFO] STATUS-CADENCE render_fps=425.5 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=646/586/523 entity_pub_hz=31.2 age_ms=31 count=7 interval_ms[last/max]=32/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:31.987] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:32.372] [INFO] [DMA-FIELD] window_ms=5000 cycles=176 raw=3872 validated=1205 published=1232 hot_scatter=194 fail=0.
+[2026-06-30 18:33:32.372] [INFO] [DMA-FIELD] component cache_hit=1211 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:33:32.372] [INFO] [DMA-FIELD] velocity req=1232 scatter_hit=1232 partial=0 fallback=0 fail=0 health req=1232 scatter_hit=1232 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:32.373] [INFO] [DMA-FIELD] hero req=490 scatter_hit=490 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:32.373] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1232 any=1232 head=1232.
+[2026-06-30 18:33:35.511] [INFO] STATUS entities=7 last_scan=22 scan_cycles=58 process_cycles=2773 scan_hz=0.8 process_hz=39.6 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=451.7 dma_reads=584091 ok=482581 fail=101510 latency_us[min/avg/max]=0/314/166395 errors[dma/decrypt/invalid]=101510/240/147564 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:35.511] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=59/2774/0 component_key_cache[hit/miss]=4502/141.
+[2026-06-30 18:33:35.511] [INFO] STATUS-CADENCE render_fps=451.7 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=646/586/523 entity_pub_hz=32.3 age_ms=63 count=7 interval_ms[last/max]=31/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:37.402] [INFO] [DMA-FIELD] window_ms=5015 cycles=178 raw=3916 validated=1228 published=1246 hot_scatter=190 fail=0.
+[2026-06-30 18:33:37.402] [INFO] [DMA-FIELD] component cache_hit=1232 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:33:37.402] [INFO] [DMA-FIELD] velocity req=1246 scatter_hit=1246 partial=0 fallback=0 fail=0 health req=1246 scatter_hit=1246 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:37.402] [INFO] [DMA-FIELD] hero req=490 scatter_hit=490 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:37.402] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=115 bones candidates=1246 any=1246 head=1246.
+[2026-06-30 18:33:37.439] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:40.512] [INFO] STATUS entities=7 last_scan=22 scan_cycles=61 process_cycles=2945 scan_hz=0.6 process_hz=34.9 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=415.3 dma_reads=620036 ok=512004 fail=108032 latency_us[min/avg/max]=0/315/166395 errors[dma/decrypt/invalid]=108032/252/155212 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:40.512] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=62/2946/0 component_key_cache[hit/miss]=4751/148.
+[2026-06-30 18:33:40.512] [INFO] STATUS-CADENCE render_fps=415.3 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=713/647/576 entity_pub_hz=66.7 age_ms=16 count=7 interval_ms[last/max]=15/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:42.003] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:42.391] [INFO] [DMA-FIELD] window_ms=5000 cycles=178 raw=3916 validated=1219 published=1246 hot_scatter=196 fail=0.
+[2026-06-30 18:33:42.391] [INFO] [DMA-FIELD] component cache_hit=1225 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:33:42.391] [INFO] [DMA-FIELD] velocity req=1246 scatter_hit=1246 partial=0 fallback=0 fail=0 health req=1246 scatter_hit=1246 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:42.391] [INFO] [DMA-FIELD] hero req=504 scatter_hit=504 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:42.391] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1246 any=1246 head=1246.
+[2026-06-30 18:33:45.512] [INFO] STATUS entities=7 last_scan=22 scan_cycles=65 process_cycles=3124 scan_hz=0.8 process_hz=36.9 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=438.8 dma_reads=658275 ok=543589 fail=114686 latency_us[min/avg/max]=0/314/166395 errors[dma/decrypt/invalid]=114686/269/165386 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:45.512] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=66/3125/0 component_key_cache[hit/miss]=5066/157.
+[2026-06-30 18:33:45.512] [INFO] STATUS-CADENCE render_fps=438.8 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=713/647/576 entity_pub_hz=66.7 age_ms=63 count=7 interval_ms[last/max]=15/1016 snapshot_copy_ms[entities last/max=0.000/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:47.012] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:47.437] [INFO] [DMA-FIELD] window_ms=5016 cycles=166 raw=3652 validated=1144 published=1162 hot_scatter=178 fail=0.
+[2026-06-30 18:33:47.437] [INFO] [DMA-FIELD] component cache_hit=1148 cache_miss=14 header=14 fail=0 link_header=14 fail=0.
+[2026-06-30 18:33:47.437] [INFO] [DMA-FIELD] velocity req=1162 scatter_hit=1162 partial=0 fallback=0 fail=0 health req=1162 scatter_hit=1162 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:47.437] [INFO] [DMA-FIELD] hero req=476 scatter_hit=476 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:47.438] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=18 team_refresh=35 skill_refresh=115 bones candidates=1162 any=1162 head=1162.
+[2026-06-30 18:33:50.513] [INFO] STATUS entities=7 last_scan=22 scan_cycles=68 process_cycles=3268 scan_hz=0.5 process_hz=26.3 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=434.0 dma_reads=718347 ok=574096 fail=144251 latency_us[min/avg/max]=0/307/166395 errors[dma/decrypt/invalid]=144251/281/173026 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:50.513] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=69/3269/0 component_key_cache[hit/miss]=5314/164.
+[2026-06-30 18:33:50.513] [INFO] STATUS-CADENCE render_fps=434.0 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=774/702/624 entity_pub_hz=32.3 age_ms=0 count=7 interval_ms[last/max]=31/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:52.267] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=3244 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; taskhostw.exe pid=26576 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; explorer.exe pid=24472 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; dwm.exe pid=18700 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; winlogon.exe pid=14248 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=3244 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; taskhostw.exe pid=26576 session=0 step=win10_gaf_export_sig addr=0xFFFFF80546FE0000 value=0x0; 
+[2026-06-30 18:33:52.397] [INFO] [DMA-FIELD] window_ms=5000 cycles=147 raw=3234 validated=1002 published=1029 hot_scatter=165 fail=0.
+[2026-06-30 18:33:52.397] [INFO] [DMA-FIELD] component cache_hit=1008 cache_miss=21 header=21 fail=0 link_header=21 fail=0.
+[2026-06-30 18:33:52.397] [INFO] [DMA-FIELD] velocity req=1029 scatter_hit=1029 partial=0 fallback=0 fail=0 health req=1029 scatter_hit=1029 partial=0 fallback=0 read_fail=0 layout_fail=0 missing=0.
+[2026-06-30 18:33:52.397] [INFO] [DMA-FIELD] hero req=448 scatter_hit=448 partial=0 fallback=0 read_fail=0 missing=0 fallback_fail=0 visibility req=0 scatter_hit=0 partial=0 fallback=0 read_fail=0 missing=0 anomaly=0.
+[2026-06-30 18:33:52.397] [INFO] [DMA-FIELD] entity_fail link_base=0 name_unknown=27 team_refresh=35 skill_refresh=115 bones candidates=1029 any=1029 head=1029.
+[2026-06-30 18:33:55.513] [INFO] STATUS entities=7 last_scan=22 scan_cycles=72 process_cycles=3442 scan_hz=0.8 process_hz=36.2 roster[fresh/dead/missing/expired/hero_change]=7/0/0/0/0 fps=456.9 dma_reads=754593 ok=603810 fail=150783 latency_us[min/avg/max]=0/308/166395 errors[dma/decrypt/invalid]=150783/297/183193 key=skipped key1=0x0 key2=0x0 dma=ready process=attached
+[2026-06-30 18:33:55.513] [INFO] STATUS-SDK begin_frame[scan/process/unknown]=73/3443/0 component_key_cache[hit/miss]=5575/174.
+[2026-06-30 18:33:55.513] [INFO] STATUS-CADENCE render_fps=456.9 viewmatrix_pub_hz=62.5 age_ms=0 interval_ms[last/max]=16/344 render_vm_age_ms[last/max]=0/328 stale[16/33/50]=839/761/676 entity_pub_hz=66.7 age_ms=16 count=7 interval_ms[last/max]=15/1016 snapshot_copy_ms[entities last/max=0.001/0.097 dynamic last/max=0.000/0.000].
+[2026-06-30 18:33:57.018] [WARN] DMA KeyState resolver failed. build=26100 candidates=5 profile=Win11 24H2 manualOffset=0x0 sessionConfig=0 details=explorer.exe pid=24472 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; dwm.exe pid=18700 session=0 step=slots addr=0xFFFFF8052FF20000 value=0x0; winlogon.exe pid=14248 session=0 step=slots addr=0xFFFFF8052FF20000 valu

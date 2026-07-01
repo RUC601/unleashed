@@ -313,16 +313,34 @@ uint32_t FireKeyMaskForMouseButton(int button)
     }
 }
 
+namespace {
+
+int GeneratedFireMouseButtonForAttackAction(int action)
+{
+    switch (action) {
+    case 1: // Secondary Fire
+        return 1;
+    case 0: // Primary Fire
+    case 2: // Scoped shots still fire with left while right holds stance.
+    case 3: // Unscoped
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+} // namespace
+
 uint32_t FireKeyMaskForAttackAction(int action)
 {
-    return FireKeyMaskForMouseButton(MouseButtonForAttackAction(action));
+    return FireKeyMaskForMouseButton(GeneratedFireMouseButtonForAttackAction(action));
 }
 
 int ResolveGeneratedFireMouseButton(const WeaponSpec* weapon, int fallbackAction)
 {
     if (weapon && weapon->control.generatedFireButton != kWeaponControlUseActionButton)
         return weapon->control.generatedFireButton;
-    return MouseButtonForAttackAction(fallbackAction);
+    return GeneratedFireMouseButtonForAttackAction(fallbackAction);
 }
 
 int ResolveTrackingHoldMouseButton(const WeaponSpec* weapon, int fallbackAction)

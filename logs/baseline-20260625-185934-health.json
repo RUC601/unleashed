@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "schema_version": 1,
+  "timestamp_ms": 1782439175901,
+  "process": {
+    "connected": false,
+    "connecting": true,
+    "pid": 0,
+    "base_address": null,
+    "status_text": "Connecting UN..."
+  },
+  "test_server": {
+    "read_only": true,
+    "write_armed": false,
+    "bind": "127.0.0.1",
+    "port": 19550,
+    "cors_mode": "disabled"
+  }
+}

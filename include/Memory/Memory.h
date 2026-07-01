@@ -163,19 +163,19 @@ public:
 	VMMDLL_SCATTER_HANDLE CreateScatterHandle() const;
 	VMMDLL_SCATTER_HANDLE CreateScatterHandle(int pid) const;
 	void CloseScatterHandle(VMMDLL_SCATTER_HANDLE handle);
-	void AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, void* buffer, size_t size);
-	void AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, void* buffer, size_t size, DWORD* bytesRead);
+	bool AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, void* buffer, size_t size);
+	bool AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, void* buffer, size_t size, DWORD* bytesRead);
 
 	template <typename T>
-	void AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, T* buffer)
+	bool AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, T* buffer)
 	{
-		AddScatterReadRequest(handle, address, reinterpret_cast<void*>(buffer), sizeof(T));
+		return AddScatterReadRequest(handle, address, reinterpret_cast<void*>(buffer), sizeof(T));
 	}
 
 	template <typename T>
-	void AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, T* buffer, DWORD* bytesRead)
+	bool AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, T* buffer, DWORD* bytesRead)
 	{
-		AddScatterReadRequest(handle, address, reinterpret_cast<void*>(buffer), sizeof(T), bytesRead);
+		return AddScatterReadRequest(handle, address, reinterpret_cast<void*>(buffer), sizeof(T), bytesRead);
 	}
 
 	bool ExecuteReadScatter(VMMDLL_SCATTER_HANDLE handle, int pid = 0);
