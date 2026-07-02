@@ -920,7 +920,8 @@ namespace OW {
             ReadEntityScannerEnvFlagState("UN_DMA_LIGHT_SCAN");
         if (lightScanFlag >= 0)
             return lightScanFlag == 1;
-        return EntityScannerEnvFlagEnabled("UN_DMA_ENTITY_PIPELINE_V2");
+        return offset::IsCnNeProfile() ||
+            EntityScannerEnvFlagEnabled("UN_DMA_ENTITY_PIPELINE_V2");
     }
 
     inline size_t EntityLightScanMaxCandidates()

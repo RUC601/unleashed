@@ -941,7 +941,7 @@ static constexpr int kBonePreferenceAimBones[] = {
     OW::Config::kAimBoneChest
 };
 static constexpr int kBonePreferenceClosestIndex = 3;
-static const char* kAimBehavior[]  = { "Tracking", "Flick", "Flick2nd", "Reacquire", "AssistFlick" };
+static const char* kAimBehavior[]  = { "Tracking", "Flick", "Flick2nd", "Reacquire", "MagneticTrigger" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPredictionMode[] = { "Auto", "Force On", "Force Off" };

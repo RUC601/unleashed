@@ -155,6 +155,95 @@ void AppendVectorOrNull(std::ostringstream& out, const OW::Vector3& value)
     out << '}';
 }
 
+OW::Vector3 YawForwardFromRotation(const OW::Vector3& rotation)
+{
+    if (!IsFiniteVector(rotation))
+        return OW::Vector3{};
+    return OW::Vector3(
+        static_cast<float>(std::sin(rotation.X)),
+        0.0f,
+        static_cast<float>(std::cos(rotation.X)));
+}
+
+int SkeletonValidCount(const OW::c_entity& entity)
+{
+    return static_cast<int>(
+        std::count(entity.skeleton_bone_valid.begin(), entity.skeleton_bone_valid.end(), true));
+}
+
+bool IsTrainingBotEntity(const OW::c_entity& entity)
+{
+    return OW::GameData::IsTrainingBotHeroId(entity.HeroID);
+}
+
+bool IsKnownRealHeroEntity(const OW::c_entity& entity)
+{
+    return OW::GameData::IsKnownHeroId(entity.HeroID) &&
+        !IsTrainingBotEntity(entity);
+}
+
+bool IsZeroRotation(const OW::Vector3& rotation)
+{
+    constexpr float kZeroRotationEpsilon = 0.0001f;
+    return IsFiniteVector(rotation) &&
+        std::fabs(rotation.X) <= kZeroRotationEpsilon &&
+        std::fabs(rotation.Y) <= kZeroRotationEpsilon &&
+        std::fabs(rotation.Z) <= kZeroRotationEpsilon;
+}
+
+void AppendIntArray(std::ostringstream& out, const std::array<int, 18>& values)
+{
+    out << '[';
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index != 0)
+            out << ',';
+        out << values[index];
+    }
+    out << ']';
+}
+
+void AppendBoolArray(std::ostringstream& out, const std::array<bool, 18>& values)
+{
+    out << '[';
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index != 0)
+            out << ',';
+        out << (values[index] ? "true" : "false");
+    }
+    out << ']';
+}
+
+void AppendSkeletonVectors(std::ostringstream& out, const OW::c_entity& entity)
+{
+    out << '[';
+    for (size_t index = 0; index < entity.skeleton_bones.size(); ++index) {
+        if (index != 0)
+            out << ',';
+        if (!entity.skeleton_bone_valid[index])
+            out << "null";
+        else
+            AppendVectorOrNull(out, entity.skeleton_bones[index]);
+    }
+    out << ']';
+}
+
+void AppendSkeletonDiagnosticJson(std::ostringstream& out, const OW::c_entity& entity, bool includeVectors)
+{
+    const auto renderMap = entity.GetRenderSkel();
+    const int validCount = SkeletonValidCount(entity);
+
+    out << "{\"valid_count\":" << validCount
+        << ",\"render_map\":";
+    AppendIntArray(out, renderMap);
+    out << ",\"valid_slots\":";
+    AppendBoolArray(out, entity.skeleton_bone_valid);
+    if (includeVectors) {
+        out << ",\"world_slots\":";
+        AppendSkeletonVectors(out, entity);
+    }
+    out << '}';
+}
+
 std::string HexString(uint64_t value)
 {
     char buffer[32] = {};
@@ -174,6 +263,39 @@ void AppendHexOrNull(std::ostringstream& out, uint64_t value)
         return;
     }
     AppendHexString(out, value);
+}
+
+void AppendEnemyAngleProbeJson(std::ostringstream& out, uint64_t enemyAngleBase)
+{
+    out << "{\"base\":";
+    AppendHexOrNull(out, enemyAngleBase);
+    out << ",\"view_direction_address\":";
+    AppendHexOrNull(
+        out,
+        enemyAngleBase ? enemyAngleBase + OW::kPlayerControllerViewDirectionOffset : 0);
+
+    OW::Vector3 viewDirection{};
+    if (enemyAngleBase && OW::SDK)
+        viewDirection = OW::SDK->RPM<OW::Vector3>(
+            enemyAngleBase + OW::kPlayerControllerViewDirectionOffset);
+
+    const float length = std::sqrt(
+        viewDirection.X * viewDirection.X +
+        viewDirection.Y * viewDirection.Y +
+        viewDirection.Z * viewDirection.Z);
+    const bool valid =
+        IsFiniteVector(viewDirection) &&
+        length > 0.5f &&
+        length < 1.5f;
+
+    out << ",\"view_direction\":";
+    AppendVectorOrNull(out, viewDirection);
+    out << ",\"view_direction_length\":";
+    AppendNumberOrNull(out, length);
+    out << ",\"valid\":" << (valid ? "true" : "false");
+    out << ",\"aim_euler\":";
+    AppendVectorOrNull(out, valid ? OW::DirectionToAimEuler(viewDirection) : OW::Vector3{});
+    out << '}';
 }
 
 void AppendDmaWindowFields(std::ostringstream& out, const Diagnostics::DmaWindowStats& window)
@@ -2894,6 +3016,66 @@ std::string HeroName(uint64_t heroId, uint64_t linkBase = 0)
     return "Unknown";
 }
 
+template <typename Candidate>
+void AppendHeroDiagnosticSummaryJson(std::ostringstream& out, const std::vector<Candidate>& candidates)
+{
+    struct HeroSummary {
+        uint64_t heroId = 0;
+        std::string heroName;
+        bool knownRealHero = false;
+        bool trainingBot = false;
+        int count = 0;
+        int rotationZeroCount = 0;
+        int maxSkeletonValidCount = 0;
+    };
+
+    std::vector<HeroSummary> summaries;
+    for (const Candidate& candidate : candidates) {
+        const OW::c_entity& entity = candidate.entity;
+        auto summaryIt = std::find_if(
+            summaries.begin(),
+            summaries.end(),
+            [&](const HeroSummary& summary) {
+                return summary.heroId == entity.HeroID;
+            });
+        if (summaryIt == summaries.end()) {
+            HeroSummary summary{};
+            summary.heroId = entity.HeroID;
+            summary.heroName = HeroName(entity.HeroID, entity.LinkBase);
+            summary.knownRealHero = IsKnownRealHeroEntity(entity);
+            summary.trainingBot = IsTrainingBotEntity(entity);
+            summaries.push_back(summary);
+            summaryIt = summaries.end() - 1;
+        }
+
+        ++summaryIt->count;
+        if (IsZeroRotation(entity.Rot))
+            ++summaryIt->rotationZeroCount;
+        summaryIt->maxSkeletonValidCount =
+            (std::max)(summaryIt->maxSkeletonValidCount, SkeletonValidCount(entity));
+    }
+
+    out << '[';
+    for (size_t index = 0; index < summaries.size(); ++index) {
+        if (index != 0)
+            out << ',';
+        const HeroSummary& summary = summaries[index];
+        out << "{\"hero_id\":";
+        AppendHexString(out, summary.heroId);
+        out << ",\"hero_name\":";
+        AppendJsonString(out, summary.heroName.empty() ? "Unknown" : summary.heroName);
+        out << ",\"known_real_hero\":" << (summary.knownRealHero ? "true" : "false")
+            << ",\"training_bot\":" << (summary.trainingBot ? "true" : "false")
+            << ",\"count\":" << summary.count
+            << ",\"rotation_zero_count\":" << summary.rotationZeroCount
+            << ",\"all_rotation_zero\":"
+            << (summary.count > 0 && summary.rotationZeroCount == summary.count ? "true" : "false")
+            << ",\"max_skeleton_valid_count\":" << summary.maxSkeletonValidCount
+            << '}';
+    }
+    out << ']';
+}
+
 void AppendCommonStart(std::ostringstream& out, const std::vector<std::string>& warnings = {})
 {
     out << "{\"ok\":true,\"schema_version\":" << kSchemaVersion
@@ -4204,7 +4386,9 @@ std::string BuildEntitiesJson(const std::unordered_map<std::string, std::string>
     AppendJsonString(out, query.team);
     out << ",\"include_dead\":" << (query.includeDead ? "true" : "false")
         << ",\"limit\":" << query.limit
-        << "},\"entities\":[";
+        << "},\"hero_summary\":";
+    AppendHeroDiagnosticSummaryJson(out, candidates);
+    out << ",\"entities\":[";
 
     for (size_t index = 0; index < candidates.size(); ++index) {
         if (index != 0)
@@ -4216,6 +4400,10 @@ std::string BuildEntitiesJson(const std::unordered_map<std::string, std::string>
             OW::offset::IsCnNeProfile() &&
             !entity.HeroBase &&
             OW::GameData::IsTrainingBotHeroId(entity.HeroID);
+        const bool trainingBot = IsTrainingBotEntity(entity);
+        const bool knownRealHero = IsKnownRealHeroEntity(entity);
+        const bool rotationZero = IsZeroRotation(entity.Rot);
+        const int skeletonValidCount = SkeletonValidCount(entity);
         out << "{\"key\":";
         AppendHexString(out, candidates[index].key);
         out << ",\"address\":";
@@ -4244,12 +4432,18 @@ std::string BuildEntitiesJson(const std::unordered_map<std::string, std::string>
         AppendHexOrNull(out, entity.AngleBase);
         out << ",\"enemy_angle_base\":";
         AppendHexOrNull(out, entity.EnemyAngleBase);
+        out << ",\"enemy_angle_probe\":";
+        AppendEnemyAngleProbeJson(out, entity.EnemyAngleBase);
         out << ",\"hero_id\":";
         AppendHexString(out, entity.HeroID);
         out << ",\"hero_source\":";
         AppendJsonString(out, entity.HeroBase ? "component" : (syntheticCnNeTrainingBot ? "health_fallback" : "missing"));
         out << ",\"hero_name\":";
         AppendJsonString(out, heroName.empty() ? "Unknown" : heroName);
+        out << ",\"known_real_hero\":" << (knownRealHero ? "true" : "false")
+            << ",\"training_bot\":" << (trainingBot ? "true" : "false")
+            << ",\"rotation_zero\":" << (rotationZero ? "true" : "false")
+            << ",\"skeleton_valid_count\":" << skeletonValidCount;
         out << ",\"team\":";
         AppendJsonString(out, entity.Team ? "enemy" : "ally");
         if (query.teamDebug) {
@@ -4272,6 +4466,14 @@ std::string BuildEntitiesJson(const std::unordered_map<std::string, std::string>
         AppendVectorOrNull(out, entity.head_pos);
         out << ",\"chest_position\":";
         AppendVectorOrNull(out, entity.chest_pos);
+        out << ",\"rotation_base\":";
+        AppendHexOrNull(out, entity.RotationBase);
+        out << ",\"rotation\":";
+        AppendVectorOrNull(out, entity.Rot);
+        out << ",\"yaw_forward\":";
+        AppendVectorOrNull(out, YawForwardFromRotation(entity.Rot));
+        out << ",\"skeleton\":";
+        AppendSkeletonDiagnosticJson(out, entity, false);
         const OW::EntityMotionState motion = OW::TargetingDetail::EstimateMotionState(entity, OW::Vector2{});
         const float groundedBaselineY = DiagnosticGroundedBaselineY(candidates[index].key, entity, motion);
         out << ",\"velocity\":";
@@ -4435,7 +4637,9 @@ std::string BuildProjectionDebugJson(const std::unordered_map<std::string, std::
     out << ",\"team\":";
     AppendJsonString(out, query.team);
     out << ",\"limit\":" << query.limit
-        << "},\"screen\":{\"width\":";
+        << "},\"hero_summary\":";
+    AppendHeroDiagnosticSummaryJson(out, candidates);
+    out << ",\"screen\":{\"width\":";
     AppendNumberOrNull(out, window.X);
     out << ",\"height\":";
     AppendNumberOrNull(out, window.Y);
@@ -4491,6 +4695,10 @@ std::string BuildProjectionDebugJson(const std::unordered_map<std::string, std::
             out << ',';
         const OW::c_entity& entity = candidates[index].entity;
         const std::string heroName = HeroName(entity.HeroID, entity.LinkBase);
+        const bool trainingBot = IsTrainingBotEntity(entity);
+        const bool knownRealHero = IsKnownRealHeroEntity(entity);
+        const bool rotationZero = IsZeroRotation(entity.Rot);
+        const int skeletonValidCount = SkeletonValidCount(entity);
         const OW::Vector3 rootPos = entity.pos;
         const OW::Vector3 headPos = entity.head_pos;
         const OW::Vector3 chestPos = entity.chest_pos;
@@ -4509,6 +4717,10 @@ std::string BuildProjectionDebugJson(const std::unordered_map<std::string, std::
         AppendHexString(out, entity.HeroID);
         out << ",\"hero_name\":";
         AppendJsonString(out, heroName.empty() ? "Unknown" : heroName);
+        out << ",\"known_real_hero\":" << (knownRealHero ? "true" : "false")
+            << ",\"training_bot\":" << (trainingBot ? "true" : "false")
+            << ",\"rotation_zero\":" << (rotationZero ? "true" : "false")
+            << ",\"skeleton_valid_count\":" << skeletonValidCount;
         out << ",\"team\":";
         AppendJsonString(out, entity.Team ? "enemy" : "ally");
         out << ",\"alive\":" << (entity.Alive ? "true" : "false")
@@ -4523,6 +4735,18 @@ std::string BuildProjectionDebugJson(const std::unordered_map<std::string, std::
         AppendNumberOrNull(out, forwardDotRoot);
         out << ",\"forward_dot_chest\":";
         AppendNumberOrNull(out, forwardDotChest);
+        out << ",\"rotation_base\":";
+        AppendHexOrNull(out, entity.RotationBase);
+        out << ",\"rotation\":";
+        AppendVectorOrNull(out, entity.Rot);
+        out << ",\"yaw_forward\":";
+        AppendVectorOrNull(out, YawForwardFromRotation(entity.Rot));
+        out << ",\"enemy_angle_base\":";
+        AppendHexOrNull(out, entity.EnemyAngleBase);
+        out << ",\"enemy_angle_probe\":";
+        AppendEnemyAngleProbeJson(out, entity.EnemyAngleBase);
+        out << ",\"skeleton\":";
+        AppendSkeletonDiagnosticJson(out, entity, true);
         out << ",\"positions\":{\"root\":";
         AppendVectorOrNull(out, rootPos);
         out << ",\"head\":";

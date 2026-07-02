@@ -10102,8 +10102,8 @@ namespace AimbotDetail {
             ResetHanzoCustomFlickState(state, "sequence_block_after_loop");
     }
 
-    inline void RunAssistFlick(RuntimeState& state, float origin_sens) {
-        if (InputSequenceBlocksAim("assist_flick"))
+    inline void RunMagneticTrigger(RuntimeState& state, float origin_sens) {
+        if (InputSequenceBlocksAim("magnetic_trigger"))
             return;
         MaintainHanzoCustomFlickState(state);
         UpdateFlickShotCooldown(state);
@@ -10122,7 +10122,7 @@ namespace AimbotDetail {
             static DWORD lastAssistTimeoutLogTick = 0;
             const DWORD now = GetTickCount();
             if (lastAssistTimeoutLogTick == 0 || now - lastAssistTimeoutLogTick >= 250) {
-                Diagnostics::Aim("assist_flick skipped reason=session_timeout_held hero=0x%llX slot=%d key=%d",
+                Diagnostics::Aim("magnetic_trigger skipped reason=session_timeout_held hero=0x%llX slot=%d key=%d",
                     static_cast<unsigned long long>(sessionIdentity.heroId),
                     sessionIdentity.slotIndex + 1,
                     sessionIdentity.aimKey);
@@ -10135,7 +10135,7 @@ namespace AimbotDetail {
         g_flickAttempts++;
         const int behavior = OW::Config::ClampAimBehaviorIndex(OW::Config::aimBehavior);
         const c_entity localAtEntry = LocalEntity();
-        Diagnostics::Aim("assist_flick.enter originSens=%.6f shooted=%d reloading=%d trackingScale=%.6f baseSpeed=%.6f method=%d acceleration=%.6f prediction=%d targetDelay=%d",
+        Diagnostics::Aim("magnetic_trigger.enter originSens=%.6f shooted=%d reloading=%d trackingScale=%.6f baseSpeed=%.6f method=%d acceleration=%.6f prediction=%d targetDelay=%d",
             origin_sens,
             OW::Config::shooted ? 1 : 0,
             OW::Config::reloading ? 1 : 0,
@@ -10149,7 +10149,7 @@ namespace AimbotDetail {
         if (!OW::Config::aimDryRun &&
             localAtEntry.HeroID == OW::eHero::HERO_HANJO &&
             !localAtEntry.skill2act) {
-            Diagnostics::Aim("hanzo.custom route=assist_flick");
+            Diagnostics::Aim("hanzo.custom route=magnetic_trigger");
             RunHanzoCustomFlick(state, origin_sens);
             return;
         }
@@ -10172,7 +10172,7 @@ namespace AimbotDetail {
                     const bool hitBeforeMove = OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
                     const bool hitAfterMove = deadzoneDampingScale > 0.0f &&
                         OW::in_range(aim.smoothed_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
-                    Diagnostics::Aim("dryrun.assist_flick local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) hitbox=%.4f would_fire=%d deadzoneDistance=%.3f deadzoneScale=%.3f target_pos=(%.1f,%.1f,%.1f)",
+                    Diagnostics::Aim("dryrun.magnetic_trigger local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) hitbox=%.4f would_fire=%d deadzoneDistance=%.3f deadzoneScale=%.3f target_pos=(%.1f,%.1f,%.1f)",
                         RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
                         RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
                         RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
@@ -10182,7 +10182,7 @@ namespace AimbotDetail {
                         deadzoneDampingScale,
                         vec.X, vec.Y, vec.Z);
                 } else {
-                    Diagnostics::Aim("dryrun.assist_flick no_target_vector targetIndex=%d entities=%zu",
+                    Diagnostics::Aim("dryrun.magnetic_trigger no_target_vector targetIndex=%d entities=%zu",
                         OW::Config::Targetenemyi,
                         OW::TargetingDetail::SnapshotEntities().size());
                 }
@@ -10200,14 +10200,14 @@ namespace AimbotDetail {
                !OW::Config::shooted &&
                !OW::Config::reloading &&
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
-            if (AimSessionTimedOut(sessionStartedTick, "assist_flick")) {
+            if (AimSessionTimedOut(sessionStartedTick, "magnetic_trigger")) {
                 state.trackingSessionTimedOut = true;
                 break;
             }
 
             const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
             if (IsZeroVector(vec)) {
-                Diagnostics::Aim("assist_flick no_move reason=no_target_vector targetIndex=%d entities=%zu",
+                Diagnostics::Aim("magnetic_trigger no_move reason=no_target_vector targetIndex=%d entities=%zu",
                     OW::Config::Targetenemyi,
                     OW::TargetingDetail::SnapshotEntities().size());
                 Sleep(1);
@@ -10218,7 +10218,7 @@ namespace AimbotDetail {
 
             c_entity target{};
             if (!IsPrimaryTargetActionable(target)) {
-                Diagnostics::Aim("assist_flick no_move reason=target_not_actionable targetIndex=%d vec=(%.9f,%.9f,%.9f)",
+                Diagnostics::Aim("magnetic_trigger no_move reason=target_not_actionable targetIndex=%d vec=(%.9f,%.9f,%.9f)",
                     OW::Config::Targetenemyi,
                     vec.X,
                     vec.Y,
@@ -10257,7 +10257,7 @@ namespace AimbotDetail {
 
             if (DelayedShotTimedOut(state)) {
                 const c_entity local = LocalEntity();
-                Diagnostics::Aim("assist_flick delayed_shot timeout target=%d localHero=0x%llX",
+                Diagnostics::Aim("magnetic_trigger delayed_shot timeout target=%d localHero=0x%llX",
                     OW::Config::Targetenemyi,
                     static_cast<unsigned long long>(local.HeroID));
                 if (local.HeroID == OW::eHero::HERO_HANJO) {
@@ -10273,7 +10273,7 @@ namespace AimbotDetail {
             if (deadzoneDampingScale <= 0.0f) {
                 OW::ResetAimSmoothingState();
                 if (OW::Config::aimVerboseLog) {
-                    Diagnostics::Aim("assist_flick.deadzone_hold distancePx=%.3f radiusPx=%.3f hitBefore=%d",
+                    Diagnostics::Aim("magnetic_trigger.deadzone_hold distancePx=%.3f radiusPx=%.3f hitBefore=%d",
                         deadzoneDistance,
                         OW::Config::ClampTrackingDeadzonePixels(OW::Config::aimbotTrackingDeadzone),
                         hitBeforeMove ? 1 : 0);
@@ -10286,7 +10286,7 @@ namespace AimbotDetail {
                 if (OW::Config::aimVerboseLog) {
                     const float deltaDegX = RAD2DEG(aim.target_angle.X - aim.local_angle.X);
                     const float deltaDegY = RAD2DEG(aim.target_angle.Y - aim.local_angle.Y);
-                    Diagnostics::Aim("assist_flick.tick delta_deg=(%.4f,%.4f) hitbox=%.4f deadzoneDistance=%.3f deadzoneScale=%.3f hitBefore=%d hitAfter=%d",
+                    Diagnostics::Aim("magnetic_trigger.tick delta_deg=(%.4f,%.4f) hitbox=%.4f deadzoneDistance=%.3f deadzoneScale=%.3f hitBefore=%d hitAfter=%d",
                         deltaDegX,
                         deltaDegY,
                         hitWindow,
@@ -10297,7 +10297,7 @@ namespace AimbotDetail {
                 }
                 RunCloseRangeActions(aimTarget);
             } else {
-                Diagnostics::Aim("assist_flick no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
+                Diagnostics::Aim("magnetic_trigger no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
                     aim.local_angle.X,
                     aim.local_angle.Y,
                     aim.local_angle.Z,
@@ -10308,7 +10308,7 @@ namespace AimbotDetail {
 
             if (hitBeforeMove || hitAfterMove) {
                 if (OW::Config::aimVerboseLog) {
-                    Diagnostics::Aim("assist_flick.fire hitbox_check=passed before=%d after=%d",
+                    Diagnostics::Aim("magnetic_trigger.fire hitbox_check=passed before=%d after=%d",
                         hitBeforeMove ? 1 : 0,
                         hitAfterMove ? 1 : 0);
                 }
@@ -10329,7 +10329,7 @@ namespace AimbotDetail {
                 const int previousShotCount = OW::Config::shotcount;
                 OW::Config::shotcount = 0;
                 const c_entity local = LocalEntity();
-                Diagnostics::Aim("assist_flick dontshot forced_fire target=%d previousShotCount=%d missbox=%.6f",
+                Diagnostics::Aim("magnetic_trigger dontshot forced_fire target=%d previousShotCount=%d missbox=%.6f",
                     OW::Config::Targetenemyi,
                     previousShotCount,
                     OW::Config::missbox);
@@ -10850,8 +10850,8 @@ namespace AimbotDetail {
 
         if (OW::Config::Tracking) RunTracking(state, origin_sens);
         else if (OW::Config::Flick) {
-            if (OW::Config::IsAssistFlickBehavior(OW::Config::aimBehavior))
-                RunAssistFlick(state, origin_sens);
+            if (OW::Config::IsMagneticTriggerBehavior(OW::Config::aimBehavior))
+                RunMagneticTrigger(state, origin_sens);
             else
                 RunFlick(state, origin_sens);
         }

@@ -243,12 +243,12 @@ namespace OW { namespace Config {
     inline constexpr int kAimBehaviorFlick = 1;
     inline constexpr int kAimBehaviorFlick2nd = 2;
     inline constexpr int kAimBehaviorReacquire = 3;
-    inline constexpr int kAimBehaviorAssistFlick = 4;
+    inline constexpr int kAimBehaviorMagneticTrigger = 4;
     inline constexpr int kAimBehaviorCount = 5;
     inline bool  aimbotAutoshot = false;
     inline bool  aimbotKeepFiring = true;
     inline int   aimbotPredictionMode = 0; // 0=Auto, 1=Force On, 2=Force Off
-    inline int   aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=AssistFlick
+    inline int   aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=MagneticTrigger
     inline int   aimbotFirePolicy = 1;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
     inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
     inline float aimbotMaxHead = 100.0f;
@@ -405,21 +405,21 @@ namespace OW { namespace Config {
         return ClampAimBehaviorIndex(behavior) == kAimBehaviorFlick2nd;
     }
 
-    inline bool IsAssistFlickBehavior(int behavior)
+    inline bool IsMagneticTriggerBehavior(int behavior)
     {
-        return ClampAimBehaviorIndex(behavior) == kAimBehaviorAssistFlick;
+        return ClampAimBehaviorIndex(behavior) == kAimBehaviorMagneticTrigger;
     }
 
     inline bool UsesTrackingDeadzone(int behavior)
     {
         const int normalized = ClampAimBehaviorIndex(behavior);
         return normalized == kAimBehaviorTracking ||
-               normalized == kAimBehaviorAssistFlick;
+               normalized == kAimBehaviorMagneticTrigger;
     }
 
     inline bool UsesFlickFireControls(int behavior)
     {
-        return IsFlickBehavior(behavior) || IsAssistFlickBehavior(behavior);
+        return IsFlickBehavior(behavior) || IsMagneticTriggerBehavior(behavior);
     }
 
     inline float ClampTrackingDeadzonePixels(float value)
@@ -1140,7 +1140,7 @@ namespace OW { namespace Config {
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         float hitbox = kDefaultHitboxScalePercent; // percentage of resolved bone+projectile window
         int aimMode = 0;         // 0=Tracking, 1=Flick
-        int aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=AssistFlick
+        int aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=MagneticTrigger
         int aimBehaviorPresetId = -1;
         int aimMethod = 0;       // legacy: smoothing method now comes from Misc behavior profiles
         int smoothType = 0;      // legacy

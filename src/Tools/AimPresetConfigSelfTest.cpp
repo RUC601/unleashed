@@ -89,17 +89,17 @@ int main()
     if (!NearlyEqual(RuntimeAimConstantAngularSpeedDeg(), 30.0f))
         return Fail();
 
-    if (!IsAssistFlickBehavior(kAimBehaviorAssistFlick))
+    if (!IsMagneticTriggerBehavior(kAimBehaviorMagneticTrigger))
         return Fail();
-    if (!UsesTrackingDeadzone(kAimBehaviorAssistFlick))
+    if (!UsesTrackingDeadzone(kAimBehaviorMagneticTrigger))
         return Fail();
-    if (!UsesFlickFireControls(kAimBehaviorAssistFlick))
+    if (!UsesFlickFireControls(kAimBehaviorMagneticTrigger))
         return Fail();
-    if (IsTrackingBehavior(kAimBehaviorAssistFlick))
+    if (IsTrackingBehavior(kAimBehaviorMagneticTrigger))
         return Fail();
-    if (IsFlickBehavior(kAimBehaviorAssistFlick))
+    if (IsFlickBehavior(kAimBehaviorMagneticTrigger))
         return Fail();
-    if (!AimBehaviorMoveSplitEnabled(kAimBehaviorAssistFlick))
+    if (!AimBehaviorMoveSplitEnabled(kAimBehaviorMagneticTrigger))
         return Fail();
 
     DynamicFovPreset dynamic{};

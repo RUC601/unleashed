@@ -4,7 +4,7 @@
 build, and run the live offset validator from `D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool`;
 `Unleashed` keeps only runtime-required offset profile behavior.
 
-版本：2026-06-19
+版本：2026-07-01
 覆盖范围：当前工作树 `D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma`
 面向读者：从未打开过 IDE、没有读过本项目代码，但准备参与需求、调试、验收和后续开发沟通的人。
 
@@ -31,14 +31,14 @@ build, and run the live offset validator from `D:\Desktop\SenseZen\ECS_O\03_DOWN
 当前 Git 基线：
 
 ```text
-6387dbf Update NE runtime diagnostics and Shion assets
+6376c3a fix: handle side-button presets and kmbox cleanup
 ```
 
 文档刷新时的源码基线：
 
 ```text
 main...origin/main
-刷新前没有未提交源码修改；本次刷新只改 docs 下的 Markdown 文档。
+刷新前没有未提交源码修改；本次刷新只改 docs/UNLEASHED_DEVELOPMENT_GUIDE.zh-CN.md。
 ```
 
 这份文档内容基于当前工作树读取到的代码。后续如果工作树再次变脏，先以真实源码和 `git diff` 为准，再按本文的文件地图追链路。
@@ -49,8 +49,8 @@ main...origin/main
 
 ```text
 仓库状态：
-  当前 HEAD 是 6387dbf；刷新前源码工作树干净并与 origin/main 对齐。
-  本次文档刷新只产生 docs/UNLEASHED_DEVELOPMENT_GUIDE.zh-CN.md 和 docs/code-reading/README.zh-CN.md 改动。
+  当前 HEAD 是 6376c3a；刷新前源码工作树干净并与 origin/main 对齐。
+  本次文档刷新只产生 docs/UNLEASHED_DEVELOPMENT_GUIDE.zh-CN.md 改动。
   CMakePresets.json 仍以 vs2026 preset 和 build/ 为唯一推荐构建树。
 
 进程连接：
@@ -133,7 +133,7 @@ Hanzo / charged fire：
 Hero Perk / weapon variant：
   HeroPerkRuntime 当前提供手动 perk override，F8 切换、Shift+F8 清除；现阶段主要驱动 Cassidy cassidy_ads_perk 这类武器 spec 变体。
   RenderCallback 会更新 HeroPerkRuntime context；状态行会显示 Perk On/Off、来源和 variantId。
-  /api/local 的 ultimate_perk 来自 HeroPerks::ReadCurrent(...)，这是现场读数/分类，不等同于 F8 手动 override。
+  /api/local 仍保留 ultimate_perk 字段，但当前不在 HTTP 响应路径里额外 hot-read HeroPerks；perk 运行时状态以 HeroPerkRuntime 状态行和相关诊断为准。
 
 Scenario/TestServer：
   CMake 默认编译 UNLEASHED_TEST_SERVER。
@@ -143,12 +143,25 @@ Scenario/TestServer：
 当前源码状态：
   KMBox command port 与 monitor port 相同时会自动改成推荐 monitor port；NormalizeKmboxPorts() 会在 UI 连接和 main 初始化前运行。
   UDP command/monitor socket 会尝试禁用 SIO_UDP_CONNRESET；monitor 启动改为先开 listener，再发 cmd_monitor，失败会 EndMonitor 清理。
+  退出、Overlay 初始化失败、目标进程断开时会尝试 ReleaseKmboxMouseStateForShutdown(...) 释放鼠标按键/掩码状态。
+  新增 --kmbox-recover-mouse，用于只初始化 KMBox 并发送 release/unmask 清理，不进入完整 runtime。
   MockHardwareSelfTest 已把 monitor port 推荐值纳入自检。
 
+2026-07-01 bug 修复注意点：
+  鼠标侧键 preset 选择不是全局 aim_key 替换。Aim slot selection 现在记录 activationKeyOverride 和 usedSideButtonAlias；排查 Mouse4/Mouse5 时先看 unleashed_aim_diag.log 里的 hero_preset.runtime activeKey/sideAlias。
+  侧键别名只作为 keyed selection 的第二轮匹配，不应让 fallback slot 无条件抢占当前按下的侧键 slot。
+  charging / flick / fire 链路遇到 activation key 与 fire key 同键时，不能为了释放蓄力而 release 正被按住的侧键；先查 ShouldSkipChargeReleaseForHeldActivation(...)。
+  现场症状如果是 trackingOK 但 flick 不动、只有 autoshoot，优先沿 TrySelectRuntimeAimPreset -> RunAimbotTick/RunTracking/RunFlick -> FireConfiguredAction 查 activeKey 和 fire release，而不是先改 triggerbot。
+  CN/NE 队伍判断不能用低字节 relation code 做敌我比较。0x...41 和 0x...43 这类值可能同队，只能用 Team_LegacyMask 做 TeamComparisonKey；TeamRawComparisonKey 只适合诊断。
+  BZ/NE 下游实体语义要统一。未知英雄名走 GameData::UnknownHeroFallbackName(...)；友方训练机器人特殊处理不能只限 CN/NE。
+  TestServer 响应路径不要做额外 DMA hot-read。/api/local 应消费已发布 snapshot；如果要现场验证 perk、skill 或 entity 字段，优先把读数放进运行时快照/诊断，再由 TestServer 导出。
+  /api/projection-debug 看 published_valid、camera_times_projection_valid、projection_times_camera_valid 和 direct_valid 的关系；published_ptr 本身只说明当前发布地址，不足以证明内部矩阵来源。
+  性能/缓存实验必须保留 feature gate 和 A/B 采样证据。涉及 UN_DMA_* runtime gates 时，先用 scripts/monitor-unleashed-perf.ps1 记录 gate、样本和 summary，不要把一次实验值直接固化成默认。
+
 工具目标：
-  CMake 除 Unleashed 外还有 MotionEstimatorSelfTest、FovConfigSelfTest、TrackingDeadzoneDampingSelfTest、AimPresetConfigSelfTest、LeadPredictionSelfTest、WeaponSpecDisplaySelfTest、HeroSkillConfigSelfTest、HeroPerkClassifierSelfTest、MockHardwareSelfTest。
+  CMake 除 Unleashed 外还有 MotionEstimatorSelfTest、FovConfigSelfTest、TrackingDeadzoneDampingSelfTest、AimPresetConfigSelfTest、LeadPredictionSelfTest、WeaponSpecDisplaySelfTest、HeroGeometrySpecSelfTest、HeroSkillConfigSelfTest、HeroPerkClassifierSelfTest、MockHardwareSelfTest。
   CnOffsetProbe 已迁到 D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool。
-  这 9 个轻量自检都已接入 ctest。
+  这 10 个轻量自检都已接入 ctest。
 ```
 
 ## 你应该如何读这份文档
@@ -230,13 +243,15 @@ AimPresetConfigSelfTest  Aim method/behavior preset 解析与 fallback 自检
 LeadPredictionSelfTest   lead prediction、settle/pre-fire timing 自检
 WeaponSpecDisplaySelfTest
                          weapon spec 显示名、stance action、manual perk 变体自检
+HeroGeometrySpecSelfTest
+                         hero bone 半径、hit window fallback 自检
 HeroSkillConfigSelfTest  Hero skill 默认值、Skill Aim/projectile 配置自检
 HeroPerkClassifierSelfTest
                          ultimate perk 读数分类、候选槽、signature/key fallback 自检
 MockHardwareSelfTest     Mock hardware 输入/输出/mask/fault mode 自检
 ```
 
-其中 9 个轻量自检已经接入 CTest：
+其中 10 个轻量自检已经接入 CTest：
 
 ```text
 MotionEstimatorSelfTest
@@ -245,6 +260,7 @@ TrackingDeadzoneDampingSelfTest
 AimPresetConfigSelfTest
 LeadPredictionSelfTest
 WeaponSpecDisplaySelfTest
+HeroGeometrySpecSelfTest
 HeroSkillConfigSelfTest
 HeroPerkClassifierSelfTest
 MockHardwareSelfTest
@@ -658,7 +674,7 @@ WeaponSpec.cpp / HeroSkills.hpp
 cassidy_fan_the_hammer -> cassidy_ads_perk
 ```
 
-Overlay 状态行里的 `Perk: On/Off | Manual | cassidy_ads_perk` 来自 `HeroPerkRuntime::CurrentSnapshot()`。TestServer 的 `/api/local` 里 `ultimate_perk` 字段来自 `HeroPerks::ReadCurrent(...)`，用于现场读数和分类调试，不代表 F8 手动 override 已经打开。
+Overlay 状态行里的 `Perk: On/Off | Manual | cassidy_ads_perk` 来自 `HeroPerkRuntime::CurrentSnapshot()`。TestServer 的 `/api/local` 里仍保留 `ultimate_perk` 字段，但当前不在 HTTP 响应路径里额外调用 `HeroPerks::ReadCurrent(...)`，避免只读 API 请求顺手制造 DMA hot-read。排查 perk 时以运行时状态行、`HeroPerkRuntime` 快照和相关诊断为准，不要把 `/api/local` 的该字段当成 F8 override 证明。
 
 ### include/Utils/ProcessConnection.hpp
 
@@ -2403,7 +2419,7 @@ OW::Config::kmboxDebugLog
 
 ```text
 Unleashed
-  主 Overlay 程序；也承载 --config-check、--kmbox-move-test、--kmbox-calibrate CLI。
+  主 Overlay 程序；也承载 --config-check、--kmbox-recover-mouse、--kmbox-move-test、--kmbox-calibrate CLI。
 
 MotionEstimatorSelfTest
   纯本地自检，不需要 DMA/Overlay。验证 reported velocity 与 world-delta fallback。
@@ -2423,6 +2439,9 @@ LeadPredictionSelfTest
 WeaponSpecDisplaySelfTest
   纯本地自检，不需要 DMA/Overlay。验证 scoped/secondary action 名称、generated fire key mask、Cassidy manual perk weapon variant。
 
+HeroGeometrySpecSelfTest
+  纯本地自检，不需要 DMA/Overlay。验证 hero bone radius、hit window fallback 和 projectile radius 组合语义。
+
 HeroSkillConfigSelfTest
   纯本地自检，不需要 DMA/Overlay。验证 hero skill 默认配置、Skill Aim、projectile 参数、Auto Melee 和 control flags。
 
@@ -2439,6 +2458,7 @@ MockHardwareSelfTest
 cd D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma
 .\build-release.ps1
 .\build\Release\Unleashed.exe --config-check
+.\build\Release\Unleashed.exe --kmbox-recover-mouse
 .\build\Release\Unleashed.exe --kmbox-move-test
 .\build\Release\Unleashed.exe --kmbox-calibrate --kmbox-reference-sens 15
 ctest --test-dir .\build -C Release --output-on-failure
@@ -2453,16 +2473,19 @@ ctest --test-dir .\build -C Release --output-on-failure
 KMBox 有连接但移动不确定：
   用 --kmbox-move-test 看设备输出链路。
 
+KMBox 疑似遗留按键/mouse mask/侧键 passthrough 状态：
+  先用 --kmbox-recover-mouse，只做 release/unmask 清理，不启动完整 runtime。
+
 KMBox counts-per-radian 需要重标定：
   用 --kmbox-calibrate，必要时加 --kmbox-reference-sens。
 
 CN/NE 或 world/BZ offset 语义变化：
   到 D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool 用 CnOffsetProbe 做现场读数，再把 VERIFIED/CANDIDATE/UNRESOLVED 写清楚。
 
-只改 Motion.hpp、FOV、tracking deadzone、lead prediction、aim preset 或 hero skill 默认配置：
+只改 Motion.hpp、FOV、tracking deadzone、lead prediction、aim preset、hero geometry 或 hero skill 默认配置：
   跑 ctest，至少让对应的 MotionEstimatorSelfTest / FovConfigSelfTest /
   TrackingDeadzoneDampingSelfTest / AimPresetConfigSelfTest / LeadPredictionSelfTest /
-  HeroSkillConfigSelfTest 过。
+  HeroGeometrySpecSelfTest / HeroSkillConfigSelfTest 过。
 
 只改 WeaponSpec、stance action、manual perk variant 或 HeroPerks 分类：
   跑 WeaponSpecDisplaySelfTest / HeroPerkClassifierSelfTest；如果改到 Target/HeroSkills runtime 选择链路，跑完整 ctest。
@@ -2512,11 +2535,11 @@ GET /api/target/history
 响应都是 application/json; charset=utf-8。
 所有响应带 schema_version=1。
 服务器只绑定 127.0.0.1，不对外网监听。
-/api/local 会把本地英雄、视角、link/skill base 和 ultimate_perk 一起导出。
+/api/local 会把本地英雄、视角、link/skill base 和 ultimate_perk 字段一起导出；ultimate_perk 当前不是 HTTP handler 现场 hot-read。
 /api/target/history 有独立 sampler，默认约 125 Hz、最多保留 1024 条。
 ```
 
-这套 API 是 Scenario、投影调试和读数对照用的只读入口。它不能替代 overlay 视觉验收：判断框、目标和投影是否真的对齐时，仍然要把 `/api/entities`、`/api/target` 或 `/api/projection-debug` 与实际画面/overlay 输出一起看。
+这套 API 是 Scenario、投影调试和读数对照用的只读入口。它应该消费已发布 snapshot 和诊断状态，不应在 HTTP handler 里临时追加 DMA hot-read。它也不能替代 overlay 视觉验收：判断框、目标和投影是否真的对齐时，仍然要把 `/api/entities`、`/api/target` 或 `/api/projection-debug` 与实际画面/overlay 输出一起看。
 
 ## 资源系统
 
@@ -2794,6 +2817,17 @@ Offset profile selected: ...
 [MAIN] Offset profile: ...
 ```
 
+如果 CN/NE 场景里敌我判断明显反了、友方训练机器人被当敌人，先查：
+
+```text
+include/Game/Offsets.hpp / TeamComparisonKeyFromFlags()
+include/Game/Entity.hpp / SameTeamAs()
+include/Game/GameData.hpp / IsFriendlyTrainingBotHeroId()
+src/Tools/FovConfigSelfTest.cpp 的 team mask 自检
+```
+
+注意低字节 relation code 不是敌我 team key。现场 flags 里的 `0x...41` 和 `0x...43` 可能仍然同队，排查时把 `TeamRawComparisonKeyFromFlags()` 当诊断读数，不要直接拿它做 runtime 过滤。
+
 ### Overlay 画面空白
 
 先分层：
@@ -2824,6 +2858,19 @@ skippedWorldToScreen
 skippedBox
 skippedWindow
 ```
+
+如果 BZ/NE 现场 `/api/projection-debug` 看起来可用但 overlay 仍空，重点看：
+
+```text
+direct_valid
+camera_times_projection_valid
+projection_times_camera_valid
+published_valid
+published_ptr
+per-entity projection deltas
+```
+
+`published_ptr` 只能说明当前发布地址，不等于证明 runtime 内部矩阵来源。要判断是 direct render VP、camera*projection 还是 projection*camera，必须看 validity flags 和投影误差。
 
 ### 输入热键无效
 
@@ -2870,6 +2917,19 @@ GetAsyncKeyState 是否在当前机器/当前焦点语义下能读到
 
 确认你编辑的是 `ConfigDirectoryPath()` 下的 profile。
 
+如果症状是按 Mouse4/Mouse5 后 trackingOK 但 flick 不动、或只有 autoshoot，没有鼠标移动，先沿这条链路查：
+
+```text
+TrySelectRuntimeAimPreset()
+IsConfiguredActivationKeyPressedForSelection()
+hero_preset.runtime activeKey/sideAlias 日志
+RunAimbotTick / RunTracking / RunFlick
+FireConfiguredAction()
+ShouldSkipChargeReleaseForHeldActivation()
+```
+
+不要先把锅甩给 triggerbot。近期真实根因在侧键 preset 路由、activationKeyOverride、side button alias 和同键 charge-release/passthrough 处理。
+
 ### KMBox 输出不动
 
 查：
@@ -2885,6 +2945,14 @@ queue overflow / retry / connection state
 ```
 
 注意：输入 monitor 和输出命令是两条路径。输出 ACK 成功不证明输入 monitor 可用，monitor 有包也不证明输出移动成功。
+
+如果是鼠标按键、侧键或 passthrough 状态疑似卡住，先跑：
+
+```powershell
+.\build\Release\Unleashed.exe --kmbox-recover-mouse
+```
+
+这个命令只做 KMBox 初始化、release 和 unmask 清理。它适合处理遗留硬件状态，不是常规启动后的额外步骤。如果没有运行 `Unleashed` 时右键/侧键仍卡住，先查 KMBox USB NIC、`192.168.2.x` 接口、ARP、监听包和硬件 passthrough，不要继续在 runtime 代码里找原因。
 
 ### 程序崩溃
 
@@ -3048,6 +3116,41 @@ MockHardwareSelfTest
 
 不要把 `Offsets.hpp` 里的旧注释值、diagnostic-only 值或未验证候选当成当前 runtime 使用值。
 
+### 11. TestServer handler 不做临时 DMA hot-read
+
+TestServer 是现场读数和 Scenario 验收入口，但它的职责是导出已发布 runtime snapshot、diagnostics 和专门设计的只读 probe。不要为了让某个 JSON 字段“看起来更新”就在 HTTP handler 里追加一次 `SDK->RPM` 或高成本分类读取。
+
+应该：
+
+```text
+运行时线程读取/计算字段
+发布到 snapshot 或 Diagnostics
+TestServer 序列化该 snapshot/diagnostics
+```
+
+谨慎避免：
+
+```text
+GET /api/local 时顺手读取 skill/perk/entity hot path
+GET /api/entities 时临时补读骨骼/队伍/技能
+```
+
+否则测试工具本身会改变 DMA 压力、缓存命中和现场症状。
+
+### 12. Runtime gate 实验必须有 A/B 证据
+
+`UN_DMA_*` 环境变量适合做小范围 feature-gated 实验，不适合凭一次现场感觉直接改默认值。做性能、扫描、viewmatrix 或缓存实验时，至少保留：
+
+```text
+当前 gate 值
+同场景 baseline 与实验组样本
+scripts/monitor-unleashed-perf.ps1 summary
+build-release.ps1 / --config-check / ctest 结果
+Scenario/TestServer/overlay 的最终现象证据
+```
+
+如果目标进程、场景或硬件状态变了，先重新 baseline，再谈优化结论。
+
 ## 你和我后续沟通可以这样提需求
 
 ### 要我解释机制
@@ -3190,6 +3293,9 @@ rg -n "AimPresetConfigSelfTest|aimMethodPresets|aimBehaviorPresets|aimBehaviorPr
 rg -n "MockHardware|MockHardwareSelfTest|inputSource == 4|MockFaultMode" include src
 rg -n "auto-melee|QuickMelee|kAimBoneClosest|EnemyHealthAbsolute" include src
 rg -n "RecommendedKmboxMonitorPort|NormalizeKmboxPorts|config.kmbox_monitor_port_adjusted" include src
+rg -n "activationKeyOverride|usedSideButtonAlias|ShouldSkipChargeReleaseForHeldActivation|FireConfiguredAction" include src
+rg -n "TeamComparisonKeyFromFlags|TeamRawComparisonKeyFromFlags|IsFriendlyTrainingBotHeroId" include src
+rg -n "projection-debug|camera_times_projection_valid|published_ptr|published_valid" src include
 rg -n "HeroPerkRuntime|HeroPerks|ultimate_perk|cassidy_ads_perk|RuntimeVariantRequirement" include src
 rg -n "TestServer|--test-server|/api/local|/api/entities|/api/target" include src
 ```
@@ -3231,6 +3337,7 @@ cd D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool
 .\build-release.ps1
 .\build\Release\CnOffsetProbe.exe
 cd D:\Desktop\SenseZen\ECS_O\01_PRODUCTS\un-dma
+.\build\Release\Unleashed.exe --kmbox-recover-mouse
 .\build\Release\Unleashed.exe --kmbox-move-test
 .\build\Release\Unleashed.exe --kmbox-calibrate --kmbox-reference-sens 15
 ```

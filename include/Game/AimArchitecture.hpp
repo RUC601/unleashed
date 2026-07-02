@@ -38,7 +38,7 @@ enum class AimBehaviorType : int {
     Flick = 1,
     Flick2nd = 2,
     Reacquire = 3,
-    AssistFlick = 4,
+    MagneticTrigger = 4,
     FlickClamp = Flick,
     FlickDelay = Flick,
     ReacquireAtApex = Reacquire,
@@ -274,7 +274,7 @@ inline FirePolicyType DefaultFirePolicyForBehavior(AimBehaviorType behavior)
         return FirePolicyType::ReleaseAfterDelay;
     case AimBehaviorType::Flick:
     case AimBehaviorType::Flick2nd:
-    case AimBehaviorType::AssistFlick:
+    case AimBehaviorType::MagneticTrigger:
     default:
         return FirePolicyType::TapOnHitWindow;
     }

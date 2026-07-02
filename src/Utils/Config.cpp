@@ -1566,7 +1566,7 @@ namespace OW { namespace Config {
         {
             if (IsTrackingBehavior(behavior))
                 return static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
-            if (IsAssistFlickBehavior(behavior))
+            if (IsMagneticTriggerBehavior(behavior))
                 return static_cast<int>(OW::FirePolicyType::TapOnHitWindow);
 
             const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(heroId, action);
@@ -4690,49 +4690,70 @@ namespace OW { namespace Config {
                 "flickMethod",
                 "flick2ndMethod",
                 "reacquireMethod",
-                "assistFlickMethod"
+                "magneticTriggerMethod"
             };
             constexpr std::array<const char*, kAimBehaviorCount> speedKeys = {
                 "trackingBaseSpeed",
                 "flickBaseSpeed",
                 "flick2ndBaseSpeed",
                 "reacquireBaseSpeed",
-                "assistFlickBaseSpeed"
+                "magneticTriggerBaseSpeed"
             };
             constexpr std::array<const char*, kAimBehaviorCount> methodPresetKeys = {
                 "trackingMethodPresetId",
                 "flickMethodPresetId",
                 "flick2ndMethodPresetId",
                 "reacquireMethodPresetId",
-                "assistFlickMethodPresetId"
+                "magneticTriggerMethodPresetId"
             };
             constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
                 "trackingAcceleration",
                 "flickAcceleration",
                 "flick2ndAcceleration",
                 "reacquireAcceleration",
-                "assistFlickAcceleration"
+                "magneticTriggerAcceleration"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitEnabledKeys = {
                 "trackingMoveSplitEnabled",
                 "flickMoveSplitEnabled",
                 "flick2ndMoveSplitEnabled",
                 "reacquireMoveSplitEnabled",
-                "assistFlickMoveSplitEnabled"
+                "magneticTriggerMoveSplitEnabled"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitMaxPixelsKeys = {
                 "trackingMoveSplitMaxPixels",
                 "flickMoveSplitMaxPixels",
                 "flick2ndMoveSplitMaxPixels",
                 "reacquireMoveSplitMaxPixels",
-                "assistFlickMoveSplitMaxPixels"
+                "magneticTriggerMoveSplitMaxPixels"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitDelayUsKeys = {
                 "trackingMoveSplitDelayUs",
                 "flickMoveSplitDelayUs",
                 "flick2ndMoveSplitDelayUs",
                 "reacquireMoveSplitDelayUs",
-                "assistFlickMoveSplitDelayUs"
+                "magneticTriggerMoveSplitDelayUs"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> legacyMethodKeys = {
+                nullptr, nullptr, nullptr, nullptr, "assistFlickMethod"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> legacySpeedKeys = {
+                nullptr, nullptr, nullptr, nullptr, "assistFlickBaseSpeed"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> legacyMethodPresetKeys = {
+                nullptr, nullptr, nullptr, nullptr, "assistFlickMethodPresetId"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> legacyAccelerationKeys = {
+                nullptr, nullptr, nullptr, nullptr, "assistFlickAcceleration"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> legacySplitEnabledKeys = {
+                nullptr, nullptr, nullptr, nullptr, "assistFlickMoveSplitEnabled"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> legacySplitMaxPixelsKeys = {
+                nullptr, nullptr, nullptr, nullptr, "assistFlickMoveSplitMaxPixels"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> legacySplitDelayUsKeys = {
+                nullptr, nullptr, nullptr, nullptr, "assistFlickMoveSplitDelayUs"
             };
             constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
                 "linearAngularSpeedScale",
@@ -4762,24 +4783,42 @@ namespace OW { namespace Config {
             aimConstantAngularSpeedDeg = ReadFixedFloat(ini, section, "aimConstantAngularSpeedDeg", aimConstantAngularSpeedDeg);
 
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
-                aimBehaviorMethod[index] = ReadInt(ini, section, methodKeys[index], aimMethod);
-                aimBehaviorBaseSpeed[index] = ReadFixedFloat(ini, section, speedKeys[index], 100.0f);
-                aimBehaviorAcceleration[index] = ReadFixedFloat(ini, section, accelerationKeys[index], accvalue);
+                const int methodFallback = legacyMethodKeys[index] && KeyExists(ini, section, legacyMethodKeys[index])
+                    ? ReadInt(ini, section, legacyMethodKeys[index], aimMethod)
+                    : aimMethod;
+                const float speedFallback = legacySpeedKeys[index] && KeyExists(ini, section, legacySpeedKeys[index])
+                    ? ReadFixedFloat(ini, section, legacySpeedKeys[index], 100.0f)
+                    : 100.0f;
+                const float accelerationFallback = legacyAccelerationKeys[index] && KeyExists(ini, section, legacyAccelerationKeys[index])
+                    ? ReadFixedFloat(ini, section, legacyAccelerationKeys[index], accvalue)
+                    : accvalue;
+                const bool splitEnabledFallback = legacySplitEnabledKeys[index] && KeyExists(ini, section, legacySplitEnabledKeys[index])
+                    ? ReadBool(ini, section, legacySplitEnabledKeys[index], aimBehaviorMoveSplitEnabled[index])
+                    : aimBehaviorMoveSplitEnabled[index];
+                const int splitMaxPixelsFallback = legacySplitMaxPixelsKeys[index] && KeyExists(ini, section, legacySplitMaxPixelsKeys[index])
+                    ? ReadInt(ini, section, legacySplitMaxPixelsKeys[index], aimBehaviorMoveSplitMaxPixels[index])
+                    : aimBehaviorMoveSplitMaxPixels[index];
+                const int splitDelayUsFallback = legacySplitDelayUsKeys[index] && KeyExists(ini, section, legacySplitDelayUsKeys[index])
+                    ? ReadInt(ini, section, legacySplitDelayUsKeys[index], aimBehaviorMoveSplitDelayUs[index])
+                    : aimBehaviorMoveSplitDelayUs[index];
+                aimBehaviorMethod[index] = ReadInt(ini, section, methodKeys[index], methodFallback);
+                aimBehaviorBaseSpeed[index] = ReadFixedFloat(ini, section, speedKeys[index], speedFallback);
+                aimBehaviorAcceleration[index] = ReadFixedFloat(ini, section, accelerationKeys[index], accelerationFallback);
                 aimBehaviorMoveSplitEnabled[index] = ReadBool(
                     ini,
                     section,
                     splitEnabledKeys[index],
-                    aimBehaviorMoveSplitEnabled[index]);
+                    splitEnabledFallback);
                 aimBehaviorMoveSplitMaxPixels[index] = ReadInt(
                     ini,
                     section,
                     splitMaxPixelsKeys[index],
-                    aimBehaviorMoveSplitMaxPixels[index]);
+                    splitMaxPixelsFallback);
                 aimBehaviorMoveSplitDelayUs[index] = ReadInt(
                     ini,
                     section,
                     splitDelayUsKeys[index],
-                    aimBehaviorMoveSplitDelayUs[index]);
+                    splitDelayUsFallback);
             }
             if (!KeyExists(ini, section, "flick2ndMethod"))
                 aimBehaviorMethod[static_cast<size_t>(kAimBehaviorFlick2nd)] =
@@ -4793,8 +4832,12 @@ namespace OW { namespace Config {
             for (size_t index = 0; index < aimMethodAngularSpeedScale.size(); ++index)
                 aimMethodAngularSpeedScale[index] = ReadFixedFloat(ini, section, angularSpeedKeys[index], 100.0f);
             LoadAimCustomPresetsUnlocked(ini);
-            for (size_t index = 0; index < aimBehaviorMethodPreset.size(); ++index)
-                aimBehaviorMethodPreset[index] = ReadInt(ini, section, methodPresetKeys[index], -1);
+            for (size_t index = 0; index < aimBehaviorMethodPreset.size(); ++index) {
+                const int methodPresetFallback = legacyMethodPresetKeys[index] && KeyExists(ini, section, legacyMethodPresetKeys[index])
+                    ? ReadInt(ini, section, legacyMethodPresetKeys[index], -1)
+                    : -1;
+                aimBehaviorMethodPreset[index] = ReadInt(ini, section, methodPresetKeys[index], methodPresetFallback);
+            }
             aimBehaviorPresetId = ReadInt(ini, section, "aimBehaviorPresetId", aimBehaviorPresetId);
             secondaryAimMethodOverride[0] = ReadInt(
                 ini, section, "secondaryTrackingMethod", secondaryAimMethodOverride[0]);
@@ -4975,49 +5018,49 @@ namespace OW { namespace Config {
                 "flickMethod",
                 "flick2ndMethod",
                 "reacquireMethod",
-                "assistFlickMethod"
+                "magneticTriggerMethod"
             };
             constexpr std::array<const char*, kAimBehaviorCount> speedKeys = {
                 "trackingBaseSpeed",
                 "flickBaseSpeed",
                 "flick2ndBaseSpeed",
                 "reacquireBaseSpeed",
-                "assistFlickBaseSpeed"
+                "magneticTriggerBaseSpeed"
             };
             constexpr std::array<const char*, kAimBehaviorCount> methodPresetKeys = {
                 "trackingMethodPresetId",
                 "flickMethodPresetId",
                 "flick2ndMethodPresetId",
                 "reacquireMethodPresetId",
-                "assistFlickMethodPresetId"
+                "magneticTriggerMethodPresetId"
             };
             constexpr std::array<const char*, kAimBehaviorCount> accelerationKeys = {
                 "trackingAcceleration",
                 "flickAcceleration",
                 "flick2ndAcceleration",
                 "reacquireAcceleration",
-                "assistFlickAcceleration"
+                "magneticTriggerAcceleration"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitEnabledKeys = {
                 "trackingMoveSplitEnabled",
                 "flickMoveSplitEnabled",
                 "flick2ndMoveSplitEnabled",
                 "reacquireMoveSplitEnabled",
-                "assistFlickMoveSplitEnabled"
+                "magneticTriggerMoveSplitEnabled"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitMaxPixelsKeys = {
                 "trackingMoveSplitMaxPixels",
                 "flickMoveSplitMaxPixels",
                 "flick2ndMoveSplitMaxPixels",
                 "reacquireMoveSplitMaxPixels",
-                "assistFlickMoveSplitMaxPixels"
+                "magneticTriggerMoveSplitMaxPixels"
             };
             constexpr std::array<const char*, kAimBehaviorCount> splitDelayUsKeys = {
                 "trackingMoveSplitDelayUs",
                 "flickMoveSplitDelayUs",
                 "flick2ndMoveSplitDelayUs",
                 "reacquireMoveSplitDelayUs",
-                "assistFlickMoveSplitDelayUs"
+                "magneticTriggerMoveSplitDelayUs"
             };
             constexpr std::array<const char*, kAimMethodCount> angularSpeedKeys = {
                 "linearAngularSpeedScale",
