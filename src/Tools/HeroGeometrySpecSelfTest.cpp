@@ -3,6 +3,7 @@
 #include "Game/Structs.hpp"
 #include "Utils/Config.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstdlib>
 
@@ -25,7 +26,7 @@ int Fail()
 int main()
 {
     const OW::HeroGeometrySpec* geometry = OW::ResolveHeroGeometrySpec(0);
-    if (!geometry || geometry->boneCount != 3)
+    if (!geometry || geometry->boneCount != 18)
         return Fail();
     if (!OW::ResolveBoneHitboxSpec(0, OW::BONE_HEAD))
         return Fail();
@@ -33,12 +34,21 @@ int main()
         return Fail();
     if (!OW::ResolveBoneHitboxSpec(0, OW::BONE_CHEST))
         return Fail();
-    if (OW::ResolveBoneHitboxSpec(0, OW::BONE_PELVIS))
+    if (!OW::ResolveBoneHitboxSpec(0, OW::BONE_BODY))
+        return Fail();
+    if (!OW::ResolveBoneHitboxSpec(0, OW::BONE_BODY_BOT))
+        return Fail();
+    if (!OW::ResolveBoneHitboxSpec(0, OW::BONE_PELVIS))
+        return Fail();
+    if (!OW::ResolveBoneHitboxSpec(0, OW::BONE_L_HAND))
+        return Fail();
+    if (!OW::ResolveBoneHitboxSpec(0, OW::BONE_R_KNEE))
         return Fail();
     if (!OW::IsCoreHitboxBoneId(OW::BONE_HEAD) ||
         !OW::IsCoreHitboxBoneId(OW::BONE_NECK) ||
         !OW::IsCoreHitboxBoneId(OW::BONE_CHEST) ||
-        OW::IsCoreHitboxBoneId(OW::BONE_PELVIS)) {
+        OW::IsCoreHitboxBoneId(OW::BONE_PELVIS) ||
+        OW::IsCoreHitboxBoneId(OW::BONE_R_HAND)) {
         return Fail();
     }
     if (!NearlyEqual(OW::ResolveBoneHitboxRadius(0, OW::BONE_HEAD, 0.13f), 0.16f))
@@ -47,7 +57,15 @@ int main()
         return Fail();
     if (!NearlyEqual(OW::ResolveBoneHitboxRadius(0, OW::BONE_CHEST, 0.13f), 0.22f))
         return Fail();
-    if (!NearlyEqual(OW::ResolveBoneHitboxRadius(0, OW::BONE_PELVIS, 0.13f), 0.13f))
+    if (!NearlyEqual(OW::ResolveBoneHitboxRadius(0, OW::BONE_PELVIS, 0.13f), 0.20f))
+        return Fail();
+    if (!NearlyEqual(OW::ResolveBoneHitboxRadius(0, OW::BONE_BODY, 0.13f), 0.22f))
+        return Fail();
+    if (!NearlyEqual(OW::ResolveBoneHitboxRadius(0, OW::BONE_L_HAND, 0.13f), 0.10f))
+        return Fail();
+    if (!NearlyEqual(OW::ResolveBoneHitboxRadius(0, OW::BONE_R_KNEE, 0.13f), 0.12f))
+        return Fail();
+    if (!NearlyEqual(OW::ResolveBoneHitboxRadius(0, 123456, 0.13f), 0.13f))
         return Fail();
     if (!NearlyEqual(OW::ResolveEffectiveHitWindow(
             0,
@@ -59,14 +77,25 @@ int main()
         return Fail();
     }
 
-    const auto cassidyCore =
-        OW::Plexies20260609::ResolveCoreRenderSkeletonMap(OW::eHero::HERO_CASSIDY);
-    if (cassidyCore[0] != 18 || cassidyCore[1] != 16 || cassidyCore[2] != 15)
+    const auto cassidyRender =
+        OW::Plexies20260609::ResolveRenderSkeletonMap(OW::eHero::HERO_CASSIDY);
+    const std::array<int, 18> expectedCassidyRender{
+        18, 16, 15, 2,
+        13, 54, 14, 55,
+        85, 95, 89, 99,
+        28, 58, 90, 100,
+        OW::Plexies20260609::kUnusedRenderSkeletonBone,
+        OW::Plexies20260609::kUnusedRenderSkeletonBone,
+    };
+    if (cassidyRender != expectedCassidyRender)
         return Fail();
-    for (size_t index = 3; index < cassidyCore.size(); ++index) {
-        if (cassidyCore[index] != OW::Plexies20260609::kUnusedRenderSkeletonBone)
+    for (size_t index = 0; index < OW::Plexies20260609::kSkeletonSlotCount; ++index) {
+        if (cassidyRender[index] == OW::Plexies20260609::kUnusedRenderSkeletonBone)
             return Fail();
     }
+    if (cassidyRender[16] != OW::Plexies20260609::kUnusedRenderSkeletonBone ||
+        cassidyRender[17] != OW::Plexies20260609::kUnusedRenderSkeletonBone)
+        return Fail();
 
     return EXIT_SUCCESS;
 }

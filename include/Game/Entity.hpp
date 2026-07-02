@@ -595,9 +595,9 @@ namespace OW {
             }
         }
 
-        // Runtime caching reads only the core aim/hitbox bones. Full maps stay in BoneSlots as reference data.
+        // Cache the full render skeleton; aim selection still uses its own core-bone paths.
         std::array<int, 18> GetRenderSkel() const {
-            return OW::Plexies20260609::ResolveCoreRenderSkeletonMap(this->HeroID);
+            return OW::Plexies20260609::ResolveRenderSkeletonMap(this->HeroID);
         }
 
         void CacheSkeletonBones(uint64_t knownVelocityBoneData = 0) {

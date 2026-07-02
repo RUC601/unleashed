@@ -6462,14 +6462,84 @@ namespace OverlayRenderDetail {
         return true;
     }
 
+    inline int HitboxBoneIdForSkeletonSlot(size_t slotIndex) {
+        using Slot = OW::Plexies20260609::SkeletonSlot;
+        switch (static_cast<Slot>(slotIndex)) {
+        case Slot::Forehead: return BONE_HEAD;
+        case Slot::Neck: return BONE_NECK;
+        case Slot::Chest: return BONE_CHEST;
+        case Slot::Pelvis: return BONE_PELVIS;
+        case Slot::UpperArmLeft: return BONE_L_SHOULDER;
+        case Slot::LowerArmLeft: return BONE_L_ELBOW;
+        case Slot::HandLeft: return BONE_L_HAND;
+        case Slot::UpperArmRight: return BONE_R_SHOULDER;
+        case Slot::LowerArmRight: return BONE_R_ELBOW;
+        case Slot::HandRight: return BONE_R_HAND;
+        case Slot::UpperLegLeft: return BONE_L_KNEE;
+        case Slot::LowerLegLeft: return BONE_L_SHANK;
+        case Slot::FootLeft: return BONE_L_ANKLE;
+        case Slot::UpperLegRight: return BONE_R_KNEE;
+        case Slot::LowerLegRight: return BONE_R_SHANK;
+        case Slot::FootRight: return BONE_R_ANKLE;
+        case Slot::Count:
+        default:
+            return -1;
+        }
+    }
+
+    inline Vector3 HitboxPointForSkeletonSlot(const OW::c_entity& entity,
+                                              size_t slotIndex,
+                                              int boneId) {
+        if (boneId == BONE_HEAD && IsFiniteVector(entity.head_pos) && IsNonZeroVector(entity.head_pos))
+            return entity.head_pos;
+        if (boneId == BONE_NECK && IsFiniteVector(entity.neck_pos) && IsNonZeroVector(entity.neck_pos))
+            return entity.neck_pos;
+        if (boneId == BONE_CHEST && IsFiniteVector(entity.chest_pos) && IsNonZeroVector(entity.chest_pos))
+            return entity.chest_pos;
+
+        if (slotIndex >= entity.skeleton_bones.size() || slotIndex >= entity.skeleton_bone_valid.size())
+            return Vector3{};
+        return entity.skeleton_bone_valid[slotIndex] ? entity.skeleton_bones[slotIndex] : Vector3{};
+    }
+
+    inline float HitboxOpacityForSkeletonSlot(size_t slotIndex) {
+        using Slot = OW::Plexies20260609::SkeletonSlot;
+        switch (static_cast<Slot>(slotIndex)) {
+        case Slot::Forehead: return 1.0f;
+        case Slot::Neck: return 0.86f;
+        case Slot::Chest: return 0.78f;
+        case Slot::Pelvis: return 0.70f;
+        default: return 0.58f;
+        }
+    }
+
     inline bool DrawHitboxes(const OW::c_entity& entity,
                              const OW::Matrix& view,
                              const Render::Color& color,
                              float opacity) {
         bool drewAny = false;
-        drewAny |= DrawCoreHitboxCircle(entity, view, BONE_HEAD, entity.head_pos, color, opacity);
-        drewAny |= DrawCoreHitboxCircle(entity, view, BONE_NECK, entity.neck_pos, color, opacity * 0.86f);
-        drewAny |= DrawCoreHitboxCircle(entity, view, BONE_CHEST, entity.chest_pos, color, opacity * 0.78f);
+        const std::array<int, 18> renderBoneIds = entity.GetRenderSkel();
+        constexpr size_t kRenderableSlots = OW::Plexies20260609::kSkeletonSlotCount;
+
+        for (size_t slotIndex = 0; slotIndex < kRenderableSlots; ++slotIndex) {
+            if (slotIndex >= renderBoneIds.size() ||
+                renderBoneIds[slotIndex] == OW::Plexies20260609::kUnusedRenderSkeletonBone) {
+                continue;
+            }
+
+            const int hitboxBoneId = HitboxBoneIdForSkeletonSlot(slotIndex);
+            if (!OW::ResolveBoneHitboxSpec(entity.HeroID, hitboxBoneId))
+                continue;
+
+            const Vector3 point = HitboxPointForSkeletonSlot(entity, slotIndex, hitboxBoneId);
+            drewAny |= DrawCoreHitboxCircle(
+                entity,
+                view,
+                hitboxBoneId,
+                point,
+                color,
+                opacity * HitboxOpacityForSkeletonSlot(slotIndex));
+        }
         return drewAny;
     }
 

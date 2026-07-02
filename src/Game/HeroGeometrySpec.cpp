@@ -20,12 +20,27 @@ using DirectX::XMStoreFloat3;
 using DirectX::XMVector3Transform;
 
 constexpr std::string_view kGeometryDataNote =
-    "Runtime core geometry from aim_public_hero_geometry_0530.tsv; full skeleton IDs are retained separately as reference data.";
+    "Runtime fallback geometry from aim_public_hero_geometry_0530.tsv; values are conservative non-public measurements.";
 
-constexpr std::array<BoneHitboxSpec, 3> kFallbackBones = {
+constexpr std::array<BoneHitboxSpec, 18> kFallbackBones = {
     BoneHitboxSpec{ BONE_HEAD, "head", 0.16f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
     BoneHitboxSpec{ BONE_NECK, "neck", 0.14f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
     BoneHitboxSpec{ BONE_CHEST, "chest", 0.22f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_BODY, "body", 0.22f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_BODY_BOT, "lower_body", 0.20f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_PELVIS, "pelvis", 0.20f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_R_SHOULDER, "right_shoulder", 0.13f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_L_SHOULDER, "left_shoulder", 0.13f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_R_ELBOW, "right_elbow", 0.11f, Vector3{}, "sphere", "", kGeometryDataNote, 0.15f },
+    BoneHitboxSpec{ BONE_L_ELBOW, "left_elbow", 0.11f, Vector3{}, "sphere", "", kGeometryDataNote, 0.15f },
+    BoneHitboxSpec{ BONE_R_HAND, "right_hand", 0.10f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_L_HAND, "left_hand", 0.10f, Vector3{}, "sphere", "", kGeometryDataNote, 0.20f },
+    BoneHitboxSpec{ BONE_R_KNEE, "right_knee", 0.12f, Vector3{}, "sphere", "", kGeometryDataNote, 0.15f },
+    BoneHitboxSpec{ BONE_L_KNEE, "left_knee", 0.12f, Vector3{}, "sphere", "", kGeometryDataNote, 0.15f },
+    BoneHitboxSpec{ BONE_R_SHANK, "right_shank", 0.11f, Vector3{}, "sphere", "", kGeometryDataNote, 0.15f },
+    BoneHitboxSpec{ BONE_L_SHANK, "left_shank", 0.11f, Vector3{}, "sphere", "", kGeometryDataNote, 0.15f },
+    BoneHitboxSpec{ BONE_R_ANKLE, "right_ankle", 0.10f, Vector3{}, "sphere", "", kGeometryDataNote, 0.15f },
+    BoneHitboxSpec{ BONE_L_ANKLE, "left_ankle", 0.10f, Vector3{}, "sphere", "", kGeometryDataNote, 0.15f },
 };
 
 constexpr HeroGeometrySpec kFallbackGeometry{
