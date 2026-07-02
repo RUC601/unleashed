@@ -1092,7 +1092,7 @@ void RenderCallback()
     if (!entityListEmpty) {
         playerInfoCalled = true;
         PlayerInfoFromSnapshot(frameEntitySnapshot(), frameLocalSnapshot(), false);
-        if (OW::Config::skillDisplayMode != 0 || OW::Config::ultimateDisplayMode != 0) {
+        if (OW::Config::ult || (OW::Config::skillinfo && OW::Config::skillDisplayMode != 0)) {
             skillInfoCalled = true;
             skillinfo(frameEntitySnapshot());
         }

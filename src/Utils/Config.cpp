@@ -281,10 +281,11 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 7;
+        constexpr int kCurrentConfigVersion = 8;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
+        constexpr int kVisualOverlayCleanupVersion = 8;
         constexpr int kCurrentHeroConfigVersion = 10;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
@@ -2379,9 +2380,11 @@ namespace OW { namespace Config {
             visualMaxDist = 100.0f;       // default: 100m
             name = false;                 // name labels are no longer shown in the UI
             ult = true;                   // default: true
-            draw_skel = true;             // default: true
+            draw_skel = false;            // default: incomplete skeleton overlay is opt-in
+            draw_avatar = true;           // default: preserve box avatar overlay
+            draw_hitbox = false;          // default: hitbox overlay is opt-in
             skillinfo = false;            // default: false
-            ultimateDisplayMode = 0;      // default: Above head
+            ultimateDisplayMode = 1;      // default: left side panel
             skillDisplayMode = 0;         // default: Above head
             radarCorner = 0;              // default: Bottom Right
             radar = false;                // default: false
@@ -5085,6 +5088,8 @@ namespace OW { namespace Config {
             name = ReadBool(ini, section, "name", name);
             ult = ReadBool(ini, section, "ult", ult);
             draw_skel = ReadBool(ini, section, "draw_skel", draw_skel);
+            draw_avatar = ReadBool(ini, section, "draw_avatar", draw_avatar);
+            draw_hitbox = ReadBool(ini, section, "draw_hitbox", draw_hitbox);
             skillinfo = ReadBool(ini, section, "skillinfo", skillinfo);
             ultimateDisplayMode = ReadInt(ini, section, "ultimateDisplayMode", ultimateDisplayMode);
             skillDisplayMode = ReadInt(ini, section, "skillDisplayMode", skillDisplayMode);
@@ -5285,7 +5290,12 @@ namespace OW { namespace Config {
             ClampSetting("MenuToggleKey", MenuToggleKey, 1, 255, VK_HOME);
             ClampSetting("inputSource", inputSource, 0, 4, 1);
             ClampSetting("aimDryRunLogIntervalMs", aimDryRunLogIntervalMs, 50, 1000, 100);
-            ClampSetting("ultimateDisplayMode", ultimateDisplayMode, 0, 2, 0);
+            if (ultimateDisplayMode != 1) {
+                LogConfig(Diagnostics::LogLevel::Warn,
+                    "ultimateDisplayMode=%d is legacy-only; using left side panel.",
+                    ultimateDisplayMode);
+                ultimateDisplayMode = 1;
+            }
             ClampSetting("skillDisplayMode", skillDisplayMode, 0, 2, 0);
             ClampSetting("radarCorner", radarCorner, 0, 3, 0);
             if (gafAsyncKeyStateSize != 64 && gafAsyncKeyStateSize != 256) {
@@ -5614,10 +5624,11 @@ namespace OW { namespace Config {
                 gafAsyncKeyStateSessionId);
             LogConfig(level, "Dump: manual screen width=%d height=%d",
                 manualScreenWidth, manualScreenHeight);
-            LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s skillinfo=%s",
+            LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s draw_avatar=%s draw_hitbox=%s skillinfo=%s ultimateDisplayMode=%d",
                 ToText(draw_info).c_str(), ToText(drawbattletag).c_str(), ToText(drawhealth).c_str(), ToText(healthbar).c_str(),
                 ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), visualMaxDist, ToText(name).c_str(), ToText(ult).c_str(),
-                ToText(draw_skel).c_str(), ToText(skillinfo).c_str());
+                ToText(draw_skel).c_str(), ToText(draw_avatar).c_str(), ToText(draw_hitbox).c_str(), ToText(skillinfo).c_str(),
+                ultimateDisplayMode);
             LogConfig(level, "Dump: overlays radar=%s radarline=%s drawline=%s draw_fov=%s drawTrackingDeadzones=%s draw_hp_pack=%s crosscircle=%s eyeray=%s boxPerfMode=%s boxPerfFastRect=%s",
                 ToText(radar).c_str(), ToText(radarline).c_str(),
                 ToText(drawline).c_str(), ToText(draw_fov).c_str(), ToText(drawTrackingDeadzones).c_str(), ToText(draw_hp_pack).c_str(),
@@ -6108,8 +6119,10 @@ namespace OW { namespace Config {
             WriteBoolValue(path, "Global", "name", name);
             WriteBoolValue(path, "Global", "ult", ult);
             WriteBoolValue(path, "Global", "draw_skel", draw_skel);
+            WriteBoolValue(path, "Global", "draw_avatar", draw_avatar);
+            WriteBoolValue(path, "Global", "draw_hitbox", draw_hitbox);
             WriteBoolValue(path, "Global", "skillinfo", skillinfo);
-            WriteIntValue(path, "Global", "ultimateDisplayMode", ultimateDisplayMode);
+            WriteIntValue(path, "Global", "ultimateDisplayMode", 1);
             WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
             WriteIntValue(path, "Global", "radarCorner", radarCorner);
             WriteBoolValue(path, "Global", "radar", radar);
@@ -6143,6 +6156,12 @@ namespace OW { namespace Config {
             LoadAimMethodSettingsUnlocked(ini);
             LoadGlobalSettingsUnlocked(ini);
             LoadKmboxSettingsUnlocked(ini);
+        }
+
+        void ApplySystemConfigMigrationDefaultsUnlocked(int fileVersion)
+        {
+            if (fileVersion < kVisualOverlayCleanupVersion)
+                draw_skel = false;
         }
 
         void ApplyLoadedHeroPresetsUnlocked(uint64_t heroId)
@@ -6325,6 +6344,8 @@ namespace OW { namespace Config {
         config_version = kCurrentConfigVersion;
 
         LoadSystemConfigUnlocked(ini);
+        if (needsMigration)
+            ApplySystemConfigMigrationDefaultsUnlocked(fileVersion);
         LoadHeroConfigOrMigrateUnlocked(HeroConfigPath(path), &ini);
         ApplyLoadedHeroPresetsUnlocked(heroId);
         ValidateUnlocked();

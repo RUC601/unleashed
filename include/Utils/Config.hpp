@@ -872,11 +872,13 @@ namespace OW { namespace Config {
     inline float visualMaxDist  = 100.f;
     inline bool name            = false;
     inline bool ult             = true;
-    inline bool draw_skel       = true;
+    inline bool draw_skel       = false;
+    inline bool draw_avatar     = true;
+    inline bool draw_hitbox     = false;
     inline bool skillinfo       = false;
     // Ultimate / Skill display position
-    // 0 = Above head (per-entity in PlayerInfo), 1 = Left side panel, 2 = Right side panel
-    inline int ultimateDisplayMode = 0;
+    // Ultimate is normalized to the left side panel; 0/2 are legacy config values.
+    inline int ultimateDisplayMode = 1;
     inline int skillDisplayMode = 0;
     // Radar corner: 0=BottomRight, 1=BottomLeft, 2=TopRight, 3=TopLeft
     inline int radarCorner = 0;

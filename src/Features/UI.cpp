@@ -1488,6 +1488,7 @@ static char     g_gbTitle[64] = "";
 static ImVec2   g_gbStartPos(0, 0);
 static float    g_gbWidth     = 0.0f;
 static float    g_gbMinHeight = 0.0f;
+static float    g_gbBottomGap = 7.0f;
 static ImDrawListSplitter g_gbDrawSplitter;
 static uint64_t s_lastSyncedDetectedHeroId = 0;
 static std::string s_configSaveStatus;
@@ -1508,6 +1509,8 @@ static constexpr float kControlRounding = 0.0f;
 static constexpr float kGroupRounding = 0.0f;
 static constexpr float kGroupContentIndent = 14.0f;
 static constexpr float kGroupBorderClipInset = 2.0f;
+static constexpr float kGroupDefaultBottomGap = 7.0f;
+static constexpr float kActionSlotBottomGap = 10.0f;
 static constexpr float kControlRightPadding = 10.0f;
 static constexpr int kAimingSubTabCount = 4;
 static constexpr int kThemeSubTabCount = 2;
@@ -2317,13 +2320,14 @@ static float RoundToSliderStep(float value, float step) {
 // UIGroupBox  --  Opens a group box.  Closes any previously open group
 //                 box (drawing its border lazily via CloseGroupBox).
 // =====================================================================
-static bool UIGroupBox(const char* title, float minHeightPx = 0.0f) {
+static bool UIGroupBox(const char* title, float minHeightPx = 0.0f, float bottomGapPx = kGroupDefaultBottomGap) {
     // Close previous group box first (draws its border)
     if (g_gbOpen)
         CloseGroupBox();
 
     g_gbOpen = true;
     g_gbMinHeight = minHeightPx;
+    g_gbBottomGap = bottomGapPx;
     std::strncpy(g_gbTitle, title, sizeof(g_gbTitle) - 1);
     g_gbTitle[sizeof(g_gbTitle) - 1] = '\0';
 
@@ -2410,8 +2414,8 @@ static void CloseGroupBox() {
              kColText, g_gbTitle);
 
     ImVec2 cursor = ImGui::GetCursorScreenPos();
-    if (cursor.y < borderMax.y + 7.0f)
-        ImGui::Dummy(ImVec2(0.0f, borderMax.y + 7.0f - cursor.y));
+    if (cursor.y < borderMax.y + g_gbBottomGap)
+        ImGui::Dummy(ImVec2(0.0f, borderMax.y + g_gbBottomGap - cursor.y));
 
     g_gbDrawSplitter.Merge(dl);
     g_gbOpen = false;
@@ -3613,7 +3617,7 @@ void UI::AimbotPage() {
 
     PushHeroActionSlotControlId(slotKind, selectedHero->heroId, state.aimHeroSegActive);
 
-    UIGroupBox("Action Slot");
+    UIGroupBox("Action Slot", 0.0f, kActionSlotBottomGap);
     {
         slotEnabledChanged |= UIActionSlotEnabledCheckbox(slotKind, *selectedHero, "##aimSlotEnabled", kAimbotHeroLabelWidth);
     }
@@ -3944,7 +3948,7 @@ void UI::TriggerPage() {
 
     PushHeroActionSlotControlId(slotKind, selectedHero->heroId, state.triggerHeroSegActive);
 
-    UIGroupBox("Action Slot");
+    UIGroupBox("Action Slot", 0.0f, kActionSlotBottomGap);
     {
         slotEnabledChanged |= UIActionSlotEnabledCheckbox(slotKind, *selectedHero, "##triggerSlotEnabled", kAimbotHeroLabelWidth);
     }
@@ -4011,8 +4015,6 @@ void UI::TriggerPage() {
             SettingRow("Ignore Invisible Targets", kAimbotRightLabelWidth);
             presetChanged |= UICheckbox("##triggerSlotIgnoreInvis", &activePreset.trigger.ignoreInvisible);
 
-            SettingRow("Draw Hitbox", kAimbotRightLabelWidth);
-            presetChanged |= UICheckbox("##triggerSlotDrawHitbox", &activePreset.trigger.drawHitbox);
         }
         CloseGroupBox();
     });
@@ -4580,20 +4582,22 @@ void UI::VisualsPage() {
             "Box", "Hero Name", "BattleTag",
             "Health Color", "Health Bar", "Health Bar 2",
             "Distance", "Ultimate", "Skill Info",
-            "Skeleton", "Snapline", "Eye Ray",
-            "Radar", "Radar Lines", "FOV Circle",
-            "Tracking Deadzone", "Crosshair", "Health Packs", nullptr
+            "Skeleton", "Hero Avatar", "Hitbox",
+            "Snapline", "Eye Ray", "Radar",
+            "Radar Lines", "FOV Circle", "Tracking Deadzone",
+            "Crosshair", "Health Packs", nullptr
         };
         bool* values[] = {
             &OW::Config::draw_info, &OW::Config::name, &OW::Config::drawbattletag,
             &OW::Config::drawhealth, &OW::Config::healthbar, &OW::Config::healthbar2,
             &OW::Config::dist, &OW::Config::ult, &OW::Config::skillinfo,
-            &OW::Config::draw_skel, &OW::Config::drawline, &OW::Config::eyeray,
-            &OW::Config::radar, &OW::Config::radarline, &OW::Config::draw_fov,
-            &OW::Config::drawTrackingDeadzones, &OW::Config::crosscircle, &OW::Config::draw_hp_pack, nullptr
+            &OW::Config::draw_skel, &OW::Config::draw_avatar, &OW::Config::draw_hitbox,
+            &OW::Config::drawline, &OW::Config::eyeray, &OW::Config::radar,
+            &OW::Config::radarline, &OW::Config::draw_fov, &OW::Config::drawTrackingDeadzones,
+            &OW::Config::crosscircle, &OW::Config::draw_hp_pack, nullptr
         };
         const float ratios[] = { 1.0f, 1.0f, 1.2f };
-        DrawCheckboxGrid3(labels, values, 6, 26.0f, ratios);
+        DrawCheckboxGrid3(labels, values, 7, 26.0f, ratios);
     }
     CloseGroupBox();
 
@@ -4633,8 +4637,6 @@ static void DrawThemeGeneralPage() {
 
         drawPositionSelect("Radar Corner", "##radarCorner", OW::Config::radar,
                            &OW::Config::radarCorner, kRadarCorner, IM_ARRAYSIZE(kRadarCorner));
-        drawPositionSelect("Ultimate Status", "##ultimateDisplayMode", OW::Config::ult,
-                           &OW::Config::ultimateDisplayMode, kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition));
         drawPositionSelect("Skill Cooldowns", "##skillDisplayMode", OW::Config::skillinfo,
                            &OW::Config::skillDisplayMode, kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition));
     }

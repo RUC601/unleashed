@@ -6352,7 +6352,7 @@ namespace OverlayRenderDetail {
         constexpr float iconSize = 18.0f;
         constexpr float gap = 3.0f;
         float cursorX = x;
-        const bool includeUltimateIcon = OW::Config::ult && OW::Config::ultimateDisplayMode == 0;
+        const bool includeUltimateIcon = false;
         const bool drewAny =
             DrawAbilityIconSlot(iconManager, *icons, icons->ability1Icon, cursorX, y,
                                 iconSize, gap, opacity,
@@ -6401,6 +6401,76 @@ namespace OverlayRenderDetail {
 
         for (const auto& link : kBoneConnections)
             draw(link.first, link.second);
+    }
+
+    inline bool TryProjectHitboxCircle(const OW::Matrix& view,
+                                       const Vector3& center,
+                                       float radiusWorld,
+                                       Vector2& centerScreen,
+                                       float& radiusScreen) {
+        radiusScreen = 0.0f;
+        if (radiusWorld <= 0.0f || !TryProjectPoint(center, centerScreen, &view))
+            return false;
+
+        const Vector3 radiusSamples[] = {
+            Vector3(center.X + radiusWorld, center.Y, center.Z),
+            Vector3(center.X, center.Y + radiusWorld, center.Z),
+            Vector3(center.X, center.Y, center.Z + radiusWorld),
+        };
+
+        for (const Vector3& sample : radiusSamples) {
+            Vector2 projected{};
+            if (!TryProjectPoint(sample, projected, &view))
+                continue;
+            const float screenRadius = centerScreen.Distance(projected);
+            if (std::isfinite(screenRadius))
+                radiusScreen = (std::max)(radiusScreen, screenRadius);
+        }
+
+        if (radiusScreen <= 0.0f || !std::isfinite(radiusScreen))
+            return false;
+
+        radiusScreen = std::clamp(radiusScreen, 2.0f, 80.0f);
+        return true;
+    }
+
+    inline bool DrawCoreHitboxCircle(const OW::c_entity& entity,
+                                     const OW::Matrix& view,
+                                     int boneId,
+                                     const Vector3& rawPoint,
+                                     const Render::Color& color,
+                                     float opacity) {
+        if (!IsFiniteVector(rawPoint) || !IsNonZeroVector(rawPoint))
+            return false;
+
+        const Vector3 center = OW::ResolveBoneHitboxCenter(entity, boneId, rawPoint);
+        const float radiusWorld = OW::ResolveBoneHitboxRadius(
+            entity.HeroID,
+            boneId,
+            OW::Config::kLegacyDefaultHitboxRadius);
+        Vector2 centerScreen{};
+        float radiusScreen = 0.0f;
+        if (!TryProjectHitboxCircle(view, center, radiusWorld, centerScreen, radiusScreen))
+            return false;
+
+        const Render::Color hitboxColor(
+            color.R,
+            color.G,
+            color.B,
+            ToByte(opacity * 0.70f));
+        Render::DrawCircle(centerScreen, radiusScreen, hitboxColor, 32, 1.0f);
+        return true;
+    }
+
+    inline bool DrawHitboxes(const OW::c_entity& entity,
+                             const OW::Matrix& view,
+                             const Render::Color& color,
+                             float opacity) {
+        bool drewAny = false;
+        drewAny |= DrawCoreHitboxCircle(entity, view, BONE_HEAD, entity.head_pos, color, opacity);
+        drewAny |= DrawCoreHitboxCircle(entity, view, BONE_NECK, entity.neck_pos, color, opacity * 0.86f);
+        drewAny |= DrawCoreHitboxCircle(entity, view, BONE_CHEST, entity.chest_pos, color, opacity * 0.78f);
+        return drewAny;
     }
 
     inline void DrawVisibleEyeIndicator(const Vector2& center, const Render::Color& color) {
@@ -6979,13 +7049,12 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
         bool drewAny = false;
 
         std::string heroName;
-        const bool showAboveHeadUltimate = OW::Config::ult && OW::Config::ultimateDisplayMode == 0;
         const bool showAboveHeadSkillCooldowns = OW::Config::skillinfo && OW::Config::skillDisplayMode == 0;
-        if (OW::Config::skillinfo || OW::Config::healthbar2 || showAboveHeadUltimate || OW::Config::name)
+        if (OW::Config::skillinfo || OW::Config::healthbar2 || OW::Config::draw_avatar || OW::Config::name)
             heroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
 
         ID3D11ShaderResourceView* heroIcon = nullptr;
-        if ((OW::Config::healthbar2 || showAboveHeadUltimate) && !specialEntity && heroName != "Unknown")
+        if (OW::Config::draw_avatar && !specialEntity && heroName != "Unknown")
             heroIcon = OverlayRenderDetail::FindHeroIcon(heroName);
 
         constexpr float iconSize = 24.0f;
@@ -6993,8 +7062,6 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
         if (heroIcon) {
             const float iconY = top - iconSize - 10.0f;
             ultimateIndicatorCenter = Vector2(centerX, iconY + iconSize * 0.5f);
-        } else if (showAboveHeadUltimate && entity.ultimate >= 100.0f) {
-            ultimateIndicatorCenter = Vector2(centerX, top - 28.0f);
         }
 
         if (OW::Config::draw_info || OW::Config::draw_edge || OW::Config::drawbox3d) {
@@ -7004,7 +7071,7 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
 
         float labelY = heroIcon
             ? (top - iconSize - 24.0f)
-            : (showAboveHeadUltimate ? top - 45.0f : top - 18.0f);
+            : (top - 18.0f);
         if (OW::Config::name && !specialEntity && heroName != "Unknown" && heroName != "Bot" && !heroName.empty()) {
             OverlayRenderDetail::DrawCenteredText(ImVec2(centerX, labelY), color, heroName, 13.0f);
             labelY += 13.0f;
@@ -7044,6 +7111,9 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
             drewAny = true;
         }
 
+        if (OW::Config::draw_hitbox && !specialEntity)
+            drewAny |= OverlayRenderDetail::DrawHitboxes(entity, renderViewMatrix, lineColor, visualOpacity);
+
         if (entity.Vis) {
             OverlayRenderDetail::DrawVisibleEyeIndicator(
                 Vector2(left + width + 8.0f, top + 7.0f), lineColor);
@@ -7063,11 +7133,6 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
         if (OW::Config::dist) {
             std::string distanceText = std::to_string(static_cast<int>(dist)) + "m";
             OverlayRenderDetail::DrawCenteredText(ImVec2(centerX, bottom + 4.0f), color, distanceText, 14.0f);
-            drewAny = true;
-        }
-
-        if (showAboveHeadUltimate && !specialEntity) {
-            OverlayRenderDetail::DrawUltimateStatus(entity, ultimateIndicatorCenter, left, bottom, visualOpacity);
             drewAny = true;
         }
 
@@ -7123,8 +7188,8 @@ inline void PlayerInfo(bool boxPerfMode = false) {
 }
 
 inline void skillinfo(const std::vector<OW::c_entity>& entity_snapshot) {
-    const bool showUltimateLeft = OW::Config::ult && OW::Config::ultimateDisplayMode == 1;
-    const bool showUltimateRight = OW::Config::ult && OW::Config::ultimateDisplayMode == 2;
+    const bool showUltimateLeft = OW::Config::ult;
+    const bool showUltimateRight = false;
     const bool showSkillLeft = OW::Config::skillinfo && OW::Config::skillDisplayMode == 1;
     const bool showSkillRight = OW::Config::skillinfo && OW::Config::skillDisplayMode == 2;
     if ((!showUltimateLeft && !showUltimateRight && !showSkillLeft && !showSkillRight) || entity_snapshot.empty())
@@ -10926,6 +10991,8 @@ inline void configsavenloadthread() {
                 saveHero("Global", "name",           OW::Config::name);
                 saveHero("Global", "ult",            OW::Config::ult);
                 saveHero("Global", "draw_skel",      OW::Config::draw_skel);
+                saveHero("Global", "draw_avatar",    OW::Config::draw_avatar);
+                saveHero("Global", "draw_hitbox",    OW::Config::draw_hitbox);
                 saveHero("Global", "skillinfo",      OW::Config::skillinfo);
                 saveHero("Global", "outline",        OW::Config::outline);
                 saveHero("Global", "externaloutline", OW::Config::externaloutline);
@@ -11071,7 +11138,9 @@ inline void configsavenloadthread() {
             OW::Config::dist            = loadHero("Global", "dist", 1);
             OW::Config::name            = loadHero("Global", "name", 1);
             OW::Config::ult             = loadHero("Global", "ult", 1);
-            OW::Config::draw_skel       = loadHero("Global", "draw_skel", 1);
+            OW::Config::draw_skel       = loadHero("Global", "draw_skel", 0);
+            OW::Config::draw_avatar     = loadHero("Global", "draw_avatar", 1);
+            OW::Config::draw_hitbox     = loadHero("Global", "draw_hitbox", 0);
             OW::Config::skillinfo       = loadHero("Global", "skillinfo", 0);
             OW::Config::externaloutline = loadHero("Global", "externaloutline", 0);
             OW::Config::teamoutline     = loadHero("Global", "teamoutline", 0);
