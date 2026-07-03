@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -40,8 +41,33 @@ namespace KeyState {
     inline std::atomic<DWORD> resolvedSessionId{ 0 };
     inline std::atomic<uint64_t> resolvedModuleBase{ 0 };
     inline std::atomic<uint64_t> resolvedSlotsRva{ 0 };
+    inline std::atomic<uint64_t> resolvedSlotsPointer{ 0 };
     inline std::atomic<uint64_t> resolvedKeyStateOffset{ 0 };
+    inline std::atomic<DWORD> resolvedProxyPid{ 0 };
+    inline std::atomic<DWORD> resolvedProxySessionId{ 0 };
     inline std::atomic<bool> resolvedViaAutoTable{ false };
+    inline std::mutex resolverDiagnosticsMutex;
+    inline std::string resolvedProfileLabel = "none";
+    inline std::string resolvedModuleName = "win32kbase.sys";
+    inline std::string resolvedMethod = "unresolved";
+    inline std::string resolvedSlotsMethod = "none";
+    inline std::string resolvedKeyOffsetMethod = "none";
+
+    struct ResolverDiagnostics {
+        DWORD build = 0;
+        std::string profile;
+        std::string module;
+        std::string method;
+        std::string slotsMethod;
+        std::string keyOffsetMethod;
+        uint64_t moduleBase = 0;
+        uint64_t slotsRva = 0;
+        uint64_t slotsPointer = 0;
+        uint64_t keyStateOffset = 0;
+        DWORD proxyPid = 0;
+        DWORD proxySessionId = 0;
+        DWORD resolvedSessionId = 0;
+    };
 
     struct KeyboardProxyProcess {
         DWORD pid = 0;
@@ -62,6 +88,42 @@ namespace KeyState {
         uint64_t size = 0;
         std::string name;
     };
+
+    inline void SetResolverDiagnosticText(
+        const char* profile,
+        const char* module,
+        const char* method,
+        const char* slotsMethod,
+        const char* keyOffsetMethod)
+    {
+        std::lock_guard<std::mutex> lock(resolverDiagnosticsMutex);
+        resolvedProfileLabel = profile ? profile : "none";
+        resolvedModuleName = module ? module : "";
+        resolvedMethod = method ? method : "unresolved";
+        resolvedSlotsMethod = slotsMethod ? slotsMethod : "none";
+        resolvedKeyOffsetMethod = keyOffsetMethod ? keyOffsetMethod : "none";
+    }
+
+    inline ResolverDiagnostics SnapshotResolverDiagnostics()
+    {
+        ResolverDiagnostics snapshot{};
+        snapshot.build = detectedBuild.load(std::memory_order_acquire);
+        snapshot.moduleBase = resolvedModuleBase.load(std::memory_order_acquire);
+        snapshot.slotsRva = resolvedSlotsRva.load(std::memory_order_acquire);
+        snapshot.slotsPointer = resolvedSlotsPointer.load(std::memory_order_acquire);
+        snapshot.keyStateOffset = resolvedKeyStateOffset.load(std::memory_order_acquire);
+        snapshot.proxyPid = resolvedProxyPid.load(std::memory_order_acquire);
+        snapshot.proxySessionId = resolvedProxySessionId.load(std::memory_order_acquire);
+        snapshot.resolvedSessionId = resolvedSessionId.load(std::memory_order_acquire);
+
+        std::lock_guard<std::mutex> lock(resolverDiagnosticsMutex);
+        snapshot.profile = resolvedProfileLabel;
+        snapshot.module = resolvedModuleName;
+        snapshot.method = resolvedMethod;
+        snapshot.slotsMethod = resolvedSlotsMethod;
+        snapshot.keyOffsetMethod = resolvedKeyOffsetMethod;
+        return snapshot;
+    }
 
     inline bool EqualsNoCase(const char* lhs, const char* rhs)
     {
@@ -112,8 +174,8 @@ namespace KeyState {
         static constexpr SessionSlotsProfile profiles[] = {
             // 25H2+ / build 26200+ per current memflow fallback table.
             { 26200, "Win11 25H2+", "win32k.sys", 0x86678, 0x3808 },
-            // 24H2 / build 26100. memflow treats the win32k.sys path as >= 22632.
-            { 22632, "Win11 24H2", "win32k.sys", 0x824F0, 0x3808 },
+            // 24H2 / build 26100 keeps the session slot path in win32k.sys.
+            { 26100, "Win11 24H2", "win32k.sys", 0x824F0, 0x3808 },
             // 22H2/23H2 builds keep the session slot path in win32ksgd.sys.
             { 22621, "Win11 22H2/23H2", "win32ksgd.sys", 0x3110, 0x36A8 },
         };
@@ -448,6 +510,36 @@ namespace KeyState {
         return true;
     }
 
+    inline bool ComputeRipRelativeTargetRva(size_t imageSize, size_t rel32Offset, int32_t rel32, uint64_t& rva)
+    {
+        rva = 0;
+        const int64_t targetRva = static_cast<int64_t>(rel32Offset) + sizeof(int32_t) + rel32;
+        if (targetRva <= 0 || static_cast<uint64_t>(targetRva) >= imageSize)
+            return false;
+
+        rva = static_cast<uint64_t>(targetRva);
+        return true;
+    }
+
+    inline bool TryResolveRipRelativeRvaInImage(
+        const std::vector<uint8_t>& image,
+        std::initializer_list<int> pattern,
+        size_t rel32OffsetInPattern,
+        uint64_t& rva)
+    {
+        rva = 0;
+        size_t matchOffset = 0;
+        if (!FindPatternOffset(image, pattern, matchOffset))
+            return false;
+
+        int32_t rel32 = 0;
+        const size_t rel32Offset = matchOffset + rel32OffsetInPattern;
+        if (!ReadLe32At(image, rel32Offset, rel32))
+            return false;
+
+        return ComputeRipRelativeTargetRva(image.size(), rel32Offset, rel32, rva);
+    }
+
     inline bool TryScanRipRelativeRva(
         DWORD pid,
         const KernelModuleInfo& module,
@@ -460,21 +552,7 @@ namespace KeyState {
         if (!ReadModuleImage(pid, module, image))
             return false;
 
-        size_t matchOffset = 0;
-        if (!FindPatternOffset(image, pattern, matchOffset))
-            return false;
-
-        int32_t rel32 = 0;
-        const size_t rel32Offset = matchOffset + rel32OffsetInPattern;
-        if (!ReadLe32At(image, rel32Offset, rel32))
-            return false;
-
-        const int64_t targetRva = static_cast<int64_t>(rel32Offset) + sizeof(int32_t) + rel32;
-        if (targetRva <= 0 || static_cast<uint64_t>(targetRva) >= module.size)
-            return false;
-
-        rva = static_cast<uint64_t>(targetRva);
-        return true;
+        return TryResolveRipRelativeRvaInImage(image, pattern, rel32OffsetInPattern, rva);
     }
 
     inline bool TryScanU32Value(
@@ -504,13 +582,131 @@ namespace KeyState {
         return true;
     }
 
+    inline bool TryLoadPdbModuleName(DWORD pid, const KernelModuleInfo& module, std::string& pdbModuleName)
+    {
+        pdbModuleName.clear();
+        if (!mem.vHandle || module.base == 0)
+            return false;
+
+        char moduleName[MAX_PATH] = {};
+        if (!VMMDLL_PdbLoad(mem.vHandle, pid, module.base, moduleName))
+            return false;
+
+        pdbModuleName = moduleName;
+        return !pdbModuleName.empty();
+    }
+
+    inline bool NormalizePdbSymbolAddressToRva(
+        const KernelModuleInfo& module,
+        uint64_t symbolAddress,
+        uint64_t& rva)
+    {
+        rva = 0;
+        if (symbolAddress >= module.base && symbolAddress < module.base + module.size) {
+            rva = symbolAddress - module.base;
+            return true;
+        }
+
+        if (module.size != 0 && symbolAddress < module.size) {
+            rva = symbolAddress;
+            return true;
+        }
+
+        return false;
+    }
+
+    inline bool TryPdbSymbolRva(
+        DWORD pid,
+        const KernelModuleInfo& module,
+        std::initializer_list<const char*> symbolNames,
+        uint64_t& symbolRva)
+    {
+        symbolRva = 0;
+        std::string pdbModuleName;
+        if (!TryLoadPdbModuleName(pid, module, pdbModuleName))
+            return false;
+
+        for (const char* symbolName : symbolNames) {
+            if (!symbolName || !*symbolName)
+                continue;
+
+            std::string symbol = symbolName;
+            ULONG64 symbolAddress = 0;
+            if (!VMMDLL_PdbSymbolAddress(
+                    mem.vHandle,
+                    pdbModuleName.data(),
+                    symbol.data(),
+                    &symbolAddress) ||
+                symbolAddress == 0) {
+                continue;
+            }
+
+            uint64_t rva = 0;
+            if (NormalizePdbSymbolAddressToRva(module, symbolAddress, rva)) {
+                symbolRva = rva;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    inline bool TryPdbTypeChildOffset(
+        DWORD pid,
+        const KernelModuleInfo& module,
+        std::initializer_list<const char*> typeNames,
+        std::initializer_list<const char*> childNames,
+        uint64_t& childOffset)
+    {
+        childOffset = 0;
+        std::string pdbModuleName;
+        if (!TryLoadPdbModuleName(pid, module, pdbModuleName))
+            return false;
+
+        for (const char* typeName : typeNames) {
+            if (!typeName || !*typeName)
+                continue;
+
+            for (const char* childName : childNames) {
+                if (!childName || !*childName)
+                    continue;
+
+                std::string type = typeName;
+                std::string child = childName;
+                DWORD offset = 0;
+                if (VMMDLL_PdbTypeChildOffset(
+                        mem.vHandle,
+                        pdbModuleName.data(),
+                        type.data(),
+                        child.data(),
+                        &offset) &&
+                    offset > 0 &&
+                    offset < 0x100000) {
+                    childOffset = offset;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    inline bool TryPdbSessionSlotsRva(DWORD pid, const KernelModuleInfo& module, uint64_t& slotsRva)
+    {
+        return TryPdbSymbolRva(
+            pid,
+            module,
+            { "gSessionGlobalSlots" },
+            slotsRva);
+    }
+
     inline bool TryScanSessionSlotsRva(
         DWORD pid,
         const KernelModuleInfo& module,
-        DWORD build,
+        const SessionSlotsProfile& profile,
         uint64_t& slotsRva)
     {
-        if (build >= 22632) {
+        if (EqualsNoCase(profile.moduleName, "win32k.sys")) {
             return TryScanRipRelativeRva(
                 pid,
                 module,
@@ -545,7 +741,8 @@ namespace KeyState {
     inline bool TryScanKeyStateOffset(DWORD pid, uint64_t& keyStateOffset)
     {
         KernelModuleInfo win32kbase{};
-        if (!ResolveKernelModuleInfo("win32kbase.sys", win32kbase))
+        if (!ResolveKernelModuleInfoForPid(pid, "win32kbase.sys", win32kbase) &&
+            !ResolveKernelModuleInfo("win32kbase.sys", win32kbase))
             return false;
 
         return TryScanU32Value(
@@ -553,6 +750,21 @@ namespace KeyState {
             win32kbase,
             { 0xB9, 0x00, 0x80, 0xFF, 0xFF, -1, 0x22, 0xB4, -1, -1, -1, -1, -1, 0x41 },
             9,
+            keyStateOffset);
+    }
+
+    inline bool TryPdbKeyStateOffset(DWORD pid, uint64_t& keyStateOffset)
+    {
+        KernelModuleInfo win32kbase{};
+        if (!ResolveKernelModuleInfoForPid(pid, "win32kbase.sys", win32kbase) &&
+            !ResolveKernelModuleInfo("win32kbase.sys", win32kbase))
+            return false;
+
+        return TryPdbTypeChildOffset(
+            pid,
+            win32kbase,
+            { "tagWINDOWSTATION", "_WINDOWSTATION", "WINDOWSTATION" },
+            { "gafAsyncKeyState" },
             keyStateOffset);
     }
 
@@ -603,10 +815,20 @@ namespace KeyState {
         resolvedSessionId.store(proxy.sessionId, std::memory_order_release);
         resolvedModuleBase.store(moduleBase, std::memory_order_release);
         resolvedSlotsRva.store(OW::Config::gafAsyncKeyStateOffset, std::memory_order_release);
+        resolvedSlotsPointer.store(0, std::memory_order_release);
         resolvedKeyStateOffset.store(0, std::memory_order_release);
+        resolvedProxyPid.store(proxy.pid, std::memory_order_release);
+        resolvedProxySessionId.store(proxy.sessionId, std::memory_order_release);
         resolvedViaAutoTable.store(false, std::memory_order_release);
+        SetResolverDiagnosticText(
+            "manual",
+            kernelModuleName.c_str(),
+            "manual",
+            "manual-offset",
+            "none");
 
-        Diagnostics::Info("DMA KeyState manual direct resolver: proxy=%s pid=%lu session=%lu module=%s base=0x%llX rva=0x%llX addr=0x%llX size=%zu.",
+        Diagnostics::Info("DMA KeyState manual direct resolver: build=%lu profile=manual method=manual proxy=%s pid=%lu session=%lu module=%s base=0x%llX slotsRva=0x%llX keyOffset=0x0 addr=0x%llX size=%zu.",
+            static_cast<unsigned long>(detectedBuild.load(std::memory_order_acquire)),
             proxy.name.c_str(),
             static_cast<unsigned long>(proxy.pid),
             static_cast<unsigned long>(proxy.sessionId),
@@ -647,16 +869,25 @@ namespace KeyState {
         uint64_t moduleBase = moduleInfo.base;
         resolvedModuleBase.store(moduleBase, std::memory_order_release);
         resolvedSlotsRva.store(resolvedByExport || moduleBase == 0 ? 0 : scannedRva, std::memory_order_release);
+        resolvedSlotsPointer.store(0, std::memory_order_release);
         resolvedKeyStateOffset.store(0, std::memory_order_release);
+        resolvedProxyPid.store(proxy.pid, std::memory_order_release);
+        resolvedProxySessionId.store(proxy.sessionId, std::memory_order_release);
         resolvedViaAutoTable.store(true, std::memory_order_release);
+        SetResolverDiagnosticText(
+            "legacy_win32kbase",
+            kernelModuleName.c_str(),
+            resolvedByExport ? "export" : "signature",
+            resolvedByExport ? "export" : "signature",
+            "none");
 
-        Diagnostics::Info("DMA KeyState Win10 resolver: build=%lu proxy=%s pid=%lu session=%lu module=%s method=%s base=0x%llX rva=0x%llX addr=0x%llX size=%zu.",
+        Diagnostics::Info("DMA KeyState legacy resolver: build=%lu profile=legacy_win32kbase method=%s proxy=%s pid=%lu session=%lu module=%s base=0x%llX slotsRva=0x%llX keyOffset=0x0 addr=0x%llX size=%zu.",
             static_cast<unsigned long>(build),
+            resolvedByExport ? "export" : "signature",
             proxy.name.c_str(),
             static_cast<unsigned long>(proxy.pid),
             static_cast<unsigned long>(proxy.sessionId),
             kernelModuleName.c_str(),
-            resolvedByExport ? "export" : "signature",
             static_cast<unsigned long long>(moduleBase),
             static_cast<unsigned long long>(resolvedByExport || moduleBase == 0 ? 0 : scannedRva),
             static_cast<unsigned long long>(address),
@@ -673,7 +904,8 @@ namespace KeyState {
         kernelModuleName = profile.moduleName;
         KernelModuleInfo moduleInfo{};
         uint64_t moduleBase = 0;
-        if (ResolveKernelModuleInfo(kernelModuleName, moduleInfo))
+        if (ResolveKernelModuleInfoForPid(proxy.pid, kernelModuleName, moduleInfo) ||
+            ResolveKernelModuleInfo(kernelModuleName, moduleInfo))
             moduleBase = moduleInfo.base;
         if (!moduleBase)
             moduleBase = ResolveKernelModuleBase(kernelModuleName);
@@ -685,11 +917,20 @@ namespace KeyState {
         }
 
         uint64_t slotsRva = profile.slotsRva;
-        const bool scannedSlots = moduleInfo.base != 0 &&
-            TryScanSessionSlotsRva(proxy.pid, moduleInfo, build, slotsRva);
+        const char* slotsMethod = "fallback";
+        if (moduleInfo.base != 0) {
+            if (TryScanSessionSlotsRva(proxy.pid, moduleInfo, profile, slotsRva))
+                slotsMethod = "signature";
+            else if (TryPdbSessionSlotsRva(proxy.pid, moduleInfo, slotsRva))
+                slotsMethod = "pdb";
+        }
 
         uint64_t keyStateOffset = profile.keyStateOffset;
-        const bool scannedKeyOffset = TryScanKeyStateOffset(proxy.pid, keyStateOffset);
+        const char* keyOffsetMethod = "fallback";
+        if (TryScanKeyStateOffset(proxy.pid, keyStateOffset))
+            keyOffsetMethod = "signature";
+        else if (TryPdbKeyStateOffset(proxy.pid, keyStateOffset))
+            keyOffsetMethod = "pdb";
 
         uint64_t slots = 0;
         const uint64_t slotsAddress = moduleBase + slotsRva;
@@ -724,25 +965,35 @@ namespace KeyState {
             resolvedSessionId.store(sessionId, std::memory_order_release);
             resolvedModuleBase.store(moduleBase, std::memory_order_release);
             resolvedSlotsRva.store(slotsRva, std::memory_order_release);
+            resolvedSlotsPointer.store(slots, std::memory_order_release);
             resolvedKeyStateOffset.store(keyStateOffset, std::memory_order_release);
+            resolvedProxyPid.store(proxy.pid, std::memory_order_release);
+            resolvedProxySessionId.store(proxy.sessionId, std::memory_order_release);
             resolvedViaAutoTable.store(true, std::memory_order_release);
             gafAsyncKeyStateOffset = slotsRva;
-
-            Diagnostics::Info("DMA KeyState auto resolver: profile=%s build=%lu proxy=%s pid=%lu session=%lu module=%s base=0x%llX slotsRva=0x%llX(%s) slots=0x%llX slot=0x%llX state=0x%llX keyOffset=0x%llX(%s) addr=0x%llX size=%zu.",
+            SetResolverDiagnosticText(
                 profile.label,
+                kernelModuleName.c_str(),
+                "session_slots",
+                slotsMethod,
+                keyOffsetMethod);
+
+            Diagnostics::Info("DMA KeyState auto resolver: build=%lu profile=%s method=session_slots proxy=%s pid=%lu proxySession=%lu session=%lu module=%s base=0x%llX slotsRva=0x%llX slotsMethod=%s slots=0x%llX slot=0x%llX state=0x%llX keyOffset=0x%llX keyOffsetMethod=%s addr=0x%llX size=%zu.",
                 static_cast<unsigned long>(build),
+                profile.label,
                 proxy.name.c_str(),
                 static_cast<unsigned long>(proxy.pid),
+                static_cast<unsigned long>(proxy.sessionId),
                 static_cast<unsigned long>(sessionId),
                 kernelModuleName.c_str(),
                 static_cast<unsigned long long>(moduleBase),
                 static_cast<unsigned long long>(slotsRva),
-                scannedSlots ? "sig" : "fallback",
+                slotsMethod,
                 static_cast<unsigned long long>(slots),
                 static_cast<unsigned long long>(slot),
                 static_cast<unsigned long long>(sessionState),
                 static_cast<unsigned long long>(keyStateOffset),
-                scannedKeyOffset ? "sig" : "fallback",
+                keyOffsetMethod,
                 static_cast<unsigned long long>(keyStateAddress),
                 keyStateByteCount.load(std::memory_order_acquire));
             return keyStateAddress;
@@ -755,6 +1006,9 @@ namespace KeyState {
     {
         std::vector<KeyboardProxyProcess> proxies;
         if (!FindKeyboardProxyProcesses(proxies)) {
+            SetResolverDiagnosticText("none", "", "no_proxy", "none", "none");
+            resolvedProxyPid.store(0, std::memory_order_release);
+            resolvedProxySessionId.store(0, std::memory_order_release);
             Diagnostics::Warn("DMA KeyState resolver could not find an interactive proxy process.");
             return 0;
         }
@@ -778,12 +1032,34 @@ namespace KeyState {
         std::string failureDetails;
         if (profile) {
             gafAsyncKeyStateOffset = profile->slotsRva;
+            SetResolverDiagnosticText(
+                profile->label,
+                profile->moduleName,
+                "session_slots",
+                "pending",
+                "pending");
             for (const KeyboardProxyProcess& proxy : proxies) {
                 if (const uint64_t address = ResolveSessionSlotsAddress(proxy, build, *profile, &failureDetails))
                     return address;
             }
+
+            Diagnostics::Warn("DMA KeyState resolver failed. build=%lu candidates=%zu profile=%s module=%s method=session_slots manualOffset=0x%llX sessionConfig=%d details=%s",
+                static_cast<unsigned long>(build),
+                proxies.size(),
+                profile->label,
+                profile->moduleName,
+                static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset),
+                OW::Config::gafAsyncKeyStateSessionId,
+                failureDetails.empty() ? "none" : failureDetails.c_str());
+            return 0;
         }
 
+        SetResolverDiagnosticText(
+            "legacy_win32kbase",
+            "win32kbase.sys",
+            "legacy_export_signature",
+            "pending",
+            "none");
         for (const KeyboardProxyProcess& proxy : proxies) {
             const uint64_t exportAddress = ResolveWin10ExportAddress(proxy, build, &failureDetails);
             if (exportAddress) {
@@ -792,10 +1068,9 @@ namespace KeyState {
             }
         }
 
-        Diagnostics::Warn("DMA KeyState resolver failed. build=%lu candidates=%zu profile=%s manualOffset=0x%llX sessionConfig=%d details=%s",
+        Diagnostics::Warn("DMA KeyState resolver failed. build=%lu candidates=%zu profile=legacy_win32kbase module=win32kbase.sys method=export_signature manualOffset=0x%llX sessionConfig=%d details=%s",
             static_cast<unsigned long>(build),
             proxies.size(),
-            profile ? profile->label : "none",
             static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset),
             OW::Config::gafAsyncKeyStateSessionId,
             failureDetails.empty() ? "none" : failureDetails.c_str());

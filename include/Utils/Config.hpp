@@ -1011,6 +1011,7 @@ namespace OW { namespace Config {
     inline char kmboxIp[32] = "192.168.2.188";
     inline int  kmboxPort = 8808;
     inline int  kmboxMonitorPort = 8809;
+    inline bool kmboxMonitorPortManualOverride = false;
     inline char kmboxMac[32] = "12525C53";
     inline char kmboxComPort[16] = "COM3";
     inline float kmboxCountsPerRadian = 100.0f;       // KMBox relative mouse counts needed for one radian at the reference game sens
@@ -1043,6 +1044,21 @@ namespace OW { namespace Config {
         if (commandPort == 65535)
             return commandPort - 1;
         return 8809;
+    }
+
+    inline bool IsValidKmboxUdpPort(int port)
+    {
+        return port >= 1 && port <= 65535;
+    }
+
+    inline int EffectiveKmboxMonitorPort()
+    {
+        const int recommended = RecommendedKmboxMonitorPort(kmboxPort);
+        if (!kmboxMonitorPortManualOverride)
+            return recommended;
+        if (!IsValidKmboxUdpPort(kmboxMonitorPort) || kmboxMonitorPort == kmboxPort)
+            return recommended;
+        return kmboxMonitorPort;
     }
 
     // ---- Diagnostics / Dry-run ----
@@ -1334,6 +1350,7 @@ namespace OW { namespace Config {
     void SaveConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);
     void LoadConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase);
     void NormalizeKmboxPorts();
+    int EffectiveKmboxMonitorPort();
     void SaveConfig(const std::string& path);
     void LoadConfig(const std::string& path);
 

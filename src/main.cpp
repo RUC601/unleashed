@@ -1166,24 +1166,42 @@ static void InitializeKmBoxFromConfig()
             OW::ForceReleaseMouseButtons();
             OW::UnmaskPhysicalMouseButtons();
             std::printf("[KMBOX] Network device ready.\n");
-            Diagnostics::Info("KMBox network device ready. ip=%s port=%d",
-                OW::Config::kmboxIp, OW::Config::kmboxPort);
-            Diagnostics::Aim("kmbox.init network success ip=%s port=%d",
+            Diagnostics::Info("KMBox network device ready. ip=%s commandPort=%d effectiveMonitorPort=%d manualOverride=%d",
                 OW::Config::kmboxIp,
-                OW::Config::kmboxPort);
+                OW::Config::kmboxPort,
+                OW::Config::EffectiveKmboxMonitorPort(),
+                OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
+            Diagnostics::Aim("kmbox.init network success ip=%s commandPort=%d effectiveMonitorPort=%d manualOverride=%d",
+                OW::Config::kmboxIp,
+                OW::Config::kmboxPort,
+                OW::Config::EffectiveKmboxMonitorPort(),
+                OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
 
-            const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxMonitorPort);
+            const WORD monitorPort = static_cast<WORD>(OW::Config::EffectiveKmboxMonitorPort());
             const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
             if (monitorStatus == success) {
                 std::printf("[KMBOX] Monitor started on port %u.\n", monitorPort);
-                Diagnostics::Info("KMBox monitor started. port=%u", monitorPort);
-                Diagnostics::Aim("kmbox.monitor success port=%u", monitorPort);
+                Diagnostics::Info("KMBox monitor started. commandPort=%d effectiveMonitorPort=%u manualOverride=%d",
+                    OW::Config::kmboxPort,
+                    monitorPort,
+                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
+                Diagnostics::Aim("kmbox.monitor success commandPort=%d effectiveMonitorPort=%u manualOverride=%d",
+                    OW::Config::kmboxPort,
+                    monitorPort,
+                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
             } else {
                 std::printf("[KMBOX] Monitor failed to start on port %u. status=%d\n",
                     monitorPort, monitorStatus);
-                Diagnostics::Warn("KMBox monitor failed to start. port=%u status=%d",
-                    monitorPort, monitorStatus);
-                Diagnostics::Aim("kmbox.monitor failure port=%u status=%d", monitorPort, monitorStatus);
+                Diagnostics::Warn("KMBox monitor failed to start. commandPort=%d effectiveMonitorPort=%u manualOverride=%d status=%d",
+                    OW::Config::kmboxPort,
+                    monitorPort,
+                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
+                    monitorStatus);
+                Diagnostics::Aim("kmbox.monitor failure commandPort=%d effectiveMonitorPort=%u manualOverride=%d status=%d",
+                    OW::Config::kmboxPort,
+                    monitorPort,
+                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
+                    monitorStatus);
             }
         } else {
             std::printf("[KMBOX] Network initialisation failed. status=%d\n", status);
@@ -1229,7 +1247,7 @@ static void LoadRuntimeConfigForDiagnostics()
     OW::Config::LoadConfig(configPath);
     OW::RefreshHostMouseDpi();
     OW::RefreshScreenSizeFromConfig();
-    Diagnostics::Aim("main.config_loaded configPath=%s screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f hostDpiDetected=%d",
+    Diagnostics::Aim("main.config_loaded configPath=%s screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s commandPort=%d effectiveMonitorPort=%d monitorPortSetting=%d manualOverride=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f hostDpiDetected=%d",
         configPathForLog.c_str(),
         OW::WX,
         OW::WY,
@@ -1237,7 +1255,9 @@ static void LoadRuntimeConfigForDiagnostics()
         OW::Config::kmboxDeviceType,
         OW::Config::kmboxIp,
         OW::Config::kmboxPort,
+        OW::Config::EffectiveKmboxMonitorPort(),
         OW::Config::kmboxMonitorPort,
+        OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
         OW::Config::kmboxCountsPerRadian,
         OW::Config::calibratedCountsPerRadian,
         OW::Config::gameMouseSensitivity,
@@ -1280,6 +1300,11 @@ static int RunConfigCheckCli()
         OW::Config::gameMouseSensitivity,
         OW::Config::referenceGameSensitivity,
         OW::Config::autoScaleByGameSensitivity ? 1 : 0);
+    std::printf("[CONFIG] commandPort=%d effectiveMonitorPort=%d monitorPortSetting=%d manualOverride=%d\n",
+        OW::Config::kmboxPort,
+        OW::Config::EffectiveKmboxMonitorPort(),
+        OW::Config::kmboxMonitorPort,
+        OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
     return 0;
 }
 
@@ -1645,7 +1670,7 @@ int main(int argc, char** argv)
     }
     OW::RefreshHostMouseDpi();
     OW::RefreshScreenSizeFromConfig();
-    Diagnostics::Aim("main.config_loaded configPath=%s screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f hostDpiDetected=%d",
+    Diagnostics::Aim("main.config_loaded configPath=%s screen=%.0fx%.0f kmboxEnabled=%d deviceType=%d ip=%s commandPort=%d effectiveMonitorPort=%d monitorPortSetting=%d manualOverride=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d hostMouseDpi=%.6f hostDpiDetected=%d",
         configPathForLog.c_str(),
         OW::WX,
         OW::WY,
@@ -1653,7 +1678,9 @@ int main(int argc, char** argv)
         OW::Config::kmboxDeviceType,
         OW::Config::kmboxIp,
         OW::Config::kmboxPort,
+        OW::Config::EffectiveKmboxMonitorPort(),
         OW::Config::kmboxMonitorPort,
+        OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
         OW::Config::kmboxCountsPerRadian,
         OW::Config::calibratedCountsPerRadian,
         OW::Config::gameMouseSensitivity,

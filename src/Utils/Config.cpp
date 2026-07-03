@@ -50,7 +50,7 @@
 
 namespace OW { namespace Config {
 
-    int config_version = 6;
+    int config_version = 9;
     bool draw_edge = false;
     bool drawbox3d = false;
     bool manualsave = false;
@@ -281,7 +281,7 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 8;
+        constexpr int kCurrentConfigVersion = 9;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
@@ -310,22 +310,72 @@ namespace OW { namespace Config {
 
         void LogConfig(Diagnostics::LogLevel level, const char* fmt, ...);
 
-        void NormalizeKmboxPortsUnlocked(const char* reason)
+        void LogKmboxMonitorPortAdjustmentUnlocked(
+            const char* reason,
+            const int oldMonitorPort,
+            const int newMonitorPort,
+            Diagnostics::LogLevel level,
+            const char* message)
         {
-            if (kmboxMonitorPort != kmboxPort)
+            LogConfig(level,
+                "%s oldMonitorPort=%d newMonitorPort=%d commandPort=%d manualOverride=%s.",
+                message ? message : "Adjusted kmboxMonitorPort.",
+                oldMonitorPort,
+                newMonitorPort,
+                kmboxPort,
+                kmboxMonitorPortManualOverride ? "true" : "false");
+            Diagnostics::Aim("config.kmbox_monitor_port_adjusted reason=%s manualOverride=%d commandPort=%d oldMonitorPort=%d newMonitorPort=%d recommendedMonitorPort=%d",
+                reason ? reason : "unknown",
+                kmboxMonitorPortManualOverride ? 1 : 0,
+                kmboxPort,
+                oldMonitorPort,
+                newMonitorPort,
+                RecommendedKmboxMonitorPort(kmboxPort));
+        }
+
+        void SetKmboxMonitorPortUnlocked(
+            int newMonitorPort,
+            const char* reason,
+            Diagnostics::LogLevel level,
+            const char* message)
+        {
+            if (kmboxMonitorPort == newMonitorPort)
                 return;
 
             const int oldMonitorPort = kmboxMonitorPort;
-            kmboxMonitorPort = RecommendedKmboxMonitorPort(kmboxPort);
-            LogConfig(Diagnostics::LogLevel::Warn,
-                "kmboxMonitorPort matched kmboxPort (%d); using %d because KMBox monitor traffic uses a separate UDP port.",
-                oldMonitorPort,
-                kmboxMonitorPort);
-            Diagnostics::Aim("config.kmbox_monitor_port_adjusted reason=%s commandPort=%d oldMonitorPort=%d newMonitorPort=%d",
-                reason ? reason : "unknown",
-                kmboxPort,
-                oldMonitorPort,
-                kmboxMonitorPort);
+            kmboxMonitorPort = newMonitorPort;
+            LogKmboxMonitorPortAdjustmentUnlocked(reason, oldMonitorPort, newMonitorPort, level, message);
+        }
+
+        void NormalizeKmboxPortsUnlocked(const char* reason)
+        {
+            const int recommendedMonitorPort = RecommendedKmboxMonitorPort(kmboxPort);
+
+            if (!kmboxMonitorPortManualOverride) {
+                SetKmboxMonitorPortUnlocked(
+                    recommendedMonitorPort,
+                    reason,
+                    Diagnostics::LogLevel::Info,
+                    "Auto-synced kmboxMonitorPort to the recommended KMBox monitor port.");
+                return;
+            }
+
+            if (!IsValidKmboxUdpPort(kmboxMonitorPort)) {
+                SetKmboxMonitorPortUnlocked(
+                    recommendedMonitorPort,
+                    reason,
+                    Diagnostics::LogLevel::Warn,
+                    "kmboxMonitorPort was invalid; using the recommended KMBox monitor port.");
+                return;
+            }
+
+            if (kmboxMonitorPort == kmboxPort) {
+                SetKmboxMonitorPortUnlocked(
+                    recommendedMonitorPort,
+                    reason,
+                    Diagnostics::LogLevel::Warn,
+                    "kmboxMonitorPort matched kmboxPort; using the recommended separate KMBox monitor port.");
+            }
         }
 
         int MigrateLegacyAimBehavior(int value)
@@ -2414,6 +2464,7 @@ namespace OW { namespace Config {
             CopyString(kmboxIp, kDefaultKmboxIp);
             kmboxPort = kDefaultKmboxPort;
             kmboxMonitorPort = kDefaultKmboxMonitorPort;
+            kmboxMonitorPortManualOverride = false;
             CopyString(kmboxMac, kDefaultKmboxMac);
             CopyString(kmboxComPort, kDefaultKmboxComPort);
             kmboxCountsPerRadian = 100.0f;       // default: reference-project manual baseline
@@ -5171,7 +5222,12 @@ namespace OW { namespace Config {
             kmboxDeviceType = ReadInt(ini, section, "kmboxDeviceType", kmboxDeviceType);
             CopyString(kmboxIp, ReadString(ini, section, "kmboxIp", kmboxIp));
             kmboxPort = ReadInt(ini, section, "kmboxPort", kmboxPort);
-            kmboxMonitorPort = ReadInt(ini, section, "kmboxMonitorPort", kmboxPort + 1);
+            kmboxMonitorPort = ReadInt(ini, section, "kmboxMonitorPort", RecommendedKmboxMonitorPort(kmboxPort));
+            kmboxMonitorPortManualOverride = ReadBool(
+                ini,
+                section,
+                "kmboxMonitorPortManualOverride",
+                false);
             CopyString(kmboxMac, ReadString(ini, section, "kmboxMac", kmboxMac));
             CopyString(kmboxComPort, ReadString(ini, section, "kmboxComPort", kmboxComPort));
             kmboxCountsPerRadian = ReadFixedFloat(
@@ -5226,6 +5282,7 @@ namespace OW { namespace Config {
             WriteStringValue(path, "KMBox", "kmboxIp", kmboxIp);
             WriteIntValue(path, "KMBox", "kmboxPort", kmboxPort);
             WriteIntValue(path, "KMBox", "kmboxMonitorPort", kmboxMonitorPort);
+            WriteBoolValue(path, "KMBox", "kmboxMonitorPortManualOverride", kmboxMonitorPortManualOverride);
             WriteStringValue(path, "KMBox", "kmboxMac", kmboxMac);
             WriteStringValue(path, "KMBox", "kmboxComPort", kmboxComPort);
             WriteFixedFloatValue(path, "KMBox", "kmboxCountsPerRadian", kmboxCountsPerRadian);
@@ -5491,10 +5548,6 @@ namespace OW { namespace Config {
             ClampSetting("uiLanguage", uiLanguage, 0, kUiLanguageCount - 1, kUiLanguageEnglish);
             ClampSetting("kmboxDeviceType", kmboxDeviceType, 0, 2, 0);
             ClampSetting("kmboxPort", kmboxPort, 1, 65535, kDefaultKmboxPort);
-            const int fallbackMonitorPort = (kmboxPort >= 1 && kmboxPort < 65535)
-                ? kmboxPort + 1
-                : kDefaultKmboxMonitorPort;
-            ClampSetting("kmboxMonitorPort", kmboxMonitorPort, 1, 65535, fallbackMonitorPort);
             NormalizeKmboxPortsUnlocked("validate");
             ClampSetting("kmboxInputDelayMs", kmboxInputDelayMs, 0, 20, kDefaultKmboxInputDelayMs);
             ClampSetting("manualScreenWidth", manualScreenWidth, 0, 16384, 1920);
@@ -5517,12 +5570,14 @@ namespace OW { namespace Config {
             const float baseCountsPerRadian = KmboxBaseCountsPerRadian();
             const float yawCountsPerRadian = KmboxYawCountsPerRadian();
             const float pitchCountsPerRadian = KmboxPitchCountsPerRadian();
-            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s port=%d monitorPort=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f calibratedPitchCountsPerRadian=%.6f baseCountsPerRadian=%.6f gameMouseSensitivity=%.6f effectiveGameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d autoReadGameMouseSensitivity=%d autoDetected=%d hostMouseDpi=%.6f yawCountsPerRadian=%.6f pitchCountsPerRadian=%.6f inputDelayMs=%d suppressWhileMenuOpen=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
+            Diagnostics::Aim("config.validated kmboxEnabled=%d deviceType=%d ip=%s commandPort=%d monitorPortSetting=%d effectiveMonitorPort=%d manualOverride=%d countsPerRadian=%.6f calibratedCountsPerRadian=%.6f calibratedPitchCountsPerRadian=%.6f baseCountsPerRadian=%.6f gameMouseSensitivity=%.6f effectiveGameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d autoReadGameMouseSensitivity=%d autoDetected=%d hostMouseDpi=%.6f yawCountsPerRadian=%.6f pitchCountsPerRadian=%.6f inputDelayMs=%d suppressWhileMenuOpen=%d aimKey=%d aimKey2=%d trackingSmooth=%.6f flickSmooth=%.6f aimMethod=%d pidDeadzone=%.6f bezierSpeed=%.6f",
                 kmboxEnabled ? 1 : 0,
                 kmboxDeviceType,
                 kmboxIp,
                 kmboxPort,
                 kmboxMonitorPort,
+                EffectiveKmboxMonitorPort(),
+                kmboxMonitorPortManualOverride ? 1 : 0,
                 kmboxCountsPerRadian,
                 calibratedCountsPerRadian,
                 calibratedPitchCountsPerRadian,
@@ -5651,8 +5706,9 @@ namespace OW { namespace Config {
                 AutoRMBdistance, ToText(AutoSkill).c_str(), SkillHealth, ToText(AntiAFK).c_str());
             LogConfig(level, "Dump: secondary secondaim=%s highPriority=%s targetPriority=%d",
                 ToText(secondaim).c_str(), ToText(highPriority).c_str(), targetPriority);
-            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s port=%d monitorPort=%d mac=%s comPort=%s countsPerRadian=%.3f calibratedCountsPerRadian=%.3f calibratedPitchCountsPerRadian=%.3f gameMouseSensitivity=%.3f effectiveGameMouseSensitivity=%.3f referenceGameSensitivity=%.3f autoScaleByGameSensitivity=%s autoReadGameMouseSensitivity=%s autoDetectedGameSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s suppressWhileMenuOpen=%s",
-                ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMonitorPort, kmboxMac,
+            LogConfig(level, "Dump: kmbox enabled=%s deviceType=%d ip=%s commandPort=%d monitorPortSetting=%d effectiveMonitorPort=%d manualOverride=%s mac=%s comPort=%s countsPerRadian=%.3f calibratedCountsPerRadian=%.3f calibratedPitchCountsPerRadian=%.3f gameMouseSensitivity=%.3f effectiveGameMouseSensitivity=%.3f referenceGameSensitivity=%.3f autoScaleByGameSensitivity=%s autoReadGameMouseSensitivity=%s autoDetectedGameSensitivity=%s hostMouseDpi=%.3f detectedHostMouseDpi=%.3f hostMouseDpiAutoDetected=%s inputDelayMs=%d debugLog=%s suppressWhileMenuOpen=%s",
+                ToText(kmboxEnabled).c_str(), kmboxDeviceType, kmboxIp, kmboxPort, kmboxMonitorPort,
+                EffectiveKmboxMonitorPort(), ToText(kmboxMonitorPortManualOverride).c_str(), kmboxMac,
                 kmboxComPort, kmboxCountsPerRadian, calibratedCountsPerRadian, calibratedPitchCountsPerRadian,
                 gameMouseSensitivity, EffectiveGameMouseSensitivity(), referenceGameSensitivity,
                 ToText(autoScaleByGameSensitivity).c_str(),
@@ -6413,7 +6469,6 @@ namespace OW { namespace Config {
     {
         std::lock_guard<std::mutex> lock(mutex);
         ClampSetting("kmboxPort", kmboxPort, 1, 65535, kDefaultKmboxPort);
-        ClampSetting("kmboxMonitorPort", kmboxMonitorPort, 1, 65535, RecommendedKmboxMonitorPort(kmboxPort));
         NormalizeKmboxPortsUnlocked("runtime");
     }
 

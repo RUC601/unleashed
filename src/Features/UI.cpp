@@ -429,7 +429,7 @@ namespace {
         if (OW::Config::kmboxDeviceType != 0)
             return { false, "Network mode only" };
 
-        const int monitorPort = OW::Config::kmboxMonitorPort;
+        const int monitorPort = OW::Config::EffectiveKmboxMonitorPort();
         if (monitorPort <= 0 || monitorPort > 65535)
             return { false, "Invalid monitor port" };
 
@@ -474,8 +474,14 @@ namespace {
         if (resultCode <= 32)
             return { false, Win32ErrorMessage("Firewall launch failed", static_cast<DWORD>(resultCode)) };
 
-        Diagnostics::Info("KMBox monitor firewall allow requested. monitorPort=%d", monitorPort);
-        Diagnostics::Aim("kmbox.firewall allow_requested monitorPort=%d", monitorPort);
+        Diagnostics::Info("KMBox monitor firewall allow requested. effectiveMonitorPort=%d commandPort=%d manualOverride=%d",
+            monitorPort,
+            OW::Config::kmboxPort,
+            OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
+        Diagnostics::Aim("kmbox.firewall allow_requested effectiveMonitorPort=%d commandPort=%d manualOverride=%d",
+            monitorPort,
+            OW::Config::kmboxPort,
+            OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
         return { true, "Firewall rule requested" };
     }
 
@@ -675,20 +681,29 @@ namespace {
                 return { false, message };
             }
 
-            const WORD monitorPort = static_cast<WORD>(OW::Config::kmboxMonitorPort);
+            const WORD monitorPort = static_cast<WORD>(OW::Config::EffectiveKmboxMonitorPort());
             const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
             if (monitorStatus != success) {
                 char message[96] = {};
                 std::snprintf(message, sizeof(message), "Init OK, monitor failed: %d", monitorStatus);
-                Diagnostics::Warn("KMBox UI enable network init succeeded, monitor failed. port=%u status=%d",
-                    monitorPort, monitorStatus);
+                Diagnostics::Warn("KMBox UI enable network init succeeded, monitor failed. commandPort=%d effectiveMonitorPort=%u manualOverride=%d status=%d",
+                    OW::Config::kmboxPort,
+                    monitorPort,
+                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
+                    monitorStatus);
                 return { true, message };
             }
 
-            Diagnostics::Info("KMBox UI enable network init succeeded. ip=%s port=%d monitor=%u",
-                OW::Config::kmboxIp, OW::Config::kmboxPort, monitorPort);
-            Diagnostics::Aim("kmbox.ui_enable network success ip=%s port=%d monitor=%u",
-                OW::Config::kmboxIp, OW::Config::kmboxPort, monitorPort);
+            Diagnostics::Info("KMBox UI enable network init succeeded. ip=%s commandPort=%d effectiveMonitorPort=%u manualOverride=%d",
+                OW::Config::kmboxIp,
+                OW::Config::kmboxPort,
+                monitorPort,
+                OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
+            Diagnostics::Aim("kmbox.ui_enable network success ip=%s commandPort=%d effectiveMonitorPort=%u manualOverride=%d",
+                OW::Config::kmboxIp,
+                OW::Config::kmboxPort,
+                monitorPort,
+                OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
             return { true, "Init OK" };
         }
 
@@ -714,18 +729,23 @@ namespace {
         if (OW::Config::kmboxDeviceType != 0)
             kmbox::ReleaseTimerResolution();
 
-        Diagnostics::Info("KMBox UI runtime reinit requested. deviceType=%d ip=%s port=%d monitor=%d mac=%s com=%s",
+        const int effectiveMonitorPort = OW::Config::EffectiveKmboxMonitorPort();
+        Diagnostics::Info("KMBox UI runtime reinit requested. deviceType=%d ip=%s commandPort=%d effectiveMonitorPort=%d monitorPortSetting=%d manualOverride=%d mac=%s com=%s",
             OW::Config::kmboxDeviceType,
             OW::Config::kmboxIp,
             OW::Config::kmboxPort,
+            effectiveMonitorPort,
             OW::Config::kmboxMonitorPort,
+            OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
             OW::Config::kmboxMac,
             OW::Config::kmboxComPort);
-        Diagnostics::Aim("kmbox.ui_reinit requested deviceType=%d ip=%s port=%d monitor=%d mac=%s com=%s",
+        Diagnostics::Aim("kmbox.ui_reinit requested deviceType=%d ip=%s commandPort=%d effectiveMonitorPort=%d monitorPortSetting=%d manualOverride=%d mac=%s com=%s",
             OW::Config::kmboxDeviceType,
             OW::Config::kmboxIp,
             OW::Config::kmboxPort,
+            effectiveMonitorPort,
             OW::Config::kmboxMonitorPort,
+            OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
             OW::Config::kmboxMac,
             OW::Config::kmboxComPort);
 
@@ -4985,17 +5005,27 @@ static void DrawMiscDiagnosticsPage() {
             ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1),
                 "DMA KeyState reads host Windows VK state (keyboard and mouse)");
             const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
+            const KeyState::ResolverDiagnostics resolver = KeyState::SnapshotResolverDiagnostics();
             if (KeyState::initialized.load() && keyStateAddress != 0) {
                 ImGui::TextColored(ImVec4(0.25f, 1.0f, 0.45f, 1),
-                    "DMA KeyState ready: build=%lu session=%lu pid=%d addr=0x%llX size=%zu",
-                    static_cast<unsigned long>(KeyState::detectedBuild.load()),
-                    static_cast<unsigned long>(KeyState::resolvedSessionId.load()),
-                    KeyState::keyStateReadPid.load(),
+                    "DMA KeyState ready: build=%lu profile=%s method=%s module=%s session=%lu proxyPid=%lu addr=0x%llX size=%zu slotsRva=0x%llX keyOffset=0x%llX",
+                    static_cast<unsigned long>(resolver.build),
+                    resolver.profile.c_str(),
+                    resolver.method.c_str(),
+                    resolver.module.c_str(),
+                    static_cast<unsigned long>(resolver.resolvedSessionId),
+                    static_cast<unsigned long>(resolver.proxyPid),
                     static_cast<unsigned long long>(keyStateAddress),
-                    KeyState::keyStateByteCount.load());
+                    KeyState::keyStateByteCount.load(),
+                    static_cast<unsigned long long>(resolver.slotsRva),
+                    static_cast<unsigned long long>(resolver.keyStateOffset));
             } else if (OW::Config::gafAsyncKeyStateOffset == 0) {
                 ImGui::TextColored(ImVec4(1, 0.35f, 0.2f, 1),
-                    "DMA KeyState auto resolver pending/failed; check Diagnostic Log");
+                    "DMA KeyState auto resolver pending/failed: build=%lu profile=%s method=%s module=%s; check Diagnostic Log",
+                    static_cast<unsigned long>(resolver.build),
+                    resolver.profile.c_str(),
+                    resolver.method.c_str(),
+                    resolver.module.c_str());
             } else {
                 ImGui::TextColored(ImVec4(1, 0.35f, 0.2f, 1),
                     "DMA KeyState manual offset unresolved: 0x%llX",
@@ -5685,16 +5715,48 @@ static void DrawMiscKmboxPage() {
             SettingRow(T(UiText::Port));
             PushControlWidth();
             ImGui::InputInt("##Port", &OW::Config::kmboxPort, 0, 0);
-            if (ImGui::IsItemDeactivatedAfterEdit())
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                OW::Config::NormalizeKmboxPorts();
                 markKmboxRuntimeConfigChanged();
+            }
             ImGui::PopItemWidth();
 
             SettingRow(T(UiText::MonitorPort));
             PushControlWidth();
-            ImGui::InputInt("##MonitorPort", &OW::Config::kmboxMonitorPort, 0, 0);
-            if (ImGui::IsItemDeactivatedAfterEdit())
-                markKmboxRuntimeConfigChanged();
+            int effectiveMonitorPort = OW::Config::EffectiveKmboxMonitorPort();
+            ImGui::InputInt(
+                "##MonitorPort",
+                &effectiveMonitorPort,
+                0,
+                0,
+                ImGuiInputTextFlags_ReadOnly);
             ImGui::PopItemWidth();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Effective KMBox monitor UDP port. Auto mode keeps this synced to the recommended port.");
+
+            if (ImGui::TreeNodeEx("Advanced##KmboxMonitorPort")) {
+                SettingRow("Manual Monitor Port");
+                if (UICheckbox("##MonitorPortManualOverride", &OW::Config::kmboxMonitorPortManualOverride)) {
+                    OW::Config::NormalizeKmboxPorts();
+                    markKmboxRuntimeConfigChanged();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Advanced override. Auto mode uses the recommended monitor port derived from the command port.");
+
+                if (OW::Config::kmboxMonitorPortManualOverride) {
+                    SettingRow(T(UiText::MonitorPort));
+                    PushControlWidth();
+                    ImGui::InputInt("##ManualMonitorPort", &OW::Config::kmboxMonitorPort, 0, 0);
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        OW::Config::NormalizeKmboxPorts();
+                        markKmboxRuntimeConfigChanged();
+                    }
+                    ImGui::PopItemWidth();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Manual monitor UDP port. It will be repaired if it matches the command port.");
+                }
+                ImGui::TreePop();
+            }
 
             SettingRow(T(UiText::Mac));
             PushControlWidth();

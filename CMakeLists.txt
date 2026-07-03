@@ -126,6 +126,10 @@ add_executable(LeadPredictionSelfTest
     src/Tools/LeadPredictionSelfTest.cpp
 )
 
+add_executable(KeyStateSelfTest
+    src/Tools/KeyStateSelfTest.cpp
+)
+
 add_executable(WeaponSpecDisplaySelfTest
     src/Tools/WeaponSpecDisplaySelfTest.cpp
     src/Game/HeroPerkRuntime.cpp
@@ -159,6 +163,7 @@ add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
 add_test(NAME AimPresetConfigSelfTest COMMAND AimPresetConfigSelfTest)
 add_test(NAME LeadPredictionSelfTest COMMAND LeadPredictionSelfTest)
+add_test(NAME KeyStateSelfTest COMMAND KeyStateSelfTest)
 add_test(NAME WeaponSpecDisplaySelfTest COMMAND WeaponSpecDisplaySelfTest)
 add_test(NAME HeroGeometrySpecSelfTest COMMAND HeroGeometrySpecSelfTest)
 add_test(NAME HeroSkillConfigSelfTest COMMAND HeroSkillConfigSelfTest)
@@ -199,6 +204,12 @@ target_include_directories(AimPresetConfigSelfTest PRIVATE
 )
 
 target_include_directories(LeadPredictionSelfTest PRIVATE
+    include
+    vendor/leechcore
+    vendor/imgui
+)
+
+target_include_directories(KeyStateSelfTest PRIVATE
     include
     vendor/leechcore
     vendor/imgui
@@ -347,6 +358,8 @@ target_compile_options(AimPresetConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd43
 target_compile_definitions(AimPresetConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(LeadPredictionSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(LeadPredictionSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(KeyStateSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(KeyStateSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(WeaponSpecDisplaySelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(WeaponSpecDisplaySelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(HeroGeometrySpecSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)

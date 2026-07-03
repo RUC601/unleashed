@@ -25,6 +25,7 @@ namespace
         OW::Config::inputSource = 4;
         OW::Config::kmboxPort = 8808;
         OW::Config::kmboxMonitorPort = 8809;
+        OW::Config::kmboxMonitorPortManualOverride = false;
         OW::Config::kmboxCountsPerRadian = 1000.0f;
         OW::Config::calibratedCountsPerRadian = 0.0f;
         OW::Config::calibratedPitchCountsPerRadian = 0.0f;
@@ -46,6 +47,48 @@ namespace
 
         if (OW::Config::RecommendedKmboxMonitorPort(0) != 8809)
             return Fail("recommended KMBox monitor port did not fall back for invalid command port");
+
+        OW::Config::kmboxPort = 5512;
+        OW::Config::kmboxMonitorPort = 5001;
+        OW::Config::kmboxMonitorPortManualOverride = false;
+        OW::Config::kmboxMonitorPort = OW::Config::EffectiveKmboxMonitorPort();
+        if (OW::Config::kmboxMonitorPort != 5513 ||
+            OW::Config::EffectiveKmboxMonitorPort() != 5513)
+            return Fail("auto KMBox monitor port did not sync stale valid port to recommended");
+
+        OW::Config::kmboxPort = 5512;
+        OW::Config::kmboxMonitorPort = 6000;
+        OW::Config::kmboxMonitorPortManualOverride = true;
+        OW::Config::kmboxMonitorPort = OW::Config::EffectiveKmboxMonitorPort();
+        if (OW::Config::kmboxMonitorPort != 6000 ||
+            OW::Config::EffectiveKmboxMonitorPort() != 6000)
+            return Fail("manual KMBox monitor port override was not preserved");
+
+        OW::Config::kmboxPort = 5512;
+        OW::Config::kmboxMonitorPort = 5512;
+        OW::Config::kmboxMonitorPortManualOverride = true;
+        if (OW::Config::EffectiveKmboxMonitorPort() != 5513)
+            return Fail("effective KMBox monitor port did not reject monitor==command");
+        OW::Config::kmboxMonitorPort = OW::Config::EffectiveKmboxMonitorPort();
+        if (OW::Config::kmboxMonitorPort != 5513)
+            return Fail("manual KMBox monitor port equal to command was not repaired");
+
+        OW::Config::kmboxPort = 5512;
+        OW::Config::kmboxMonitorPort = 0;
+        OW::Config::kmboxMonitorPortManualOverride = true;
+        if (OW::Config::EffectiveKmboxMonitorPort() != 5513)
+            return Fail("effective KMBox monitor port did not reject invalid manual override");
+        OW::Config::kmboxMonitorPort = OW::Config::EffectiveKmboxMonitorPort();
+        if (OW::Config::kmboxMonitorPort != 5513)
+            return Fail("invalid manual KMBox monitor port was not repaired");
+
+        OW::Config::kmboxPort = 65535;
+        OW::Config::kmboxMonitorPort = 5001;
+        OW::Config::kmboxMonitorPortManualOverride = false;
+        OW::Config::kmboxMonitorPort = OW::Config::EffectiveKmboxMonitorPort();
+        if (OW::Config::kmboxMonitorPort != 65534 ||
+            OW::Config::EffectiveKmboxMonitorPort() != 65534)
+            return Fail("auto KMBox monitor port did not handle 65535 command port");
 
         return EXIT_SUCCESS;
     }
