@@ -2481,6 +2481,7 @@ KMBox counts-per-radian 需要重标定：
 
 CN/NE 或 world/BZ offset 语义变化：
   到 D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool 用 CnOffsetProbe 做现场读数，再把 VERIFIED/CANDIDATE/UNRESOLVED 写清楚。
+  rotation 是必查项：RotationBase、RotationBase_Sub1/Sub2、published Rot/yaw_forward 和 skeleton 朝向必须用 known real hero 样本验证，training bot 不能单独作为通过证据。
 
 只改 Motion.hpp、FOV、tracking deadzone、lead prediction、aim preset、hero geometry 或 hero skill 默认配置：
   跑 ctest，至少让对应的 MotionEstimatorSelfTest / FovConfigSelfTest /
@@ -2701,9 +2702,10 @@ skill.aim_tick 与 lead.solve 日志
 1. include/Game/Offsets.hpp 改 RuntimeOffsetProfile 或常量
 2. 如果是 CN/NE，明确哪些是 live-verified，哪些仍是 unresolved
 3. include/Game/Decrypt.hpp / Overwatch.hpp / Entity.hpp / Target.hpp 查实际消费者
-4. D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool\src\CnOffsetProbe.cpp 同步或确认探针仍能验证该字段
-5. 日志里确认 Offset profile selected: world/bz 或 cn/ne
-6. 不要把 diagnostic-only / OLD 注释值写成 live 使用值
+4. RotationBase / RotationBase_Sub1/Sub2 / published Rot / yaw_forward 必须单独验证；骨骼或 hitbox 依赖 rotation 时，known real hero 朝向样本必不可少
+5. D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool\src\CnOffsetProbe.cpp 同步或确认探针仍能验证该字段
+6. 日志里确认 Offset profile selected: world/bz 或 cn/ne
+7. 不要把 diagnostic-only / OLD 注释值写成 live 使用值
 ```
 
 offset 文档必须区分：
@@ -3111,6 +3113,7 @@ MockHardwareSelfTest
 是否 live-verified？
 是否有 CnOffsetProbe 证据？
 哪些 runtime consumer 会读它？
+rotation/yaw/skeleton 是否有 known real hero 现场样本？
 如果 unresolved，代码是否有 fallback？
 ```
 

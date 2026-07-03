@@ -1485,6 +1485,7 @@ inline void entity_thread() {
         bool skill1act = false;
         bool skill2act = false;
         float ultimate = 0.0f;
+        bool ultimateValid = false;
         float skillcd1 = 0.0f;
         float skillcd2 = 0.0f;
         bool reloading = false;
@@ -1752,6 +1753,25 @@ inline void entity_thread() {
             rosterPair.second.hotReadRetainedThisCycle = false;
         }
     };
+
+    auto applyCachedUltimateToEntity =
+        [&](OW::c_entity& entity, const ComponentBaseCache& cache) {
+            if (cache.ultimateValid && std::isfinite(cache.ultimate)) {
+                entity.ultimate = cache.ultimate;
+                return;
+            }
+
+            if (entity.roster_key == 0)
+                return;
+
+            const auto rosterIt = entityRoster.find(entity.roster_key);
+            if (rosterIt == entityRoster.end())
+                return;
+
+            const OW::c_entity& previous = rosterIt->second.entity;
+            if (previous.HeroID == entity.HeroID && std::isfinite(previous.ultimate))
+                entity.ultimate = previous.ultimate;
+        };
 
     auto recordStateFromRoster = [](OW::EntityRosterState state) {
         switch (state) {
@@ -4524,11 +4544,6 @@ inline void entity_thread() {
             ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.skillMs);
             if (!refreshSkillStatus) {
                 pipelineStats.skillSkippedNotDueCount++;
-                entity.skill1act = slowCache.skill1act;
-                entity.skill2act = slowCache.skill2act;
-                entity.ultimate = slowCache.ultimate;
-                entity.skillcd1 = slowCache.skillcd1;
-                entity.skillcd2 = slowCache.skillcd2;
             } else if (entity.SkillBase) {
                 pipelineStats.skillDueCount++;
                 dmaFieldWindow.skillRefresh++;
@@ -4547,9 +4562,15 @@ inline void entity_thread() {
                         OW::IsSkillActive(entity.SkillBase + 0x40, 0, 0x28E9);
                     break;
                 default:
-                    slowCache.ultimate =
-                        OW::readult(entity.SkillBase + 0x40, 0, 0x1e32);
+                {
+                    float ultimate = 0.0f;
+                    if (OW::TryReadUlt(entity.SkillBase + 0x40, 0, 0x1e32, ultimate) &&
+                        std::isfinite(ultimate)) {
+                        slowCache.ultimate = ultimate;
+                        slowCache.ultimateValid = true;
+                    }
                     break;
+                }
                 }
                 ++slowCache.skillRefreshCursor;
                 pipelineStats.skillReadCount++;
@@ -4557,13 +4578,15 @@ inline void entity_thread() {
                     slowCache.skillUpdateTick = slowNow;
                     slowCache.skillValid = true;
                 }
-                entity.skill1act = slowCache.skill1act;
-                entity.skill2act = slowCache.skill2act;
-                entity.ultimate = slowCache.ultimate;
                 if (detailedProcessLog && processStats.boneCandidates > 0) {
                     Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu skill_done.", i);
                 }
             }
+            entity.skill1act = slowCache.skill1act;
+            entity.skill2act = slowCache.skill2act;
+            applyCachedUltimateToEntity(entity, slowCache);
+            entity.skillcd1 = slowCache.skillcd1;
+            entity.skillcd2 = slowCache.skillcd2;
             }
 
             // Sombra stealth affects the effective visibility state, so keep it
@@ -4667,10 +4690,17 @@ inline void entity_thread() {
                             slowCache.skillUpdateTick = slowNow;
                             break;
                         default:
-                            slowCache.ultimate = OW::readult(entity.SkillBase + 0x40, 0, 0x1e32);
+                        {
+                            float ultimate = 0.0f;
+                            if (OW::TryReadUlt(entity.SkillBase + 0x40, 0, 0x1e32, ultimate) &&
+                                std::isfinite(ultimate)) {
+                                slowCache.ultimate = ultimate;
+                                slowCache.ultimateValid = true;
+                            }
                             slowCache.skillValid = true;
                             slowCache.skillUpdateTick = slowNow;
                             break;
+                        }
                         }
                         ++slowCache.localSkillRefreshCursor;
                         pipelineStats.skillReadCount++;
@@ -4679,7 +4709,7 @@ inline void entity_thread() {
                     }
                     entity.skill1act = slowCache.skill1act;
                     entity.skill2act = slowCache.skill2act;
-                    entity.ultimate = slowCache.ultimate;
+                    applyCachedUltimateToEntity(entity, slowCache);
                     if (detailedProcessLog) {
                         Diagnostics::Info("[PIPELINE] Stage 4 progress idx=%zu local_select skillcd1_start skill_base=0x%llX hero=%s.",
                             i,

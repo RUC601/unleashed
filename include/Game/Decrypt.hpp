@@ -3052,13 +3052,19 @@ namespace OW {
         return (ret != 0) ? ret : 1.f;
     }
 
-    inline float readult(uint64_t base, uint16_t skillIdx, uint16_t skillIdx2) {
+    inline bool TryReadUlt(uint64_t base, uint16_t skillIdx, uint16_t skillIdx2, float& ultimate) {
         __m128 skillStruct{};
         uint16_t skillId[15] = { skillIdx, skillIdx2 };
         skillStruct.m128_u64[1] = base + 0xD0;
         uint64_t skill = FnSkillStruct(&skillStruct, skillId);
-        if (!skill) return false;
-        return SDK->RPM<float>(skill + 0x60);
+        if (!skill)
+            return false;
+        return SDK->read_range(skill + 0x60, &ultimate, sizeof(ultimate));
+    }
+
+    inline float readult(uint64_t base, uint16_t skillIdx, uint16_t skillIdx2) {
+        float ultimate = 0.0f;
+        return TryReadUlt(base, skillIdx, skillIdx2, ultimate) ? ultimate : 0.0f;
     }
 
     inline int readammo(uint64_t base, uint16_t skillIdx, uint16_t skillIdx2) {
