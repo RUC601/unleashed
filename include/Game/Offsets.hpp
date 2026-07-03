@@ -185,7 +185,7 @@ namespace OW {
         static constexpr auto Actor_PositionOffsetFromHeroId = 0x1C;
         static constexpr auto HeroId_HighWord = 0x02E0;
         static constexpr auto RotationBase_Sub1 = 0x888;
-        static constexpr auto RotationBase_Sub2 = 0x90C;
+        static constexpr auto RotationBase_Sub2 = 0x8EC;
         static constexpr auto Vis_DataOffsetInComp = 0x98;
         static constexpr auto Vis_OccludedBitMask = 0x800;
         static constexpr auto Team_FlagsOffset = 0x58;
