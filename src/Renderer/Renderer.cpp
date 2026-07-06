@@ -190,6 +190,20 @@ namespace Render {
         d->AddCircle(ToCanvas(center), radius * ScaleUniform(), color.ToImU32(), segments, thickness * ScaleUniform());
     }
 
+    void DrawEllipse(const Vector2& center, const Vector2& radius, const Color& color,
+                     float rotation, int segments, float thickness) {
+        ImDrawList* d = DL();
+        if (!d) return;
+        d->AddEllipse(
+            ToCanvas(center),
+            ImVec2(radius.X * ScaleX(), radius.Y * ScaleY()),
+            color.ToImU32(),
+            rotation,
+            segments,
+            thickness * ScaleUniform());
+        Diagnostics::RecordRenderPrimitive(Diagnostics::RenderPrimitiveKind::Line);
+    }
+
     // ---- DrawFilledCircle ----
 
     void DrawFilledCircle(const Vector2& center, float radius, const Color& color, int segments) {

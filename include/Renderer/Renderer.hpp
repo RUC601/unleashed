@@ -69,6 +69,9 @@ namespace Render {
 
     void DrawCircle(const Vector2& center, float radius, const Color& color, int segments = 32, float thickness = 1.0f);
 
+    void DrawEllipse(const Vector2& center, const Vector2& radius, const Color& color,
+                     float rotation = 0.0f, int segments = 48, float thickness = 1.0f);
+
     void DrawFilledCircle(const Vector2& center, float radius, const Color& color, int segments = 32);
 
     void DrawStrokeText(const ImVec2& pos, ImU32 color, const char* text, float fontSize = 15.0f);

@@ -97,5 +97,13 @@ int main()
         cassidyRender[17] != OW::Plexies20260609::kUnusedRenderSkeletonBone)
         return Fail();
 
+    if (OW::Plexies20260609::HitboxBoneIdForRenderSlot(0) != OW::BONE_HEAD ||
+        OW::Plexies20260609::HitboxBoneIdForRenderSlot(3) != OW::BONE_PELVIS ||
+        OW::Plexies20260609::HitboxBoneIdForRenderSlot(12) != OW::BONE_L_HAND ||
+        OW::Plexies20260609::HitboxBoneIdForRenderSlot(16) !=
+            OW::Plexies20260609::kUnusedRenderSkeletonBone) {
+        return Fail();
+    }
+
     return EXIT_SUCCESS;
 }

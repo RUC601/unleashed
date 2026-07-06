@@ -6433,114 +6433,133 @@ namespace OverlayRenderDetail {
             draw(link.first, link.second);
     }
 
-    inline bool TryProjectHitboxCircle(const OW::Matrix& view,
-                                       const Vector3& center,
-                                       float radiusWorld,
-                                       Vector2& centerScreen,
-                                       float& radiusScreen) {
-        radiusScreen = 0.0f;
-        if (radiusWorld <= 0.0f || !TryProjectPoint(center, centerScreen, &view))
-            return false;
+    struct BoneHitboxEllipse {
+        Vector2 center{};
+        Vector2 radius{};
+    };
 
-        const Vector3 radiusSamples[] = {
-            Vector3(center.X + radiusWorld, center.Y, center.Z),
-            Vector3(center.X, center.Y + radiusWorld, center.Z),
-            Vector3(center.X, center.Y, center.Z + radiusWorld),
-        };
-
-        for (const Vector3& sample : radiusSamples) {
-            Vector2 projected{};
-            if (!TryProjectPoint(sample, projected, &view))
+    inline bool TryAccumulateProjectedRadius(const OW::Matrix& view,
+                                             const Vector3& centerWorld,
+                                             const Vector3& axis,
+                                             float radiusWorld,
+                                             const Vector2& centerScreen,
+                                             float& radiusX,
+                                             float& radiusY) {
+        bool accepted = false;
+        const Vector2 windowSize(OW::WX, OW::WY);
+        for (float sign : { -1.0f, 1.0f }) {
+            Vector2 point{};
+            const Vector3 worldPoint = centerWorld + axis * (radiusWorld * sign);
+            if (!view.WorldToScreen(worldPoint, &point, windowSize) ||
+                !IsReasonableProjectedPoint(point)) {
                 continue;
-            const float screenRadius = centerScreen.Distance(projected);
-            if (std::isfinite(screenRadius))
-                radiusScreen = (std::max)(radiusScreen, screenRadius);
+            }
+            radiusX = (std::max)(radiusX, std::fabs(point.X - centerScreen.X));
+            radiusY = (std::max)(radiusY, std::fabs(point.Y - centerScreen.Y));
+            accepted = true;
         }
-
-        if (radiusScreen <= 0.0f || !std::isfinite(radiusScreen))
-            return false;
-
-        radiusScreen = std::clamp(radiusScreen, 2.0f, 80.0f);
-        return true;
+        return accepted;
     }
 
-    inline bool DrawCoreHitboxCircle(const OW::c_entity& entity,
-                                     const OW::Matrix& view,
-                                     int boneId,
-                                     const Vector3& rawPoint,
-                                     const Render::Color& color,
-                                     float opacity) {
-        if (!IsFiniteVector(rawPoint) || !IsNonZeroVector(rawPoint))
+    inline bool TryBuildBoneHitboxEllipse(const OW::c_entity& entity,
+                                          const OW::Matrix& view,
+                                          size_t renderSlot,
+                                          const Vector3& bonePoint,
+                                          BoneHitboxEllipse& ellipse) {
+        const int hitboxBoneId = OW::Plexies20260609::HitboxBoneIdForRenderSlot(renderSlot);
+        if (hitboxBoneId < 0)
             return false;
 
-        const Vector3 center = OW::ResolveBoneHitboxCenter(entity, boneId, rawPoint);
-        const float radiusWorld = OW::ResolveBoneHitboxRadius(
+        const float radiusWorld = OW::ResolveEffectiveHitWindow(
             entity.HeroID,
-            boneId,
+            hitboxBoneId,
+            nullptr,
+            OW::Config::hitbox,
             OW::Config::kLegacyDefaultHitboxRadius);
-        Vector2 centerScreen{};
-        float radiusScreen = 0.0f;
-        if (!TryProjectHitboxCircle(view, center, radiusWorld, centerScreen, radiusScreen))
+        if (radiusWorld <= 0.0f || !std::isfinite(radiusWorld))
             return false;
 
-        const Render::Color hitboxColor(
-            color.R,
-            color.G,
-            color.B,
-            ToByte(opacity * 0.70f));
-        Render::DrawCircle(centerScreen, radiusScreen, hitboxColor, 32, 1.0f);
+        const Vector3 centerWorld = OW::ResolveBoneHitboxCenter(entity, hitboxBoneId, bonePoint);
+        if (!IsFiniteVector(centerWorld) || !IsNonZeroVector(centerWorld))
+            return false;
+
+        Vector2 centerScreen{};
+        if (!view.WorldToScreen(centerWorld, &centerScreen, Vector2(OW::WX, OW::WY)) ||
+            !IsReasonableProjectedPoint(centerScreen)) {
+            return false;
+        }
+
+        float radiusX = 0.0f;
+        float radiusY = 0.0f;
+        bool accepted = false;
+        accepted |= TryAccumulateProjectedRadius(
+            view, centerWorld, Vector3(1.0f, 0.0f, 0.0f), radiusWorld, centerScreen, radiusX, radiusY);
+        accepted |= TryAccumulateProjectedRadius(
+            view, centerWorld, Vector3(0.0f, 1.0f, 0.0f), radiusWorld, centerScreen, radiusX, radiusY);
+        accepted |= TryAccumulateProjectedRadius(
+            view, centerWorld, Vector3(0.0f, 0.0f, 1.0f), radiusWorld, centerScreen, radiusX, radiusY);
+        if (!accepted)
+            return false;
+
+        radiusX = std::clamp(radiusX, 1.5f, OW::WX * 0.25f);
+        radiusY = std::clamp(radiusY, 1.5f, OW::WY * 0.25f);
+        if (!std::isfinite(radiusX) || !std::isfinite(radiusY))
+            return false;
+
+        ellipse.center = centerScreen;
+        ellipse.radius = Vector2(radiusX, radiusY);
         return true;
     }
 
-    inline int HitboxBoneIdForSkeletonSlot(size_t slotIndex) {
-        using Slot = OW::Plexies20260609::SkeletonSlot;
-        switch (static_cast<Slot>(slotIndex)) {
-        case Slot::Forehead: return BONE_HEAD;
-        case Slot::Neck: return BONE_NECK;
-        case Slot::Chest: return BONE_CHEST;
-        case Slot::Pelvis: return BONE_PELVIS;
-        case Slot::UpperArmLeft: return BONE_L_SHOULDER;
-        case Slot::LowerArmLeft: return BONE_L_ELBOW;
-        case Slot::HandLeft: return BONE_L_HAND;
-        case Slot::UpperArmRight: return BONE_R_SHOULDER;
-        case Slot::LowerArmRight: return BONE_R_ELBOW;
-        case Slot::HandRight: return BONE_R_HAND;
-        case Slot::UpperLegLeft: return BONE_L_KNEE;
-        case Slot::LowerLegLeft: return BONE_L_SHANK;
-        case Slot::FootLeft: return BONE_L_ANKLE;
-        case Slot::UpperLegRight: return BONE_R_KNEE;
-        case Slot::LowerLegRight: return BONE_R_SHANK;
-        case Slot::FootRight: return BONE_R_ANKLE;
-        case Slot::Count:
-        default:
-            return -1;
-        }
+    inline float BoneEllipseJointRadius(const BoneHitboxEllipse& ellipse) {
+        return (std::max)(ellipse.radius.X, ellipse.radius.Y);
     }
 
-    inline Vector3 HitboxPointForSkeletonSlot(const OW::c_entity& entity,
-                                              size_t slotIndex,
-                                              int boneId) {
-        if (boneId == BONE_HEAD && IsFiniteVector(entity.head_pos) && IsNonZeroVector(entity.head_pos))
-            return entity.head_pos;
-        if (boneId == BONE_NECK && IsFiniteVector(entity.neck_pos) && IsNonZeroVector(entity.neck_pos))
-            return entity.neck_pos;
-        if (boneId == BONE_CHEST && IsFiniteVector(entity.chest_pos) && IsNonZeroVector(entity.chest_pos))
-            return entity.chest_pos;
+    inline void DrawBoneSegmentCapsuleWireframe(const BoneHitboxEllipse& from,
+                                                const BoneHitboxEllipse& to,
+                                                const Render::Color& color,
+                                                float thickness) {
+        if (!IsValidScreenPoint(from.center) || !IsValidScreenPoint(to.center))
+            return;
 
-        if (slotIndex >= entity.skeleton_bones.size() || slotIndex >= entity.skeleton_bone_valid.size())
-            return Vector3{};
-        return entity.skeleton_bone_valid[slotIndex] ? entity.skeleton_bones[slotIndex] : Vector3{};
+        const Vector2 delta = to.center - from.center;
+        const float length = delta.Length();
+        if (length <= 2.0f || !std::isfinite(length))
+            return;
+
+        const float maxCapsuleRadius = (std::max)(2.0f, length * 0.45f);
+        const float fromRadius = std::clamp(BoneEllipseJointRadius(from), 1.5f, maxCapsuleRadius);
+        const float toRadius = std::clamp(BoneEllipseJointRadius(to), 1.5f, maxCapsuleRadius);
+        const Vector2 direction = delta / length;
+        const Vector2 normal(-direction.Y, direction.X);
+        const Vector2 fromSideA = from.center + normal * fromRadius;
+        const Vector2 fromSideB = from.center - normal * fromRadius;
+        const Vector2 toSideA = to.center + normal * toRadius;
+        const Vector2 toSideB = to.center - normal * toRadius;
+
+        const float railThickness = (std::max)(1.0f, thickness * 0.75f);
+        Render::DrawLine(fromSideA, toSideA, color, railThickness);
+        Render::DrawLine(fromSideB, toSideB, color, railThickness);
     }
 
-    inline float HitboxOpacityForSkeletonSlot(size_t slotIndex) {
-        using Slot = OW::Plexies20260609::SkeletonSlot;
-        switch (static_cast<Slot>(slotIndex)) {
-        case Slot::Forehead: return 1.0f;
-        case Slot::Neck: return 0.86f;
-        case Slot::Chest: return 0.78f;
-        case Slot::Pelvis: return 0.70f;
-        default: return 0.58f;
-        }
+    inline bool TryDrawBoneCapsuleWireframe(const BoneHitboxEllipse& from,
+                                            const BoneHitboxEllipse& to,
+                                            const Render::Color& color,
+                                            float thickness,
+                                            bool& usedFrom,
+                                            bool& usedTo) {
+        if (!IsValidScreenPoint(from.center) || !IsValidScreenPoint(to.center))
+            return false;
+
+        const Vector2 delta = to.center - from.center;
+        const float length = delta.Length();
+        if (length <= 2.0f || !std::isfinite(length))
+            return false;
+
+        DrawBoneSegmentCapsuleWireframe(from, to, color, thickness);
+        usedFrom = true;
+        usedTo = true;
+        return true;
     }
 
     inline bool DrawHitboxes(const OW::c_entity& entity,
@@ -6549,6 +6568,9 @@ namespace OverlayRenderDetail {
                              float opacity) {
         bool drewAny = false;
         const std::array<int, 18> renderBoneIds = entity.GetRenderSkel();
+        BoneHitboxEllipse ellipses[18]{};
+        bool ellipseReady[18]{};
+        bool capsuleJointUsed[18]{};
         constexpr size_t kRenderableSlots = OW::Plexies20260609::kSkeletonSlotCount;
 
         for (size_t slotIndex = 0; slotIndex < kRenderableSlots; ++slotIndex) {
@@ -6557,19 +6579,49 @@ namespace OverlayRenderDetail {
                 continue;
             }
 
-            const int hitboxBoneId = HitboxBoneIdForSkeletonSlot(slotIndex);
-            if (!OW::ResolveBoneHitboxSpec(entity.HeroID, hitboxBoneId))
+            if (slotIndex >= entity.skeleton_bones.size() || !entity.skeleton_bone_valid[slotIndex])
                 continue;
-
-            const Vector3 point = HitboxPointForSkeletonSlot(entity, slotIndex, hitboxBoneId);
-            drewAny |= DrawCoreHitboxCircle(
-                entity,
-                view,
-                hitboxBoneId,
-                point,
-                color,
-                opacity * HitboxOpacityForSkeletonSlot(slotIndex));
+            ellipseReady[slotIndex] = TryBuildBoneHitboxEllipse(
+                entity, view, slotIndex, entity.skeleton_bones[slotIndex], ellipses[slotIndex]);
         }
+
+        const Render::Color hitboxColor(color.R, color.G, color.B, ToByte(opacity * 0.70f));
+        constexpr float capsuleThickness = 1.0f;
+        static constexpr std::pair<int, int> kBoneConnections[] = {
+            {0, 1}, {1, 2}, {2, 3},
+            {1, 4}, {4, 6}, {6, 12},
+            {1, 5}, {5, 7}, {7, 13},
+            {3, 8}, {8, 10}, {10, 14},
+            {3, 9}, {9, 11}, {11, 15},
+        };
+
+        for (const auto& link : kBoneConnections) {
+            const int from = link.first;
+            const int to = link.second;
+            if (ellipseReady[from] && ellipseReady[to]) {
+                drewAny |= TryDrawBoneCapsuleWireframe(
+                    ellipses[from],
+                    ellipses[to],
+                    hitboxColor,
+                    capsuleThickness,
+                    capsuleJointUsed[from],
+                    capsuleJointUsed[to]);
+            }
+        }
+
+        for (size_t slotIndex = 0; slotIndex < kRenderableSlots; ++slotIndex) {
+            if (!capsuleJointUsed[slotIndex])
+                continue;
+            Render::DrawEllipse(
+                ellipses[slotIndex].center,
+                ellipses[slotIndex].radius,
+                hitboxColor,
+                0.0f,
+                48,
+                capsuleThickness);
+            drewAny = true;
+        }
+
         return drewAny;
     }
 

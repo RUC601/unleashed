@@ -35,6 +35,34 @@ namespace OW::Plexies20260609 {
 
     inline constexpr int kUnusedRenderSkeletonBone = -1;
 
+    inline constexpr RenderSkeletonMap kRenderSkeletonHitboxBones{
+        BONE_HEAD,
+        BONE_NECK,
+        BONE_CHEST,
+        BONE_PELVIS,
+        BONE_L_SHOULDER,
+        BONE_R_SHOULDER,
+        BONE_L_ELBOW,
+        BONE_R_ELBOW,
+        BONE_L_KNEE,
+        BONE_R_KNEE,
+        BONE_L_SHANK,
+        BONE_R_SHANK,
+        BONE_L_HAND,
+        BONE_R_HAND,
+        BONE_L_ANKLE,
+        BONE_R_ANKLE,
+        kUnusedRenderSkeletonBone,
+        kUnusedRenderSkeletonBone,
+    };
+
+    inline constexpr int HitboxBoneIdForRenderSlot(std::size_t slot)
+    {
+        return slot < kRenderSkeletonHitboxBones.size()
+            ? kRenderSkeletonHitboxBones[slot]
+            : kUnusedRenderSkeletonBone;
+    }
+
     inline constexpr SkeletonMap kDefaultSkeletonMap{
         17, 16, 15, 2, 13, 14, 28, 54,
         55, 58, 85, 89, 90, 95, 99, 100,
