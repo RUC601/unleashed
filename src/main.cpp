@@ -1051,14 +1051,20 @@ void RenderCallback()
 
     auto frameEntitySnapshot = [&]() -> const std::vector<OW::c_entity>& {
         if (!frameEntitiesReady) {
-            frameEntities = OW::TargetingDetail::SnapshotEntities();
+            if (OW::PresentUseForRenderEnabled())
+                frameEntities = OW::TargetingDetail::SnapshotPresentRenderEntities();
+            if (frameEntities.empty())
+                frameEntities = OW::TargetingDetail::SnapshotEntities();
             frameEntitiesReady = true;
         }
         return frameEntities;
     };
     auto frameDynamicEntitySnapshot = [&]() -> const std::vector<OW::hpanddy>& {
         if (!frameDynamicEntitiesReady) {
-            frameDynamicEntities = OW::TargetingDetail::SnapshotDynamicEntities();
+            if (OW::PresentUseForRenderEnabled())
+                frameDynamicEntities = OW::TargetingDetail::SnapshotPresentRenderDynamicEntities();
+            if (frameDynamicEntities.empty())
+                frameDynamicEntities = OW::TargetingDetail::SnapshotDynamicEntities();
             frameDynamicEntitiesReady = true;
         }
         return frameDynamicEntities;
@@ -1417,6 +1423,11 @@ static void StartBackgroundThreads()
 
     std::thread(entity_thread).detach();
     std::printf("  [+] entity_thread\n");
+
+    if (OW::PresentInterpolationEnabled()) {
+        std::thread(present_interp_thread).detach();
+        std::printf("  [+] present_interp_thread\n");
+    }
 
     std::thread(aimbot_thread).detach();
     // TEST: RunKmboxMoveTest();

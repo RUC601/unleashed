@@ -1,4 +1,5 @@
 #include "Utils/Config.hpp"
+#include "Utils/InputLabels.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -32,6 +33,33 @@ void ResetAimPresetState()
     aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4, 4 };
     aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800, 800 };
     aimConstantAngularSpeedDeg = 30.0f;
+}
+
+bool TestActivationKeySelectionIsExact()
+{
+    using namespace OW::Labels;
+
+    constexpr int kMouse4 = 2;
+    constexpr int kMouse5 = 3;
+
+    int matchedKey = -1;
+    auto onlyMouse4Down = [](int vk) {
+        return vk == VK_XBUTTON1;
+    };
+    if (!TryMatchAimActivationKey(kMouse4, onlyMouse4Down, &matchedKey) || matchedKey != kMouse4)
+        return false;
+    if (TryMatchAimActivationKey(kMouse5, onlyMouse4Down, &matchedKey))
+        return false;
+
+    auto onlyMouse5Down = [](int vk) {
+        return vk == VK_XBUTTON2;
+    };
+    if (!TryMatchAimActivationKey(kMouse5, onlyMouse5Down, &matchedKey) || matchedKey != kMouse5)
+        return false;
+    if (TryMatchAimActivationKey(kMouse4, onlyMouse5Down, &matchedKey))
+        return false;
+
+    return true;
 }
 
 } // namespace
@@ -100,6 +128,8 @@ int main()
     if (IsFlickBehavior(kAimBehaviorMagneticTrigger))
         return Fail();
     if (!AimBehaviorMoveSplitEnabled(kAimBehaviorMagneticTrigger))
+        return Fail();
+    if (!TestActivationKeySelectionIsExact())
         return Fail();
 
     DynamicFovPreset dynamic{};

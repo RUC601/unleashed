@@ -148,8 +148,8 @@ Scenario/TestServer：
   MockHardwareSelfTest 已把 monitor port 推荐值纳入自检。
 
 2026-07-01 bug 修复注意点：
-  鼠标侧键 preset 选择不是全局 aim_key 替换。Aim slot selection 现在记录 activationKeyOverride 和 usedSideButtonAlias；排查 Mouse4/Mouse5 时先看 unleashed_aim_diag.log 里的 hero_preset.runtime activeKey/sideAlias。
-  侧键别名只作为 keyed selection 的第二轮匹配，不应让 fallback slot 无条件抢占当前按下的侧键 slot。
+  鼠标侧键 preset 选择不是全局 aim_key 替换。Aim slot selection 记录 activationKeyOverride 和 usedSideButtonAlias；DMA KeyState 路径下 Mouse4/Mouse5 必须精确匹配，排查时先看 unleashed_aim_diag.log 里的 hero_preset.runtime activeKey/sideAlias 是否意外变成非零。
+  历史侧键别名第二轮匹配已移除，不能让 Mouse4 触发 Mouse5 slot，反向也一样。
   charging / flick / fire 链路遇到 activation key 与 fire key 同键时，不能为了释放蓄力而 release 正被按住的侧键；先查 ShouldSkipChargeReleaseForHeldActivation(...)。
   现场症状如果是 trackingOK 但 flick 不动、只有 autoshoot，优先沿 TrySelectRuntimeAimPreset -> RunAimbotTick/RunTracking/RunFlick -> FireConfiguredAction 查 activeKey 和 fire release，而不是先改 triggerbot。
   CN/NE 队伍判断不能用低字节 relation code 做敌我比较。0x...41 和 0x...43 这类值可能同队，只能用 Team_LegacyMask 做 TeamComparisonKey；TeamRawComparisonKey 只适合诊断。

@@ -120,6 +120,13 @@ $envGates = [ordered]@{
     UN_DMA_ENTITY_SOFT_REFRESH_GAP_MS = Get-EnvGateValue 'UN_DMA_ENTITY_SOFT_REFRESH_GAP_MS'
     UN_DMA_ENTITY_HARD_RESCAN_GAP_MS = Get-EnvGateValue 'UN_DMA_ENTITY_HARD_RESCAN_GAP_MS'
     UN_DMA_ENTITY_SCAN_MISS_GRACE_COUNT = Get-EnvGateValue 'UN_DMA_ENTITY_SCAN_MISS_GRACE_COUNT'
+    UN_DMA_PRESENT_INTERP = Get-EnvGateValue 'UN_DMA_PRESENT_INTERP'
+    UN_DMA_ENTITY_PRESENT_HZ = Get-EnvGateValue 'UN_DMA_ENTITY_PRESENT_HZ'
+    UN_DMA_ENTITY_PRESENT_DELAY_MS = Get-EnvGateValue 'UN_DMA_ENTITY_PRESENT_DELAY_MS'
+    UN_DMA_ENTITY_PRESENT_RENDER_DELAY_MS = Get-EnvGateValue 'UN_DMA_ENTITY_PRESENT_RENDER_DELAY_MS'
+    UN_DMA_PRESENT_MAX_EXTRAP_MS = Get-EnvGateValue 'UN_DMA_PRESENT_MAX_EXTRAP_MS'
+    UN_DMA_RENDER_PRESENT_MICRO_EXTRAP_MS = Get-EnvGateValue 'UN_DMA_RENDER_PRESENT_MICRO_EXTRAP_MS'
+    UN_DMA_PRESENT_USE_FOR_RENDER = Get-EnvGateValue 'UN_DMA_PRESENT_USE_FOR_RENDER'
     UN_DMA_SKILL_REFRESH_BUDGET = Get-EnvGateValue 'UN_DMA_SKILL_REFRESH_BUDGET'
     UN_DMA_TEAM_NAME_REFRESH_BUDGET = Get-EnvGateValue 'UN_DMA_TEAM_NAME_REFRESH_BUDGET'
     UN_DMA_SKELETON_REFRESH_BUDGET = Get-EnvGateValue 'UN_DMA_SKELETON_REFRESH_BUDGET'
@@ -148,6 +155,12 @@ $preflight = [ordered]@{
             viewmatrix_poll_sleep_ms = As-Int64OrZero $rd.viewmatrix_poll_sleep_ms
             viewmatrix_scan_backoff_ms = As-Int64OrZero $rd.viewmatrix_scan_backoff_ms
             viewmatrix_scan_due_guard_ms = As-Int64OrZero $rd.viewmatrix_scan_due_guard_ms
+            present_interp_enabled = if ($null -ne $rd.present_interp_enabled) { [bool]$rd.present_interp_enabled } else { $null }
+            present_for_render_enabled = if ($null -ne $rd.present_for_render_enabled) { [bool]$rd.present_for_render_enabled } else { $null }
+            present_for_aim_enabled = if ($null -ne $rd.present_for_aim_enabled) { [bool]$rd.present_for_aim_enabled } else { $null }
+            entity_present_delay_ms = As-Int64OrZero $rd.entity_present_delay_ms
+            entity_render_present_delay_ms = As-Int64OrZero $rd.entity_render_present_delay_ms
+            render_present_micro_extrap_ms = As-Int64OrZero $rd.render_present_micro_extrap_ms
             scan_cold_topology_enabled = if ($rPipeline -and $rPipeline.scan) { [bool]$rPipeline.scan.scan_cold_topology_enabled } else { $null }
             light_scan_enabled = if ($rScanDetail) { [bool]$rScanDetail.light_scan_enabled } else { $null }
             cn_ne_map_candidate_cache_enabled = if ($rCounters) { [bool]$rCounters.cn_ne_map_candidate_cache_enabled } else { $null }
@@ -235,6 +248,13 @@ if ($preflight.runtime_gates) {
         $preflight.runtime_gates.entity_soft_refresh_gap_ms_env,
         $preflight.runtime_gates.entity_hard_rescan_gap_ms_env,
         $preflight.runtime_gates.entity_scan_miss_grace_count_env)
+    Write-Host ("Present gates: interp={0} render={1} aim={2} entity_delay={3}ms render_delay={4}ms micro={5}ms" -f `
+        $preflight.runtime_gates.present_interp_enabled,
+        $preflight.runtime_gates.present_for_render_enabled,
+        $preflight.runtime_gates.present_for_aim_enabled,
+        $preflight.runtime_gates.entity_present_delay_ms,
+        $preflight.runtime_gates.entity_render_present_delay_ms,
+        $preflight.runtime_gates.render_present_micro_extrap_ms)
 }
 
 while ((Get-Date) -lt $deadline) {
@@ -280,6 +300,27 @@ while ((Get-Date) -lt $deadline) {
             entity_process_hz = As-DoubleOrNull $d.entity_process_hz
             entity_scan_hz = As-DoubleOrNull $d.entity_scan_hz
             entity_publish_hz = As-DoubleOrNull $d.entity_publish_hz
+            entity_raw_publish_hz = As-DoubleOrNull $d.entity_raw_publish_hz
+            entity_present_hz = As-DoubleOrNull $d.entity_present_hz
+            entity_present_source_raw = As-Int64OrZero $d.entity_present_source_counts.raw
+            entity_present_source_interp = As-Int64OrZero $d.entity_present_source_counts.interp
+            entity_present_source_extrap = As-Int64OrZero $d.entity_present_source_counts.extrap
+            entity_present_source_hold = As-Int64OrZero $d.entity_present_source_counts.hold
+            entity_present_prediction_ms_avg = As-DoubleOrNull $d.entity_present_prediction_ms_avg
+            entity_present_prediction_ms_max = As-DoubleOrNull $d.entity_present_prediction_ms_max
+            entity_present_delay_ms = As-Int64OrZero $d.entity_present_delay_ms
+            entity_render_present_hz = As-DoubleOrNull $d.entity_render_present_hz
+            entity_render_present_source_raw = As-Int64OrZero $d.entity_render_present_source_counts.raw
+            entity_render_present_source_interp = As-Int64OrZero $d.entity_render_present_source_counts.interp
+            entity_render_present_source_extrap = As-Int64OrZero $d.entity_render_present_source_counts.extrap
+            entity_render_present_source_hold = As-Int64OrZero $d.entity_render_present_source_counts.hold
+            entity_render_present_prediction_ms_avg = As-DoubleOrNull $d.entity_render_present_prediction_ms_avg
+            entity_render_present_prediction_ms_max = As-DoubleOrNull $d.entity_render_present_prediction_ms_max
+            entity_render_present_delay_ms = As-Int64OrZero $d.entity_render_present_delay_ms
+            render_present_micro_extrap_ms = As-Int64OrZero $d.render_present_micro_extrap_ms
+            present_interp_enabled = if ($null -ne $d.present_interp_enabled) { [bool]$d.present_interp_enabled } else { $null }
+            present_for_render_enabled = if ($null -ne $d.present_for_render_enabled) { [bool]$d.present_for_render_enabled } else { $null }
+            present_for_aim_enabled = if ($null -ne $d.present_for_aim_enabled) { [bool]$d.present_for_aim_enabled } else { $null }
             entity_publish_age_ms = As-Int64OrZero $d.entity_publish_age_ms
             entity_publish_count = As-Int64OrZero $d.entity_publish_count
             scan_loop_hz = As-DoubleOrNull $pipeScan.scan_loop_hz
@@ -812,17 +853,24 @@ while ((Get-Date) -lt $deadline) {
         }
         $samples.Add($sample) | Out-Null
 
-        Write-Host ("{0} fps={1:n1} vm_pub={2:n1}Hz/{3}ms vm_use={4}ms ent_pub={5:n1}Hz/{6}ms entities={7} pred={8}/{9} vm={10} screen={11:n0}x{12:n0} sample=({13},{14}) render={15:n2}ms copy={16:n3}ms rt_dmatotal={17}" -f `
+        Write-Host ("{0} fps={1:n1} vm_pub={2:n1}Hz/{3}ms vm_use={4}ms ent_raw={5:n1}Hz/{6}ms ent_present={7:n1}Hz render_present={8:n1}Hz src={9}/{10}/{11}/{12} entities={13} pred={14}/{15} micro={16}ms vm={17} screen={18:n0}x{19:n0} sample=({20},{21}) render={22:n2}ms copy={23:n3}ms rt_dmatotal={24}" -f `
             (Get-Date -Format 'HH:mm:ss'),
             $sample.render_fps,
             $sample.viewmatrix_publish_hz,
             $sample.viewmatrix_publish_age_ms,
             $sample.render_viewmatrix_age_ms,
-            $sample.entity_publish_hz,
+            $sample.entity_raw_publish_hz,
             $sample.entity_publish_age_ms,
+            $sample.entity_present_hz,
+            $sample.entity_render_present_hz,
+            $sample.entity_render_present_source_raw,
+            $sample.entity_render_present_source_interp,
+            $sample.entity_render_present_source_extrap,
+            $sample.entity_render_present_source_hold,
             $sample.entity_count,
             $sample.render_prediction_applied,
             $sample.render_prediction_world_delta_fallback,
+            $sample.render_present_micro_extrap_ms,
             $sample.view_matrix_ok,
             $sample.resolved_wx,
             $sample.resolved_wy,
@@ -915,6 +963,31 @@ $summary = [ordered]@{
     entity_process_hz = Measure-SampleField $samples 'entity_process_hz'
     entity_scan_hz = Measure-SampleField $samples 'entity_scan_hz'
     entity_publish_hz = Measure-SampleField $samples 'entity_publish_hz'
+    entity_raw_publish_hz = Measure-SampleField $samples 'entity_raw_publish_hz'
+    entity_present_hz = Measure-SampleField $samples 'entity_present_hz'
+    entity_present_delay_ms = Measure-SampleField $samples 'entity_present_delay_ms'
+    entity_present_prediction_ms_avg = Measure-SampleField $samples 'entity_present_prediction_ms_avg'
+    entity_present_prediction_ms_max = Measure-SampleField $samples 'entity_present_prediction_ms_max'
+    entity_present_source_delta = [ordered]@{
+        raw = [math]::Max(0, $last.entity_present_source_raw - $first.entity_present_source_raw)
+        interp = [math]::Max(0, $last.entity_present_source_interp - $first.entity_present_source_interp)
+        extrap = [math]::Max(0, $last.entity_present_source_extrap - $first.entity_present_source_extrap)
+        hold = [math]::Max(0, $last.entity_present_source_hold - $first.entity_present_source_hold)
+    }
+    entity_render_present_hz = Measure-SampleField $samples 'entity_render_present_hz'
+    entity_render_present_delay_ms = Measure-SampleField $samples 'entity_render_present_delay_ms'
+    entity_render_present_prediction_ms_avg = Measure-SampleField $samples 'entity_render_present_prediction_ms_avg'
+    entity_render_present_prediction_ms_max = Measure-SampleField $samples 'entity_render_present_prediction_ms_max'
+    entity_render_present_source_delta = [ordered]@{
+        raw = [math]::Max(0, $last.entity_render_present_source_raw - $first.entity_render_present_source_raw)
+        interp = [math]::Max(0, $last.entity_render_present_source_interp - $first.entity_render_present_source_interp)
+        extrap = [math]::Max(0, $last.entity_render_present_source_extrap - $first.entity_render_present_source_extrap)
+        hold = [math]::Max(0, $last.entity_render_present_source_hold - $first.entity_render_present_source_hold)
+    }
+    render_present_micro_extrap_ms = Measure-SampleField $samples 'render_present_micro_extrap_ms'
+    present_interp_enabled = if ($null -ne $last.present_interp_enabled) { [bool]$last.present_interp_enabled } else { $null }
+    present_for_render_enabled = if ($null -ne $last.present_for_render_enabled) { [bool]$last.present_for_render_enabled } else { $null }
+    present_for_aim_enabled = if ($null -ne $last.present_for_aim_enabled) { [bool]$last.present_for_aim_enabled } else { $null }
     entity_publish_age_ms = Measure-SampleField $samples 'entity_publish_age_ms'
     scan_loop_hz = Measure-SampleField $samples 'scan_loop_hz'
     scan_due_hz = Measure-SampleField $samples 'scan_due_hz'

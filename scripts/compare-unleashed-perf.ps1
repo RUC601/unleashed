@@ -25,9 +25,34 @@ function MetricMax($summary, $name) {
     try { return [double]$summary.$name.max } catch { return $null }
 }
 
+function MetricAvgOr($summary, $primary, $fallback) {
+    $value = MetricAvg $summary $primary
+    if ($null -ne $value) { return $value }
+    return MetricAvg $summary $fallback
+}
+
 function NumberOrNull($value) {
     if ($null -eq $value) { return $null }
     try { return [double]$value } catch { return $null }
+}
+
+function NumberOrZero($value) {
+    if ($null -eq $value) { return 0.0 }
+    try { return [double]$value } catch { return 0.0 }
+}
+
+function SourcePercent($summary, $fieldName, $sourceName) {
+    $counts = $summary.$fieldName
+    if ($null -eq $counts) { return $null }
+
+    $total =
+        (NumberOrZero $counts.raw) +
+        (NumberOrZero $counts.interp) +
+        (NumberOrZero $counts.extrap) +
+        (NumberOrZero $counts.hold)
+    if ($total -le 0.0) { return $null }
+
+    return [math]::Round(((NumberOrZero $counts.$sourceName) / $total) * 100.0, 2)
 }
 
 function Delta($before, $after) {
@@ -59,6 +84,8 @@ function Extract-Perf($summary, $name) {
         $null
     }
 
+    $entityRawHzAvg = MetricAvgOr $summary 'entity_raw_publish_hz' 'entity_publish_hz'
+
     return [ordered]@{
         name = $name
         label = $summary.label
@@ -71,6 +98,16 @@ function Extract-Perf($summary, $name) {
         process_ms_avg = MetricAvg $summary 'entity_cycle_ms'
         process_ms_max = MetricMax $summary 'entity_cycle_ms'
         publish_hz_avg = MetricAvg $summary 'entity_publish_hz'
+        entity_raw_hz_avg = $entityRawHzAvg
+        entity_present_hz_avg = MetricAvg $summary 'entity_present_hz'
+        entity_present_interp_percent = SourcePercent $summary 'entity_present_source_delta' 'interp'
+        entity_present_hold_percent = SourcePercent $summary 'entity_present_source_delta' 'hold'
+        entity_render_present_hz_avg = MetricAvg $summary 'entity_render_present_hz'
+        entity_render_present_interp_percent = SourcePercent $summary 'entity_render_present_source_delta' 'interp'
+        entity_render_present_hold_percent = SourcePercent $summary 'entity_render_present_source_delta' 'hold'
+        render_prediction_applied_avg = MetricAvg $summary 'render_prediction_applied'
+        render_prediction_max_lead_ms = MetricMax $summary 'render_prediction_max_lead_ms'
+        render_present_micro_extrap_ms = MetricMax $summary 'render_present_micro_extrap_ms'
         publish_age_ms_max = MetricMax $summary 'entity_publish_age_ms'
         projection_jumps = NumberOrNull $summary.projection_jump_samples
         map_cache_enabled = [bool]$summary.scan_cn_ne_map_candidate_cache_enabled
@@ -90,6 +127,9 @@ $scanPct = PercentDelta $before.scan_ms_avg $after.scan_ms_avg
 $targetMapPct = PercentDelta $before.target_map_ms_avg $after.target_map_ms_avg
 $processMaxPct = PercentDelta $before.process_ms_max $after.process_ms_max
 $publishHzPct = PercentDelta $before.publish_hz_avg $after.publish_hz_avg
+$entityRawHzPct = PercentDelta $before.entity_raw_hz_avg $after.entity_raw_hz_avg
+$entityPresentHzPct = PercentDelta $before.entity_present_hz_avg $after.entity_present_hz_avg
+$entityRenderPresentHzPct = PercentDelta $before.entity_render_present_hz_avg $after.entity_render_present_hz_avg
 $publishAgePct = PercentDelta $before.publish_age_ms_max $after.publish_age_ms_max
 
 $verdict = 'inconclusive'
@@ -123,6 +163,19 @@ $comparison = [ordered]@{
         process_ms_max_percent = $processMaxPct
         publish_hz_avg = Delta $before.publish_hz_avg $after.publish_hz_avg
         publish_hz_avg_percent = $publishHzPct
+        entity_raw_hz_avg = Delta $before.entity_raw_hz_avg $after.entity_raw_hz_avg
+        entity_raw_hz_avg_percent = $entityRawHzPct
+        entity_present_hz_avg = Delta $before.entity_present_hz_avg $after.entity_present_hz_avg
+        entity_present_hz_avg_percent = $entityPresentHzPct
+        entity_present_interp_percent = Delta $before.entity_present_interp_percent $after.entity_present_interp_percent
+        entity_present_hold_percent = Delta $before.entity_present_hold_percent $after.entity_present_hold_percent
+        entity_render_present_hz_avg = Delta $before.entity_render_present_hz_avg $after.entity_render_present_hz_avg
+        entity_render_present_hz_avg_percent = $entityRenderPresentHzPct
+        entity_render_present_interp_percent = Delta $before.entity_render_present_interp_percent $after.entity_render_present_interp_percent
+        entity_render_present_hold_percent = Delta $before.entity_render_present_hold_percent $after.entity_render_present_hold_percent
+        render_prediction_applied_avg = Delta $before.render_prediction_applied_avg $after.render_prediction_applied_avg
+        render_prediction_max_lead_ms = Delta $before.render_prediction_max_lead_ms $after.render_prediction_max_lead_ms
+        render_present_micro_extrap_ms = Delta $before.render_present_micro_extrap_ms $after.render_present_micro_extrap_ms
         publish_age_ms_max = Delta $before.publish_age_ms_max $after.publish_age_ms_max
         publish_age_ms_max_percent = $publishAgePct
         projection_jumps = Delta $before.projection_jumps $after.projection_jumps
@@ -144,6 +197,14 @@ if ($Json) {
     target_map_ms_avg_percent = $comparison.delta.target_map_ms_avg_percent
     process_ms_max_percent = $comparison.delta.process_ms_max_percent
     publish_hz_avg_percent = $comparison.delta.publish_hz_avg_percent
+    entity_raw_hz_avg_percent = $comparison.delta.entity_raw_hz_avg_percent
+    entity_present_hz_avg_delta = $comparison.delta.entity_present_hz_avg
+    entity_render_present_hz_avg_delta = $comparison.delta.entity_render_present_hz_avg
+    entity_render_present_hz_avg_percent = $comparison.delta.entity_render_present_hz_avg_percent
+    entity_render_present_interp_percent_delta = $comparison.delta.entity_render_present_interp_percent
+    entity_render_present_hold_percent_delta = $comparison.delta.entity_render_present_hold_percent
+    render_prediction_applied_avg_delta = $comparison.delta.render_prediction_applied_avg
+    render_prediction_max_lead_ms_delta = $comparison.delta.render_prediction_max_lead_ms
     publish_age_ms_max_percent = $comparison.delta.publish_age_ms_max_percent
     projection_jumps_delta = $comparison.delta.projection_jumps
 } | Format-List

@@ -78,6 +78,17 @@ namespace OW::Labels {
         return kAimActivationKeyVks[static_cast<std::size_t>(keyIndex)];
     }
 
+    template <typename IsVkDown>
+    inline bool TryMatchAimActivationKey(int keyIndex,
+                                         IsVkDown&& isVkDown,
+                                         int* matchedKeyIndex = nullptr) {
+        if (matchedKeyIndex)
+            *matchedKeyIndex = keyIndex;
+
+        const int vk = AimActivationKeyVk(keyIndex);
+        return vk > 0 && isVkDown(vk);
+    }
+
     inline const char* AimModeName(int mode) {
         return LabelAt(kAimModes, mode);
     }

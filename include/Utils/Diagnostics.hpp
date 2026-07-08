@@ -126,6 +126,19 @@ struct PublishCadenceStats {
     size_t lastCount = 0;
 };
 
+struct PresentSourceCounts {
+    uint64_t raw = 0;
+    uint64_t interp = 0;
+    uint64_t extrap = 0;
+    uint64_t hold = 0;
+};
+
+struct PresentPredictionStats {
+    double avgMs = 0.0;
+    double maxMs = 0.0;
+    uint64_t samples = 0;
+};
+
 struct SnapshotCopyStats {
     uint64_t copies = 0;
     double lastMs = 0.0;
@@ -882,6 +895,12 @@ struct StatusSnapshot {
     double fps = 0.0;
     PublishCadenceStats viewMatrixPublish{};
     PublishCadenceStats entityPublish{};
+    PublishCadenceStats entityPresent{};
+    PublishCadenceStats entityRenderPresent{};
+    PresentSourceCounts entityPresentSources{};
+    PresentSourceCounts entityRenderPresentSources{};
+    PresentPredictionStats entityPresentPrediction{};
+    PresentPredictionStats entityRenderPresentPrediction{};
     SnapshotCopyStats entitySnapshotCopy{};
     SnapshotCopyStats dynamicSnapshotCopy{};
     ViewMatrixConsumerStats renderViewMatrixUse{};
@@ -979,6 +998,16 @@ void RecordEntityProcessCycle(double measuredHz);
 void RecordViewMatrixPublish();
 void RecordRenderViewMatrixUse();
 void RecordEntityPublish(size_t count);
+void RecordEntityPresent(size_t count,
+                         const PresentSourceCounts& sourceCounts,
+                         double predictionSumMs,
+                         double predictionMaxMs,
+                         uint64_t predictionSamples);
+void RecordEntityRenderPresent(size_t count,
+                               const PresentSourceCounts& sourceCounts,
+                               double predictionSumMs,
+                               double predictionMaxMs,
+                               uint64_t predictionSamples);
 void RecordEntitySnapshotCopy(size_t count, std::chrono::steady_clock::duration elapsed);
 void RecordDynamicSnapshotCopy(size_t count, std::chrono::steady_clock::duration elapsed);
 

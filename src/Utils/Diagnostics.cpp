@@ -226,6 +226,34 @@ std::atomic<uint64_t> g_entityPublishLastTickMs{ 0 };
 std::atomic<uint64_t> g_entityPublishLastIntervalMs{ 0 };
 std::atomic<uint64_t> g_entityPublishMaxIntervalMs{ 0 };
 std::atomic<uint64_t> g_entityPublishLastCount{ 0 };
+std::atomic<uint64_t> g_entityPresentCycles{ 0 };
+std::atomic<uint64_t> g_entityPresentHzMilli{ 0 };
+std::atomic<uint64_t> g_entityPresentLastTickMs{ 0 };
+std::atomic<uint64_t> g_entityPresentLastTickUs{ 0 };
+std::atomic<uint64_t> g_entityPresentLastIntervalMs{ 0 };
+std::atomic<uint64_t> g_entityPresentMaxIntervalMs{ 0 };
+std::atomic<uint64_t> g_entityPresentLastCount{ 0 };
+std::atomic<uint64_t> g_entityPresentSourceRaw{ 0 };
+std::atomic<uint64_t> g_entityPresentSourceInterp{ 0 };
+std::atomic<uint64_t> g_entityPresentSourceExtrap{ 0 };
+std::atomic<uint64_t> g_entityPresentSourceHold{ 0 };
+std::atomic<uint64_t> g_entityPresentPredictionSamples{ 0 };
+std::atomic<uint64_t> g_entityPresentPredictionTotalUs{ 0 };
+std::atomic<uint64_t> g_entityPresentPredictionMaxUs{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentCycles{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentHzMilli{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentLastTickMs{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentLastTickUs{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentLastIntervalMs{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentMaxIntervalMs{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentLastCount{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentSourceRaw{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentSourceInterp{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentSourceExtrap{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentSourceHold{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentPredictionSamples{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentPredictionTotalUs{ 0 };
+std::atomic<uint64_t> g_entityRenderPresentPredictionMaxUs{ 0 };
 std::atomic<uint64_t> g_entitySnapshotCopyCount{ 0 };
 std::atomic<uint64_t> g_entitySnapshotCopyLastCount{ 0 };
 std::atomic<uint64_t> g_entitySnapshotCopyLastUs{ 0 };
@@ -584,6 +612,35 @@ void RecordPublishCadence(std::atomic<uint64_t>& cycles,
                   std::memory_order_relaxed);
 }
 
+void RecordHighResPublishCadence(std::atomic<uint64_t>& cycles,
+                                  std::atomic<uint64_t>& hzMilli,
+                                  std::atomic<uint64_t>& lastTickMs,
+                                  std::atomic<uint64_t>& lastTickUs,
+                                  std::atomic<uint64_t>& lastIntervalMs,
+                                  std::atomic<uint64_t>& maxIntervalMs,
+                                  size_t count,
+                                  std::atomic<uint64_t>* lastCount)
+{
+    const uint64_t nowMs = GetTickCount64();
+    const uint64_t nowUs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    const uint64_t previousUs = lastTickUs.exchange(nowUs, std::memory_order_relaxed);
+    lastTickMs.store(nowMs, std::memory_order_relaxed);
+    cycles.fetch_add(1, std::memory_order_relaxed);
+    if (lastCount)
+        lastCount->store(static_cast<uint64_t>(count), std::memory_order_relaxed);
+
+    if (previousUs == 0 || nowUs <= previousUs)
+        return;
+
+    const uint64_t intervalUs = nowUs - previousUs;
+    const uint64_t intervalMs = (intervalUs + 500ULL) / 1000ULL;
+    lastIntervalMs.store(intervalMs, std::memory_order_relaxed);
+    UpdateAtomicMax(maxIntervalMs, intervalMs);
+    hzMilli.store(intervalUs > 0 ? (1000000000ULL / intervalUs) : 0ULL,
+                  std::memory_order_relaxed);
+}
+
 void RecordSnapshotCopy(std::atomic<uint64_t>& copies,
                         std::atomic<uint64_t>& lastCount,
                         std::atomic<uint64_t>& lastUs,
@@ -615,6 +672,23 @@ PublishCadenceStats BuildPublishStats(const std::atomic<uint64_t>& cycles,
     stats.maxIntervalMs = maxIntervalMs.load(std::memory_order_relaxed);
     if (lastCount)
         stats.lastCount = static_cast<size_t>(lastCount->load(std::memory_order_relaxed));
+    return stats;
+}
+
+PresentPredictionStats BuildPresentPredictionStats(
+    const std::atomic<uint64_t>& samples,
+    const std::atomic<uint64_t>& totalUs,
+    const std::atomic<uint64_t>& maxUs)
+{
+    PresentPredictionStats stats{};
+    stats.samples = samples.load(std::memory_order_relaxed);
+    stats.maxMs = static_cast<double>(maxUs.load(std::memory_order_relaxed)) / 1000.0;
+    if (stats.samples > 0) {
+        stats.avgMs =
+            static_cast<double>(totalUs.load(std::memory_order_relaxed)) /
+            static_cast<double>(stats.samples) /
+            1000.0;
+    }
     return stats;
 }
 
@@ -1101,6 +1175,70 @@ void RecordEntityPublish(size_t count)
         &g_entityPublishLastCount);
 }
 
+void RecordEntityPresent(size_t count,
+                         const PresentSourceCounts& sourceCounts,
+                         double predictionSumMs,
+                         double predictionMaxMs,
+                         uint64_t predictionSamples)
+{
+    RecordHighResPublishCadence(
+        g_entityPresentCycles,
+        g_entityPresentHzMilli,
+        g_entityPresentLastTickMs,
+        g_entityPresentLastTickUs,
+        g_entityPresentLastIntervalMs,
+        g_entityPresentMaxIntervalMs,
+        count,
+        &g_entityPresentLastCount);
+
+    g_entityPresentSourceRaw.fetch_add(sourceCounts.raw, std::memory_order_relaxed);
+    g_entityPresentSourceInterp.fetch_add(sourceCounts.interp, std::memory_order_relaxed);
+    g_entityPresentSourceExtrap.fetch_add(sourceCounts.extrap, std::memory_order_relaxed);
+    g_entityPresentSourceHold.fetch_add(sourceCounts.hold, std::memory_order_relaxed);
+
+    if (predictionSamples > 0) {
+        const uint64_t predictionSumUs =
+            static_cast<uint64_t>((std::max)(0.0, predictionSumMs) * 1000.0 + 0.5);
+        const uint64_t predictionMaxUs =
+            static_cast<uint64_t>((std::max)(0.0, predictionMaxMs) * 1000.0 + 0.5);
+        g_entityPresentPredictionSamples.fetch_add(predictionSamples, std::memory_order_relaxed);
+        g_entityPresentPredictionTotalUs.fetch_add(predictionSumUs, std::memory_order_relaxed);
+        UpdateAtomicMax(g_entityPresentPredictionMaxUs, predictionMaxUs);
+    }
+}
+
+void RecordEntityRenderPresent(size_t count,
+                               const PresentSourceCounts& sourceCounts,
+                               double predictionSumMs,
+                               double predictionMaxMs,
+                               uint64_t predictionSamples)
+{
+    RecordHighResPublishCadence(
+        g_entityRenderPresentCycles,
+        g_entityRenderPresentHzMilli,
+        g_entityRenderPresentLastTickMs,
+        g_entityRenderPresentLastTickUs,
+        g_entityRenderPresentLastIntervalMs,
+        g_entityRenderPresentMaxIntervalMs,
+        count,
+        &g_entityRenderPresentLastCount);
+
+    g_entityRenderPresentSourceRaw.fetch_add(sourceCounts.raw, std::memory_order_relaxed);
+    g_entityRenderPresentSourceInterp.fetch_add(sourceCounts.interp, std::memory_order_relaxed);
+    g_entityRenderPresentSourceExtrap.fetch_add(sourceCounts.extrap, std::memory_order_relaxed);
+    g_entityRenderPresentSourceHold.fetch_add(sourceCounts.hold, std::memory_order_relaxed);
+
+    if (predictionSamples > 0) {
+        const uint64_t predictionSumUs =
+            static_cast<uint64_t>((std::max)(0.0, predictionSumMs) * 1000.0 + 0.5);
+        const uint64_t predictionMaxUs =
+            static_cast<uint64_t>((std::max)(0.0, predictionMaxMs) * 1000.0 + 0.5);
+        g_entityRenderPresentPredictionSamples.fetch_add(predictionSamples, std::memory_order_relaxed);
+        g_entityRenderPresentPredictionTotalUs.fetch_add(predictionSumUs, std::memory_order_relaxed);
+        UpdateAtomicMax(g_entityRenderPresentPredictionMaxUs, predictionMaxUs);
+    }
+}
+
 void RecordEntitySnapshotCopy(size_t count, std::chrono::steady_clock::duration elapsed)
 {
     RecordSnapshotCopy(
@@ -1482,6 +1620,44 @@ StatusSnapshot Snapshot()
         g_entityPublishLastIntervalMs,
         g_entityPublishMaxIntervalMs,
         &g_entityPublishLastCount);
+    snapshot.entityPresent = BuildPublishStats(
+        g_entityPresentCycles,
+        g_entityPresentHzMilli,
+        g_entityPresentLastTickMs,
+        g_entityPresentLastIntervalMs,
+        g_entityPresentMaxIntervalMs,
+        &g_entityPresentLastCount);
+    snapshot.entityRenderPresent = BuildPublishStats(
+        g_entityRenderPresentCycles,
+        g_entityRenderPresentHzMilli,
+        g_entityRenderPresentLastTickMs,
+        g_entityRenderPresentLastIntervalMs,
+        g_entityRenderPresentMaxIntervalMs,
+        &g_entityRenderPresentLastCount);
+    snapshot.entityPresentSources.raw =
+        g_entityPresentSourceRaw.load(std::memory_order_relaxed);
+    snapshot.entityPresentSources.interp =
+        g_entityPresentSourceInterp.load(std::memory_order_relaxed);
+    snapshot.entityPresentSources.extrap =
+        g_entityPresentSourceExtrap.load(std::memory_order_relaxed);
+    snapshot.entityPresentSources.hold =
+        g_entityPresentSourceHold.load(std::memory_order_relaxed);
+    snapshot.entityRenderPresentSources.raw =
+        g_entityRenderPresentSourceRaw.load(std::memory_order_relaxed);
+    snapshot.entityRenderPresentSources.interp =
+        g_entityRenderPresentSourceInterp.load(std::memory_order_relaxed);
+    snapshot.entityRenderPresentSources.extrap =
+        g_entityRenderPresentSourceExtrap.load(std::memory_order_relaxed);
+    snapshot.entityRenderPresentSources.hold =
+        g_entityRenderPresentSourceHold.load(std::memory_order_relaxed);
+    snapshot.entityPresentPrediction = BuildPresentPredictionStats(
+        g_entityPresentPredictionSamples,
+        g_entityPresentPredictionTotalUs,
+        g_entityPresentPredictionMaxUs);
+    snapshot.entityRenderPresentPrediction = BuildPresentPredictionStats(
+        g_entityRenderPresentPredictionSamples,
+        g_entityRenderPresentPredictionTotalUs,
+        g_entityRenderPresentPredictionMaxUs);
     snapshot.entitySnapshotCopy = BuildSnapshotCopyStats(
         g_entitySnapshotCopyCount,
         g_entitySnapshotCopyLastCount,

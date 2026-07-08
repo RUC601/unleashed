@@ -3312,7 +3312,35 @@ std::string BuildDiagnosticsJson()
         << ",\"render_viewmatrix_over_50ms\":" << snapshot.renderViewMatrixUse.over50Ms
         << ",\"entity_publish_hz\":";
     AppendNumberOrNull(out, static_cast<float>(snapshot.entityPublish.hz));
-    out << ",\"entity_publish_age_ms\":" << snapshot.entityPublish.ageMs
+    out << ",\"entity_raw_publish_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityPublish.hz));
+    out << ",\"entity_present_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityPresent.hz));
+    out << ",\"entity_present_source_counts\":{\"raw\":" << snapshot.entityPresentSources.raw
+        << ",\"interp\":" << snapshot.entityPresentSources.interp
+        << ",\"extrap\":" << snapshot.entityPresentSources.extrap
+        << ",\"hold\":" << snapshot.entityPresentSources.hold
+        << "},\"entity_present_prediction_ms_avg\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityPresentPrediction.avgMs));
+    out << ",\"entity_present_prediction_ms_max\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityPresentPrediction.maxMs));
+    out << ",\"entity_present_delay_ms\":" << OW::PresentEntityDelayMs()
+        << ",\"entity_render_present_hz\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityRenderPresent.hz));
+    out << ",\"entity_render_present_source_counts\":{\"raw\":" << snapshot.entityRenderPresentSources.raw
+        << ",\"interp\":" << snapshot.entityRenderPresentSources.interp
+        << ",\"extrap\":" << snapshot.entityRenderPresentSources.extrap
+        << ",\"hold\":" << snapshot.entityRenderPresentSources.hold
+        << "},\"entity_render_present_prediction_ms_avg\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityRenderPresentPrediction.avgMs));
+    out << ",\"entity_render_present_prediction_ms_max\":";
+    AppendNumberOrNull(out, static_cast<float>(snapshot.entityRenderPresentPrediction.maxMs));
+    out << ",\"entity_render_present_delay_ms\":" << OW::PresentRenderEntityDelayMs()
+        << ",\"render_present_micro_extrap_ms\":" << OW::PresentRenderMicroExtrapolationMs()
+        << ",\"present_interp_enabled\":" << (OW::PresentInterpolationEnabled() ? "true" : "false")
+        << ",\"present_for_aim_enabled\":false"
+        << ",\"present_for_render_enabled\":" << (OW::PresentUseForRenderEnabled() ? "true" : "false")
+        << ",\"entity_publish_age_ms\":" << snapshot.entityPublish.ageMs
         << ",\"entity_publish_cycles\":" << snapshot.entityPublish.cycles
         << ",\"entity_publish_count\":" << snapshot.entityPublish.lastCount
         << ",\"entity_publish_last_interval_ms\":" << snapshot.entityPublish.lastIntervalMs

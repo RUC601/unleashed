@@ -9,6 +9,8 @@
 #include <limits>
 #include <mutex>
 #include <cstdio>
+#include <cctype>
+#include <cstdlib>
 #include <atomic>
 #include <unordered_map>
 #include <windows.h>
@@ -61,6 +63,98 @@ namespace OW {
     extern std::vector<c_entity> entities;
     extern c_entity local_entity;
     extern std::vector<hpanddy> hp_dy_entities;
+    extern std::vector<c_entity> present_entities;
+    extern std::vector<hpanddy> present_hp_dy_entities;
+    extern std::mutex g_presentEntityMutex;
+    extern std::vector<c_entity> present_render_entities;
+    extern std::vector<hpanddy> present_render_hp_dy_entities;
+    extern std::mutex g_presentRenderEntityMutex;
+
+    inline int ReadPresentEnvFlagState(const char* name, int defaultValue)
+    {
+        char buffer[32]{};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0)
+            return defaultValue;
+        if (length >= sizeof(buffer))
+            return defaultValue;
+
+        std::string value(buffer, buffer + (std::min<DWORD>)(length, sizeof(buffer) - 1));
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+        if (value == "1" || value == "true" || value == "yes" || value == "on")
+            return 1;
+        if (value == "0" || value == "false" || value == "no" || value == "off")
+            return 0;
+        return defaultValue;
+    }
+
+    inline DWORD ReadPresentEnvDword(const char* name, DWORD fallback, DWORD minValue, DWORD maxValue)
+    {
+        char buffer[32]{};
+        const DWORD length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(sizeof(buffer)));
+        if (length == 0)
+            return fallback;
+        if (length >= sizeof(buffer))
+            return fallback;
+
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(buffer, &end, 10);
+        if (end == buffer)
+            return fallback;
+
+        return std::clamp<DWORD>(static_cast<DWORD>(parsed), minValue, maxValue);
+    }
+
+    inline bool PresentInterpolationEnabled()
+    {
+        static const bool enabled = ReadPresentEnvFlagState("UN_DMA_PRESENT_INTERP", 1) == 1;
+        return enabled;
+    }
+
+    inline bool PresentUseForRenderEnabled()
+    {
+        static const bool enabled =
+            PresentInterpolationEnabled() &&
+            ReadPresentEnvFlagState("UN_DMA_PRESENT_USE_FOR_RENDER", 1) == 1;
+        return enabled;
+    }
+
+    inline DWORD PresentEntityHz()
+    {
+        static const DWORD hz = ReadPresentEnvDword("UN_DMA_ENTITY_PRESENT_HZ", 120, 30, 144);
+        return hz;
+    }
+
+    inline DWORD PresentEntityDelayMs()
+    {
+        static const DWORD delayMs = ReadPresentEnvDword("UN_DMA_ENTITY_PRESENT_DELAY_MS", 16, 0, 48);
+        return delayMs;
+    }
+
+    inline DWORD PresentRenderEntityDelayMs()
+    {
+        static const DWORD delayMs = ReadPresentEnvDword(
+            "UN_DMA_ENTITY_PRESENT_RENDER_DELAY_MS",
+            24,
+            0,
+            64);
+        return delayMs;
+    }
+
+    inline DWORD PresentMaxExtrapolationMs()
+    {
+        static const DWORD maxMs = ReadPresentEnvDword("UN_DMA_PRESENT_MAX_EXTRAP_MS", 8, 0, 16);
+        return maxMs;
+    }
+
+    inline DWORD PresentRenderMicroExtrapolationMs()
+    {
+        static const DWORD maxMs = ReadPresentEnvDword("UN_DMA_RENDER_PRESENT_MICRO_EXTRAP_MS", 8, 0, 16);
+        return maxMs;
+    }
 
     inline void SnapshotViewMatrices(Matrix& view, Matrix& viewXor) {
         std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
@@ -1102,6 +1196,26 @@ namespace OW {
             return snapshot;
         }
 
+        inline std::vector<c_entity> SnapshotPresentEntities() {
+            std::vector<c_entity> snapshot;
+            if (!OW::PresentInterpolationEnabled())
+                return snapshot;
+
+            std::lock_guard<std::mutex> lock(OW::g_presentEntityMutex);
+            snapshot = OW::present_entities;
+            return snapshot;
+        }
+
+        inline std::vector<c_entity> SnapshotPresentRenderEntities() {
+            std::vector<c_entity> snapshot;
+            if (!OW::PresentUseForRenderEnabled())
+                return snapshot;
+
+            std::lock_guard<std::mutex> lock(OW::g_presentRenderEntityMutex);
+            snapshot = OW::present_render_entities;
+            return snapshot;
+        }
+
         inline std::vector<hpanddy> SnapshotDynamicEntities() {
             const auto startedAt = std::chrono::steady_clock::now();
             std::vector<hpanddy> snapshot;
@@ -1112,6 +1226,26 @@ namespace OW {
             Diagnostics::RecordDynamicSnapshotCopy(
                 snapshot.size(),
                 std::chrono::steady_clock::now() - startedAt);
+            return snapshot;
+        }
+
+        inline std::vector<hpanddy> SnapshotPresentDynamicEntities() {
+            std::vector<hpanddy> snapshot;
+            if (!OW::PresentInterpolationEnabled())
+                return snapshot;
+
+            std::lock_guard<std::mutex> lock(OW::g_presentEntityMutex);
+            snapshot = OW::present_hp_dy_entities;
+            return snapshot;
+        }
+
+        inline std::vector<hpanddy> SnapshotPresentRenderDynamicEntities() {
+            std::vector<hpanddy> snapshot;
+            if (!OW::PresentUseForRenderEnabled())
+                return snapshot;
+
+            std::lock_guard<std::mutex> lock(OW::g_presentRenderEntityMutex);
+            snapshot = OW::present_render_hp_dy_entities;
             return snapshot;
         }
 

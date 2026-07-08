@@ -16,6 +16,23 @@ using namespace DirectX;
 
 namespace OW {
 
+    enum class PresentSnapshotSource : uint8_t {
+        Raw = 0,
+        Interp,
+        Extrap,
+        Hold
+    };
+
+    inline const char* PresentSnapshotSourceName(PresentSnapshotSource source) {
+        switch (source) {
+        case PresentSnapshotSource::Raw: return "raw";
+        case PresentSnapshotSource::Interp: return "interp";
+        case PresentSnapshotSource::Extrap: return "extrap";
+        case PresentSnapshotSource::Hold: return "hold";
+        default: return "unknown";
+        }
+    }
+
     enum class EntityRosterState : uint8_t {
         Fresh = 0,
         Missing,
@@ -113,6 +130,13 @@ namespace OW {
         std::array<bool, 18> previous_skeleton_bone_valid{};
         Vector3 previous_cached_bot_chest_bone{};
         bool previous_cached_bot_chest_bone_valid = false;
+        PresentSnapshotSource present_source = PresentSnapshotSource::Raw;
+        uint32_t present_raw_sample_tick_ms = 0;
+        uint32_t present_tick_ms = 0;
+        uint64_t present_tick_us = 0;
+        uint32_t present_age_ms = 0;
+        float present_prediction_ms = 0.0f;
+        float present_confidence = 1.0f;
 
         uint64_t bone_fallback_logged_offset = UINT64_MAX;
         bool debugHeadLookupAttempted = false;
