@@ -190,9 +190,6 @@ namespace OW { namespace Config {
     inline int aim_key2    = 1;      // Left Mouse
     inline int togglekey   = 0;
     inline int MenuToggleKey = VK_HOME;
-    inline uint64_t gafAsyncKeyStateOffset = 0; // manual win32kbase.sys-relative host key-state RVA; 0 = auto
-    inline int gafAsyncKeyStateSize = 256;      // manual 256-byte VK array or 64-byte compact bitmap
-    inline int gafAsyncKeyStateSessionId = 0;   // 0 = auto from interactive proxy process
 
     // ---- General aim ----
     inline float Fov        = kDefaultFovDeg;
@@ -1006,7 +1003,6 @@ namespace OW { namespace Config {
 
     // ---- KMBox input output ----
     inline bool kmboxEnabled = false;
-    inline int inputSource = 1; // 0=Auto (KMBox>DMA>Local), 1=KMBox, 2=Local, 3=DMA, 4=Mock
     inline int  kmboxDeviceType = 0; // 0=Network/UDP, 1=Serial/COM, 2=Mock
     inline char kmboxIp[32] = "192.168.2.188";
     inline int  kmboxPort = 8808;

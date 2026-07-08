@@ -2,27 +2,11 @@
 
 #include "Utils/Diagnostics.hpp"
 
-#include <algorithm>
-
 namespace kmbox
 {
     namespace
     {
         constexpr std::size_t kMaxRecentEvents = 512;
-
-        bool IsMouseVk(int vk)
-        {
-            switch (vk) {
-            case VK_LBUTTON:
-            case VK_RBUTTON:
-            case VK_MBUTTON:
-            case VK_XBUTTON1:
-            case VK_XBUTTON2:
-                return true;
-            default:
-                return false;
-            }
-        }
     }
 
     MockHardware MockHardwareMgr;
@@ -33,8 +17,6 @@ namespace kmbox
         case MockFaultMode::None:          return "None";
         case MockFaultMode::OutputTimeout: return "OutputTimeout";
         case MockFaultMode::DropOutput:    return "DropOutput";
-        case MockFaultMode::InputJitter:   return "InputJitter";
-        case MockFaultMode::StuckButtons:  return "StuckButtons";
         default:                           return "Unknown";
         }
     }
@@ -57,9 +39,8 @@ namespace kmbox
     {
         std::lock_guard<std::mutex> lock(mutex_);
         ClearStateLocked(true);
-        monitorPackets_ = 1;
         Diagnostics::Info("[KMBOX-MOCK] initialized.");
-        Diagnostics::Aim("kmbox.mock init success monitorPackets=%llu", monitorPackets_);
+        Diagnostics::Aim("kmbox.mock init success");
         return success;
     }
 
@@ -75,8 +56,6 @@ namespace kmbox
         std::lock_guard<std::mutex> lock(mutex_);
         const bool keepInitialized = initialized_;
         ClearStateLocked(keepInitialized);
-        if (keepInitialized)
-            monitorPackets_ = 1;
         Diagnostics::Info("[KMBOX-MOCK] state reset.");
         Diagnostics::Aim("kmbox.mock reset initialized=%d", keepInitialized ? 1 : 0);
     }
@@ -91,11 +70,6 @@ namespace kmbox
     {
         std::lock_guard<std::mutex> lock(mutex_);
         faultMode_ = mode;
-        if (faultMode_ == MockFaultMode::StuckButtons) {
-            stuckMouseButtons_ |= inputMouseButtons_;
-        } else {
-            stuckMouseButtons_ = 0;
-        }
         Diagnostics::Info("[KMBOX-MOCK] fault mode set to %s.", ToString(mode));
         Diagnostics::Aim("kmbox.mock fault_mode=%s", ToString(mode));
     }
@@ -298,74 +272,14 @@ namespace kmbox
         return success;
     }
 
-    bool MockHardware::SetInputVk(int vk, bool down)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!ValidVk(vk))
-            return false;
-
-        InputState& state = inputStates_[static_cast<std::size_t>(vk)];
-        state.previous = state.down;
-        state.down = down;
-        state.readCount = 0;
-
-        const uint32_t mouseMask = MouseMaskForVk(vk);
-        if (mouseMask != 0) {
-            if (down) {
-                inputMouseButtons_ |= mouseMask;
-                if (faultMode_ == MockFaultMode::StuckButtons)
-                    stuckMouseButtons_ |= mouseMask;
-            } else {
-                inputMouseButtons_ &= ~mouseMask;
-                if (faultMode_ != MockFaultMode::StuckButtons)
-                    stuckMouseButtons_ &= ~mouseMask;
-            }
-        }
-
-        ++monitorPackets_;
-        Diagnostics::Aim("kmbox.mock input_vk vk=0x%X down=%d mouseMask=0x%02X monitorPackets=%llu",
-            vk,
-            down ? 1 : 0,
-            mouseMask,
-            monitorPackets_);
-        return true;
-    }
-
-    bool MockHardware::IsVkDown(int vk)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return ReadVkLocked(vk, true);
-    }
-
-    bool MockHardware::PeekVkDown(int vk) const
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!ValidVk(vk))
-            return false;
-
-        const uint32_t mouseMask = MouseMaskForVk(vk);
-        if (mouseMask != 0 && (stuckMouseButtons_ & mouseMask) != 0)
-            return true;
-        return inputStates_[static_cast<std::size_t>(vk)].down;
-    }
-
-    unsigned long long MockHardware::InputPacketCount() const
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return monitorPackets_;
-    }
-
     MockHardwareSnapshot MockHardware::Snapshot() const
     {
         std::lock_guard<std::mutex> lock(mutex_);
         MockHardwareSnapshot snapshot{};
         snapshot.initialized = initialized_;
         snapshot.faultMode = faultMode_;
-        snapshot.inputMouseButtons = inputMouseButtons_;
         snapshot.outputMouseButtons = outputMouseButtons_;
         snapshot.maskedButtons = maskedButtons_;
-        snapshot.stuckMouseButtons = stuckMouseButtons_;
-        snapshot.monitorPackets = monitorPackets_;
         snapshot.totalEvents = totalEvents_;
         snapshot.moveEvents = moveEvents_;
         snapshot.buttonEvents = buttonEvents_;
@@ -379,23 +293,6 @@ namespace kmbox
     {
         std::lock_guard<std::mutex> lock(mutex_);
         return std::vector<MockEvent>(events_.begin(), events_.end());
-    }
-
-    bool MockHardware::ValidVk(int vk) const
-    {
-        return vk >= 0 && vk < static_cast<int>(inputStates_.size());
-    }
-
-    uint32_t MockHardware::MouseMaskForVk(int vk) const
-    {
-        switch (vk) {
-        case VK_LBUTTON:  return 0x01u;
-        case VK_RBUTTON:  return 0x02u;
-        case VK_MBUTTON:  return 0x04u;
-        case VK_XBUTTON1: return 0x08u;
-        case VK_XBUTTON2: return 0x10u;
-        default:          return 0u;
-        }
     }
 
     uint32_t MockHardware::MouseMaskForButton(int button) const
@@ -451,37 +348,13 @@ namespace kmbox
         return true;
     }
 
-    bool MockHardware::ReadVkLocked(int vk, bool countRead)
-    {
-        if (!initialized_ || !ValidVk(vk))
-            return false;
-
-        InputState& state = inputStates_[static_cast<std::size_t>(vk)];
-        bool actual = state.down;
-        const uint32_t mouseMask = MouseMaskForVk(vk);
-        if (mouseMask != 0 && (stuckMouseButtons_ & mouseMask) != 0)
-            actual = true;
-
-        if (countRead && faultMode_ == MockFaultMode::InputJitter) {
-            ++state.readCount;
-            if (state.readCount % 3 == 0)
-                return state.previous;
-        }
-
-        return actual;
-    }
-
     void MockHardware::ClearStateLocked(bool keepInitialized)
     {
         initialized_ = keepInitialized;
         faultMode_ = MockFaultMode::None;
-        inputStates_.fill(InputState{});
         hidStates_.fill(false);
-        inputMouseButtons_ = 0;
         outputMouseButtons_ = 0;
         maskedButtons_ = 0;
-        stuckMouseButtons_ = 0;
-        monitorPackets_ = 0;
         totalEvents_ = 0;
         moveEvents_ = 0;
         buttonEvents_ = 0;

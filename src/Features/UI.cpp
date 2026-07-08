@@ -72,85 +72,19 @@ namespace {
         return (left ? 0x01 : 0) | (right ? 0x02 : 0);
     }
 
-    bool KmboxMonitorAvailable()
-    {
-        return OW::Config::kmboxEnabled &&
-            OW::Config::kmboxDeviceType == 0 &&
-            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() &&
-            kmbox::KmBoxMgr.KeyBoard.InputPacketCount() > 0;
-    }
-
-    bool MockHardwareAvailable()
-    {
-        return OW::Config::kmboxEnabled &&
-            OW::Config::kmboxDeviceType == 2 &&
-            kmbox::MockHardwareMgr.IsInitialized();
-    }
-
     bool DmaKeyStateAvailable()
     {
         return KeyState::initialized.load() && KeyState::gafAsyncKeyStateAddr.load() != 0;
     }
 
-    bool ReadLocalMouseButton(int vk)
-    {
-        return (GetAsyncKeyState(vk) & 0x8000) != 0;
-    }
-
-    bool ReadDmaMouseButton(int vk)
+    bool ReadRecorderMouseButton(int vk)
     {
         return DmaKeyStateAvailable() && KeyState::IsKeyDown(static_cast<uint32_t>(vk));
     }
 
-    bool ReadKmboxMouseButton(int vk)
+    const char* RecorderDmaSourceName()
     {
-        return KmboxMonitorAvailable() && kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
-    }
-
-    bool ReadMockMouseButton(int vk)
-    {
-        return MockHardwareAvailable() && kmbox::MockHardwareMgr.IsVkDown(vk);
-    }
-
-    bool ReadRecorderMouseButton(int vk)
-    {
-        switch (OW::Config::inputSource) {
-        case 1:
-            if (MockHardwareAvailable())
-                return ReadMockMouseButton(vk);
-            if (KmboxMonitorAvailable())
-                return ReadKmboxMouseButton(vk);
-            return ReadDmaMouseButton(vk) || ReadLocalMouseButton(vk);
-        case 2:
-            return ReadLocalMouseButton(vk);
-        case 3:
-            return ReadDmaMouseButton(vk);
-        case 4:
-            return ReadMockMouseButton(vk);
-        default:
-            if (MockHardwareAvailable())
-                return ReadMockMouseButton(vk);
-            if (KmboxMonitorAvailable())
-                return ReadKmboxMouseButton(vk);
-            return ReadDmaMouseButton(vk) || ReadLocalMouseButton(vk);
-        }
-    }
-
-    const char* RecorderInputSourceName()
-    {
-        if (OW::Config::inputSource == 1 && MockHardwareAvailable())
-            return "mock_hardware";
-        if (OW::Config::inputSource == 1)
-            return KmboxMonitorAvailable() ? "kmbox_monitor" : "kmbox_fallback_dma_or_local";
-        if (OW::Config::inputSource == 2)
-            return "local_GetAsyncKeyState";
-        if (OW::Config::inputSource == 3)
-            return "dma_keystate";
-        if (OW::Config::inputSource == 4)
-            return "mock_hardware";
-        if (MockHardwareAvailable())
-            return "auto_mock_hardware";
-        return KmboxMonitorAvailable() ? "auto_kmbox_monitor" : "auto_dma_or_local";
+        return "dma_keystate";
     }
 
     std::string MaskChangeText(int previousMask, int mask)
@@ -247,7 +181,7 @@ namespace {
         std::vector<FirePatternRecorderEvent> events;
         events.reserve(64);
 
-        const char* sourceName = RecorderInputSourceName();
+        const char* sourceName = RecorderDmaSourceName();
         const auto started = std::chrono::steady_clock::now();
         bool left = ReadRecorderMouseButton(VK_LBUTTON);
         bool right = ReadRecorderMouseButton(VK_RBUTTON);
@@ -940,10 +874,6 @@ static const HeroOption kHeroOptions[] = {
     { "Wuyang", OW::eHero::HERO_WUYANG, "Support" },
     { "JetpackCat", OW::eHero::HERO_JETPACKCAT, "Support" },
 };
-static const char* kInputSource[] = {
-    "KMBox Monitor (Primary)", "Auto (KMBox > DMA > Local)",
-    "Mock Hardware", "DMA KeyState (Diagnostic)", "Local GetAsyncKeyState (Diagnostic)"
-};
 static const char* kHeroSkillModes[] = {
     "Auto", "Assist", "Manual"
 };
@@ -953,7 +883,6 @@ static const char* kHeroSkillTrackingBones[] = {
 static const char* kHeroSkillTargetBones[] = {
     "Chest", "Head", "Neck", "Closest"
 };
-static constexpr int kInputSourceConfigOrder[] = { 1, 0, 4, 3, 2 };
 static const char* kBonePreference[] = { "Head", "Neck", "Chest", "Closest" };
 static constexpr int kBonePreferenceAimBones[] = {
     OW::Config::kAimBoneHead,
@@ -973,7 +902,7 @@ static const char* kTeam[]         = { "Enemies", "Allies", "All" };
 static const char* kTrace[]        = { "Strict", "Relaxed", "Off" };
 static const char* kUnlock[]       = { "Anytime", "On Release", "Never" };
 static const char* kKmBoxDeviceTypes[] = { "Network", "Serial", "Mock" };
-static const char* kMockFaultModes[] = { "None", "Output Timeout", "Drop Output", "Input Jitter", "Stuck Buttons" };
+static const char* kMockFaultModes[] = { "None", "Output Timeout", "Drop Output" };
 static const char* kMenuToggleKeys[] = {
     "Home", "Insert", "End", "Delete",
     "F1", "F2", "F3", "F4", "F5", "F6",
@@ -1033,7 +962,6 @@ enum class UiText : size_t {
     TooltipReconnect,
     TooltipMinimizeOverlay,
     GroupDiagnostics,
-    InputSource,
     HotkeyProbe,
     StatusNa,
     StatusDown,
@@ -1104,7 +1032,6 @@ enum class UiText : size_t {
     BlockOutputWhenMenuOpen,
     DebugLogging,
     MockFault,
-    MockInput,
     MockReset,
     Reset,
     MockStats,
@@ -1190,7 +1117,6 @@ static constexpr UiTextPair kUiText[] = {
     { "Hide the drawing canvas and put the overlay menu on the taskbar. Restore it from the taskbar when you need the UI again.",
       "隐藏绘制画布，并把 Overlay 菜单放到任务栏；需要界面时从任务栏还原。" },
     { "Diagnostics", "诊断" },
-    { "Input Source", "输入来源" },
     { "Hotkey Probe", "热键探测" },
     { "n/a", "不可用" },
     { "DOWN", "按下" },
@@ -1261,7 +1187,6 @@ static constexpr UiTextPair kUiText[] = {
     { "Block Output When Menu Open", "菜单打开时阻断输出" },
     { "Debug Logging", "调试日志" },
     { "Mock Fault", "模拟故障" },
-    { "Mock Input", "模拟输入" },
     { "Mock Reset", "模拟重置" },
     { "Reset", "重置" },
     { "Mock Stats", "模拟统计" },
@@ -1302,39 +1227,12 @@ static const char* T(UiText id) {
     return (text && text[0] != '\0') ? text : kUiText[index].en;
 }
 
-static int InputSourceConfigToUiIndex(int configValue) {
-    for (int i = 0; i < IM_ARRAYSIZE(kInputSourceConfigOrder); ++i) {
-        if (kInputSourceConfigOrder[i] == configValue)
-            return i;
-    }
-    return 0;
-}
-
-static int InputSourceUiIndexToConfig(int uiIndex) {
-    if (uiIndex < 0 || uiIndex >= IM_ARRAYSIZE(kInputSourceConfigOrder))
-        return 0;
-    return kInputSourceConfigOrder[uiIndex];
-}
-
 static void DrawProbeState(const char* label, bool available, bool down) {
     const ImVec4 color = !available
         ? ImVec4(0.55f, 0.58f, 0.62f, 1.0f)
         : (down ? ImVec4(0.25f, 1.0f, 0.45f, 1.0f) : ImVec4(0.86f, 0.88f, 0.92f, 1.0f));
     ImGui::TextColored(color, "%s: %s", label,
         !available ? T(UiText::StatusNa) : (down ? T(UiText::StatusDown) : T(UiText::StatusUp)));
-}
-
-static bool IsAimMouseActivationVk(int vk) {
-    switch (vk) {
-    case VK_LBUTTON:
-    case VK_RBUTTON:
-    case VK_MBUTTON:
-    case VK_XBUTTON1:
-    case VK_XBUTTON2:
-        return true;
-    default:
-        return false;
-    }
 }
 
 static void DrawAimHotkeyProbe() {
@@ -1344,42 +1242,14 @@ static void DrawAimHotkeyProbe() {
 
     ImGui::Text("%s: %s  vk=0x%02X", T(UiText::HotkeyProbe), keyLabel, vk > 0 ? vk : 0);
     if (vk <= 0) {
-        DrawProbeState("KMBox Monitor", false, false);
-        ImGui::SameLine();
         DrawProbeState("DMA KeyState", false, false);
-        ImGui::SameLine();
-        DrawProbeState("Mock", false, false);
-        ImGui::SameLine();
-        DrawProbeState("Local", false, false);
         return;
     }
 
-    const bool localDown = (GetAsyncKeyState(vk) & 0x8000) != 0;
-    const bool kmboxAvailable =
-        OW::Config::kmboxEnabled &&
-        OW::Config::kmboxDeviceType == 0 &&
-        kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load();
-    bool kmboxDown = false;
-    if (kmboxAvailable) {
-        kmboxDown = IsAimMouseActivationVk(vk)
-            ? kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk)
-            : kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
-    }
-
-    const bool dmaAvailable =
-        KeyState::initialized.load() &&
-        KeyState::gafAsyncKeyStateAddr.load() != 0;
+    const bool dmaAvailable = DmaKeyStateAvailable();
     const bool dmaDown = dmaAvailable && KeyState::IsKeyDown(vk);
-    const bool mockAvailable = MockHardwareAvailable();
-    const bool mockDown = mockAvailable && kmbox::MockHardwareMgr.PeekVkDown(vk);
 
-    DrawProbeState("KMBox Monitor", kmboxAvailable, kmboxDown);
-    ImGui::SameLine();
     DrawProbeState("DMA KeyState", dmaAvailable, dmaDown);
-    ImGui::SameLine();
-    DrawProbeState("Mock", mockAvailable, mockDown);
-    ImGui::SameLine();
-    DrawProbeState("Local", true, localDown);
 }
 
 static int ClampHeroPresetSlotIndex(int slotIndex) {
@@ -4992,57 +4862,35 @@ static void DrawMiscGeneralPage() {
 static void DrawMiscDiagnosticsPage() {
     UIGroupBox(T(UiText::GroupDiagnostics));
     {
-        SettingRow(T(UiText::InputSource));
-        PushControlWidth();
-        int inputSourceUiIndex = InputSourceConfigToUiIndex(OW::Config::inputSource);
-        if (UISelect("##inputSource", &inputSourceUiIndex,
-                     kInputSource, IM_ARRAYSIZE(kInputSource))) {
-            OW::Config::inputSource = InputSourceUiIndexToConfig(inputSourceUiIndex);
-        }
-        ImGui::PopItemWidth();
-
-        if (OW::Config::inputSource == 3) {
-            ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1),
-                "DMA KeyState reads host Windows VK state (keyboard and mouse)");
-            const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
-            const KeyState::ResolverDiagnostics resolver = KeyState::SnapshotResolverDiagnostics();
-            if (KeyState::initialized.load() && keyStateAddress != 0) {
-                ImGui::TextColored(ImVec4(0.25f, 1.0f, 0.45f, 1),
-                    "DMA KeyState ready: build=%lu profile=%s method=%s module=%s session=%lu proxyPid=%lu addr=0x%llX size=%zu slotsRva=0x%llX keyOffset=0x%llX",
-                    static_cast<unsigned long>(resolver.build),
-                    resolver.profile.c_str(),
-                    resolver.method.c_str(),
-                    resolver.module.c_str(),
-                    static_cast<unsigned long>(resolver.resolvedSessionId),
-                    static_cast<unsigned long>(resolver.proxyPid),
-                    static_cast<unsigned long long>(keyStateAddress),
-                    KeyState::keyStateByteCount.load(),
-                    static_cast<unsigned long long>(resolver.slotsRva),
-                    static_cast<unsigned long long>(resolver.keyStateOffset));
-            } else if (OW::Config::gafAsyncKeyStateOffset == 0) {
-                ImGui::TextColored(ImVec4(1, 0.35f, 0.2f, 1),
-                    "DMA KeyState auto resolver pending/failed: build=%lu profile=%s method=%s module=%s; check Diagnostic Log",
-                    static_cast<unsigned long>(resolver.build),
-                    resolver.profile.c_str(),
-                    resolver.method.c_str(),
-                    resolver.module.c_str());
-            } else {
-                ImGui::TextColored(ImVec4(1, 0.35f, 0.2f, 1),
-                    "DMA KeyState manual offset unresolved: 0x%llX",
-                    static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset));
+        ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1),
+            "DMA KeyState reads host Windows VK state (keyboard and mouse)");
+        const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
+        const KeyState::ResolverDiagnostics resolver = KeyState::SnapshotResolverDiagnostics();
+        if (KeyState::initialized.load() && keyStateAddress != 0) {
+            ImGui::TextColored(ImVec4(0.25f, 1.0f, 0.45f, 1),
+                "DMA KeyState ready: build=%lu profile=%s method=%s module=%s session=%lu proxyPid=%lu addr=0x%llX size=%zu slotsRva=0x%llX slotsMethod=%s keyOffset=0x%llX keyMethod=%s",
+                static_cast<unsigned long>(resolver.build),
+                resolver.profile.c_str(),
+                resolver.method.c_str(),
+                resolver.module.c_str(),
+                static_cast<unsigned long>(resolver.resolvedSessionId),
+                static_cast<unsigned long>(resolver.proxyPid),
+                static_cast<unsigned long long>(keyStateAddress),
+                KeyState::keyStateByteCount.load(),
+                static_cast<unsigned long long>(resolver.slotsRva),
+                resolver.slotsMethod.c_str(),
+                static_cast<unsigned long long>(resolver.keyStateOffset),
+                resolver.keyOffsetMethod.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(1, 0.35f, 0.2f, 1),
+                "DMA KeyState resolver pending/failed: build=%lu profile=%s method=%s module=%s; check Diagnostic Log",
+                static_cast<unsigned long>(resolver.build),
+                resolver.profile.c_str(),
+                resolver.method.c_str(),
+                resolver.module.c_str());
+            if (!resolver.lastFailureDetails.empty()) {
+                ImGui::TextWrapped("Last resolver failure: %s", resolver.lastFailureDetails.c_str());
             }
-        }
-
-        if (OW::Config::inputSource == 4) {
-            const kmbox::MockHardwareSnapshot snapshot = kmbox::MockHardwareMgr.Snapshot();
-            ImGui::TextColored(
-                snapshot.initialized ? ImVec4(0.25f, 1.0f, 0.45f, 1)
-                                     : ImVec4(1, 0.35f, 0.2f, 1),
-                "Mock Hardware: %s packets=%llu events=%llu fault=%s",
-                snapshot.initialized ? "ready" : "not initialized",
-                snapshot.monitorPackets,
-                snapshot.totalEvents,
-                kmbox::ToString(snapshot.faultMode));
         }
 
         DrawAimHotkeyProbe();
@@ -5057,7 +4905,7 @@ static void DrawMiscDiagnosticsPage() {
                 StartFirePatternRecorder();
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Records left/right mouse button down/up edges from the current input source for up to 8 seconds.\nPerform one full fire-pattern cycle plus the first press of the next cycle, then press Stop.\nResults are written to unleashed_aim_diag.log and the log overlay.");
+            ImGui::SetTooltip("Records left/right mouse button down/up edges from DMA KeyState for up to 8 seconds.\nPerform one full fire-pattern cycle plus the first press of the next cycle, then press Stop.\nResults are written to unleashed_aim_diag.log and the log overlay.");
         }
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), "%s", GetFirePatternRecorderStatus().c_str());
@@ -5699,8 +5547,6 @@ static void DrawMiscKmboxPage() {
         if (ImGui::Combo("##DeviceType", &OW::Config::kmboxDeviceType,
                          kKmBoxDeviceTypes, IM_ARRAYSIZE(kKmBoxDeviceTypes))) {
             markKmboxRuntimeConfigChanged();
-            if (OW::Config::kmboxDeviceType == 2)
-                OW::Config::inputSource = 4;
         }
         ImGui::PopItemWidth();
 
@@ -5933,42 +5779,20 @@ static void DrawMiscKmboxPage() {
             }
             ImGui::PopItemWidth();
 
-            SettingRow(T(UiText::MockInput));
-            bool leftDown = kmbox::MockHardwareMgr.PeekVkDown(VK_LBUTTON);
-            bool rightDown = kmbox::MockHardwareMgr.PeekVkDown(VK_RBUTTON);
-            bool middleDown = kmbox::MockHardwareMgr.PeekVkDown(VK_MBUTTON);
-            bool x1Down = kmbox::MockHardwareMgr.PeekVkDown(VK_XBUTTON1);
-            bool x2Down = kmbox::MockHardwareMgr.PeekVkDown(VK_XBUTTON2);
-            if (ImGui::Checkbox("L##MockLeft", &leftDown))
-                kmbox::MockHardwareMgr.SetInputVk(VK_LBUTTON, leftDown);
-            ImGui::SameLine();
-            if (ImGui::Checkbox("R##MockRight", &rightDown))
-                kmbox::MockHardwareMgr.SetInputVk(VK_RBUTTON, rightDown);
-            ImGui::SameLine();
-            if (ImGui::Checkbox("M##MockMiddle", &middleDown))
-                kmbox::MockHardwareMgr.SetInputVk(VK_MBUTTON, middleDown);
-            ImGui::SameLine();
-            if (ImGui::Checkbox("X1##MockX1", &x1Down))
-                kmbox::MockHardwareMgr.SetInputVk(VK_XBUTTON1, x1Down);
-            ImGui::SameLine();
-            if (ImGui::Checkbox("X2##MockX2", &x2Down))
-                kmbox::MockHardwareMgr.SetInputVk(VK_XBUTTON2, x2Down);
-
             SettingRow(T(UiText::MockReset));
             if (ImGui::Button(T(UiText::Reset), ImVec2(72.0f, kControlHeight)))
                 kmbox::MockHardwareMgr.Reset();
 
             snapshot = kmbox::MockHardwareMgr.Snapshot();
             SettingRow(T(UiText::MockStats));
-            ImGui::Text("events=%llu moves=%llu buttons=%llu keys=%llu packets=%llu in=0x%02X out=0x%02X stuck=0x%02X",
+            ImGui::Text("events=%llu moves=%llu buttons=%llu keys=%llu masks=%llu out=0x%02X masked=0x%02X",
                 snapshot.totalEvents,
                 snapshot.moveEvents,
                 snapshot.buttonEvents,
                 snapshot.keyboardEvents,
-                snapshot.monitorPackets,
-                snapshot.inputMouseButtons,
+                snapshot.maskEvents,
                 snapshot.outputMouseButtons,
-                snapshot.stuckMouseButtons);
+                snapshot.maskedButtons);
         }
 
         // ---- Counts-per-radian auto-calibration button ----

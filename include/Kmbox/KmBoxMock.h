@@ -16,9 +16,7 @@ namespace kmbox
     enum class MockFaultMode : int {
         None = 0,
         OutputTimeout,
-        DropOutput,
-        InputJitter,
-        StuckButtons
+        DropOutput
     };
 
     enum class MockEventType : int {
@@ -52,11 +50,8 @@ namespace kmbox
     struct MockHardwareSnapshot {
         bool initialized = false;
         MockFaultMode faultMode = MockFaultMode::None;
-        uint32_t inputMouseButtons = 0;
         uint32_t outputMouseButtons = 0;
         uint32_t maskedButtons = 0;
-        uint32_t stuckMouseButtons = 0;
-        unsigned long long monitorPackets = 0;
         unsigned long long totalEvents = 0;
         unsigned long long moveEvents = 0;
         unsigned long long buttonEvents = 0;
@@ -85,38 +80,20 @@ namespace kmbox
         int UnmaskAll();
         int RecordKeyboardKey(unsigned char hidCode, bool down);
 
-        bool SetInputVk(int vk, bool down);
-        bool IsVkDown(int vk);
-        bool PeekVkDown(int vk) const;
-        unsigned long long InputPacketCount() const;
-
         MockHardwareSnapshot Snapshot() const;
         std::vector<MockEvent> RecentEvents() const;
 
     private:
-        struct InputState {
-            bool down = false;
-            bool previous = false;
-            unsigned int readCount = 0;
-        };
-
-        bool ValidVk(int vk) const;
-        uint32_t MouseMaskForVk(int vk) const;
         uint32_t MouseMaskForButton(int button) const;
         bool PushOutputEventLocked(MockEvent event);
-        bool ReadVkLocked(int vk, bool countRead);
         void ClearStateLocked(bool keepInitialized);
 
         mutable std::mutex mutex_;
         bool initialized_ = false;
         MockFaultMode faultMode_ = MockFaultMode::None;
-        std::array<InputState, 256> inputStates_{};
         std::array<bool, 256> hidStates_{};
-        uint32_t inputMouseButtons_ = 0;
         uint32_t outputMouseButtons_ = 0;
         uint32_t maskedButtons_ = 0;
-        uint32_t stuckMouseButtons_ = 0;
-        unsigned long long monitorPackets_ = 0;
         unsigned long long totalEvents_ = 0;
         unsigned long long moveEvents_ = 0;
         unsigned long long buttonEvents_ = 0;

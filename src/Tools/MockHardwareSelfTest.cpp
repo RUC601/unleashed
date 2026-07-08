@@ -22,7 +22,6 @@ namespace
     {
         OW::Config::kmboxEnabled = true;
         OW::Config::kmboxDeviceType = 2;
-        OW::Config::inputSource = 4;
         OW::Config::kmboxPort = 8808;
         OW::Config::kmboxMonitorPort = 8809;
         OW::Config::kmboxMonitorPortManualOverride = false;
@@ -188,23 +187,6 @@ int main()
     if (kmbox::MockHardwareMgr.Snapshot().keyboardEvents == 0)
         return Fail("keyboard event was not counted");
 
-    if (!kmbox::MockHardwareMgr.SetInputVk(VK_RBUTTON, true))
-        return Fail("SetInputVk failed");
-    if (!AimbotDetail::IsInputVkDown(VK_RBUTTON) || !AimbotDetail::IsInputVkDownQuiet(VK_RBUTTON))
-        return Fail("OW input path did not read mock right button");
-    kmbox::MockHardwareMgr.SetInputVk(VK_RBUTTON, false);
-    if (AimbotDetail::IsInputVkDownQuiet(VK_RBUTTON))
-        return Fail("OW quiet input path did not observe mock release");
-
-    kmbox::MockHardwareMgr.Reset();
-    if (!kmbox::MockHardwareMgr.SetInputVk(VK_XBUTTON1, true))
-        return Fail("SetInputVk Mouse4 failed");
-    if (!AimbotDetail::IsInputVkDown(VK_XBUTTON1) || !AimbotDetail::IsInputVkDownQuiet(VK_XBUTTON1))
-        return Fail("OW input path did not read mock Mouse4");
-    kmbox::MockHardwareMgr.SetInputVk(VK_XBUTTON1, false);
-    if (AimbotDetail::IsInputVkDownQuiet(VK_XBUTTON1))
-        return Fail("OW quiet input path did not observe mock Mouse4 release");
-
     {
         const kmbox::MockHardwareSnapshot before = kmbox::MockHardwareMgr.Snapshot();
         OW::SendMouseMove(OW::Vector3(0.02f, -0.03f, 0.0f), 8);
@@ -239,30 +221,6 @@ int main()
         return Fail("DropOutput did not return success");
     if (kmbox::MockHardwareMgr.Snapshot().totalEvents != 0)
         return Fail("DropOutput recorded an event");
-
-    kmbox::MockHardwareMgr.Reset();
-    kmbox::MockHardwareMgr.SetInputVk(VK_LBUTTON, true);
-    kmbox::MockHardwareMgr.SetFaultMode(kmbox::MockFaultMode::InputJitter);
-    if (!AimbotDetail::IsInputVkDown(VK_LBUTTON))
-        return Fail("InputJitter first read should be current true");
-    if (!AimbotDetail::IsInputVkDown(VK_LBUTTON))
-        return Fail("InputJitter second read should be current true");
-    if (AimbotDetail::IsInputVkDown(VK_LBUTTON))
-        return Fail("InputJitter third read should return previous false");
-    if (!AimbotDetail::IsInputVkDown(VK_LBUTTON))
-        return Fail("InputJitter fourth read should return current true");
-
-    kmbox::MockHardwareMgr.Reset();
-    kmbox::MockHardwareMgr.SetFaultMode(kmbox::MockFaultMode::StuckButtons);
-    kmbox::MockHardwareMgr.SetInputVk(VK_LBUTTON, true);
-    if (!AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON))
-        return Fail("StuckButtons did not read initial down");
-    kmbox::MockHardwareMgr.SetInputVk(VK_LBUTTON, false);
-    if (!AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON))
-        return Fail("StuckButtons did not hold released mouse button");
-    kmbox::MockHardwareMgr.Reset();
-    if (AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON))
-        return Fail("Reset did not clear stuck input state");
 
     kmbox::MockHardwareMgr.Shutdown();
     Diagnostics::ShutdownAimLog();

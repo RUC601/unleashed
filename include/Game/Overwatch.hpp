@@ -143,12 +143,12 @@ namespace OW {
     inline int howbigentitysize = 0;
     inline constexpr DWORD kEntityScanIntervalMs = 250;
     inline constexpr DWORD kEntityEmptyScanIntervalMs = 50;
-    inline constexpr DWORD kEntityProcessIntervalMs = 16;
+    inline constexpr DWORD kEntityProcessIntervalMs = 12;
     inline constexpr DWORD kEntitySlowFieldIntervalMs = 500;
     inline constexpr DWORD kEntityTeamNameIntervalMs = 1000;
     inline constexpr DWORD kEntitySkillStatusIntervalMs = 1000;
     inline constexpr DWORD kEntityLocalSkillIntervalMs = kEntitySlowFieldIntervalMs;
-    inline constexpr DWORD kEntityHealthIntervalMs = kEntityProcessIntervalMs;
+    inline constexpr DWORD kEntityHealthIntervalMs = 16;
     inline constexpr DWORD kEntityHeroIntervalMs = 50;
     inline constexpr DWORD kEntityRosterTtlMs = 13000;
     inline constexpr DWORD kCnNeEntityScanStableHoldMs = kEntityRosterTtlMs;
@@ -8300,20 +8300,7 @@ namespace AimbotDetail {
         return OW::TargetingDetail::SnapshotLocalEntity();
     }
 
-    inline bool IsMouseActivationKey(int vk) {
-        switch (vk) {
-        case VK_LBUTTON:
-        case VK_RBUTTON:
-        case VK_MBUTTON:
-        case VK_XBUTTON1:
-        case VK_XBUTTON2:
-            return true;
-        default:
-            return false;
-        }
-    }
-
-    inline void LogAimKeyState(int keySetting, int vk, int sourceType, bool pressed) {
+    inline void LogAimKeyState(int keySetting, int vk, bool pressed) {
         struct LastLogState {
             bool initialized = false;
             int keySetting = -1;
@@ -8322,9 +8309,7 @@ namespace AimbotDetail {
             DWORD lastLogTick = 0;
         };
 
-        static LastLogState lastStates[4]{};
-        const int stateIndex = (sourceType >= 0 && sourceType < 4) ? sourceType : 0;
-        LastLogState& state = lastStates[stateIndex];
+        static LastLogState state{};
 
         const DWORD now = GetTickCount();
         const bool changed = !state.initialized ||
@@ -8333,28 +8318,12 @@ namespace AimbotDetail {
             state.pressed != pressed;
 
         if (changed || (pressed && (state.lastLogTick == 0 || now - state.lastLogTick >= 1000))) {
-            const char* sourceLabel = "GetAsyncKeyState";
-            if (sourceType == 1)
-                sourceLabel = "kmbox_monitor";
-            else if (sourceType == 2)
-                sourceLabel = "dma_keystate";
-            else if (sourceType == 3)
-                sourceLabel = "mock_hardware";
-
-            const bool mockSource = sourceType == 3;
-            const int monitorRunning = mockSource
-                ? (kmbox::MockHardwareMgr.IsInitialized() ? 1 : 0)
-                : (kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0);
-            const unsigned long long monitorPackets = mockSource
-                ? kmbox::MockHardwareMgr.InputPacketCount()
-                : kmbox::KmBoxMgr.KeyBoard.InputPacketCount();
-
-            Diagnostics::Aim("hotkey state keySetting=%d vk=0x%X source=%s monitorRunning=%d monitorPackets=%llu pressed=%d",
+            Diagnostics::Aim("hotkey state keySetting=%d vk=0x%X source=dma_keystate ready=%d addr=0x%llX pressed=%d",
                 keySetting,
                 vk,
-                sourceLabel,
-                monitorRunning,
-                monitorPackets,
+                (KeyState::initialized.load(std::memory_order_acquire) &&
+                    KeyState::gafAsyncKeyStateAddr.load(std::memory_order_acquire) != 0) ? 1 : 0,
+                static_cast<unsigned long long>(KeyState::gafAsyncKeyStateAddr.load(std::memory_order_acquire)),
                 pressed ? 1 : 0);
             state.initialized = true;
             state.keySetting = keySetting;
@@ -8364,145 +8333,48 @@ namespace AimbotDetail {
         }
     }
 
-    inline bool IsKmBoxMonitorAvailable() {
-        return OW::Config::kmboxEnabled &&
-            OW::Config::kmboxDeviceType == 0 &&
-            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() &&
-            kmbox::KmBoxMgr.KeyBoard.InputPacketCount() > 0;
+    inline void LogDmaKeyStateUnavailable(int keySetting, int vk, uint64_t keyStateAddress) {
+        static DWORD lastDmaUnavailableWarnTick = 0;
+        const DWORD now = GetTickCount();
+        if (lastDmaUnavailableWarnTick != 0 && now - lastDmaUnavailableWarnTick < 1000)
+            return;
+
+        const KeyState::ResolverDiagnostics resolver = KeyState::SnapshotResolverDiagnostics();
+        Diagnostics::Aim("hotkey early_return reason=dma_keystate_unavailable keySetting=%d vk=0x%X build=%lu profile=%s method=%s module=%s session=%lu proxyPid=%lu resolvedAddress=0x%llX size=%zu readPid=%d",
+            keySetting,
+            vk,
+            static_cast<unsigned long>(resolver.build),
+            resolver.profile.c_str(),
+            resolver.method.c_str(),
+            resolver.module.c_str(),
+            static_cast<unsigned long>(resolver.resolvedSessionId),
+            static_cast<unsigned long>(resolver.proxyPid),
+            static_cast<unsigned long long>(keyStateAddress),
+            KeyState::keyStateByteCount.load(std::memory_order_acquire),
+            KeyState::keyStateReadPid.load(std::memory_order_acquire));
+        lastDmaUnavailableWarnTick = now;
     }
 
-    inline bool IsMockHardwareAvailable() {
-        return OW::Config::kmboxEnabled &&
-            OW::Config::kmboxDeviceType == 2 &&
-            kmbox::MockHardwareMgr.IsInitialized();
-    }
-
-    inline bool ReadKmBoxMonitorVk(int vk, int keySetting) {
-        bool pressed = false;
-        if (IsMouseActivationKey(vk))
-            pressed = kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
-        else
-            pressed = kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
-
-        LogAimKeyState(keySetting, vk, 1, pressed);
-        return pressed;
-    }
-
-    inline bool ReadMockHardwareVk(int vk, int keySetting) {
-        const bool pressed = kmbox::MockHardwareMgr.IsVkDown(vk);
-        LogAimKeyState(keySetting, vk, 3, pressed);
-        return pressed;
-    }
-
-    inline bool ReadDmaKeyStateVk(int vk, int keySetting, bool strictDmaOnly) {
+    inline bool ReadDmaKeyStateVk(int vk, int keySetting) {
         const uint64_t keyStateAddress = KeyState::gafAsyncKeyStateAddr.load();
         if (!KeyState::initialized.load() || keyStateAddress == 0) {
-            LogAimKeyState(keySetting, vk, 2, false);
-            if (strictDmaOnly) {
-                static DWORD lastDmaUnavailableWarnTick = 0;
-                const DWORD now = GetTickCount();
-                if (lastDmaUnavailableWarnTick == 0 || now - lastDmaUnavailableWarnTick >= 1000) {
-                    Diagnostics::Aim("hotkey early_return reason=dma_keystate_unavailable keySetting=%d vk=0x%X gafAsyncKeyStateOffset=0x%llX resolvedAddress=0x%llX size=%zu build=%lu session=%lu readPid=%d",
-                        keySetting,
-                        vk,
-                        static_cast<unsigned long long>(OW::Config::gafAsyncKeyStateOffset),
-                        static_cast<unsigned long long>(keyStateAddress),
-                        KeyState::keyStateByteCount.load(),
-                        static_cast<unsigned long>(KeyState::detectedBuild.load()),
-                        static_cast<unsigned long>(KeyState::resolvedSessionId.load()),
-                        KeyState::keyStateReadPid.load());
-                    lastDmaUnavailableWarnTick = now;
-                }
-            }
+            LogAimKeyState(keySetting, vk, false);
+            LogDmaKeyStateUnavailable(keySetting, vk, keyStateAddress);
             return false;
         }
 
         const bool pressed = KeyState::IsKeyDown(static_cast<uint32_t>(vk));
-        LogAimKeyState(keySetting, vk, 2, pressed);
+        LogAimKeyState(keySetting, vk, pressed);
         return pressed;
-    }
-
-    inline bool ReadLocalAsyncKeyStateVk(int vk, int keySetting) {
-        const bool pressed = (GetAsyncKeyState(vk) & 0x8000) != 0;
-        LogAimKeyState(keySetting, vk, 0, pressed);
-        return pressed;
-    }
-
-    inline void LogKmBoxMonitorFallback(int keySetting, int vk) {
-        static DWORD lastFallbackLogTick = 0;
-        const DWORD now = GetTickCount();
-        if (lastFallbackLogTick != 0 && now - lastFallbackLogTick < 1000)
-            return;
-
-        Diagnostics::Aim("hotkey fallback reason=kmbox_monitor_unavailable keySetting=%d vk=0x%X configuredSource=kmbox kmboxEnabled=%d deviceType=%d monitorRunning=%d monitorPackets=%llu dmaReady=%d dmaAddr=0x%llX",
-            keySetting,
-            vk,
-            OW::Config::kmboxEnabled ? 1 : 0,
-            OW::Config::kmboxDeviceType,
-            kmbox::KmBoxMgr.KeyBoard.ListenerRuned.load() ? 1 : 0,
-            kmbox::KmBoxMgr.KeyBoard.InputPacketCount(),
-            (KeyState::initialized.load() && KeyState::gafAsyncKeyStateAddr.load() != 0) ? 1 : 0,
-            static_cast<unsigned long long>(KeyState::gafAsyncKeyStateAddr.load()));
-        lastFallbackLogTick = now;
-    }
-
-    inline bool ReadDmaThenLocalVk(int vk, int keySetting) {
-        const bool dmaPressed = ReadDmaKeyStateVk(vk, keySetting, false);
-        if (dmaPressed)
-            return true;
-
-        return ReadLocalAsyncKeyStateVk(vk, keySetting);
     }
 
     inline bool IsInputVkDown(int vk, int keySetting = -1) {
         if (vk <= 0) {
-            LogAimKeyState(keySetting, vk, 0, false);
+            LogAimKeyState(keySetting, vk, false);
             return false;
         }
 
-        if (OW::Config::inputSource == 4 ||
-            (OW::Config::inputSource == 1 && OW::Config::kmboxDeviceType == 2)) {
-            if (!IsMockHardwareAvailable()) {
-                LogAimKeyState(keySetting, vk, 3, false);
-                return false;
-            }
-            return ReadMockHardwareVk(vk, keySetting);
-        }
-
-        if (OW::Config::inputSource == 1) {
-            if (!IsKmBoxMonitorAvailable()) {
-                LogAimKeyState(keySetting, vk, 1, false);
-                LogKmBoxMonitorFallback(keySetting, vk);
-                return ReadDmaThenLocalVk(vk, keySetting);
-            }
-            return ReadKmBoxMonitorVk(vk, keySetting);
-        }
-
-        if (OW::Config::inputSource == 3)
-            return ReadDmaKeyStateVk(vk, keySetting, true);
-
-        if (OW::Config::inputSource == 2)
-            return ReadLocalAsyncKeyStateVk(vk, keySetting);
-
-        // Auto is only a fallback mode. If KMBox monitor is running, trust it
-        // exclusively so a released KMBox key cannot be overridden by local/DMA.
-        if (IsMockHardwareAvailable())
-            return ReadMockHardwareVk(vk, keySetting);
-
-        if (IsKmBoxMonitorAvailable())
-            return ReadKmBoxMonitorVk(vk, keySetting);
-
-        return ReadDmaThenLocalVk(vk, keySetting);
-    }
-
-    inline bool ReadKmBoxMonitorVkQuiet(int vk) {
-        if (IsMouseActivationKey(vk))
-            return kmbox::KmBoxMgr.KeyBoard.IsMouseButtonPressed(vk);
-        return kmbox::KmBoxMgr.KeyBoard.GetKeyState(static_cast<WORD>(vk));
-    }
-
-    inline bool ReadMockHardwareVkQuiet(int vk) {
-        return kmbox::MockHardwareMgr.IsVkDown(vk);
+        return ReadDmaKeyStateVk(vk, keySetting);
     }
 
     inline bool ReadDmaKeyStateVkQuiet(int vk) {
@@ -8512,44 +8384,11 @@ namespace AimbotDetail {
         return KeyState::IsKeyDown(static_cast<uint32_t>(vk));
     }
 
-    inline bool ReadLocalAsyncKeyStateVkQuiet(int vk) {
-        return (GetAsyncKeyState(vk) & 0x8000) != 0;
-    }
-
-    inline bool ReadDmaThenLocalVkQuiet(int vk) {
-        return ReadDmaKeyStateVkQuiet(vk) || ReadLocalAsyncKeyStateVkQuiet(vk);
-    }
-
     inline bool IsInputVkDownQuiet(int vk) {
         if (vk <= 0)
             return false;
 
-        if (OW::Config::inputSource == 4 ||
-            (OW::Config::inputSource == 1 && OW::Config::kmboxDeviceType == 2)) {
-            if (IsMockHardwareAvailable())
-                return ReadMockHardwareVkQuiet(vk);
-            return false;
-        }
-
-        if (OW::Config::inputSource == 1) {
-            if (IsKmBoxMonitorAvailable())
-                return ReadKmBoxMonitorVkQuiet(vk);
-            return ReadDmaThenLocalVkQuiet(vk);
-        }
-
-        if (OW::Config::inputSource == 3)
-            return ReadDmaKeyStateVkQuiet(vk);
-
-        if (OW::Config::inputSource == 2)
-            return ReadLocalAsyncKeyStateVkQuiet(vk);
-
-        if (IsMockHardwareAvailable())
-            return ReadMockHardwareVkQuiet(vk);
-
-        if (IsKmBoxMonitorAvailable())
-            return ReadKmBoxMonitorVkQuiet(vk);
-
-        return ReadDmaThenLocalVkQuiet(vk);
+        return ReadDmaKeyStateVkQuiet(vk);
     }
 
     inline int SideMouseAliasKeySetting(int keySetting) {
@@ -8589,7 +8428,7 @@ namespace AimbotDetail {
     inline bool IsConfiguredAimKeyPressed(int keySetting) {
         const int vk = OW::get_bind_id(keySetting);
         if (vk <= 0) {
-            LogAimKeyState(keySetting, vk, 0, false);
+            LogAimKeyState(keySetting, vk, false);
             static DWORD lastInvalidBindingLogTick = 0;
             const DWORD now = GetTickCount();
             if (lastInvalidBindingLogTick == 0 || now - lastInvalidBindingLogTick >= 1000) {

@@ -1074,6 +1074,17 @@ namespace OW { namespace Config {
             return true;
         }
 
+        bool DeleteValue(const std::string& path, const char* section, const char* key)
+        {
+            if (!WritePrivateProfileStringA(section, key, nullptr, path.c_str())) {
+                LogConfig(Diagnostics::LogLevel::Warn,
+                    "Failed to delete [%s] %s from %s (GetLastError=%lu).",
+                    section, key, path.c_str(), static_cast<unsigned long>(GetLastError()));
+                return false;
+            }
+            return true;
+        }
+
         void WriteIntValue(const std::string& path, const char* section, const char* key, int value)
         {
             char buffer[64] = {};
@@ -2363,7 +2374,6 @@ namespace OW { namespace Config {
             aimOvershootCurve = false;
             aimOvershootGain = 0.25f;
             aimOvershootResetPixels = 56.0f;
-            inputSource = 1;
             aimDryRun = false;
             aimVerboseLog = false;
             aimDryRunLogIntervalMs = 100;
@@ -2446,9 +2456,6 @@ namespace OW { namespace Config {
             crosscircle = false;          // default: false
             eyeray = false;               // default: false
             MenuToggleKey = VK_HOME;      // default: VK_HOME
-            gafAsyncKeyStateOffset = 0;   // default: auto resolve by host build
-            gafAsyncKeyStateSize = 256;   // default for manual direct RVA mode
-            gafAsyncKeyStateSessionId = 0; // default: auto from interactive proxy process
             lastConfigProfile = "config.ini";
 
             enargb = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);       // current box theme: visible fill red
@@ -4598,7 +4605,6 @@ namespace OW { namespace Config {
             aimOvershootCurve = ReadBool(ini, section, "aimOvershootCurve", aimOvershootCurve);
             aimOvershootGain = ReadFixedFloat(ini, section, "aimOvershootGain", aimOvershootGain);
             aimOvershootResetPixels = ReadFixedFloat(ini, section, "aimOvershootResetPixels", aimOvershootResetPixels);
-            inputSource = ReadInt(ini, section, "inputSource", inputSource);
             aimDryRun = ReadBool(ini, section, "aimDryRun", aimDryRun);
             aimVerboseLog = ReadBool(ini, section, "aimVerboseLog", aimVerboseLog);
             aimDryRunLogIntervalMs = ReadInt(ini, section, "aimDryRunLogIntervalMs", aimDryRunLogIntervalMs);
@@ -4942,7 +4948,6 @@ namespace OW { namespace Config {
             WriteBoolValue(path, section, "aimOvershootCurve", aimOvershootCurve);
             WriteFixedFloatValue(path, section, "aimOvershootGain", aimOvershootGain);
             WriteFixedFloatValue(path, section, "aimOvershootResetPixels", aimOvershootResetPixels);
-            WriteIntValue(path, section, "inputSource", inputSource);
             WriteBoolValue(path, section, "aimDryRun", aimDryRun);
             WriteBoolValue(path, section, "aimVerboseLog", aimVerboseLog);
             WriteIntValue(path, section, "aimDryRunLogIntervalMs", aimDryRunLogIntervalMs);
@@ -5197,9 +5202,6 @@ namespace OW { namespace Config {
             boxPerfFastRect = ReadBool(ini, section, "boxPerfFastRect", boxPerfFastRect);
             targetPriority = ReadInt(ini, section, "targetPriority", targetPriority);
             MenuToggleKey = ReadInt(ini, section, "MenuToggleKey", MenuToggleKey);
-            gafAsyncKeyStateOffset = ReadUInt64(ini, section, "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
-            gafAsyncKeyStateSize = ReadInt(ini, section, "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
-            gafAsyncKeyStateSessionId = ReadInt(ini, section, "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
             lastConfigProfile = ReadString(ini, section, "lastConfigProfile", lastConfigProfile.c_str());
             uiLanguage = ReadInt(ini, section, "uiLanguage", uiLanguage);
             manualScreenWidth = ReadInt(ini, section, "manualScreenWidth", manualScreenWidth);
@@ -5388,7 +5390,6 @@ namespace OW { namespace Config {
             ClampSetting("aim_key2", aim_key2, 0, MaxActivationKeyIndex(), 1);
             ClampSetting("togglekey", togglekey, 0, 54, 0);
             ClampSetting("MenuToggleKey", MenuToggleKey, 1, 255, VK_HOME);
-            ClampSetting("inputSource", inputSource, 0, 4, 1);
             ClampSetting("aimDryRunLogIntervalMs", aimDryRunLogIntervalMs, 50, 1000, 100);
             if (ultimateDisplayMode != 1) {
                 LogConfig(Diagnostics::LogLevel::Warn,
@@ -5398,13 +5399,6 @@ namespace OW { namespace Config {
             }
             ClampSetting("skillDisplayMode", skillDisplayMode, 0, 2, 0);
             ClampSetting("radarCorner", radarCorner, 0, 3, 0);
-            if (gafAsyncKeyStateSize != 64 && gafAsyncKeyStateSize != 256) {
-                LogConfig(Diagnostics::LogLevel::Warn,
-                    "gafAsyncKeyStateSize out of range (%d); using default 256.",
-                    gafAsyncKeyStateSize);
-                gafAsyncKeyStateSize = 256;
-            }
-            ClampSetting("gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId, 0, 64, 0);
 
             ClampFloatSetting("Fov", Fov, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
             ClampFloatSetting("Fov2", Fov2, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
@@ -5718,9 +5712,6 @@ namespace OW { namespace Config {
                 ToText(hostMouseDpiAutoDetected).c_str(), kmboxInputDelayMs,
                 ToText(kmboxDebugLog).c_str(),
                 ToText(kmboxSuppressOutputWhileMenuOpen).c_str());
-            LogConfig(level, "Dump: keystate offset=%s size=%d sessionId=%d",
-                ToText(gafAsyncKeyStateOffset).c_str(), gafAsyncKeyStateSize,
-                gafAsyncKeyStateSessionId);
             LogConfig(level, "Dump: manual screen width=%d height=%d",
                 manualScreenWidth, manualScreenHeight);
             LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s draw_avatar=%s draw_hitbox=%s skillinfo=%s ultimateDisplayMode=%d",
@@ -6233,9 +6224,6 @@ namespace OW { namespace Config {
             WriteBoolValue(path, "Global", "drawTrackingDeadzones", drawTrackingDeadzones);
             WriteIntValue(path, "Global", "targetPriority", targetPriority);
             WriteIntValue(path, "Global", "MenuToggleKey", MenuToggleKey);
-            WriteUInt64Value(path, "Global", "gafAsyncKeyStateOffset", gafAsyncKeyStateOffset);
-            WriteIntValue(path, "Global", "gafAsyncKeyStateSize", gafAsyncKeyStateSize);
-            WriteIntValue(path, "Global", "gafAsyncKeyStateSessionId", gafAsyncKeyStateSessionId);
             WriteStringValue(path, "Global", "lastConfigProfile", lastConfigProfile.c_str());
             WriteIntValue(path, "Global", "uiLanguage", ClampUiLanguage(uiLanguage));
             WriteIntValue(path, "Global", "manualScreenWidth", manualScreenWidth);
@@ -6247,6 +6235,11 @@ namespace OW { namespace Config {
             WriteColor(path, "Global", "targetargb", targetargb);
             WriteColor(path, "Global", "allyargb", allyargb);
             SaveFovRingStyles(path);
+
+            DeleteValue(path, "Aimbot", "inputSource");
+            DeleteValue(path, "Global", "gafAsyncKeyStateOffset");
+            DeleteValue(path, "Global", "gafAsyncKeyStateSize");
+            DeleteValue(path, "Global", "gafAsyncKeyStateSessionId");
         }
 
         void LoadSystemConfigUnlocked(const IniFile& ini)

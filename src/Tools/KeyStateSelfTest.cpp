@@ -53,8 +53,8 @@ bool TestProfileSelection()
 
 bool TestCompactBitmapDecode()
 {
-    std::array<uint8_t, 256> bitmap{};
-    KeyState::keyStateByteCount.store(64, std::memory_order_release);
+    KeyState::KeyStateBitmap bitmap{};
+    KeyState::keyStateByteCount.store(KeyState::kKeyStateByteCount, std::memory_order_release);
 
     constexpr int vkA = 'A';
     bitmap[static_cast<size_t>(vkA) / 4] =
@@ -72,24 +72,40 @@ bool TestCompactBitmapDecode()
     return true;
 }
 
-bool TestByteBitmapDecode()
+bool TestSessionProbeOrder()
 {
-    std::array<uint8_t, 256> bitmap{};
-    KeyState::keyStateByteCount.store(256, std::memory_order_release);
+    KeyState::KeyboardProxyProcess proxy{};
 
-    bitmap[VK_SPACE] = 0x80;
-    bitmap[VK_SHIFT] = 0x01;
-
-    if (!KeyState::IsKeyDownInBitmap(bitmap, VK_SPACE))
-        return false;
-    if (KeyState::IsKeyDownInBitmap(bitmap, VK_SHIFT))
-        return false;
-    if (KeyState::IsKeyDownInBitmap(bitmap, -1))
-        return false;
-    if (KeyState::IsKeyDownInBitmap(bitmap, 256))
+    proxy.sessionId = 2;
+    std::vector<DWORD> sessions = KeyState::BuildSessionProbeList(proxy);
+    if (sessions.size() != 2 || sessions[0] != 2 || sessions[1] != 1)
         return false;
 
-    return true;
+    proxy.sessionId = 0;
+    sessions = KeyState::BuildSessionProbeList(proxy);
+    return sessions.size() == 2 && sessions[0] == 1 && sessions[1] == 2;
+}
+
+bool TestWin1124H2FallbackCandidates()
+{
+    const KeyState::SessionSlotsProfile* profile = KeyState::SelectSessionSlotsProfile(26100);
+    if (!profile)
+        return false;
+
+    std::vector<KeyState::ResolverValueCandidate> slots;
+    KeyState::AddProfileSlotsRvaCandidates(slots, 26100, *profile);
+    if (slots.size() != 3 ||
+        slots[0].value != 0x824F0 ||
+        slots[1].value != 0x82530 ||
+        slots[2].value != 0x82538) {
+        return false;
+    }
+
+    std::vector<KeyState::ResolverValueCandidate> offsets;
+    KeyState::AddProfileKeyOffsetCandidates(offsets, 26100, *profile);
+    return offsets.size() == 2 &&
+        offsets[0].value == 0x3808 &&
+        offsets[1].value == 0x3830;
 }
 
 bool TestRipRelativeHelper()
@@ -128,6 +144,30 @@ bool TestRipRelativeHelper()
     return true;
 }
 
+bool TestU32ValueHelper()
+{
+    std::vector<uint8_t> image(64, 0x90);
+    constexpr size_t matchOffset = 8;
+    constexpr uint32_t keyStateOffset = 0x3830;
+
+    image[matchOffset + 0] = 0x48;
+    image[matchOffset + 1] = 0x8D;
+    image[matchOffset + 2] = 0x90;
+    std::memcpy(image.data() + matchOffset + 3, &keyStateOffset, sizeof(keyStateOffset));
+    image[matchOffset + 7] = 0xE8;
+    image[matchOffset + 12] = 0x0F;
+    image[matchOffset + 13] = 0x57;
+    image[matchOffset + 14] = 0xC0;
+
+    uint64_t resolved = 0;
+    return KeyState::TryResolveU32ValueInImage(
+        image,
+        { 0x48, 0x8D, 0x90, -1, -1, -1, -1, 0xE8, -1, -1, -1, -1, 0x0F, 0x57, 0xC0 },
+        3,
+        resolved) &&
+        resolved == keyStateOffset;
+}
+
 } // namespace
 
 int main()
@@ -136,11 +176,15 @@ int main()
         return Fail("profile selection");
     if (!TestCompactBitmapDecode())
         return Fail("64-byte compact bitmap decode");
-    if (!TestByteBitmapDecode())
-        return Fail("256-byte bitmap decode");
+    if (!TestSessionProbeOrder())
+        return Fail("session probe order");
+    if (!TestWin1124H2FallbackCandidates())
+        return Fail("Win11 24H2 fallback candidates");
     if (!TestRipRelativeHelper())
         return Fail("RIP-relative helper");
+    if (!TestU32ValueHelper())
+        return Fail("U32 value helper");
 
-    KeyState::keyStateByteCount.store(KeyState::keyStateBitmap.size(), std::memory_order_release);
+    KeyState::keyStateByteCount.store(KeyState::kKeyStateByteCount, std::memory_order_release);
     return EXIT_SUCCESS;
 }
