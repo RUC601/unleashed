@@ -58,6 +58,21 @@ enum class KmBoxCommandType {
     Serial
 };
 
+enum class KmBoxOutputIntent {
+    Normal = 0,
+    SafetyRelease
+};
+
+inline constexpr KmBoxOutputIntent OutputIntentForState(bool down) {
+    return down ? KmBoxOutputIntent::Normal : KmBoxOutputIntent::SafetyRelease;
+}
+
+inline constexpr bool ShouldSuppressOutputForMenu(
+    bool menuSuppressed,
+    KmBoxOutputIntent intent) {
+    return menuSuppressed && intent == KmBoxOutputIntent::Normal;
+}
+
 inline const char* ToString(KmBoxConnectionState state) {
     switch (state) {
     case KmBoxConnectionState::Disconnected: return "disconnected";
@@ -83,6 +98,14 @@ inline const char* ToString(KmBoxCommandType type) {
     case KmBoxCommandType::SetConfig:     return "set_config";
     case KmBoxCommandType::Serial:        return "serial";
     default:                              return "unknown";
+    }
+}
+
+inline const char* ToString(KmBoxOutputIntent intent) {
+    switch (intent) {
+    case KmBoxOutputIntent::Normal:        return "normal";
+    case KmBoxOutputIntent::SafetyRelease: return "safety_release";
+    default:                               return "unknown";
     }
 }
 
@@ -139,6 +162,7 @@ struct KmBoxQueuedNetCommand {
     client_data data{};
     int length = 0;
     KmBoxCommandType type = KmBoxCommandType::Unknown;
+    KmBoxOutputIntent outputIntent = KmBoxOutputIntent::Normal;
     int mouseButtonStateMask = -1;
     std::chrono::steady_clock::time_point enqueuedAt{};
 };
@@ -146,6 +170,7 @@ struct KmBoxQueuedNetCommand {
 struct KmBoxQueuedSerialCommand {
     std::string command;
     KmBoxCommandType type = KmBoxCommandType::Serial;
+    KmBoxOutputIntent outputIntent = KmBoxOutputIntent::Normal;
     std::chrono::steady_clock::time_point enqueuedAt{};
 };
 

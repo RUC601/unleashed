@@ -216,14 +216,17 @@ namespace OW {
         return Config::kmboxDeviceType == 0 ? "network" : "serial";
     }
 
-    inline bool ShouldSuppressKmboxOutput(const char* action) {
-        if (!Config::KmboxOutputSuppressedByMenu())
+    inline bool ShouldSuppressKmboxOutput(
+        const char* action,
+        KmBoxOutputIntent intent = KmBoxOutputIntent::Normal) {
+        if (!ShouldSuppressOutputForMenu(Config::KmboxOutputSuppressedByMenu(), intent))
             return false;
 
         static std::atomic_flag logged = ATOMIC_FLAG_INIT;
         if (!logged.test_and_set(std::memory_order_relaxed)) {
-            Diagnostics::Aim("kmbox.output suppressed action=%s reason=menu_open",
-                action ? action : "unknown");
+            Diagnostics::Aim("kmbox.output suppressed action=%s reason=menu_open intent=%s",
+                action ? action : "unknown",
+                ToString(intent));
         }
         return true;
     }
@@ -703,7 +706,8 @@ namespace OW {
     inline ActionOutputStatus SendMouseButtonActionState(int button, bool down) {
         if (!Config::kmboxEnabled)
             return ActionOutputStatus::Disabled;
-        if (ShouldSuppressKmboxOutput("mouse_button"))
+        const KmBoxOutputIntent intent = OutputIntentForState(down);
+        if (ShouldSuppressKmboxOutput("mouse_button", intent))
             return ActionOutputStatus::Suppressed;
         if (button < 0 || button > 2)
             return ActionOutputStatus::InvalidAction;
@@ -766,7 +770,8 @@ namespace OW {
             return ActionOutputStatus::InvalidAction;
         if (!Config::kmboxEnabled)
             return ActionOutputStatus::Disabled;
-        if (ShouldSuppressKmboxOutput("keyboard"))
+        const KmBoxOutputIntent intent = OutputIntentForState(down);
+        if (ShouldSuppressKmboxOutput("keyboard", intent))
             return ActionOutputStatus::Suppressed;
 
         if (Config::kmboxDeviceType == 2) {
@@ -794,7 +799,8 @@ namespace OW {
     inline void ForceReleaseMouseButtons() {
         if (!Config::kmboxEnabled)
             return;
-        if (ShouldSuppressKmboxOutput("force_release_buttons"))
+        if (ShouldSuppressKmboxOutput(
+                "force_release_buttons", KmBoxOutputIntent::SafetyRelease))
             return;
 
         if (Config::kmboxDeviceType == 2) {
@@ -811,7 +817,8 @@ namespace OW {
     inline void ForceReleaseMouseButton(int button) {
         if (!Config::kmboxEnabled)
             return;
-        if (ShouldSuppressKmboxOutput("force_release_button"))
+        if (ShouldSuppressKmboxOutput(
+                "force_release_button", KmBoxOutputIntent::SafetyRelease))
             return;
 
         if (Config::kmboxDeviceType == 2) {
@@ -864,7 +871,8 @@ namespace OW {
     inline bool UnmaskPhysicalMouseButtons() {
         if (!Config::kmboxEnabled)
             return false;
-        if (ShouldSuppressKmboxOutput("mouse_unmask"))
+        if (ShouldSuppressKmboxOutput(
+                "mouse_unmask", KmBoxOutputIntent::SafetyRelease))
             return false;
 
         if (Config::kmboxDeviceType == 2)

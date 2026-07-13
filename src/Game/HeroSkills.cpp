@@ -589,7 +589,8 @@ namespace {
         if (hidCode == 0)
             return false;
 
-        if (Config::kmboxEnabled && ShouldSuppressKmboxOutput("keyboard"))
+        const KmBoxOutputIntent intent = OutputIntentForState(down);
+        if (Config::kmboxEnabled && ShouldSuppressKmboxOutput("keyboard", intent))
             return false;
 
         if (Config::kmboxEnabled && Config::kmboxDeviceType == 2) {

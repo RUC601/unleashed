@@ -738,9 +738,12 @@ void KmBoxNetManager::QueueWorkerLoop()
         if (elapsed < flushInterval)
             std::this_thread::sleep_for(flushInterval - elapsed);
 
-        if (OW::Config::KmboxOutputSuppressedByMenu() && IsOutputCommand(command.type)) {
-            Diagnostics::Aim("udp.queue drop reason=menu_open_suppressed type=%s",
-                ToString(command.type));
+        if (IsOutputCommand(command.type) &&
+            ShouldSuppressOutputForMenu(
+                OW::Config::KmboxOutputSuppressedByMenu(), command.outputIntent)) {
+            Diagnostics::Aim("udp.queue drop reason=menu_open_suppressed type=%s intent=%s",
+                ToString(command.type),
+                ToString(command.outputIntent));
             continue;
         }
 
@@ -1012,6 +1015,7 @@ int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int C
     command.data = packet;
     command.length = sizeof(cmd_head_t) + sizeof(soft_mouse_t);
     command.type = KmBoxCommandType::MouseButton;
+    command.outputIntent = OutputIntentForState(Down);
     command.mouseButtonStateMask = stateMask;
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
@@ -1220,6 +1224,7 @@ int KmBoxNetManager::UnmaskAll()
     command.data = packet;
     command.length = sizeof(cmd_head_t);
     command.type = KmBoxCommandType::MouseUnmask;
+    command.outputIntent = KmBoxOutputIntent::SafetyRelease;
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
 }
@@ -1255,6 +1260,7 @@ int KmBoxNetManager::SendKeyboardKey(unsigned char hidCode, bool down)
     command.data = packet;
     command.length = sizeof(cmd_head_t) + sizeof(soft_keyboard_t);
     command.type = KmBoxCommandType::Keyboard;
+    command.outputIntent = OutputIntentForState(down);
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
 }

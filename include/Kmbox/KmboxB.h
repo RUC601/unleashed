@@ -31,7 +31,10 @@ private:
     void ClosePort();
     bool SendCommandWithRetry(const std::string& command, KmBoxCommandType type);
     bool SendCommandOnce(const std::string& command);
-    void EnqueueCommand(const std::string& command, KmBoxCommandType type);
+    void EnqueueCommand(
+        const std::string& command,
+        KmBoxCommandType type,
+        KmBoxOutputIntent outputIntent = KmBoxOutputIntent::Normal);
     void StartWorkers();
     void StopWorkers();
     void QueueWorkerLoop();

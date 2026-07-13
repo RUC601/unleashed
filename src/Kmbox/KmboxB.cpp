@@ -235,7 +235,10 @@ bool KmBoxBManager::SendCommandWithRetry(const std::string& command, KmBoxComman
     return false;
 }
 
-void KmBoxBManager::EnqueueCommand(const std::string& command, KmBoxCommandType type)
+void KmBoxBManager::EnqueueCommand(
+    const std::string& command,
+    KmBoxCommandType type,
+    KmBoxOutputIntent outputIntent)
 {
     {
         std::lock_guard<std::mutex> lock(queueMutex);
@@ -247,6 +250,7 @@ void KmBoxBManager::EnqueueCommand(const std::string& command, KmBoxCommandType 
         KmBoxQueuedSerialCommand queued{};
         queued.command = command;
         queued.type = type;
+        queued.outputIntent = outputIntent;
         queued.enqueuedAt = std::chrono::steady_clock::now();
 
         if (type == KmBoxCommandType::MouseButton) {
@@ -317,9 +321,12 @@ void KmBoxBManager::QueueWorkerLoop()
         if (elapsed < flushInterval)
             std::this_thread::sleep_for(flushInterval - elapsed);
 
-        if (OW::Config::KmboxOutputSuppressedByMenu() && IsSerialOutputCommand(command.type)) {
-            Diagnostics::Aim("serial.queue drop reason=menu_open_suppressed type=%s",
-                ToString(command.type));
+        if (IsSerialOutputCommand(command.type) &&
+            ShouldSuppressOutputForMenu(
+                OW::Config::KmboxOutputSuppressedByMenu(), command.outputIntent)) {
+            Diagnostics::Aim("serial.queue drop reason=menu_open_suppressed type=%s intent=%s",
+                ToString(command.type),
+                ToString(command.outputIntent));
             continue;
         }
 
@@ -396,7 +403,10 @@ void KmBoxBManager::km_click()
     std::string command = "km.left(" + std::to_string(1) + ")\r\n";
     std::string command1 = "km.left(" + std::to_string(0) + ")\r\n";
     EnqueueCommand(command, KmBoxCommandType::MouseButton);
-    EnqueueCommand(command1, KmBoxCommandType::MouseButton);
+    EnqueueCommand(
+        command1,
+        KmBoxCommandType::MouseButton,
+        KmBoxOutputIntent::SafetyRelease);
 }
 
 void KmBoxBManager::km_left(bool down)
@@ -404,7 +414,7 @@ void KmBoxBManager::km_left(bool down)
     std::string command = "km.left(" + std::to_string(down ? 1 : 0) + ")\r\n";
     if (OW::Config::kmboxDebugLog)
         Diagnostics::Info("[KMBOX-B] queue output command=km_left down=%d", down ? 1 : 0);
-    EnqueueCommand(command, KmBoxCommandType::MouseButton);
+    EnqueueCommand(command, KmBoxCommandType::MouseButton, OutputIntentForState(down));
 }
 
 void KmBoxBManager::km_right(bool down)
@@ -412,11 +422,11 @@ void KmBoxBManager::km_right(bool down)
     std::string command = "km.right(" + std::to_string(down ? 1 : 0) + ")\r\n";
     if (OW::Config::kmboxDebugLog)
         Diagnostics::Info("[KMBOX-B] queue output command=km_right down=%d", down ? 1 : 0);
-    EnqueueCommand(command, KmBoxCommandType::MouseButton);
+    EnqueueCommand(command, KmBoxCommandType::MouseButton, OutputIntentForState(down));
 }
 
 void KmBoxBManager::km_middle(bool down)
 {
     std::string command = "km.middle(" + std::to_string(down ? 1 : 0) + ")\r\n";
-    EnqueueCommand(command, KmBoxCommandType::MouseButton);
+    EnqueueCommand(command, KmBoxCommandType::MouseButton, OutputIntentForState(down));
 }

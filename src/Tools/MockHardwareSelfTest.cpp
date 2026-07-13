@@ -92,15 +92,50 @@ namespace
         return EXIT_SUCCESS;
     }
 
-    int VerifyKmboxOutputSuppressionWhileMenuOpen()
+    int VerifyKmboxOutputIntentPolicy()
+    {
+        if (OutputIntentForState(true) != KmBoxOutputIntent::Normal)
+            return Fail("button-down did not resolve to normal output intent");
+        if (OutputIntentForState(false) != KmBoxOutputIntent::SafetyRelease)
+            return Fail("button-up did not resolve to safety-release output intent");
+        if (!ShouldSuppressOutputForMenu(true, KmBoxOutputIntent::Normal))
+            return Fail("menu suppression did not block normal output intent");
+        if (ShouldSuppressOutputForMenu(true, KmBoxOutputIntent::SafetyRelease))
+            return Fail("menu suppression blocked safety-release output intent");
+        if (ShouldSuppressOutputForMenu(false, KmBoxOutputIntent::Normal) ||
+            ShouldSuppressOutputForMenu(false, KmBoxOutputIntent::SafetyRelease)) {
+            return Fail("output intent was suppressed while menu suppression was inactive");
+        }
+        return EXIT_SUCCESS;
+    }
+
+    int VerifyMouseReleaseWhileMenuOpen()
     {
         kmbox::MockHardwareMgr.Reset();
         OW::Config::kmboxSuppressOutputWhileMenuOpen = true;
+        OW::Config::Menu = false;
+
+        if (!OW::ActionOutputSucceeded(
+                OW::SetActionState(OW::GameAction::PrimaryFire, true))) {
+            return Fail("failed to seed held mouse action before opening menu");
+        }
+        if ((kmbox::MockHardwareMgr.Snapshot().outputMouseButtons & 0x01u) == 0)
+            return Fail("seeded mouse action was not held");
+
         OW::Config::Menu = true;
+        if (!OW::ActionOutputSucceeded(
+                OW::SetActionState(OW::GameAction::PrimaryFire, false))) {
+            return Fail("mouse release was suppressed while menu was open");
+        }
+        if (kmbox::MockHardwareMgr.Snapshot().outputMouseButtons != 0)
+            return Fail("mouse release did not clear held output while menu was open");
 
         const kmbox::MockHardwareSnapshot before = kmbox::MockHardwareMgr.Snapshot();
         OW::SendMouseMove(OW::Vector3(0.01f, -0.01f, 0.0f), 0);
-        OW::SendMouseButton(0, true);
+        if (OW::SetActionState(OW::GameAction::PrimaryFire, true) !=
+            OW::ActionOutputStatus::Suppressed) {
+            return Fail("menu suppression did not block a new mouse press");
+        }
         if (OW::SendMouseButtonStateMask(0x3u, true))
             return Fail("button state mask reported success while menu suppression was active");
 
@@ -108,25 +143,73 @@ namespace
         if (after.moveEvents != before.moveEvents)
             return Fail("menu suppression did not block mock mouse move");
         if (after.buttonEvents != before.buttonEvents)
-            return Fail("menu suppression did not block mock mouse button");
+            return Fail("menu suppression did not block a new mock mouse press");
         if (after.outputMouseButtons != before.outputMouseButtons)
             return Fail("menu suppression changed mock button state");
 
-        if (kmbox::MockHardwareMgr.RecordButton(0, true) != success)
-            return Fail("failed to seed mock button state for force-release suppression");
-        const kmbox::MockHardwareSnapshot held = kmbox::MockHardwareMgr.Snapshot();
-        OW::ForceReleaseMouseButtons();
-        if (kmbox::MockHardwareMgr.Snapshot().outputMouseButtons != held.outputMouseButtons)
-            return Fail("menu suppression did not block force-release output");
+        OW::Config::Menu = false;
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
+        return EXIT_SUCCESS;
+    }
+
+    int VerifyKeyboardReleaseWhileMenuOpen()
+    {
+        kmbox::MockHardwareMgr.Reset();
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = true;
+        OW::Config::Menu = false;
+
+        if (!OW::ActionOutputSucceeded(
+                OW::SetActionState(OW::GameAction::Ability1, true))) {
+            return Fail("failed to seed held keyboard action before opening menu");
+        }
+
+        OW::Config::Menu = true;
+        if (!OW::ActionOutputSucceeded(
+                OW::SetActionState(OW::GameAction::Ability1, false))) {
+            return Fail("keyboard release was suppressed while menu was open");
+        }
+
+        const auto releasedEvents = kmbox::MockHardwareMgr.RecentEvents();
+        if (releasedEvents.size() != 2 ||
+            releasedEvents[0].type != kmbox::MockEventType::Keyboard ||
+            releasedEvents[1].type != kmbox::MockEventType::Keyboard ||
+            !releasedEvents[0].down || releasedEvents[1].down) {
+            return Fail("keyboard release emitted the wrong sequence while menu was open");
+        }
+
+        const auto before = kmbox::MockHardwareMgr.Snapshot();
+        if (OW::SetActionState(OW::GameAction::Ability1, true) !=
+            OW::ActionOutputStatus::Suppressed) {
+            return Fail("menu suppression did not block a new keyboard press");
+        }
+        if (kmbox::MockHardwareMgr.Snapshot().keyboardEvents != before.keyboardEvents)
+            return Fail("suppressed keyboard press emitted a mock event");
 
         OW::Config::Menu = false;
-        kmbox::MockHardwareMgr.Reset();
-        const kmbox::MockHardwareSnapshot unsuppressedBefore = kmbox::MockHardwareMgr.Snapshot();
-        OW::SendMouseMove(OW::Vector3(0.01f, -0.01f, 0.0f), 0);
-        const kmbox::MockHardwareSnapshot unsuppressedAfter = kmbox::MockHardwareMgr.Snapshot();
-        if (unsuppressedAfter.moveEvents <= unsuppressedBefore.moveEvents)
-            return Fail("KMBox output stayed blocked after menu closed");
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
+        return EXIT_SUCCESS;
+    }
 
+    int VerifySafetyCleanupWhileMenuOpen()
+    {
+        kmbox::MockHardwareMgr.Reset();
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = true;
+        OW::Config::Menu = true;
+
+        if (kmbox::MockHardwareMgr.RecordButton(0, true) != success)
+            return Fail("failed to seed held mouse button for safety cleanup");
+        if (kmbox::MockHardwareMgr.MaskMouse(0x03u) != success)
+            return Fail("failed to seed mouse mask for safety cleanup");
+
+        OW::ForceReleaseMouseButtons();
+        if (kmbox::MockHardwareMgr.Snapshot().outputMouseButtons != 0)
+            return Fail("force release was blocked while menu was open");
+        if (!OW::UnmaskPhysicalMouseButtons())
+            return Fail("unmask was blocked while menu was open");
+        if (kmbox::MockHardwareMgr.Snapshot().maskedButtons != 0)
+            return Fail("unmask did not clear mask while menu was open");
+
+        OW::Config::Menu = false;
         OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
         return EXIT_SUCCESS;
     }
@@ -294,6 +377,14 @@ int main()
         return EXIT_FAILURE;
     if (VerifyTypedActionOutput() != EXIT_SUCCESS)
         return EXIT_FAILURE;
+    if (VerifyKmboxOutputIntentPolicy() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
+    if (VerifyMouseReleaseWhileMenuOpen() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
+    if (VerifyKeyboardReleaseWhileMenuOpen() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
+    if (VerifySafetyCleanupWhileMenuOpen() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
 
     {
         const kmbox::MockHardwareSnapshot before = kmbox::MockHardwareMgr.Snapshot();
@@ -326,9 +417,6 @@ int main()
         return Fail("OW::UnmaskPhysicalMouseButtons failed in mock mode");
     if (kmbox::MockHardwareMgr.Snapshot().maskedButtons != 0)
         return Fail("mock unmask state did not clear");
-
-    if (VerifyKmboxOutputSuppressionWhileMenuOpen() != EXIT_SUCCESS)
-        return EXIT_FAILURE;
 
     if (kmbox::MockHardwareMgr.RecordKeyboardKey(0x09, true) != success)
         return Fail("keyboard output record failed");
