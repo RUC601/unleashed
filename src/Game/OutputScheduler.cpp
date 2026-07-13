@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -71,6 +72,62 @@ namespace OW
         {
             destination.insert(destination.end(), source.begin(), source.end());
         }
+
+        void CanonicalizeControls(std::vector<OutputControl>& controls)
+        {
+            std::sort(controls.begin(), controls.end());
+            controls.erase(
+                std::unique(controls.begin(), controls.end()),
+                controls.end());
+        }
+
+        std::vector<OutputControl> ControlDifference(
+            const std::vector<OutputControl>& left,
+            const std::vector<OutputControl>& right)
+        {
+            std::vector<OutputControl> result;
+            std::set_difference(
+                left.begin(),
+                left.end(),
+                right.begin(),
+                right.end(),
+                std::back_inserter(result));
+            return result;
+        }
+
+        // Aggregate sinks are allowed to be backed by transports that accept
+        // one edge before a later edge in the same update fails.  Once an
+        // acquire update has been attempted, conservatively assume every new
+        // control may have reached hardware.  Track the union in-memory, then
+        // build one release-only update that can safely clean up both genuine
+        // and merely possible downs.  Releasing a control that another owner
+        // still holds remains aggregate-safe through OutputOwnership.
+        bool BuildConservativeOwnerRelease(
+            const OutputOwnership& current,
+            const OwnerToken& owner,
+            const std::vector<OutputControl>& possiblyPressed,
+            OutputOwnership& tracked,
+            OutputOwnership& released,
+            OutputAggregateUpdate& releaseUpdate)
+        {
+            tracked = current;
+            std::vector<OutputChange> ignored;
+            if (!ApplyControls(
+                    tracked,
+                    owner,
+                    {},
+                    possiblyPressed,
+                    ignored)) {
+                return false;
+            }
+
+            released = tracked;
+            const auto changes = released.CancelOwner(owner);
+            if (!changes.has_value())
+                return false;
+            releaseUpdate = BuildUpdate(released, *changes);
+            return true;
+        }
     }
 
     struct OutputScheduler::Impl
@@ -80,8 +137,11 @@ namespace OW
             std::uint64_t id = 0;
             OwnerToken owner{};
             OutputScheduledCancelCallback cancelCleanup;
+            std::vector<OutputControl> heldControls;
+            std::vector<OutputControl> retryControls;
             bool cleanupInvoked = false;
             bool releaseOnly = false;
+            bool manual = false;
         };
 
         struct DeadlineKey
@@ -294,6 +354,21 @@ namespace OW
             }
         }
 
+        void RetainGlobalResidualLocked(
+            OutputActionCancelReason reason,
+            std::vector<CleanupCall>& cleanups)
+        {
+            cleanups.reserve(cleanups.size() + actions.size());
+            for (auto& [key, action] : actions) {
+                (void)key;
+                MarkCleanupLocked(action, reason, cleanups);
+            }
+            deadlines.clear();
+            actions.clear();
+            residualAll = !ownership.Empty();
+            runtimeValid = false;
+        }
+
         bool EnsureWorkerStartedWhileOperationLocked(
             std::unique_lock<std::mutex>& lock)
         {
@@ -321,6 +396,27 @@ namespace OW
             }
         }
 
+        void StopWorkerIfNoTimedWorkWhileOperationLocked(
+            std::unique_lock<std::mutex>& lock)
+        {
+            if (!worker.joinable() || !deadlines.empty())
+                return;
+            for (const auto& [key, action] : actions) {
+                (void)key;
+                if (!action.manual && !action.releaseOnly)
+                    return;
+            }
+
+            stopping = true;
+            cv.notify_all();
+            std::thread idleWorker = std::move(worker);
+            lock.unlock();
+            idleWorker.join();
+            lock.lock();
+            workerRunning = false;
+            stopping = false;
+        }
+
         bool RetryResidualReleasesWhileOperationLocked(
             std::unique_lock<std::mutex>& lock)
         {
@@ -334,10 +430,26 @@ namespace OW
                 for (const auto& [key, action] : actions) {
                     if (!action.releaseOnly)
                         continue;
-                    const auto released = proposed.CancelOwner(action.owner);
-                    if (!released.has_value())
-                        return false;
-                    AppendChanges(changes, *released);
+                    if (action.manual) {
+                        std::vector<OutputChange> ownerChanges;
+                        const auto releases = ControlDifference(
+                            action.heldControls,
+                            action.retryControls);
+                        if (!ApplyControls(
+                                proposed,
+                                action.owner,
+                                releases,
+                                {},
+                                ownerChanges)) {
+                            return false;
+                        }
+                        AppendChanges(changes, ownerChanges);
+                    } else {
+                        const auto released = proposed.CancelOwner(action.owner);
+                        if (!released.has_value())
+                            return false;
+                        AppendChanges(changes, *released);
+                    }
                     residualKeys.push_back(key);
                 }
             }
@@ -359,7 +471,14 @@ namespace OW
                     if (actionIt == actions.end() || !actionIt->second.releaseOnly)
                         continue;
                     EraseDeadlinesLocked(actionIt->second.id);
-                    actions.erase(actionIt);
+                    if (actionIt->second.manual &&
+                        !actionIt->second.retryControls.empty()) {
+                        actionIt->second.heldControls =
+                            std::move(actionIt->second.retryControls);
+                        actionIt->second.releaseOnly = false;
+                    } else {
+                        actions.erase(actionIt);
+                    }
                 }
                 return true;
             }
@@ -439,15 +558,6 @@ namespace OW
             const bool accepted = dispatchClaimed && Emit(update);
             if (dispatchClaimed)
                 EndNormalDispatch();
-            if (!accepted) {
-                InvokeCancelCleanup(
-                    plan.cancelCleanup,
-                    observed == expected && dispatchClaimed
-                        ? OutputActionCancelReason::OutputFailure
-                        : OutputActionCancelReason::RuntimeChanged,
-                    owner.backendGeneration);
-            }
-
             lock.lock();
             if (accepted) {
                 ownership = std::move(proposed);
@@ -472,9 +582,429 @@ namespace OW
                             nextDeadlineSequence++ },
                         std::move(event));
                 }
+            } else if (dispatchClaimed) {
+                OutputOwnership tracked;
+                OutputOwnership released;
+                OutputAggregateUpdate releaseUpdate{};
+                const bool conservativeValid = BuildConservativeOwnerRelease(
+                    ownership,
+                    owner,
+                    plan.acquire,
+                    tracked,
+                    released,
+                    releaseUpdate);
+
+                lock.unlock();
+                const bool cleanupAccepted = conservativeValid &&
+                    EmitReleaseForCurrentGeneration(releaseUpdate);
+                const OutputRuntimeState afterFailure = ReadRuntimeState();
+                InvokeCancelCleanup(
+                    plan.cancelCleanup,
+                    OutputActionCancelReason::OutputFailure,
+                    owner.backendGeneration);
+                lock.lock();
+
+                if (conservativeValid && cleanupAccepted) {
+                    ownership = std::move(released);
+                } else if (conservativeValid) {
+                    ownership = std::move(tracked);
+                    std::vector<CleanupCall> cleanups;
+                    RetainGlobalResidualLocked(
+                        OutputActionCancelReason::OutputFailure,
+                        cleanups);
+                    lock.unlock();
+                    InvokeCleanupCalls(cleanups);
+                    lock.lock();
+                }
+                if (afterFailure.backendGeneration !=
+                        ownership.BackendGeneration() ||
+                    !afterFailure.outputGateOpen) {
+                    runtimeValid = false;
+                }
+                StopWorkerIfNoTimedWorkWhileOperationLocked(lock);
+            } else {
+                lock.unlock();
+                InvokeCancelCleanup(
+                    plan.cancelCleanup,
+                    OutputActionCancelReason::RuntimeChanged,
+                    owner.backendGeneration);
+                lock.lock();
+                StopWorkerIfNoTimedWorkWhileOperationLocked(lock);
             }
             FinishOperationLocked();
             return accepted;
+        }
+
+        bool SetManualControls(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            std::vector<OutputControl> controls)
+        {
+            return UpdateManualControls(
+                std::move(key),
+                ownerSource,
+                std::move(controls),
+                nullptr,
+                false,
+                {},
+                std::nullopt);
+        }
+
+        bool SetManualControlsForGeneration(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            std::vector<OutputControl> controls,
+            std::uint64_t expectedGeneration)
+        {
+            return UpdateManualControls(
+                std::move(key),
+                ownerSource,
+                std::move(controls),
+                nullptr,
+                false,
+                {},
+                expectedGeneration);
+        }
+
+        bool SetManualControl(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            OutputControl control,
+            bool down)
+        {
+            OutputOwnership validator(1);
+            const OwnerToken validationOwner{ ownerSource, 1, 1 };
+            if (!validator.Release(control, validationOwner).has_value())
+                return false;
+            return UpdateManualControls(
+                std::move(key),
+                ownerSource,
+                {},
+                &control,
+                down,
+                {},
+                std::nullopt);
+        }
+
+        bool ReleaseManualControlOrExecuteIfUnowned(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            OutputControl control,
+            OutputUnownedControlCallback callback)
+        {
+            if (!callback)
+                return false;
+            OutputOwnership validator(1);
+            const OwnerToken validationOwner{ ownerSource, 1, 1 };
+            if (!validator.Release(control, validationOwner).has_value())
+                return false;
+            return UpdateManualControls(
+                std::move(key),
+                ownerSource,
+                {},
+                &control,
+                false,
+                std::move(callback),
+                std::nullopt);
+        }
+
+        bool ReleaseManualControlOrExecuteIfUnownedForGeneration(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            OutputControl control,
+            std::uint64_t expectedGeneration,
+            OutputUnownedControlCallback callback)
+        {
+            if (!callback)
+                return false;
+            OutputOwnership validator(1);
+            const OwnerToken validationOwner{ ownerSource, 1, 1 };
+            if (!validator.Release(control, validationOwner).has_value())
+                return false;
+            return UpdateManualControls(
+                std::move(key),
+                ownerSource,
+                {},
+                &control,
+                false,
+                std::move(callback),
+                expectedGeneration);
+        }
+
+        bool ExecuteIfControlUnownedWhileOperationLocked(
+            std::unique_lock<std::mutex>& lock,
+            OutputControl control,
+            const OutputUnownedControlCallback& callback,
+            bool ownedIsSuccess)
+        {
+            if (transitionPaused)
+                return false;
+            if (ownership.IsHeld(control))
+                return ownedIsSuccess;
+
+            const std::uint64_t generation = ownership.BackendGeneration();
+            lock.unlock();
+            const OutputRuntimeState observed = ReadRuntimeState();
+            const OutputRuntimeState expected{ generation, true };
+            const bool dispatchClaimed =
+                observed == expected &&
+                TryBeginNormalDispatch();
+            bool accepted = false;
+            if (dispatchClaimed) {
+                try {
+                    accepted = callback(generation);
+                } catch (...) {
+                    accepted = false;
+                }
+                EndNormalDispatch();
+            }
+
+            lock.lock();
+            return accepted;
+        }
+
+        bool UpdateManualControls(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            std::vector<OutputControl> controls,
+            const OutputControl* singleControl,
+            bool singleDown,
+            OutputUnownedControlCallback ownerlessRelease,
+            std::optional<std::uint64_t> expectedGeneration)
+        {
+            if (key.empty())
+                return false;
+            CanonicalizeControls(controls);
+
+            bool synchronized = false;
+            for (;;) {
+                std::unique_lock<std::mutex> lock(mutex);
+                if (!WaitForOperationSlotLocked(lock))
+                    return false;
+                if (expectedGeneration.has_value() &&
+                    ownership.BackendGeneration() != *expectedGeneration) {
+                    FinishOperationLocked();
+                    return false;
+                }
+
+                auto actionIt = actions.find(key);
+                if (actionIt != actions.end() &&
+                    (!actionIt->second.manual ||
+                     actionIt->second.owner.source != ownerSource)) {
+                    FinishOperationLocked();
+                    return false;
+                }
+                const bool retryAlreadyReleasesRequestedControl =
+                    ownerlessRelease && singleControl != nullptr &&
+                    actionIt != actions.end() &&
+                    actionIt->second.releaseOnly &&
+                    std::binary_search(
+                        actionIt->second.heldControls.begin(),
+                        actionIt->second.heldControls.end(),
+                        *singleControl) &&
+                    !std::binary_search(
+                        actionIt->second.retryControls.begin(),
+                        actionIt->second.retryControls.end(),
+                        *singleControl);
+                const bool residualReleased =
+                    RetryResidualReleasesWhileOperationLocked(lock);
+                if (!residualReleased) {
+                    FinishOperationLocked();
+                    return false;
+                }
+                if (retryAlreadyReleasesRequestedControl) {
+                    FinishOperationLocked();
+                    return true;
+                }
+                actionIt = actions.find(key);
+
+                const bool ownerHeldRequestedControl =
+                    singleControl != nullptr && actionIt != actions.end() &&
+                    std::binary_search(
+                        actionIt->second.heldControls.begin(),
+                        actionIt->second.heldControls.end(),
+                        *singleControl);
+
+                std::vector<OutputControl> desired = controls;
+                if (singleControl != nullptr) {
+                    desired = actionIt == actions.end()
+                        ? std::vector<OutputControl>{}
+                        : actionIt->second.heldControls;
+                    const auto desiredIt = std::lower_bound(
+                        desired.begin(), desired.end(), *singleControl);
+                    if (singleDown) {
+                        if (desiredIt == desired.end() ||
+                            *desiredIt != *singleControl) {
+                            desired.insert(desiredIt, *singleControl);
+                        }
+                    } else if (desiredIt != desired.end() &&
+                               *desiredIt == *singleControl) {
+                        desired.erase(desiredIt);
+                    }
+                }
+
+                if (actionIt == actions.end() && desired.empty()) {
+                    if (ownerlessRelease && singleControl != nullptr) {
+                        const bool accepted =
+                            ExecuteIfControlUnownedWhileOperationLocked(
+                                lock,
+                                *singleControl,
+                                ownerlessRelease,
+                                true);
+                        FinishOperationLocked();
+                        return accepted;
+                    }
+                    FinishOperationLocked();
+                    return true;
+                }
+
+                const std::vector<OutputControl> current =
+                    actionIt == actions.end()
+                    ? std::vector<OutputControl>{}
+                    : actionIt->second.heldControls;
+                const auto releases = ControlDifference(current, desired);
+                const auto acquires = ControlDifference(desired, current);
+                if (releases.empty() && acquires.empty()) {
+                    if (ownerlessRelease && singleControl != nullptr &&
+                        !ownerHeldRequestedControl) {
+                        const bool accepted =
+                            ExecuteIfControlUnownedWhileOperationLocked(
+                                lock,
+                                *singleControl,
+                                ownerlessRelease,
+                                true);
+                        FinishOperationLocked();
+                        return accepted;
+                    }
+                    FinishOperationLocked();
+                    return true;
+                }
+
+                if (!acquires.empty() && (!runtimeValid || transitionPaused)) {
+                    FinishOperationLocked();
+                    lock.unlock();
+                    if (expectedGeneration.has_value())
+                        return false;
+                    if (synchronized || !SynchronizeRuntime())
+                        return false;
+                    synchronized = true;
+                    continue;
+                }
+
+                const std::uint64_t actionId = actionIt == actions.end()
+                    ? nextActionId++
+                    : actionIt->second.id;
+                if (nextActionId == 0)
+                    ++nextActionId;
+                const OwnerToken owner = actionIt == actions.end()
+                    ? OwnerToken{
+                        ownerSource,
+                        actionId,
+                        ownership.BackendGeneration() }
+                    : actionIt->second.owner;
+
+                OutputOwnership proposed = ownership;
+                std::vector<OutputChange> changes;
+                const bool valid = ApplyControls(
+                    proposed,
+                    owner,
+                    releases,
+                    acquires,
+                    changes);
+                const OutputAggregateUpdate update = valid
+                    ? BuildUpdate(proposed, std::move(changes))
+                    : OutputAggregateUpdate{};
+                const bool releaseOnlyUpdate = acquires.empty();
+                const OutputRuntimeState expected{
+                    ownership.BackendGeneration(), true };
+                lock.unlock();
+
+                bool accepted = false;
+                bool dispatchClaimed = false;
+                if (valid && releaseOnlyUpdate) {
+                    accepted = EmitReleaseForCurrentGeneration(update);
+                } else if (valid) {
+                    const OutputRuntimeState observed = ReadRuntimeState();
+                    dispatchClaimed =
+                        observed == expected && TryBeginNormalDispatch();
+                    accepted = dispatchClaimed && Emit(update);
+                    if (dispatchClaimed)
+                        EndNormalDispatch();
+                }
+
+                lock.lock();
+                actionIt = actions.find(key);
+                if (accepted) {
+                    ownership = std::move(proposed);
+                    if (desired.empty()) {
+                        if (actionIt != actions.end() &&
+                            actionIt->second.id == actionId) {
+                            actions.erase(actionIt);
+                        }
+                    } else if (actionIt == actions.end()) {
+                        ActionState action{};
+                        action.id = actionId;
+                        action.owner = owner;
+                        action.heldControls = std::move(desired);
+                        action.manual = true;
+                        actions.emplace(std::move(key), std::move(action));
+                    } else if (actionIt->second.id == actionId) {
+                        actionIt->second.heldControls = std::move(desired);
+                        actionIt->second.retryControls.clear();
+                        actionIt->second.releaseOnly = false;
+                    }
+                } else if (valid && releaseOnlyUpdate &&
+                           actionIt != actions.end() &&
+                           actionIt->second.id == actionId) {
+                    actionIt->second.retryControls = std::move(desired);
+                    actionIt->second.releaseOnly = true;
+                    QueueReleaseRetryLocked(key, actionIt->second);
+                } else if (valid && !releaseOnlyUpdate && dispatchClaimed) {
+                    OutputOwnership tracked;
+                    OutputOwnership released;
+                    OutputAggregateUpdate releaseUpdate{};
+                    const bool conservativeValid = BuildConservativeOwnerRelease(
+                        ownership,
+                        owner,
+                        acquires,
+                        tracked,
+                        released,
+                        releaseUpdate);
+
+                    lock.unlock();
+                    const bool cleanupAccepted = conservativeValid &&
+                        EmitReleaseForCurrentGeneration(releaseUpdate);
+                    const OutputRuntimeState afterFailure = ReadRuntimeState();
+                    lock.lock();
+
+                    actionIt = actions.find(key);
+                    if (conservativeValid && cleanupAccepted) {
+                        ownership = std::move(released);
+                        if (actionIt != actions.end() &&
+                            actionIt->second.id == actionId) {
+                            EraseDeadlinesLocked(actionIt->second.id);
+                            actions.erase(actionIt);
+                        }
+                    } else if (conservativeValid) {
+                        ownership = std::move(tracked);
+                        std::vector<CleanupCall> cleanups;
+                        RetainGlobalResidualLocked(
+                            OutputActionCancelReason::OutputFailure,
+                            cleanups);
+                        lock.unlock();
+                        InvokeCleanupCalls(cleanups);
+                        lock.lock();
+                    }
+                    if (afterFailure.backendGeneration !=
+                            ownership.BackendGeneration() ||
+                        !afterFailure.outputGateOpen) {
+                        runtimeValid = false;
+                    }
+                    StopWorkerIfNoTimedWorkWhileOperationLocked(lock);
+                }
+                FinishOperationLocked();
+                return accepted;
+            }
         }
 
         bool Cancel(const std::string& key)
@@ -482,21 +1012,26 @@ namespace OW
             std::unique_lock<std::mutex> lock(mutex);
             if (!WaitForOperationSlotLocked(lock))
                 return false;
-            const auto actionIt = actions.find(key);
+            auto actionIt = actions.find(key);
             if (actionIt == actions.end()) {
                 FinishOperationLocked();
                 return false;
             }
 
             if (actionIt->second.releaseOnly) {
-                (void)RetryResidualReleasesWhileOperationLocked(lock);
-                FinishOperationLocked();
-                return true;
+                const bool residualReleased =
+                    RetryResidualReleasesWhileOperationLocked(lock);
+                actionIt = actions.find(key);
+                if (!residualReleased || actionIt == actions.end()) {
+                    FinishOperationLocked();
+                    return true;
+                }
             }
 
             ActionState& action = actionIt->second;
             EraseDeadlinesLocked(action.id);
             action.releaseOnly = true;
+            action.retryControls.clear();
             std::vector<CleanupCall> cleanups;
             MarkCleanupLocked(
                 action,
@@ -530,6 +1065,76 @@ namespace OW
             }
             FinishOperationLocked();
             return true;
+        }
+
+        void CancelSource(OutputOwnerSource source)
+        {
+            struct SelectedAction
+            {
+                std::string key;
+                std::uint64_t id = 0;
+            };
+
+            std::unique_lock<std::mutex> lock(mutex);
+            if (!WaitForOperationSlotLocked(lock))
+                return;
+
+            std::vector<SelectedAction> selected;
+            std::vector<CleanupCall> cleanups;
+            OutputOwnership proposed = ownership;
+            std::vector<OutputChange> changes;
+            bool valid = true;
+            for (auto& [key, action] : actions) {
+                if (action.owner.source != source)
+                    continue;
+                selected.push_back({ key, action.id });
+                EraseDeadlinesLocked(action.id);
+                action.releaseOnly = true;
+                action.retryControls.clear();
+                MarkCleanupLocked(
+                    action,
+                    OutputActionCancelReason::Explicit,
+                    cleanups);
+                const auto released = proposed.CancelOwner(action.owner);
+                if (!released.has_value()) {
+                    valid = false;
+                    break;
+                }
+                AppendChanges(changes, *released);
+            }
+
+            if (selected.empty()) {
+                StopWorkerIfNoTimedWorkWhileOperationLocked(lock);
+                FinishOperationLocked();
+                return;
+            }
+
+            const OutputAggregateUpdate update = valid
+                ? BuildUpdate(proposed, std::move(changes))
+                : OutputAggregateUpdate{};
+            lock.unlock();
+            const bool accepted = valid &&
+                EmitReleaseForCurrentGeneration(update);
+            InvokeCleanupCalls(cleanups);
+            lock.lock();
+
+            if (accepted)
+                ownership = std::move(proposed);
+            for (const SelectedAction& selectedAction : selected) {
+                const auto actionIt = actions.find(selectedAction.key);
+                if (actionIt == actions.end() ||
+                    actionIt->second.id != selectedAction.id) {
+                    continue;
+                }
+                if (accepted) {
+                    actions.erase(actionIt);
+                }
+            }
+            // Source cancellation is a synchronous lifecycle boundary. Keep a
+            // failed lease as release-only state for the next explicit retry,
+            // but do not leave a permanent-failure deadline spinning forever.
+            StopWorkerIfNoTimedWorkWhileOperationLocked(lock);
+            FinishOperationLocked();
         }
 
         void CancelAllAndJoin(
@@ -858,6 +1463,65 @@ namespace OW
                     ownership = std::move(proposed);
 
                 if (!accepted) {
+                    const bool attemptedAcquireFailed =
+                        validStep && !outputAccepted &&
+                        !event.step.acquire.empty();
+                    if (attemptedAcquireFailed) {
+                        OutputOwnership tracked;
+                        OutputOwnership released;
+                        OutputAggregateUpdate releaseUpdate{};
+                        const bool conservativeValid =
+                            BuildConservativeOwnerRelease(
+                                ownership,
+                                owner,
+                                event.step.acquire,
+                                tracked,
+                                released,
+                                releaseUpdate);
+
+                        lock.unlock();
+                        const bool cleanupAccepted = conservativeValid &&
+                            EmitReleaseForCurrentGeneration(releaseUpdate);
+                        const OutputRuntimeState afterFailure =
+                            ReadRuntimeState();
+                        lock.lock();
+
+                        bool stopAfterFailure = false;
+                        const auto failedAction = actions.find(event.actionKey);
+                        if (conservativeValid && cleanupAccepted) {
+                            ownership = std::move(released);
+                            if (failedAction != actions.end() &&
+                                failedAction->second.id == event.actionId) {
+                                MarkCleanupLocked(
+                                    failedAction->second,
+                                    OutputActionCancelReason::OutputFailure,
+                                    cleanups);
+                                EraseDeadlinesLocked(failedAction->second.id);
+                                actions.erase(failedAction);
+                            }
+                        } else if (conservativeValid) {
+                            ownership = std::move(tracked);
+                            RetainGlobalResidualLocked(
+                                OutputActionCancelReason::OutputFailure,
+                                cleanups);
+                            stopping = true;
+                            stopAfterFailure = true;
+                        }
+                        if (afterFailure.backendGeneration !=
+                                ownership.BackendGeneration() ||
+                            !afterFailure.outputGateOpen) {
+                            runtimeValid = false;
+                        }
+
+                        lock.unlock();
+                        InvokeCleanupCalls(cleanups);
+                        lock.lock();
+                        FinishOperationLocked();
+                        if (stopAfterFailure)
+                            break;
+                        continue;
+                    }
+
                     ActionState& action = currentAction->second;
                     EraseDeadlinesLocked(action.id);
                     action.releaseOnly = true;
@@ -925,6 +1589,12 @@ namespace OW
             std::lock_guard<std::mutex> lock(mutex);
             const auto it = actions.find(key);
             return it != actions.end() && !it->second.releaseOnly;
+        }
+
+        bool IsControlHeld(OutputControl control) const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return ownership.IsHeld(control);
         }
 
         std::size_t ActiveActionCount() const
@@ -1013,9 +1683,79 @@ namespace OW
         return Schedule(std::move(plan));
     }
 
+    bool OutputScheduler::SetManualControls(
+        std::string key,
+        OutputOwnerSource ownerSource,
+        std::vector<OutputControl> controls)
+    {
+        return impl_->SetManualControls(
+            std::move(key),
+            ownerSource,
+            std::move(controls));
+    }
+
+    bool OutputScheduler::SetManualControlsForGeneration(
+        std::string key,
+        OutputOwnerSource ownerSource,
+        std::vector<OutputControl> controls,
+        std::uint64_t expectedGeneration)
+    {
+        return impl_->SetManualControlsForGeneration(
+            std::move(key),
+            ownerSource,
+            std::move(controls),
+            expectedGeneration);
+    }
+
+    bool OutputScheduler::SetManualControl(
+        std::string key,
+        OutputOwnerSource ownerSource,
+        OutputControl control,
+        bool down)
+    {
+        return impl_->SetManualControl(
+            std::move(key),
+            ownerSource,
+            control,
+            down);
+    }
+
+    bool OutputScheduler::ReleaseManualControlOrExecuteIfUnowned(
+        std::string key,
+        OutputOwnerSource ownerSource,
+        OutputControl control,
+        OutputUnownedControlCallback callback)
+    {
+        return impl_->ReleaseManualControlOrExecuteIfUnowned(
+            std::move(key),
+            ownerSource,
+            control,
+            std::move(callback));
+    }
+
+    bool OutputScheduler::ReleaseManualControlOrExecuteIfUnownedForGeneration(
+        std::string key,
+        OutputOwnerSource ownerSource,
+        OutputControl control,
+        std::uint64_t expectedGeneration,
+        OutputUnownedControlCallback callback)
+    {
+        return impl_->ReleaseManualControlOrExecuteIfUnownedForGeneration(
+            std::move(key),
+            ownerSource,
+            control,
+            expectedGeneration,
+            std::move(callback));
+    }
+
     bool OutputScheduler::Cancel(const std::string& key)
     {
         return impl_->Cancel(key);
+    }
+
+    void OutputScheduler::CancelSource(OutputOwnerSource source)
+    {
+        impl_->CancelSource(source);
     }
 
     void OutputScheduler::CancelAllAndJoin(OutputActionCancelReason reason)
@@ -1041,6 +1781,11 @@ namespace OW
     bool OutputScheduler::IsActive(const std::string& key) const
     {
         return impl_->IsActive(key);
+    }
+
+    bool OutputScheduler::IsControlHeld(OutputControl control) const
+    {
+        return impl_->IsControlHeld(control);
     }
 
     std::size_t OutputScheduler::ActiveActionCount() const

@@ -292,6 +292,83 @@ namespace
         return 0;
     }
 
+    int TestSuccessfulReleaseStartsNewOutputGeneration()
+    {
+        using namespace kmbox;
+        FakeBackendOps ops;
+        KmboxRuntimeController controller(ops);
+        ops.controller = &controller;
+        const auto mock = KmboxRuntimeDescriptor::Mock();
+
+        if (controller.Reconcile(mock, 20ms) != success)
+            return Fail("could not prepare successful release generation test");
+        const auto before = controller.Applied();
+        ops.ClearEvents();
+
+        if (controller.ReleaseActive(20ms) != success ||
+            !EventsEqual(ops, {
+                "gate:closed", "release:mock", "gate:open" }) ||
+            ops.operationObservedOpenGate) {
+            return Fail("successful ReleaseActive ordering is wrong");
+        }
+
+        const auto after = controller.Applied();
+        if (after.descriptor != before.descriptor ||
+            after.generation == before.generation ||
+            controller.CanDispatch(before.generation) ||
+            !controller.CanDispatch(after.generation) ||
+            !controller.IsOutputGateOpen()) {
+            return Fail("successful ReleaseActive did not invalidate the old generation");
+        }
+
+        ops.ClearEvents();
+        if (controller.Reconcile(mock, 20ms) != success ||
+            !ops.events.empty() ||
+            controller.Applied().generation != after.generation) {
+            return Fail("post-release same descriptor was not a strict no-op");
+        }
+        return 0;
+    }
+
+    int TestExplicitTransitionPauseRejectsDispatch()
+    {
+        using namespace kmbox;
+        FakeBackendOps ops;
+        KmboxRuntimeController controller(ops);
+        ops.controller = &controller;
+        const auto mock = KmboxRuntimeDescriptor::Mock();
+
+        if (controller.Reconcile(mock, 20ms) != success)
+            return Fail("could not prepare explicit transition pause test");
+        const auto before = controller.Applied();
+        ops.ClearEvents();
+
+        controller.PauseOutputForTransition();
+        int dispatchAttempts = 0;
+        const int dispatchStatus = controller.DispatchActive(
+            [&dispatchAttempts](const KmboxRuntimeAppliedState&) {
+                ++dispatchAttempts;
+                return success;
+            });
+        if (!EventsEqual(ops, { "gate:closed" }) ||
+            controller.IsOutputGateOpen() ||
+            controller.CanDispatch(before.generation) ||
+            dispatchStatus != err_queue_stopped ||
+            dispatchAttempts != 0) {
+            return Fail("explicit transition pause accepted normal output");
+        }
+
+        ops.ClearEvents();
+        if (controller.Reconcile(mock, 20ms) != success ||
+            !EventsEqual(ops, {
+                "gate:closed", "release:mock", "shutdown:mock",
+                "init:mock", "gate:open" }) ||
+            controller.Applied().generation == before.generation) {
+            return Fail("paused same-descriptor runtime did not complete reconciliation");
+        }
+        return 0;
+    }
+
     int TestConfigDescriptorSnapshot()
     {
         using namespace kmbox;
@@ -325,6 +402,8 @@ int main()
         TestInitFailureAndRetry() != 0 ||
         TestEndpointChangeAndStrictNoOp() != 0 ||
         TestFailedReleaseCanRepairSameDescriptor() != 0 ||
+        TestSuccessfulReleaseStartsNewOutputGeneration() != 0 ||
+        TestExplicitTransitionPauseRejectsDispatch() != 0 ||
         TestConfigDescriptorSnapshot() != 0) {
         return 1;
     }

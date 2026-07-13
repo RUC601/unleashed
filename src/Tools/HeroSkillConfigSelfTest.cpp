@@ -22,6 +22,41 @@ int Fail()
 
 int main()
 {
+    using OW::HeroSkillDetail::SequenceWorkerExitReason;
+    if (OW::HeroSkillDetail::SequenceWorkerExitRequiresRelease(
+            SequenceWorkerExitReason::Running) ||
+        OW::HeroSkillDetail::SequenceWorkerExitRequiresRelease(
+            SequenceWorkerExitReason::StopRequested) ||
+        !OW::HeroSkillDetail::SequenceWorkerExitRequiresRelease(
+            SequenceWorkerExitReason::RuntimeChanged) ||
+        !OW::HeroSkillDetail::SequenceWorkerExitRequiresRelease(
+            SequenceWorkerExitReason::AmmoBudget) ||
+        !OW::HeroSkillDetail::SequenceWorkerExitRequiresRelease(
+            SequenceWorkerExitReason::OutputFailure)) {
+        return Fail();
+    }
+    bool sequenceRearmBlocked = true;
+    if (OW::HeroSkillDetail::AdvanceSequenceRearmGate(
+            sequenceRearmBlocked, true) ||
+        !sequenceRearmBlocked) {
+        return Fail();
+    }
+    if (OW::HeroSkillDetail::AdvanceSequenceRearmGate(
+            sequenceRearmBlocked, false) ||
+        sequenceRearmBlocked) {
+        return Fail();
+    }
+    if (!OW::HeroSkillDetail::AdvanceSequenceRearmGate(
+            sequenceRearmBlocked, true)) {
+        return Fail();
+    }
+    if (!OW::HeroSkillDetail::SequenceWorkerRuntimeMatches(7, 7, true) ||
+        OW::HeroSkillDetail::SequenceWorkerRuntimeMatches(7, 8, true) ||
+        OW::HeroSkillDetail::SequenceWorkerRuntimeMatches(7, 7, false) ||
+        OW::HeroSkillDetail::SequenceWorkerRuntimeMatches(0, 0, true)) {
+        return Fail();
+    }
+
     const OW::HeroSkillDefinition* asheFirePattern = nullptr;
     const OW::HeroSkillDefinition* anaSleepDart = nullptr;
     const OW::HeroSkillDefinition* anaBioticGrenade = nullptr;

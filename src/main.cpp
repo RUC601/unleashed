@@ -26,6 +26,7 @@
 #include "Game/AbilityIcons.hpp"  // ability icon lookup table
 #include "Game/HeroPerkRuntime.hpp" // manual perk variant runtime
 #include "Game/HeroSkills.hpp"    // generic hero skill primitives
+#include "Game/InputOrchestrator.hpp" // shared generated-output ownership
 #include "Game/SDK.hpp"           // OW::SDK
 #include "Game/Decrypt.hpp"       // OW::GetGlobalKey, OW::DecryptComponent
 #include "Game/Overwatch.hpp"     // main threads: viewmatrix, entity, aimbot, ...
@@ -1472,6 +1473,10 @@ static void ClearProcessRuntimeSnapshots()
 
 static void MarkProcessDisconnected(const char* statusText)
 {
+    // Close the process-scoped output session before stopping producers. This
+    // prevents a late scheduler call from self-synchronizing while disconnect
+    // cleanup is still draining the old hardware generation.
+    OW::SetRuntimeOutputSessionEnabled(false);
     const bool wasConnected = OW::ProcessConnection::IsConnected();
     OW::ProcessConnection::SetStatus(false, false, 0, 0,
         statusText ? statusText : "Waiting for Overwatch.exe");
@@ -1479,7 +1484,11 @@ static void MarkProcessDisconnected(const char* statusText)
     if (wasConnected) {
         Diagnostics::Warn("Target process disconnected.");
         std::printf("[MAIN] Target process disconnected; waiting for %s...\n", kTargetProcessName);
+        // Stop independent hero/sequence producers before clearing shared
+        // ownership so an old worker cannot reacquire during disconnect.
         OW::CancelActiveSkill();
+        OW::RuntimeOutputScheduler().CancelAllAndJoin(
+            OW::OutputActionCancelReason::RuntimeChanged);
         ReleaseKmboxMouseStateForShutdown("target_disconnect");
     }
 
@@ -1500,8 +1509,19 @@ static bool TryConnectTargetProcess(bool forceReconnect, bool manualRequest)
         return false;
     }
 
+    const bool wasConnected = OW::ProcessConnection::IsConnected();
+    // A manual/PID-change reconnect is the same output ownership boundary as
+    // a detected disconnect. Close normal output before publishing the
+    // reconnecting state, then drain the old process generation completely.
+    OW::SetRuntimeOutputSessionEnabled(false);
     OW::ProcessConnection::SetStatus(false, true, 0, 0,
         manualRequest ? "Reconnecting UN..." : "Connecting UN...");
+    if (forceReconnect && wasConnected) {
+        OW::CancelActiveSkill();
+        OW::RuntimeOutputScheduler().CancelAllAndJoin(
+            OW::OutputActionCancelReason::RuntimeChanged);
+        ReleaseKmboxMouseStateForShutdown("target_reconnect");
+    }
     Diagnostics::SetProcessAttached(false);
     Diagnostics::Info("%s process connect attempt. target=%s pid=%lu",
         manualRequest ? "Manual" : "Automatic",
@@ -1537,6 +1557,8 @@ static bool TryConnectTargetProcess(bool forceReconnect, bool manualRequest)
     Diagnostics::SetProcessAttached(true);
     OW::ProcessConnection::SetStatus(true, false, attachedPid, OW::SDK->dwGameBase,
         std::string("Connected to Overwatch.exe (") + OW::offset::ActiveProfileName() + ")");
+    // Reopen only after SDK attach and process identity have both committed.
+    OW::SetRuntimeOutputSessionEnabled(true);
     Diagnostics::Info("Process attached: %s pid=%d base=0x%llX.",
         kTargetProcessName,
         attachedPid,
@@ -1559,6 +1581,7 @@ static bool TryConnectTargetProcess(bool forceReconnect, bool manualRequest)
 static void StartProcessConnectionThread()
 {
     g_ProcessConnectionThreadRunning.store(true, std::memory_order_release);
+    OW::SetRuntimeOutputSessionEnabled(false);
     OW::ProcessConnection::SetStatus(false, false, 0, 0, "Waiting for Overwatch.exe");
     std::thread([]() {
         Diagnostics::Info("Process connection thread started. target=%s interval_ms=%lu.",

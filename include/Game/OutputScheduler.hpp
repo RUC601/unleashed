@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,8 @@ namespace OW
         std::function<OutputRuntimeState()>;
     using OutputScheduledCallback =
         std::function<void(std::uint64_t backendGeneration)>;
+    using OutputUnownedControlCallback =
+        std::function<bool(std::uint64_t backendGeneration)>;
     enum class OutputActionCancelReason : std::uint8_t
     {
         Explicit,
@@ -107,7 +110,38 @@ namespace OW
             std::vector<OutputControl> controls,
             std::chrono::milliseconds duration);
 
+        // Manual owners share the same aggregate ownership model as timed
+        // actions, but never create a worker or deadline. SetManualControls
+        // replaces the complete control set held by key; SetManualControl
+        // changes one member of that set. An empty set releases the owner.
+        bool SetManualControls(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            std::vector<OutputControl> controls);
+        bool SetManualControlsForGeneration(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            std::vector<OutputControl> controls,
+            std::uint64_t expectedGeneration);
+        bool SetManualControl(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            OutputControl control,
+            bool down);
+        bool ReleaseManualControlOrExecuteIfUnowned(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            OutputControl control,
+            OutputUnownedControlCallback callback);
+        bool ReleaseManualControlOrExecuteIfUnownedForGeneration(
+            std::string key,
+            OutputOwnerSource ownerSource,
+            OutputControl control,
+            std::uint64_t expectedGeneration,
+            OutputUnownedControlCallback callback);
+
         bool Cancel(const std::string& key);
+        void CancelSource(OutputOwnerSource source);
         void CancelAllAndJoin(
             OutputActionCancelReason reason = OutputActionCancelReason::Explicit);
 
@@ -125,6 +159,7 @@ namespace OW
         bool SynchronizeRuntime(OutputRuntimeState state);
 
         bool IsActive(const std::string& key) const;
+        bool IsControlHeld(OutputControl control) const;
         std::size_t ActiveActionCount() const;
         std::size_t PendingDeadlineCount() const;
         std::size_t WorkerCount() const;

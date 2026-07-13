@@ -12,15 +12,19 @@
 #include <cctype>
 #include <cstdlib>
 #include <atomic>
+#include <functional>
+#include <map>
 #include <unordered_map>
 #include <windows.h>
 #include <chrono>
 #include <optional>
 #include <thread>
+#include <utility>
 
 #include "Game/Decrypt.hpp"
 #include "Game/Entity.hpp"
 #include "Game/HeroGeometrySpec.hpp"
+#include "Game/InputOrchestrator.hpp"
 #include "Game/LeadPrediction.hpp"
 #include "Game/Motion.hpp"
 #include "Game/WeaponSpec.hpp"
@@ -221,6 +225,17 @@ namespace OW {
     inline bool ShouldSuppressKmboxOutput(
         const char* action,
         KmBoxOutputIntent intent = KmBoxOutputIntent::Normal) {
+        if (intent == KmBoxOutputIntent::Normal &&
+            !RuntimeOutputSessionEnabled()) {
+            static std::atomic_flag sessionLogged = ATOMIC_FLAG_INIT;
+            if (!sessionLogged.test_and_set(std::memory_order_relaxed)) {
+                Diagnostics::Aim(
+                    "kmbox.output suppressed action=%s reason=process_session_closed intent=%s",
+                    action ? action : "unknown",
+                    ToString(intent));
+            }
+            return true;
+        }
         if (!ShouldSuppressOutputForMenu(Config::KmboxOutputSuppressedByMenu(), intent))
             return false;
 
@@ -233,11 +248,40 @@ namespace OW {
         return true;
     }
 
-    inline int EnqueueKmboxPixelMove(int pixelX, int pixelY, int automoveRuntimeMs) {
+    inline int EnqueueKmboxPixelMoveForGeneration(
+        int pixelX,
+        int pixelY,
+        int automoveRuntimeMs,
+        std::uint64_t expectedGeneration,
+        std::uint64_t expectedConnectionEpoch = 0) {
         if (ShouldSuppressKmboxOutput("mouse_move"))
             return Config::kKmboxOutputSuppressedStatus;
 
-        return kmbox::DispatchMouseMove(pixelX, pixelY, automoveRuntimeMs);
+        const OutputRuntimeState runtime = CurrentKmboxOutputRuntimeState();
+        if (!runtime.outputGateOpen || expectedGeneration == 0 ||
+            runtime.backendGeneration != expectedGeneration ||
+            (expectedConnectionEpoch != 0 &&
+             (!ProcessConnection::IsConnected() ||
+              ProcessConnection::ConnectionEpoch() != expectedConnectionEpoch))) {
+            return err_queue_stopped;
+        }
+        return kmbox::DispatchMouseMoveForGeneration(
+            expectedGeneration,
+            pixelX,
+            pixelY,
+            automoveRuntimeMs);
+    }
+
+    inline int EnqueueKmboxPixelMove(
+        int pixelX,
+        int pixelY,
+        int automoveRuntimeMs) {
+        const OutputRuntimeState runtime = CurrentKmboxOutputRuntimeState();
+        return EnqueueKmboxPixelMoveForGeneration(
+            pixelX,
+            pixelY,
+            automoveRuntimeMs,
+            runtime.backendGeneration);
     }
 
     namespace OutputMotionTelemetry {
@@ -339,6 +383,20 @@ namespace OW {
     } // namespace OutputMotionTelemetry
 
     inline void SendMouseMove(const Vector3& delta, int moveTimeMs = -1) {
+        const std::uint64_t connectionEpoch =
+            ProcessConnection::ConnectionEpoch();
+        const OutputRuntimeState outputRuntime =
+            CurrentKmboxOutputRuntimeState();
+        if (connectionEpoch == 0 || !ProcessConnection::IsConnected() ||
+            !outputRuntime.outputGateOpen ||
+            outputRuntime.backendGeneration == 0) {
+            Diagnostics::Aim(
+                "mouse.move early_return reason=stale_or_unavailable_output_session connectionEpoch=%llu generation=%llu gate=%d",
+                static_cast<unsigned long long>(connectionEpoch),
+                static_cast<unsigned long long>(outputRuntime.backendGeneration),
+                outputRuntime.outputGateOpen ? 1 : 0);
+            return;
+        }
         if (moveTimeMs < 0) moveTimeMs = Config::kmboxInputDelayMs;
         const int automoveRuntimeMs = ClampKmboxAutomoveRuntimeMs(moveTimeMs);
         Diagnostics::Aim("mouse.move request delta_rad=(%.9f,%.9f,%.9f) moveTimeMs=%d automoveRuntimeMs=%d enabled=%d deviceType=%d",
@@ -450,7 +508,12 @@ namespace OW {
                 : 1;
 
             if (steps <= 1) {
-                const int status = EnqueueKmboxPixelMove(pixelX, pixelY, automoveRuntimeMs);
+                const int status = EnqueueKmboxPixelMoveForGeneration(
+                    pixelX,
+                    pixelY,
+                    automoveRuntimeMs,
+                    outputRuntime.backendGeneration,
+                    connectionEpoch);
                 Diagnostics::Aim("mouse.enqueue transport=%s command=%s pixel=(%d,%d) runtimeMs=%d behavior=%d splitEnabled=%d status=%d",
                     KmboxTransportName(),
                     automoveRuntimeMs > 0 ? "automove" : "move",
@@ -482,13 +545,19 @@ namespace OW {
                 int remainingX = pixelX;
                 int remainingY = pixelY;
                 int lastStatus = 0;
+                int completedSteps = 0;
                 for (int i = 0; i < steps; i++) {
                     const int curX = remainingX / (steps - i);
                     const int curY = remainingY / (steps - i);
                     remainingX -= curX;
                     remainingY -= curY;
 
-                    const int status = EnqueueKmboxPixelMove(curX, curY, automoveRuntimeMs);
+                    const int status = EnqueueKmboxPixelMoveForGeneration(
+                        curX,
+                        curY,
+                        automoveRuntimeMs,
+                        outputRuntime.backendGeneration,
+                        connectionEpoch);
                     lastStatus = status;
                     Diagnostics::Aim("mouse.enqueue.split transport=%s command=%s step=%d/%d cur=(%d,%d) runtimeMs=%d status=%d",
                         KmboxTransportName(),
@@ -500,12 +569,25 @@ namespace OW {
                         automoveRuntimeMs,
                         status);
 
+                    if (status != success) {
+                        Diagnostics::Aim(
+                            "mouse.move.split_abort step=%d/%d status=%d expectedGeneration=%llu connectionEpoch=%llu",
+                            i + 1,
+                            steps,
+                            status,
+                            static_cast<unsigned long long>(
+                                outputRuntime.backendGeneration),
+                            static_cast<unsigned long long>(connectionEpoch));
+                        break;
+                    }
+                    ++completedSteps;
+
                     if (i < steps - 1 && delayUs > 0) {
                         std::this_thread::sleep_for(std::chrono::microseconds(delayUs));
                     }
                 }
                 Diagnostics::Aim("mouse.move.split_complete steps=%d total=(%d,%d)",
-                    steps, pixelX, pixelY);
+                    completedSteps, pixelX, pixelY);
                 OutputMotionTelemetry::RecordMouseMove(
                     delta,
                     pixelX,
@@ -513,7 +595,7 @@ namespace OW {
                     automoveRuntimeMs,
                     lastStatus,
                     true,
-                    steps);
+                    completedSteps);
             }
             return;
         }
@@ -538,7 +620,18 @@ namespace OW {
     inline float CalibrateSensitivity(bool calibrateBothAxes = true,
                                       float referenceGameSensitivityOverride = 0.0f) {
         if (ShouldSuppressKmboxOutput("calibration_move")) {
-            Diagnostics::Aim("kmbox.calibration skipped reason=menu_open_suppressed");
+            Diagnostics::Aim("kmbox.calibration skipped reason=normal_output_suppressed");
+            return 0.0f;
+        }
+        const OutputRuntimeState outputRuntime =
+            CurrentKmboxOutputRuntimeState();
+        const std::uint64_t connectionEpoch =
+            ProcessConnection::ConnectionEpoch();
+        if (connectionEpoch == 0 || !ProcessConnection::IsConnected() ||
+            !outputRuntime.outputGateOpen ||
+            outputRuntime.backendGeneration == 0) {
+            Diagnostics::Warn(
+                "[CALIBRATE] Calibration output is unavailable for the current runtime session.");
             return 0.0f;
         }
 
@@ -553,7 +646,12 @@ namespace OW {
         // 3. Send a known horizontal mouse move (only yaw matters)
         int moveX = Config::calibrationMovePixels;
         int moveY = 0;
-        if (kmbox::DispatchMouseMove(moveX, moveY, 0) != success) {
+        if (EnqueueKmboxPixelMoveForGeneration(
+                moveX,
+                moveY,
+                0,
+                outputRuntime.backendGeneration,
+                connectionEpoch) != success) {
             Diagnostics::Warn("[CALIBRATE] Horizontal calibration output was rejected by the active runtime.");
             Config::calibrationInProgress = false;
             return 0.0f;
@@ -592,7 +690,12 @@ namespace OW {
 
             int pitchMoveX = 0;
             int pitchMoveY = Config::calibrationMovePixels;
-            if (kmbox::DispatchMouseMove(pitchMoveX, pitchMoveY, 0) != success) {
+            if (EnqueueKmboxPixelMoveForGeneration(
+                    pitchMoveX,
+                    pitchMoveY,
+                    0,
+                    outputRuntime.backendGeneration,
+                    connectionEpoch) != success) {
                 Diagnostics::Warn("[CALIBRATE] Vertical calibration output was rejected by the active runtime.");
                 Config::calibrationInProgress = false;
                 return 0.0f;
@@ -698,33 +801,221 @@ namespace OW {
             : ActionOutputStatus::TransportError;
     }
 
-    inline ActionOutputStatus SendMouseButtonActionState(int button, bool down) {
-        if (button < 0 || button > 2)
-            return ActionOutputStatus::InvalidAction;
+    inline std::string DefaultMouseButtonOwnerKey(OutputOwnerSource ownerSource, int button) {
+        return "target.mouse." +
+            std::to_string(static_cast<unsigned int>(ownerSource)) + "." +
+            std::to_string(button);
+    }
+
+    inline const char* GameActionOwnerKey(GameAction action) {
+        switch (action) {
+        case GameAction::PrimaryFire:   return "game_action.primary_fire";
+        case GameAction::SecondaryFire: return "game_action.secondary_fire";
+        case GameAction::MiddleMouse:   return "game_action.middle_mouse";
+        case GameAction::Ability1:      return "game_action.ability1";
+        case GameAction::Ability2:      return "game_action.ability2";
+        case GameAction::Ultimate:      return "game_action.ultimate";
+        case GameAction::Melee:         return "game_action.melee";
+        case GameAction::MoveForward:   return "game_action.move_forward";
+        default:                        return nullptr;
+        }
+    }
+
+    inline ActionOutputStatus SetOwnedOutputControl(
+        const std::string& ownerKey,
+        OutputOwnerSource ownerSource,
+        OutputControl control,
+        bool down,
+        const char* outputName,
+        bool requireKeyboardOutput = false,
+        OutputUnownedControlCallback ownerlessRelease = {},
+        std::uint64_t expectedGeneration = 0) {
         const kmbox::KmboxRuntimeAppliedState applied = kmbox::RuntimeController().Applied();
         if (applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None ||
-            !kmbox::RuntimeController().CanDispatch(applied.generation)) {
+            !kmbox::RuntimeController().CanDispatch(applied.generation) ||
+            (expectedGeneration != 0 &&
+             applied.generation != expectedGeneration)) {
             return UnavailableActionOutputStatus();
         }
         const KmBoxOutputIntent intent = OutputIntentForState(down);
-        if (ShouldSuppressKmboxOutput("mouse_button", intent))
+        if (ShouldSuppressKmboxOutput(outputName, intent))
             return ActionOutputStatus::Suppressed;
+        if (requireKeyboardOutput &&
+            !kmbox::SupportsKeyboardOutput(applied.descriptor.backend)) {
+            return ActionOutputStatus::UnsupportedTransport;
+        }
+
+        OutputScheduler& scheduler = RuntimeOutputScheduler();
+        if (expectedGeneration != 0 && down &&
+            !scheduler.SynchronizeRuntime(
+                { expectedGeneration, true })) {
+            return ActionOutputStatus::TransportError;
+        }
+        bool accepted = false;
+        if (expectedGeneration != 0) {
+            accepted = !down && ownerlessRelease
+                ? scheduler.ReleaseManualControlOrExecuteIfUnownedForGeneration(
+                    ownerKey,
+                    ownerSource,
+                    control,
+                    expectedGeneration,
+                    std::move(ownerlessRelease))
+                : scheduler.SetManualControlsForGeneration(
+                    ownerKey,
+                    ownerSource,
+                    down
+                        ? std::vector<OutputControl>{ control }
+                        : std::vector<OutputControl>{},
+                    expectedGeneration);
+        } else {
+            accepted = !down && ownerlessRelease
+                ? scheduler.ReleaseManualControlOrExecuteIfUnowned(
+                    ownerKey,
+                    ownerSource,
+                    control,
+                    std::move(ownerlessRelease))
+                : scheduler.SetManualControl(
+                    ownerKey,
+                    ownerSource,
+                    control,
+                    down);
+        }
+        return accepted
+            ? ActionOutputStatus::Sent
+            : ActionOutputStatus::TransportError;
+    }
+
+    inline ActionOutputStatus SendMouseButtonActionState(
+        int button,
+        bool down,
+        OutputOwnerSource ownerSource = OutputOwnerSource::GlobalAim,
+        const char* ownerKey = nullptr,
+        std::uint64_t expectedGeneration = 0) {
+        if (button < 0 || button > 2)
+            return ActionOutputStatus::InvalidAction;
 
         if (Config::kmboxDebugLog) {
             std::printf("[KMBOX] mouse.button button=%d down=%d transport=%s generation=%llu\n",
                 button,
                 down ? 1 : 0,
                 KmboxTransportName(),
-                static_cast<unsigned long long>(applied.generation));
+                static_cast<unsigned long long>(
+                    kmbox::RuntimeController().Applied().generation));
         }
 
-        return kmbox::DispatchMouseButton(button, down) == success
+        const std::string resolvedOwnerKey = ownerKey && *ownerKey
+            ? std::string(ownerKey)
+            : DefaultMouseButtonOwnerKey(ownerSource, button);
+        return SetOwnedOutputControl(
+            resolvedOwnerKey,
+            ownerSource,
+            { OutputControlKind::MouseButton,
+              static_cast<std::uint16_t>(button) },
+            down,
+            "mouse_button",
+            false,
+            {},
+            expectedGeneration);
+    }
+
+    inline ActionOutputStatus ReleaseMouseButtonActionStateOrPhysicalFallback(
+        int button,
+        OutputOwnerSource ownerSource,
+        const char* ownerKey,
+        std::uint64_t expectedGeneration,
+        bool* physicalFallbackReleased = nullptr) {
+        if (button < 0 || button > 2)
+            return ActionOutputStatus::InvalidAction;
+        if (physicalFallbackReleased)
+            *physicalFallbackReleased = false;
+
+        const std::string resolvedOwnerKey = ownerKey && *ownerKey
+            ? std::string(ownerKey)
+            : DefaultMouseButtonOwnerKey(ownerSource, button);
+        const kmbox::KmboxRuntimeAppliedState applied =
+            kmbox::RuntimeController().Applied();
+        if (expectedGeneration == 0 ||
+            applied.generation != expectedGeneration ||
+            applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None ||
+            !kmbox::RuntimeController().CanDispatch(applied.generation)) {
+            return UnavailableActionOutputStatus();
+        }
+        if (ShouldSuppressKmboxOutput(
+                "mouse_button",
+                KmBoxOutputIntent::SafetyRelease)) {
+            return ActionOutputStatus::Suppressed;
+        }
+
+        const bool accepted = RuntimeOutputScheduler()
+            .ReleaseManualControlOrExecuteIfUnownedForGeneration(
+            resolvedOwnerKey,
+            ownerSource,
+            {
+                OutputControlKind::MouseButton,
+                static_cast<std::uint16_t>(button)
+            },
+            expectedGeneration,
+            [button, physicalFallbackReleased](
+                std::uint64_t backendGeneration) {
+                const bool released =
+                    kmbox::DispatchForceReleaseMouseButtonForGeneration(
+                        backendGeneration,
+                        button) == success;
+                if (physicalFallbackReleased)
+                    *physicalFallbackReleased = released;
+                return released;
+            });
+        return accepted
             ? ActionOutputStatus::Sent
             : ActionOutputStatus::TransportError;
     }
 
-    inline void SendMouseButton(int button, bool down) {
-        (void)SendMouseButtonActionState(button, down);
+    inline ActionOutputStatus ReleaseMouseButtonActionStateForGeneration(
+        int button,
+        OutputOwnerSource ownerSource,
+        const char* ownerKey,
+        std::uint64_t expectedGeneration) {
+        if (button < 0 || button > 2)
+            return ActionOutputStatus::InvalidAction;
+
+        const kmbox::KmboxRuntimeAppliedState applied =
+            kmbox::RuntimeController().Applied();
+        if (expectedGeneration == 0 ||
+            applied.generation != expectedGeneration ||
+            applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None ||
+            !kmbox::RuntimeController().CanDispatch(applied.generation)) {
+            return UnavailableActionOutputStatus();
+        }
+        if (ShouldSuppressKmboxOutput(
+                "mouse_button",
+                KmBoxOutputIntent::SafetyRelease)) {
+            return ActionOutputStatus::Suppressed;
+        }
+
+        const std::string resolvedOwnerKey = ownerKey && *ownerKey
+            ? std::string(ownerKey)
+            : DefaultMouseButtonOwnerKey(ownerSource, button);
+        const bool accepted = RuntimeOutputScheduler()
+            .ReleaseManualControlOrExecuteIfUnownedForGeneration(
+            resolvedOwnerKey,
+            ownerSource,
+            {
+                OutputControlKind::MouseButton,
+                static_cast<std::uint16_t>(button)
+            },
+            expectedGeneration,
+            [](std::uint64_t) { return true; });
+        return accepted
+            ? ActionOutputStatus::Sent
+            : ActionOutputStatus::TransportError;
+    }
+
+    inline void SendMouseButton(
+        int button,
+        bool down,
+        OutputOwnerSource ownerSource = OutputOwnerSource::GlobalAim,
+        const char* ownerKey = nullptr) {
+        (void)SendMouseButtonActionState(button, down, ownerSource, ownerKey);
     }
 
     inline unsigned char GameActionKeyboardHid(GameAction action) {
@@ -738,14 +1029,27 @@ namespace OW {
         }
     }
 
-    inline ActionOutputStatus SetActionState(GameAction action, bool down) {
+    inline ActionOutputStatus SetActionStateForGeneration(
+        GameAction action,
+        bool down,
+        std::uint64_t expectedGeneration) {
+        const char* ownerKey = GameActionOwnerKey(action);
+        if (!ownerKey)
+            return ActionOutputStatus::InvalidAction;
+
         switch (action) {
         case GameAction::PrimaryFire:
-            return SendMouseButtonActionState(0, down);
+            return SendMouseButtonActionState(
+                0, down, OutputOwnerSource::GameAction, ownerKey,
+                expectedGeneration);
         case GameAction::SecondaryFire:
-            return SendMouseButtonActionState(1, down);
+            return SendMouseButtonActionState(
+                1, down, OutputOwnerSource::GameAction, ownerKey,
+                expectedGeneration);
         case GameAction::MiddleMouse:
-            return SendMouseButtonActionState(2, down);
+            return SendMouseButtonActionState(
+                2, down, OutputOwnerSource::GameAction, ownerKey,
+                expectedGeneration);
         default:
             break;
         }
@@ -753,29 +1057,41 @@ namespace OW {
         const unsigned char hidCode = GameActionKeyboardHid(action);
         if (hidCode == 0)
             return ActionOutputStatus::InvalidAction;
-        const kmbox::KmboxRuntimeAppliedState applied = kmbox::RuntimeController().Applied();
-        if (applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None ||
-            !kmbox::RuntimeController().CanDispatch(applied.generation)) {
-            return UnavailableActionOutputStatus();
-        }
-        const KmBoxOutputIntent intent = OutputIntentForState(down);
-        if (ShouldSuppressKmboxOutput("keyboard", intent))
-            return ActionOutputStatus::Suppressed;
+        return SetOwnedOutputControl(
+            ownerKey,
+            OutputOwnerSource::GameAction,
+            {
+                hidCode >= 0xE0 && hidCode <= 0xE7
+                    ? OutputControlKind::KeyboardModifier
+                    : OutputControlKind::KeyboardUsage,
+                hidCode
+            },
+            down,
+            "keyboard",
+            true,
+            {},
+            expectedGeneration);
+    }
 
-        if (!kmbox::SupportsKeyboardOutput(applied.descriptor.backend))
-            return ActionOutputStatus::UnsupportedTransport;
-        return kmbox::DispatchKeyboardKey(hidCode, down) == success
-            ? ActionOutputStatus::Sent
-            : ActionOutputStatus::TransportError;
+    inline ActionOutputStatus SetActionState(GameAction action, bool down) {
+        return SetActionStateForGeneration(action, down, 0);
     }
 
     inline ActionOutputStatus PulseAction(GameAction action, DWORD durationMs = 10) {
-        const ActionOutputStatus pressStatus = SetActionState(action, true);
+        const std::uint64_t operationGeneration =
+            kmbox::ActiveRuntimeSnapshot().generation;
+        const ActionOutputStatus pressStatus = SetActionStateForGeneration(
+            action,
+            true,
+            operationGeneration);
         if (!ActionOutputSucceeded(pressStatus))
             return pressStatus;
 
         Sleep(durationMs);
-        return SetActionState(action, false);
+        return SetActionStateForGeneration(
+            action,
+            false,
+            operationGeneration);
     }
 
     inline void ForceReleaseMouseButtons() {
@@ -809,6 +1125,431 @@ namespace OW {
                 "mouse_unmask", KmBoxOutputIntent::SafetyRelease))
             return false;
         return kmbox::DispatchMouseUnmask() == success;
+    }
+
+    struct PhysicalMouseMaskLeaseOwner {
+        OutputOwnerSource source = OutputOwnerSource::GlobalAim;
+        std::string key;
+
+        bool operator<(const PhysicalMouseMaskLeaseOwner& other) const noexcept {
+            if (source != other.source) {
+                return static_cast<std::uint8_t>(source) <
+                    static_cast<std::uint8_t>(other.source);
+            }
+            return key < other.key;
+        }
+    };
+
+    class PhysicalMouseMaskLeaseCoordinator {
+    public:
+        using MaskDispatch =
+            std::function<int(std::uint64_t generation, std::uint32_t mask)>;
+        using UnmaskDispatch =
+            std::function<int(std::uint64_t generation)>;
+        using RuntimeSource = std::function<OutputRuntimeState()>;
+
+        PhysicalMouseMaskLeaseCoordinator(
+            MaskDispatch maskDispatch,
+            UnmaskDispatch unmaskDispatch,
+            RuntimeSource runtimeSource)
+            : maskDispatch_(std::move(maskDispatch)),
+              unmaskDispatch_(std::move(unmaskDispatch)),
+              runtimeSource_(std::move(runtimeSource))
+        {
+        }
+
+        bool Acquire(
+            std::string ownerKey,
+            OutputOwnerSource source,
+            std::uint32_t mask)
+        {
+            if (!runtimeSource_)
+                return false;
+            const std::uint64_t expectedGeneration =
+                runtimeSource_().backendGeneration;
+            return Acquire(
+                std::move(ownerKey),
+                source,
+                mask,
+                expectedGeneration);
+        }
+
+        bool Acquire(
+            std::string ownerKey,
+            OutputOwnerSource source,
+            std::uint32_t mask,
+            std::uint64_t expectedGeneration)
+        {
+            const std::uint32_t effectiveMask = mask & 0x7Fu;
+            if (ownerKey.empty() || effectiveMask == 0 ||
+                expectedGeneration == 0 ||
+                !maskDispatch_ || !unmaskDispatch_ || !runtimeSource_) {
+                return false;
+            }
+
+            std::unique_lock<std::mutex> operationLock(operationMutex_);
+            if (runtimeSource_().backendGeneration != expectedGeneration)
+                return false;
+            if (!RetryPendingWhileOperationLocked())
+                return false;
+
+            const OutputRuntimeState runtime = runtimeSource_();
+            if (runtime.backendGeneration != expectedGeneration)
+                return false;
+            NormalizeGenerationWhileOperationLocked(runtime.backendGeneration);
+            if (!runtime.outputGateOpen || runtime.backendGeneration == 0)
+                return false;
+
+            const PhysicalMouseMaskLeaseOwner owner{
+                source, std::move(ownerKey) };
+            std::optional<std::uint32_t> previousMask;
+            {
+                std::lock_guard<std::mutex> stateLock(stateMutex_);
+                const auto existing = leases_.find(owner);
+                if (existing != leases_.end()) {
+                    if (existing->second == effectiveMask)
+                        return true;
+                    previousMask = existing->second;
+                    existing->second = effectiveMask;
+                } else {
+                    leases_.emplace(owner, effectiveMask);
+                }
+            }
+
+            if (ReconcileWhileOperationLocked(runtime.backendGeneration)) {
+                return true;
+            }
+
+            {
+                std::lock_guard<std::mutex> stateLock(stateMutex_);
+                if (generation_ == runtime.backendGeneration) {
+                    if (previousMask.has_value())
+                        leases_[owner] = *previousMask;
+                    else
+                        leases_.erase(owner);
+                    RefreshPendingLocked();
+                }
+            }
+            return false;
+        }
+
+        bool Release(
+            const std::string& ownerKey,
+            OutputOwnerSource source)
+        {
+            if (!runtimeSource_)
+                return false;
+            const std::uint64_t expectedGeneration =
+                runtimeSource_().backendGeneration;
+            return Release(ownerKey, source, expectedGeneration);
+        }
+
+        bool Release(
+            const std::string& ownerKey,
+            OutputOwnerSource source,
+            std::uint64_t expectedGeneration)
+        {
+            if (ownerKey.empty() || expectedGeneration == 0 || !runtimeSource_)
+                return false;
+
+            std::unique_lock<std::mutex> operationLock(operationMutex_);
+            const OutputRuntimeState runtime = runtimeSource_();
+            if (runtime.backendGeneration != expectedGeneration)
+                return false;
+            NormalizeGenerationWhileOperationLocked(runtime.backendGeneration);
+
+            bool removed = false;
+            {
+                std::lock_guard<std::mutex> stateLock(stateMutex_);
+                removed = leases_.erase({ source, ownerKey }) != 0;
+                if (removed)
+                    RefreshPendingLocked();
+            }
+            if (!removed)
+                return RetryPendingWhileOperationLocked();
+            return ReconcileWhileOperationLocked(runtime.backendGeneration);
+        }
+
+        bool RetryPending()
+        {
+            std::unique_lock<std::mutex> operationLock(operationMutex_);
+            return RetryPendingWhileOperationLocked();
+        }
+
+        bool IsActive(
+            const std::string& ownerKey,
+            OutputOwnerSource source)
+        {
+            std::unique_lock<std::mutex> operationLock(operationMutex_);
+            (void)RetryPendingWhileOperationLocked();
+            const OutputRuntimeState runtime = runtimeSource_();
+            NormalizeGenerationWhileOperationLocked(runtime.backendGeneration);
+            std::lock_guard<std::mutex> stateLock(stateMutex_);
+            return leases_.find({ source, ownerKey }) != leases_.end();
+        }
+
+        bool IsConfirmedActive(
+            const std::string& ownerKey,
+            OutputOwnerSource source)
+        {
+            std::unique_lock<std::mutex> operationLock(operationMutex_);
+            (void)RetryPendingWhileOperationLocked();
+            const OutputRuntimeState runtime = runtimeSource_();
+            NormalizeGenerationWhileOperationLocked(runtime.backendGeneration);
+            std::lock_guard<std::mutex> stateLock(stateMutex_);
+            const auto lease = leases_.find({ source, ownerKey });
+            return lease != leases_.end() && hardwareKnown_ &&
+                (appliedMask_ & lease->second) == lease->second;
+        }
+
+        std::uint32_t AggregateMask()
+        {
+            std::unique_lock<std::mutex> operationLock(operationMutex_);
+            (void)RetryPendingWhileOperationLocked();
+            const OutputRuntimeState runtime = runtimeSource_();
+            NormalizeGenerationWhileOperationLocked(runtime.backendGeneration);
+            std::lock_guard<std::mutex> stateLock(stateMutex_);
+            return DesiredAggregateLocked();
+        }
+
+        bool HasPending()
+        {
+            std::unique_lock<std::mutex> operationLock(operationMutex_);
+            const OutputRuntimeState runtime = runtimeSource_();
+            NormalizeGenerationWhileOperationLocked(runtime.backendGeneration);
+            std::lock_guard<std::mutex> stateLock(stateMutex_);
+            return pending_;
+        }
+
+    private:
+        std::uint32_t DesiredAggregateLocked() const
+        {
+            std::uint32_t aggregate = 0;
+            for (const auto& [owner, mask] : leases_) {
+                (void)owner;
+                aggregate |= mask;
+            }
+            return aggregate & 0x7Fu;
+        }
+
+        void RefreshPendingLocked()
+        {
+            pending_ = !hardwareKnown_ ||
+                appliedMask_ != DesiredAggregateLocked();
+        }
+
+        void NormalizeGenerationWhileOperationLocked(
+            std::uint64_t generation)
+        {
+            std::lock_guard<std::mutex> stateLock(stateMutex_);
+            if (generation_ == generation)
+                return;
+            generation_ = generation;
+            leases_.clear();
+            appliedMask_ = 0;
+            hardwareKnown_ = true;
+            pending_ = false;
+        }
+
+        void MarkHardwareUnknown(std::uint64_t generation)
+        {
+            std::lock_guard<std::mutex> stateLock(stateMutex_);
+            if (generation_ != generation)
+                return;
+            hardwareKnown_ = false;
+            pending_ = true;
+        }
+
+        bool ReconcileWhileOperationLocked(std::uint64_t generation)
+        {
+            std::uint32_t desiredMask = 0;
+            std::uint32_t appliedMask = 0;
+            bool hardwareKnown = true;
+            {
+                std::lock_guard<std::mutex> stateLock(stateMutex_);
+                if (generation_ != generation)
+                    return false;
+                desiredMask = DesiredAggregateLocked();
+                appliedMask = appliedMask_;
+                hardwareKnown = hardwareKnown_;
+            }
+
+            const bool needsBaseline = !hardwareKnown ||
+                (appliedMask & ~desiredMask) != 0;
+            if (needsBaseline) {
+                if (unmaskDispatch_(generation) != success) {
+                    MarkHardwareUnknown(generation);
+                    return false;
+                }
+                {
+                    std::lock_guard<std::mutex> stateLock(stateMutex_);
+                    if (generation_ != generation)
+                        return false;
+                    appliedMask_ = 0;
+                    hardwareKnown_ = true;
+                    pending_ = desiredMask != 0;
+                }
+                appliedMask = 0;
+            }
+
+            if (desiredMask != appliedMask) {
+                const OutputRuntimeState observed = runtimeSource_();
+                if (observed != OutputRuntimeState{ generation, true }) {
+                    std::lock_guard<std::mutex> stateLock(stateMutex_);
+                    if (generation_ == generation)
+                        pending_ = true;
+                    return false;
+                }
+                if (maskDispatch_(generation, desiredMask) != success) {
+                    MarkHardwareUnknown(generation);
+                    return false;
+                }
+                {
+                    std::lock_guard<std::mutex> stateLock(stateMutex_);
+                    if (generation_ != generation)
+                        return false;
+                    appliedMask_ = desiredMask;
+                    hardwareKnown_ = true;
+                    pending_ = false;
+                }
+                return true;
+            }
+
+            {
+                std::lock_guard<std::mutex> stateLock(stateMutex_);
+                if (generation_ != generation)
+                    return false;
+                appliedMask_ = desiredMask;
+                hardwareKnown_ = true;
+                pending_ = false;
+            }
+            return true;
+        }
+
+        bool RetryPendingWhileOperationLocked()
+        {
+            const OutputRuntimeState runtime = runtimeSource_();
+            NormalizeGenerationWhileOperationLocked(runtime.backendGeneration);
+            bool pending = false;
+            {
+                std::lock_guard<std::mutex> stateLock(stateMutex_);
+                pending = pending_;
+            }
+            if (!pending)
+                return true;
+            return ReconcileWhileOperationLocked(runtime.backendGeneration);
+        }
+
+        MaskDispatch maskDispatch_;
+        UnmaskDispatch unmaskDispatch_;
+        RuntimeSource runtimeSource_;
+        std::mutex operationMutex_;
+        std::mutex stateMutex_;
+        std::map<PhysicalMouseMaskLeaseOwner, std::uint32_t> leases_;
+        std::uint64_t generation_ = 0;
+        std::uint32_t appliedMask_ = 0;
+        bool hardwareKnown_ = true;
+        bool pending_ = false;
+    };
+
+    inline PhysicalMouseMaskLeaseCoordinator& RuntimePhysicalMouseMaskLeases()
+    {
+        static PhysicalMouseMaskLeaseCoordinator coordinator(
+            [](std::uint64_t generation, std::uint32_t mask) {
+                return kmbox::DispatchMouseMaskAndWaitForGeneration(
+                    generation,
+                    mask);
+            },
+            [](std::uint64_t generation) {
+                return kmbox::DispatchMouseUnmaskAndWaitForGeneration(
+                    generation);
+            },
+            []() { return CurrentKmboxOutputRuntimeState(); });
+        return coordinator;
+    }
+
+    inline bool AcquirePhysicalMouseMaskLease(
+        std::string ownerKey,
+        OutputOwnerSource source,
+        std::uint32_t mask,
+        std::uint64_t expectedGeneration)
+    {
+        const kmbox::KmboxRuntimeAppliedState applied =
+            kmbox::ActiveRuntimeSnapshot();
+        if (expectedGeneration == 0 ||
+            applied.generation != expectedGeneration ||
+            (applied.descriptor.backend != kmbox::KmboxRuntimeBackend::Network &&
+             applied.descriptor.backend != kmbox::KmboxRuntimeBackend::Mock)) {
+            return false;
+        }
+        return RuntimePhysicalMouseMaskLeases().Acquire(
+            std::move(ownerKey),
+            source,
+            mask,
+            expectedGeneration);
+    }
+
+    inline bool AcquirePhysicalMouseMaskLease(
+        std::string ownerKey,
+        OutputOwnerSource source,
+        std::uint32_t mask)
+    {
+        const std::uint64_t expectedGeneration =
+            kmbox::ActiveRuntimeSnapshot().generation;
+        return AcquirePhysicalMouseMaskLease(
+            std::move(ownerKey),
+            source,
+            mask,
+            expectedGeneration);
+    }
+
+    inline bool ReleasePhysicalMouseMaskLease(
+        const std::string& ownerKey,
+        OutputOwnerSource source,
+        std::uint64_t expectedGeneration)
+    {
+        return RuntimePhysicalMouseMaskLeases().Release(
+            ownerKey,
+            source,
+            expectedGeneration);
+    }
+
+    inline bool ReleasePhysicalMouseMaskLease(
+        const std::string& ownerKey,
+        OutputOwnerSource source)
+    {
+        const std::uint64_t expectedGeneration =
+            kmbox::ActiveRuntimeSnapshot().generation;
+        return ReleasePhysicalMouseMaskLease(
+            ownerKey,
+            source,
+            expectedGeneration);
+    }
+
+    inline bool RetryPendingPhysicalMouseMaskLeases()
+    {
+        return RuntimePhysicalMouseMaskLeases().RetryPending();
+    }
+
+    inline bool IsPhysicalMouseMaskLeaseActive(
+        const std::string& ownerKey,
+        OutputOwnerSource source)
+    {
+        return RuntimePhysicalMouseMaskLeases().IsActive(ownerKey, source);
+    }
+
+    inline bool IsPhysicalMouseMaskLeaseConfirmed(
+        const std::string& ownerKey,
+        OutputOwnerSource source)
+    {
+        return RuntimePhysicalMouseMaskLeases().IsConfirmedActive(
+            ownerKey,
+            source);
+    }
+
+    inline std::uint32_t PhysicalMouseMaskAggregate()
+    {
+        return RuntimePhysicalMouseMaskLeases().AggregateMask();
     }
 
     inline int get_bind_id(int setting) {

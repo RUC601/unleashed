@@ -1846,9 +1846,18 @@ int KmBoxNetManager::SetMouseButtonStateMask(unsigned int StateMask, bool Force)
 
 int KmBoxNetManager::MaskMouse(unsigned int Mask)
 {
+    return MaskMouseTracked(Mask, {});
+}
+
+int KmBoxNetManager::MaskMouseTracked(
+    unsigned int Mask,
+    const std::shared_ptr<KmBoxCommandCompletion>& Completion)
+{
     const unsigned int effectiveMask = Mask & 0x7Fu;
-    if (effectiveMask == 0)
+    if (effectiveMask == 0) {
+        CompleteCommand(Completion, success);
         return success;
+    }
 
     client_data packet = BuildPacket(cmd_mask_mouse, effectiveMask);
 
@@ -1858,11 +1867,88 @@ int KmBoxNetManager::MaskMouse(unsigned int Mask)
     command.data = packet;
     command.length = sizeof(cmd_head_t);
     command.type = KmBoxCommandType::MouseMask;
+    command.completion = Completion;
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
 }
 
+bool KmBoxNetManager::CancelQueuedMouseMask(
+    const std::shared_ptr<KmBoxCommandCompletion>& Completion)
+{
+    if (!Completion)
+        return false;
+
+    bool cancelled = false;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        const auto command = std::find_if(
+            commandQueue.begin(),
+            commandQueue.end(),
+            [&Completion](const KmBoxQueuedNetCommand& queued) {
+                return queued.type == KmBoxCommandType::MouseMask &&
+                    queued.completion == Completion;
+            });
+        if (command != commandQueue.end()) {
+            commandQueue.erase(command);
+            cancelled = true;
+        }
+    }
+    if (cancelled)
+        CompleteCommand(Completion, err_completion_timeout);
+    return cancelled;
+}
+
+int KmBoxNetManager::QueueMouseUnmaskCleanup(
+    const std::shared_ptr<KmBoxCommandCompletion>& Completion)
+{
+    if (!Completion)
+        return err_net_cmd;
+
+    client_data packet = BuildPacket(cmd_unmask_all, NextRandom());
+    KmBoxQueuedNetCommand command{};
+    command.data = packet;
+    command.length = sizeof(cmd_head_t);
+    command.type = KmBoxCommandType::MouseUnmask;
+    command.outputIntent = KmBoxOutputIntent::SafetyRelease;
+    command.priority = KmBoxCommandPriority::Safety;
+    command.completion = Completion;
+    command.enqueuedAt = std::chrono::steady_clock::now();
+
+    int status = success;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        const LifecycleState lifecycle =
+            lifecycleState.load(std::memory_order_acquire);
+        const bool offlineTestSeam =
+            lifecycle == LifecycleState::Stopped &&
+            queueRunning.load(std::memory_order_acquire) &&
+            static_cast<bool>(safetySendOverride);
+        if (configuredIp.empty()) {
+            status = err_creat_socket;
+        } else if (!queueRunning.load(std::memory_order_acquire) ||
+                   (lifecycle != LifecycleState::Running && !offlineTestSeam)) {
+            status = err_queue_stopped;
+        } else {
+            // A paired cleanup may temporarily exceed the normal queue bound;
+            // it must not be rejected behind an in-flight mask.
+            commandQueue.push_front(std::move(command));
+        }
+    }
+    if (status != success) {
+        CompleteCommand(Completion, status);
+        return status;
+    }
+    queueCv.notify_one();
+    return success;
+}
+
 int KmBoxNetManager::UnmaskAll()
+{
+    return UnmaskAllTracked({});
+}
+
+int KmBoxNetManager::UnmaskAllTracked(
+    const std::shared_ptr<KmBoxCommandCompletion>& Completion)
 {
     client_data packet = BuildPacket(cmd_unmask_all, NextRandom());
 
@@ -1873,6 +1959,7 @@ int KmBoxNetManager::UnmaskAll()
     command.length = sizeof(cmd_head_t);
     command.type = KmBoxCommandType::MouseUnmask;
     command.outputIntent = KmBoxOutputIntent::SafetyRelease;
+    command.completion = Completion;
     command.enqueuedAt = std::chrono::steady_clock::now();
     return EnqueueCommand(command);
 }

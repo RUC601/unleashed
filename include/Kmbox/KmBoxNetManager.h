@@ -150,7 +150,21 @@ public:
     int Shutdown(std::chrono::milliseconds Timeout = std::chrono::milliseconds(500));
     int SetMouseButtonStateMask(unsigned int StateMask, bool Force = false);
     int MaskMouse(unsigned int Mask);
+    // Queue a mask command with a completion token. The token is resolved by
+    // the queue worker only after suppression/transport handling finishes.
+    int MaskMouseTracked(
+        unsigned int Mask,
+        const std::shared_ptr<KmBoxCommandCompletion>& Completion);
+    bool CancelQueuedMouseMask(
+        const std::shared_ptr<KmBoxCommandCompletion>& Completion);
+    // Emergency ordering for a timed-out, possibly in-flight mask: this
+    // cleanup is placed directly behind the worker's current command even if
+    // the bounded queue is otherwise full.
+    int QueueMouseUnmaskCleanup(
+        const std::shared_ptr<KmBoxCommandCompletion>& Completion);
     int UnmaskAll();
+    int UnmaskAllTracked(
+        const std::shared_ptr<KmBoxCommandCompletion>& Completion);
     static bool BuildKeyboardReport(
         unsigned char modifierMask,
         const std::vector<unsigned char>& usages,

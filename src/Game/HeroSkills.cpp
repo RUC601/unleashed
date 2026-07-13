@@ -17,8 +17,10 @@
 #include <cstdlib>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -74,13 +76,22 @@ namespace {
     constexpr int kGenjiComboMinDashWaitMs = 180;
     constexpr int kGenjiComboMaxDashWaitMs = 380;
     constexpr float kGenjiComboDashMsPerMeter = 18.0f;
+    using SequenceWorkerExitReason = HeroSkillDetail::SequenceWorkerExitReason;
+
+    struct SequenceWorkerCompletion {
+        std::atomic<SequenceWorkerExitReason> reason{
+            SequenceWorkerExitReason::Running };
+    };
+
     struct SequenceRuntime {
         bool active = false;
+        bool rearmBlockedUntilRelease = false;
         size_t stepIndex = 0;
         int currentMask = 0;
         Clock::time_point stepStarted{};
         int effectiveDurationMs = 0;
         std::jthread worker{};
+        std::shared_ptr<SequenceWorkerCompletion> workerCompletion{};
         Clock::time_point hitMonitorStarted{};
         Clock::time_point hitLastChange{};
         uint64_t hitTargetAddress = 0;
@@ -268,6 +279,10 @@ namespace {
     std::unordered_map<std::string, SequenceRuntime> g_sequences;
     std::unordered_map<std::string, GenjiComboRuntime> g_genjiCombos;
     std::unordered_map<std::string, ViewpointRuntime> g_viewpoints;
+    // ProcessHeroSkills runs on the hero runtime thread while disconnect
+    // cleanup is initiated by the process-connection thread. Serialize every
+    // access to the mutable hero runtime containers across that boundary.
+    std::mutex g_heroSkillRuntimeMutex;
     std::unordered_map<std::string, Clock::time_point> g_lastActionExecutions;
     std::unordered_map<std::string, Clock::time_point> g_lastSkillGuardLogs;
     std::unordered_map<std::string, AmmoGuardLogState> g_lastAmmoGuardSamples;
@@ -285,6 +300,8 @@ namespace {
     bool IsActionDebounced(const std::string& runtimeKey);
     bool ShouldLogSkillGuard(const std::string& runtimeKey);
     void MarkActionExecuted(const std::string& runtimeKey);
+    OutputScheduler& TimedOutputScheduler();
+    bool TryMapVkToOutputControl(int vk, OutputControl& control);
     bool ConsumeSequenceAmmoBudgetForStep(const std::string& runtimeKey,
                                           int previousMask,
                                           int nextMask,
@@ -331,9 +348,7 @@ namespace {
         return std::string(buffer, static_cast<size_t>(length));
     }
 
-    bool SendKeyboardState(int vk, bool down);
     int MapHotkeyToVK(int hotkey);
-    bool SetHotkeyState(int vk, bool down);
 
     SequenceSelfTestRuntime& SequenceSelfTest()
     {
@@ -487,6 +502,23 @@ namespace {
         return false;
     }
 
+    bool SetSequenceSelfTestReloadState(const SequenceSelfTestRuntime& runtime, bool down)
+    {
+        OutputControl control{};
+        if (!TryMapVkToOutputControl(runtime.reloadKeyVk, control) ||
+            control.kind == OutputControlKind::MouseButton) {
+            return false;
+        }
+
+        std::vector<OutputControl> controls;
+        if (down)
+            controls.push_back(control);
+        return TimedOutputScheduler().SetManualControls(
+            "hero:sequence_self_test:reload",
+            OutputOwnerSource::Sequence,
+            std::move(controls));
+    }
+
     void UpdateSequenceSelfTestReload()
     {
         SequenceSelfTestRuntime& runtime = SequenceSelfTest();
@@ -495,7 +527,7 @@ namespace {
 
         const Clock::time_point now = Clock::now();
         if (!runtime.reloadPressLogged && now >= runtime.reloadPressAt) {
-            if (SendKeyboardState(runtime.reloadKeyVk, true)) {
+            if (SetSequenceSelfTestReloadState(runtime, true)) {
                 runtime.reloadPressLogged = true;
                 Diagnostics::Aim("sequence.self_test reload_press vk=0x%X", runtime.reloadKeyVk);
             } else {
@@ -507,9 +539,10 @@ namespace {
 
         if (runtime.reloadPressLogged && !runtime.reloadReleaseLogged &&
             now >= runtime.reloadReleaseAt) {
-            SendKeyboardState(runtime.reloadKeyVk, false);
-            runtime.reloadReleaseLogged = true;
-            Diagnostics::Aim("sequence.self_test reload_release vk=0x%X", runtime.reloadKeyVk);
+            if (SetSequenceSelfTestReloadState(runtime, false)) {
+                runtime.reloadReleaseLogged = true;
+                Diagnostics::Aim("sequence.self_test reload_release vk=0x%X", runtime.reloadKeyVk);
+            }
         }
     }
 
@@ -518,45 +551,75 @@ namespace {
         return Config::aimVerboseLog || SequenceSelfTest().enabled;
     }
 
-    void ApplyButtonMaskDiff(const std::string& skillId, int prevMask, int newMask)
+    std::string SequenceOwnerKey(const std::string& skillId)
     {
-        newMask &= 0x07;
-        prevMask &= 0x07;
-        const int changed = prevMask ^ newMask;
-        if (changed == 0)
-            return;
-
-        const bool rightStateInvolved = ((prevMask | newMask) & 0x02) != 0;
-        if (rightStateInvolved &&
-            OW::SendMouseButtonStateMask(static_cast<uint32_t>(newMask))) {
-            if (SequenceDiagnosticsEnabled()) {
-                Diagnostics::Aim("sequence.button_state skill=%s prevMask=0x%02X newMask=0x%02X fullState=1",
-                    skillId.c_str(),
-                    prevMask,
-                    newMask);
-            }
-            return;
-        }
-
-        for (int bit = 0; bit < 3; ++bit) {
-            const int bitFlag = 1 << bit;
-            if (changed & bitFlag) {
-                if (SequenceDiagnosticsEnabled()) {
-                    Diagnostics::Aim("sequence.button_diff skill=%s prevMask=0x%02X newMask=0x%02X button=%d down=%d fullState=0",
-                        skillId.c_str(),
-                        prevMask,
-                        newMask,
-                        bit,
-                        (newMask & bitFlag) != 0 ? 1 : 0);
-                }
-                OW::SendMouseButton(bit, (newMask & bitFlag) != 0);
-            }
-        }
+        return "hero:sequence:" + skillId;
     }
 
-    void ReleaseAllButtons()
+    std::string ViewpointOwnerKey(const std::string& skillId)
     {
-        OW::ForceReleaseMouseButtons();
+        return "hero:viewpoint:" + skillId;
+    }
+
+    std::string GenjiComboOwnerKey(const std::string& runtimeKey)
+    {
+        return "hero:genji_combo:" + runtimeKey;
+    }
+
+    std::vector<OutputControl> MouseControlsForMask(int mask)
+    {
+        std::vector<OutputControl> controls;
+        mask &= 0x07;
+        controls.reserve(3);
+        for (int bit = 0; bit < 3; ++bit) {
+            if ((mask & (1 << bit)) != 0) {
+                controls.push_back({
+                    OutputControlKind::MouseButton,
+                    static_cast<std::uint16_t>(bit)
+                });
+            }
+        }
+        return controls;
+    }
+
+    bool SetSequenceButtonMask(const std::string& skillId,
+                               int prevMask,
+                               int newMask,
+                               std::uint64_t expectedGeneration = 0)
+    {
+        prevMask &= 0x07;
+        newMask &= 0x07;
+        if (prevMask == newMask)
+            return true;
+
+        std::vector<OutputControl> controls = MouseControlsForMask(newMask);
+        const bool accepted = expectedGeneration == 0
+            ? TimedOutputScheduler().SetManualControls(
+                SequenceOwnerKey(skillId),
+                OutputOwnerSource::Sequence,
+                std::move(controls))
+            : TimedOutputScheduler().SetManualControlsForGeneration(
+                SequenceOwnerKey(skillId),
+                OutputOwnerSource::Sequence,
+                std::move(controls),
+                expectedGeneration);
+        if (!accepted) {
+            Diagnostics::Warn(
+                "Hero skill sequence output failed. skill=%s prevMask=0x%02X newMask=0x%02X",
+                skillId.c_str(),
+                prevMask,
+                newMask);
+            return false;
+        }
+
+        if (SequenceDiagnosticsEnabled()) {
+            Diagnostics::Aim(
+                "sequence.button_owner skill=%s prevMask=0x%02X newMask=0x%02X",
+                skillId.c_str(),
+                prevMask,
+                newMask);
+        }
+        return true;
     }
 
     // VK → USB HID key code for the most common game keys.
@@ -582,52 +645,78 @@ namespace {
         }
     }
 
-    bool SendKeyboardState(int vk, bool down)
+    bool AddOutputControlForVk(std::vector<OutputControl>& controls, int vk)
     {
-        const unsigned char hidCode = VkToHidKeyCode(vk);
-        if (hidCode == 0)
+        OutputControl control{};
+        if (!TryMapVkToOutputControl(vk, control))
             return false;
-
-        const KmBoxOutputIntent intent = OutputIntentForState(down);
-        if (ShouldSuppressKmboxOutput("keyboard", intent))
-            return false;
-        return kmbox::DispatchKeyboardKey(hidCode, down) == success;
+        if (std::find(controls.begin(), controls.end(), control) == controls.end())
+            controls.push_back(control);
+        return true;
     }
 
-    void BeginSecondaryPulse(const std::string& skillId, ViewpointRuntime& runtime, Clock::time_point now)
+    bool SetViewpointOutputs(const std::string& skillId, const ViewpointRuntime& runtime)
+    {
+        std::vector<OutputControl> controls;
+        controls.reserve(2);
+        if (runtime.secondaryDown && !AddOutputControlForVk(controls, runtime.skillVk))
+            return false;
+        if (runtime.jumpDown && !AddOutputControlForVk(controls, runtime.jumpVk))
+            return false;
+        return TimedOutputScheduler().SetManualControls(
+            ViewpointOwnerKey(skillId),
+            OutputOwnerSource::Viewpoint,
+            std::move(controls));
+    }
+
+    [[nodiscard]] bool BeginSecondaryPulse(const std::string& skillId,
+                                           ViewpointRuntime& runtime,
+                                           Clock::time_point now)
     {
         if (runtime.secondaryDown)
-            return;
+            return true;
 
-        if (runtime.skillVk <= 0 || !SetHotkeyState(runtime.skillVk, true)) {
+        if (runtime.skillVk <= 0) {
             Diagnostics::Warn("Hero skill viewpoint skill pulse failed. skill=%s vk=%d",
                 skillId.c_str(),
                 runtime.skillVk);
-            return;
+            return false;
+        }
+
+        runtime.secondaryDown = true;
+        if (!SetViewpointOutputs(skillId, runtime)) {
+            runtime.secondaryDown = false;
+            Diagnostics::Warn("Hero skill viewpoint skill pulse failed. skill=%s vk=%d",
+                skillId.c_str(),
+                runtime.skillVk);
+            return false;
         }
 
         Diagnostics::Info("Hero skill viewpoint skill pulse start. skill=%s vk=%d",
             skillId.c_str(),
             runtime.skillVk);
-        runtime.secondaryDown = true;
         runtime.secondaryPressedAt = now;
+        return true;
     }
 
-    bool BeginKeyboardPulse(const std::string& skillId,
-                            ViewpointRuntime& runtime,
-                            int vk,
-                            Clock::time_point now)
+    [[nodiscard]] bool BeginKeyboardPulse(const std::string& skillId,
+                                          ViewpointRuntime& runtime,
+                                          int vk,
+                                          Clock::time_point now)
     {
         if (vk <= 0 || vk > 255)
             return false;
         if (runtime.jumpDown)
             return true;
-        if (!SendKeyboardState(vk, true))
+
+        runtime.jumpDown = true;
+        if (!SetViewpointOutputs(skillId, runtime)) {
+            runtime.jumpDown = false;
             return false;
+        }
 
         Diagnostics::Info("Hero skill viewpoint keyboard pulse start. skill=%s vk=%d",
             skillId.c_str(), vk);
-        runtime.jumpDown = true;
         runtime.jumpPressedAt = now;
         return true;
     }
@@ -635,16 +724,33 @@ namespace {
     void UpdateViewpointPulses(const std::string& skillId, ViewpointRuntime& runtime, Clock::time_point now)
     {
         if (runtime.secondaryDown && now - runtime.secondaryPressedAt >= kBriefPulse) {
-            SetHotkeyState(runtime.skillVk, false);
             runtime.secondaryDown = false;
+            if (!SetViewpointOutputs(skillId, runtime)) {
+                (void)TimedOutputScheduler().Cancel(ViewpointOwnerKey(skillId));
+                runtime.jumpDown = false;
+                runtime.phase = ViewpointPhase::Cancelled;
+                Diagnostics::Warn(
+                    "Hero skill viewpoint secondary release failed. skill=%s",
+                    skillId.c_str());
+                return;
+            }
             runtime.fired = true;
             runtime.fireDelayStarted = now;
             Diagnostics::Info("Hero skill viewpoint secondary pulse end. skill=%s", skillId.c_str());
         }
 
         if (runtime.jumpDown && now - runtime.jumpPressedAt >= kBriefPulse) {
-            SendKeyboardState(runtime.jumpVk, false);
             runtime.jumpDown = false;
+            if (!SetViewpointOutputs(skillId, runtime)) {
+                (void)TimedOutputScheduler().Cancel(ViewpointOwnerKey(skillId));
+                runtime.secondaryDown = false;
+                runtime.phase = ViewpointPhase::Cancelled;
+                Diagnostics::Warn(
+                    "Hero skill viewpoint keyboard release failed. skill=%s vk=%d",
+                    skillId.c_str(),
+                    runtime.jumpVk);
+                return;
+            }
             Diagnostics::Info("Hero skill viewpoint keyboard pulse end. skill=%s vk=%d",
                 skillId.c_str(), runtime.jumpVk);
         }
@@ -816,33 +922,23 @@ namespace {
         runtime.hitLastChange = now;
     }
 
-    void ReleaseViewpointOutputs(ViewpointRuntime& runtime)
+    void ReleaseViewpointOutputs(const std::string& skillId, ViewpointRuntime& runtime)
     {
-        if (runtime.secondaryDown) {
-            SetHotkeyState(runtime.skillVk, false);
-            runtime.secondaryDown = false;
-        }
-        if (runtime.jumpDown) {
-            SendKeyboardState(runtime.jumpVk, false);
-            runtime.jumpDown = false;
-        }
+        (void)TimedOutputScheduler().Cancel(ViewpointOwnerKey(skillId));
+        runtime.secondaryDown = false;
+        runtime.jumpDown = false;
     }
 
     void CancelSequence(const std::string& skillId, SequenceRuntime& runtime, const char* reason)
     {
         const bool hadWorker = runtime.worker.joinable();
-        const bool shouldForceRelease = runtime.active || hadWorker || runtime.currentMask != 0;
         if (hadWorker) {
             runtime.worker.request_stop();
             runtime.worker.join();
         }
 
-        if (runtime.currentMask != 0) {
-            ApplyButtonMaskDiff(skillId, runtime.currentMask, 0);
-            runtime.currentMask = 0;
-        }
-        if (shouldForceRelease)
-            ReleaseAllButtons();
+        (void)TimedOutputScheduler().Cancel(SequenceOwnerKey(skillId));
+        runtime.currentMask = 0;
 
         LogSequenceHitSummary(skillId, runtime);
 
@@ -854,11 +950,23 @@ namespace {
         RefreshAnyInputSequenceActive();
     }
 
+    void CancelSequenceAndBlockUntilRelease(const std::string& skillId,
+                                            SequenceRuntime& runtime,
+                                            const char* reason)
+    {
+        CancelSequence(skillId, runtime, reason);
+        runtime.rearmBlockedUntilRelease = true;
+        Diagnostics::Warn(
+            "Hero skill sequence rearm blocked until activation release. skill=%s reason=%s",
+            skillId.c_str(),
+            reason ? reason : "unknown");
+    }
+
     void CancelViewpoint(const std::string& skillId, ViewpointRuntime& runtime, const char* reason)
     {
         const bool wasActive = runtime.phase == ViewpointPhase::PitchDown ||
             runtime.phase == ViewpointPhase::PitchUp;
-        ReleaseViewpointOutputs(runtime);
+        ReleaseViewpointOutputs(skillId, runtime);
         runtime.phase = ViewpointPhase::Cancelled;
         runtime.lastTick = Clock::now();
         if (wasActive) {
@@ -1040,12 +1148,20 @@ namespace {
         return std::clamp(static_cast<int>(std::lround(duration)), 5, 1000);
     }
 
-    void EnterSequenceStep(const std::string& skillId,
+    bool EnterSequenceStep(const std::string& skillId,
                            int& currentMask,
-                           const Config::HeroSkillSequenceStep& step)
+                           const Config::HeroSkillSequenceStep& step,
+                           std::uint64_t expectedGeneration = 0)
     {
-        ApplyButtonMaskDiff(skillId, currentMask, step.buttonMask);
+        if (!SetSequenceButtonMask(
+                skillId,
+                currentMask,
+                step.buttonMask,
+                expectedGeneration)) {
+            return false;
+        }
         currentMask = step.buttonMask;
+        return true;
     }
 
     void SleepUntilSequenceDeadline(std::stop_token stopToken, Clock::time_point deadline)
@@ -1063,28 +1179,76 @@ namespace {
         }
     }
 
+    const char* SequenceWorkerExitReasonName(SequenceWorkerExitReason reason)
+    {
+        switch (reason) {
+        case SequenceWorkerExitReason::Running:       return "running";
+        case SequenceWorkerExitReason::StopRequested: return "stop_requested";
+        case SequenceWorkerExitReason::RuntimeChanged:return "runtime_changed";
+        case SequenceWorkerExitReason::AmmoBudget:    return "ammo_guard_budget";
+        case SequenceWorkerExitReason::OutputFailure: return "output_failed";
+        default:                                      return "unknown";
+        }
+    }
+
+    bool SequenceWorkerRuntimeStillValid(std::uint64_t startGeneration)
+    {
+        const OutputRuntimeState current = CurrentKmboxOutputRuntimeState();
+        return HeroSkillDetail::SequenceWorkerRuntimeMatches(
+            startGeneration,
+            current.backendGeneration,
+            current.outputGateOpen);
+    }
+
     void RunSequenceWorker(std::stop_token stopToken,
                            std::string skillId,
                            std::vector<Config::HeroSkillSequenceStep> steps,
                            bool ammoGuardEnabled,
-                           int ammoGuardReserve)
+                           int ammoGuardReserve,
+                           std::uint64_t startGeneration,
+                           std::shared_ptr<SequenceWorkerCompletion> completion)
     {
         timeBeginPeriod(1);
 
         int currentMask = 0;
         size_t stepIndex = 0;
+        SequenceWorkerExitReason exitReason = SequenceWorkerExitReason::StopRequested;
         Diagnostics::Info("Hero skill sequence worker started. skill=%s steps=%zu",
             skillId.c_str(), steps.size());
 
         while (!stopToken.stop_requested() && !steps.empty()) {
+            if (!SequenceWorkerRuntimeStillValid(startGeneration)) {
+                exitReason = SequenceWorkerExitReason::RuntimeChanged;
+                break;
+            }
             if (stepIndex >= steps.size())
                 stepIndex = 0;
 
             const Config::HeroSkillSequenceStep& step = steps[stepIndex];
             const int durationMs = PickSequenceDurationMs(step);
-            if (ConsumeSequenceAmmoBudgetForStep(skillId, currentMask, step.buttonMask, ammoGuardEnabled, ammoGuardReserve))
+            if (ConsumeSequenceAmmoBudgetForStep(
+                    skillId,
+                    currentMask,
+                    step.buttonMask,
+                    ammoGuardEnabled,
+                    ammoGuardReserve)) {
+                exitReason = SequenceWorkerExitReason::AmmoBudget;
                 break;
-            EnterSequenceStep(skillId, currentMask, step);
+            }
+            if (!SequenceWorkerRuntimeStillValid(startGeneration)) {
+                exitReason = SequenceWorkerExitReason::RuntimeChanged;
+                break;
+            }
+            if (!EnterSequenceStep(
+                    skillId,
+                    currentMask,
+                    step,
+                    startGeneration)) {
+                exitReason = SequenceWorkerRuntimeStillValid(startGeneration)
+                    ? SequenceWorkerExitReason::OutputFailure
+                    : SequenceWorkerExitReason::RuntimeChanged;
+                break;
+            }
 
             if (SequenceDiagnosticsEnabled()) {
                 Diagnostics::Aim("sequence.step skill=%s step=%zu mask=0x%02X durationMs=%d baseMs=%d scale=%.3f jitterMs=%d",
@@ -1101,10 +1265,15 @@ namespace {
             ++stepIndex;
         }
 
-        ApplyButtonMaskDiff(skillId, currentMask, 0);
-        ReleaseAllButtons();
+        (void)TimedOutputScheduler().Cancel(SequenceOwnerKey(skillId));
         timeEndPeriod(1);
-        Diagnostics::Info("Hero skill sequence worker stopped. skill=%s", skillId.c_str());
+        if (completion) {
+            completion->reason.store(exitReason, std::memory_order_release);
+        }
+        Diagnostics::Info(
+            "Hero skill sequence worker stopped. skill=%s reason=%s",
+            skillId.c_str(),
+            SequenceWorkerExitReasonName(exitReason));
     }
 
     void BeginViewpoint(const std::string& skillId,
@@ -1171,7 +1340,14 @@ namespace {
             return;
         if (ShouldSuppressKmboxOutput("fast_raw_mouse_move"))
             return;
-        (void)kmbox::DispatchMouseMove(px, py, 0);
+        const OutputRuntimeState runtime = CurrentKmboxOutputRuntimeState();
+        if (!runtime.outputGateOpen || runtime.backendGeneration == 0)
+            return;
+        (void)kmbox::DispatchMouseMoveForGeneration(
+            runtime.backendGeneration,
+            px,
+            py,
+            0);
     }
 
     bool MovePitchToward(float targetPitch, float speedDeg, float deltaSeconds)
@@ -1892,32 +2068,6 @@ namespace {
         return MapHotkeyToVK(settings.skillKey >= 0 ? settings.skillKey : settings.key);
     }
 
-    bool SendMouseVkState(int vk, bool down)
-    {
-        switch (vk) {
-        case VK_LBUTTON:
-            return ActionOutputSucceeded(SendMouseButtonActionState(0, down));
-        case VK_RBUTTON:
-            return ActionOutputSucceeded(SendMouseButtonActionState(1, down));
-        case VK_MBUTTON:
-            return ActionOutputSucceeded(SendMouseButtonActionState(2, down));
-        case VK_XBUTTON1:
-        case VK_XBUTTON2:
-            return false;
-        default:
-            return false;
-        }
-    }
-
-    bool SetHotkeyState(int vk, bool down)
-    {
-        if (vk <= 0)
-            return false;
-        if (SendMouseVkState(vk, down))
-            return true;
-        return SendKeyboardState(vk, down);
-    }
-
     OutputScheduler& TimedOutputScheduler()
     {
         return RuntimeOutputScheduler();
@@ -1971,6 +2121,7 @@ namespace {
     {
         struct PulseState
         {
+            std::atomic<bool> maskedLeft{ false };
             std::atomic<bool> releasedLeft{ false };
             std::atomic<bool> rightPressed{ false };
             std::atomic<bool> restoredLeft{ false };
@@ -1978,6 +2129,8 @@ namespace {
         };
 
         const auto state = std::make_shared<PulseState>();
+        const std::string physicalLeftMaskKey =
+            runtimeKey + ":physical_lmb_mask";
         const auto logCompletion = [runtimeKey, releaseLeftDuringPulse, timing, state](
             const char* outcome) {
             Diagnostics::Aim(
@@ -1998,14 +2151,45 @@ namespace {
         plan.ownerSource = OutputOwnerSource::ZaryaPulse;
         plan.acquire = { { OutputControlKind::MouseButton, 1 } };
 
+        const auto generatedLeftOwnerHeld = []() {
+            return TimedOutputScheduler().IsControlHeld(
+                { OutputControlKind::MouseButton, 0 });
+        };
+
         if (releaseLeftDuringPulse) {
             OutputActionStep releaseLeft{};
             releaseLeft.afterStart = timing.leftReleaseDelay;
-            releaseLeft.callback = [state](std::uint64_t generation) {
-                state->releasedLeft.store(
-                    kmbox::DispatchMouseButtonForGeneration(
-                        generation, 0, false) == success,
-                    std::memory_order_release);
+            releaseLeft.callback = [
+                state,
+                generatedLeftOwnerHeld,
+                physicalLeftMaskKey](std::uint64_t generation) {
+                // Temporarily mask physical LMB rather than inventing a
+                // positive "physical" lease. Generated owners remain usable
+                // while the mask is active and cannot later steal the user's
+                // still-held physical button when their final lease releases.
+                if (generatedLeftOwnerHeld())
+                    return;
+                if (!OW::AcquirePhysicalMouseMaskLease(
+                        physicalLeftMaskKey,
+                        OutputOwnerSource::ZaryaPulse,
+                        0x01u,
+                        generation)) {
+                    return;
+                }
+                state->maskedLeft.store(true, std::memory_order_release);
+                const bool released =
+                    kmbox::DispatchForceReleaseMouseButtonForGeneration(
+                        generation, 0) == success;
+                state->releasedLeft.store(released, std::memory_order_release);
+                if (!released) {
+                    state->restoredLeft.store(
+                        OW::ReleasePhysicalMouseMaskLease(
+                            physicalLeftMaskKey,
+                            OutputOwnerSource::ZaryaPulse,
+                            generation),
+                        std::memory_order_release);
+                    throw std::runtime_error("Zarya physical LMB release failed");
+                }
             };
             plan.steps.push_back(std::move(releaseLeft));
         }
@@ -2025,13 +2209,19 @@ namespace {
         if (releaseLeftDuringPulse) {
             OutputActionStep restoreLeft{};
             restoreLeft.afterStart = timing.rightHold + kZaryaAutoRightRestoreSettle;
-            restoreLeft.callback = [state, logCompletion](std::uint64_t generation) {
-                if (state->releasedLeft.load(std::memory_order_acquire) &&
-                    AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON)) {
-                    state->restoredLeft.store(
-                        kmbox::DispatchMouseButtonForGeneration(
-                            generation, 0, true) == success,
-                        std::memory_order_release);
+            restoreLeft.callback = [
+                state,
+                logCompletion,
+                physicalLeftMaskKey](std::uint64_t generation) {
+                if (state->maskedLeft.load(std::memory_order_acquire) &&
+                    !state->restoredLeft.load(std::memory_order_acquire)) {
+                    const bool restored = OW::ReleasePhysicalMouseMaskLease(
+                        physicalLeftMaskKey,
+                        OutputOwnerSource::ZaryaPulse,
+                        generation);
+                    state->restoredLeft.store(restored, std::memory_order_release);
+                    if (!restored)
+                        throw std::runtime_error("Zarya physical LMB unmask failed");
                 }
                 state->completed.store(true, std::memory_order_release);
                 logCompletion("completed");
@@ -2040,16 +2230,16 @@ namespace {
             plan.steps.push_back(std::move(restoreLeft));
         }
 
-        plan.cancelCleanup = [state, logCompletion](
+        plan.cancelCleanup = [state, logCompletion, physicalLeftMaskKey](
             OutputActionCancelReason reason,
             std::uint64_t generation) {
-            if (reason != OutputActionCancelReason::RuntimeChanged &&
-                state->releasedLeft.load(std::memory_order_acquire) &&
-                !state->restoredLeft.load(std::memory_order_acquire) &&
-                AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON)) {
+            if (state->maskedLeft.load(std::memory_order_acquire) &&
+                !state->restoredLeft.load(std::memory_order_acquire)) {
                 state->restoredLeft.store(
-                    kmbox::DispatchMouseButtonForGeneration(
-                        generation, 0, true) == success,
+                    OW::ReleasePhysicalMouseMaskLease(
+                        physicalLeftMaskKey,
+                        OutputOwnerSource::ZaryaPulse,
+                        generation),
                     std::memory_order_release);
             }
             if (!state->completed.load(std::memory_order_acquire)) {
@@ -2362,23 +2552,29 @@ namespace {
         return Clock::now() - runtime.phaseStarted >= std::chrono::milliseconds(milliseconds);
     }
 
+    bool SetGenjiComboOutputs(const std::string& runtimeKey,
+                              const GenjiComboRuntime& runtime)
+    {
+        std::vector<OutputControl> controls;
+        controls.reserve(3);
+        if (runtime.rightDown && !AddOutputControlForVk(controls, VK_RBUTTON))
+            return false;
+        if (runtime.shiftDown && !AddOutputControlForVk(controls, VK_LSHIFT))
+            return false;
+        if (runtime.meleeDown && !AddOutputControlForVk(controls, 0x56))
+            return false;
+        return TimedOutputScheduler().SetManualControls(
+            GenjiComboOwnerKey(runtimeKey),
+            OutputOwnerSource::GenjiCombo,
+            std::move(controls));
+    }
+
     void FinishGenjiCombo(const std::string& runtimeKey,
                           GenjiComboRuntime& runtime,
                           const char* reason,
                           bool completed)
     {
-        if (runtime.rightDown) {
-            SetHotkeyState(VK_RBUTTON, false);
-            runtime.rightDown = false;
-        }
-        if (runtime.shiftDown) {
-            SendKeyboardState(VK_LSHIFT, false);
-            runtime.shiftDown = false;
-        }
-        if (runtime.meleeDown) {
-            SendKeyboardState(0x56, false);
-            runtime.meleeDown = false;
-        }
+        (void)TimedOutputScheduler().Cancel(GenjiComboOwnerKey(runtimeKey));
 
         const bool prevKeyDown = runtime.prevKeyDown;
         runtime = GenjiComboRuntime{};
@@ -2416,12 +2612,13 @@ namespace {
             return false;
         }
 
-        if (!SetHotkeyState(VK_RBUTTON, true)) {
+        runtime.rightDown = true;
+        if (!SetGenjiComboOutputs(runtimeKey, runtime)) {
+            runtime.rightDown = false;
             FinishGenjiCombo(runtimeKey, runtime, "opening_right_down_failed", false);
             return false;
         }
 
-        runtime.rightDown = true;
         SetGenjiComboPhase(runtime, GenjiComboPhase::OpeningFire);
         Diagnostics::Aim("genji.combo started skill=%s target=0x%llX distance=%.2f dashWaitMs=%d",
             runtimeKey.c_str(),
@@ -2443,27 +2640,34 @@ namespace {
         case GenjiComboPhase::OpeningFire:
             if (!GenjiComboPhaseElapsed(runtime, kGenjiComboRightHoldMs))
                 return true;
-            SetHotkeyState(VK_RBUTTON, false);
             runtime.rightDown = false;
+            if (!SetGenjiComboOutputs(runtimeKey, runtime)) {
+                FinishGenjiCombo(runtimeKey, runtime, "opening_right_up_failed", false);
+                return false;
+            }
             SetGenjiComboPhase(runtime, GenjiComboPhase::AfterOpeningFire);
             return true;
 
         case GenjiComboPhase::AfterOpeningFire:
             if (!GenjiComboPhaseElapsed(runtime, kGenjiComboAfterOpeningFireMs))
                 return true;
-            if (!SendKeyboardState(VK_LSHIFT, true)) {
+            runtime.shiftDown = true;
+            if (!SetGenjiComboOutputs(runtimeKey, runtime)) {
+                runtime.shiftDown = false;
                 FinishGenjiCombo(runtimeKey, runtime, "shift_down_failed", false);
                 return false;
             }
-            runtime.shiftDown = true;
             SetGenjiComboPhase(runtime, GenjiComboPhase::Shift);
             return true;
 
         case GenjiComboPhase::Shift:
             if (!GenjiComboPhaseElapsed(runtime, kGenjiComboShiftHoldMs))
                 return true;
-            SendKeyboardState(VK_LSHIFT, false);
             runtime.shiftDown = false;
+            if (!SetGenjiComboOutputs(runtimeKey, runtime)) {
+                FinishGenjiCombo(runtimeKey, runtime, "shift_up_failed", false);
+                return false;
+            }
             SetGenjiComboPhase(runtime, GenjiComboPhase::DashWait);
             return true;
 
@@ -2523,11 +2727,12 @@ namespace {
                 return false;
             }
 
-            if (!SetHotkeyState(VK_RBUTTON, true)) {
+            runtime.rightDown = true;
+            if (!SetGenjiComboOutputs(runtimeKey, runtime)) {
+                runtime.rightDown = false;
                 FinishGenjiCombo(runtimeKey, runtime, "final_right_down_failed", false);
                 return false;
             }
-            runtime.rightDown = true;
             SetGenjiComboPhase(runtime, GenjiComboPhase::FinalFire);
             return true;
         }
@@ -2535,27 +2740,34 @@ namespace {
         case GenjiComboPhase::FinalFire:
             if (!GenjiComboPhaseElapsed(runtime, kGenjiComboRightHoldMs))
                 return true;
-            SetHotkeyState(VK_RBUTTON, false);
             runtime.rightDown = false;
+            if (!SetGenjiComboOutputs(runtimeKey, runtime)) {
+                FinishGenjiCombo(runtimeKey, runtime, "final_right_up_failed", false);
+                return false;
+            }
             SetGenjiComboPhase(runtime, GenjiComboPhase::AfterFinalFire);
             return true;
 
         case GenjiComboPhase::AfterFinalFire:
             if (!GenjiComboPhaseElapsed(runtime, kGenjiComboAfterFinalFireMs))
                 return true;
-            if (!SendKeyboardState(0x56, true)) {
+            runtime.meleeDown = true;
+            if (!SetGenjiComboOutputs(runtimeKey, runtime)) {
+                runtime.meleeDown = false;
                 FinishGenjiCombo(runtimeKey, runtime, "melee_down_failed", false);
                 return false;
             }
-            runtime.meleeDown = true;
             SetGenjiComboPhase(runtime, GenjiComboPhase::Melee);
             return true;
 
         case GenjiComboPhase::Melee:
             if (!GenjiComboPhaseElapsed(runtime, kGenjiComboMeleeHoldMs))
                 return true;
-            SendKeyboardState(0x56, false);
             runtime.meleeDown = false;
+            if (!SetGenjiComboOutputs(runtimeKey, runtime)) {
+                FinishGenjiCombo(runtimeKey, runtime, "melee_up_failed", false);
+                return false;
+            }
             FinishGenjiCombo(runtimeKey, runtime, "done", true);
             return true;
 
@@ -3712,6 +3924,31 @@ void RunInputSequence(const std::string& skillId,
     const bool held = IsSequenceSelfTestHeld(key) || IsActivationKeyHeld(key);
     const bool useWorker = UseSequenceWorker();
 
+    if (useWorker && runtime.active && runtime.workerCompletion) {
+        const SequenceWorkerExitReason exitReason =
+            runtime.workerCompletion->reason.load(std::memory_order_acquire);
+        if (exitReason != SequenceWorkerExitReason::Running) {
+            const char* reason = SequenceWorkerExitReasonName(exitReason);
+            if (HeroSkillDetail::SequenceWorkerExitRequiresRelease(exitReason)) {
+                CancelSequenceAndBlockUntilRelease(skillId, runtime, reason);
+            } else {
+                CancelSequence(skillId, runtime, reason);
+            }
+            return;
+        }
+    }
+
+    const bool wasRearmBlocked = runtime.rearmBlockedUntilRelease;
+    if (!HeroSkillDetail::AdvanceSequenceRearmGate(
+            runtime.rearmBlockedUntilRelease, held)) {
+        if (wasRearmBlocked && !runtime.rearmBlockedUntilRelease) {
+            Diagnostics::Info(
+                "Hero skill sequence rearmed after activation release. skill=%s",
+                skillId.c_str());
+        }
+        return;
+    }
+
     if (!held || steps.empty()) {
         if (runtime.active)
             CancelSequence(skillId, runtime, held ? "empty_steps" : "activation_released");
@@ -3728,18 +3965,36 @@ void RunInputSequence(const std::string& skillId,
         MarkActionExecuted(skillId);
 
         if (useWorker) {
+            const OutputRuntimeState workerRuntime =
+                CurrentKmboxOutputRuntimeState();
+            if (!HeroSkillDetail::SequenceWorkerRuntimeMatches(
+                    workerRuntime.backendGeneration,
+                    workerRuntime.backendGeneration,
+                    workerRuntime.outputGateOpen)) {
+                CancelSequenceAndBlockUntilRelease(
+                    skillId, runtime, "runtime_unavailable");
+                return;
+            }
+            runtime.workerCompletion = std::make_shared<SequenceWorkerCompletion>();
             runtime.worker = std::jthread(RunSequenceWorker,
                 skillId,
                 std::vector<Config::HeroSkillSequenceStep>(steps.begin(), steps.end()),
                 ammoGuardEnabled,
-                ammoGuardReserve);
+                ammoGuardReserve,
+                workerRuntime.backendGeneration,
+                runtime.workerCompletion);
         } else {
             if (ConsumeSequenceAmmoBudgetForStep(
                     skillId, runtime.currentMask, steps.front().buttonMask, ammoGuardEnabled, ammoGuardReserve)) {
-                CancelSequence(skillId, runtime, "ammo_guard_budget");
+                CancelSequenceAndBlockUntilRelease(
+                    skillId, runtime, "ammo_guard_budget");
                 return;
             }
-            EnterSequenceStep(skillId, runtime.currentMask, steps.front());
+            if (!EnterSequenceStep(skillId, runtime.currentMask, steps.front())) {
+                CancelSequenceAndBlockUntilRelease(
+                    skillId, runtime, "output_failed");
+                return;
+            }
         }
 
         Diagnostics::Info("Hero skill sequence started. skill=%s steps=%zu activationKey=%d",
@@ -3763,10 +4018,15 @@ void RunInputSequence(const std::string& skillId,
             runtime.effectiveDurationMs = PickSequenceDurationMs(steps.front());
             if (ConsumeSequenceAmmoBudgetForStep(
                     skillId, runtime.currentMask, steps.front().buttonMask, ammoGuardEnabled, ammoGuardReserve)) {
-                CancelSequence(skillId, runtime, "ammo_guard_budget");
+                CancelSequenceAndBlockUntilRelease(
+                    skillId, runtime, "ammo_guard_budget");
                 return;
             }
-            EnterSequenceStep(skillId, runtime.currentMask, steps.front());
+            if (!EnterSequenceStep(skillId, runtime.currentMask, steps.front())) {
+                CancelSequenceAndBlockUntilRelease(
+                    skillId, runtime, "output_failed");
+                return;
+            }
         }
 
         const Clock::time_point now = Clock::now();
@@ -3778,10 +4038,15 @@ void RunInputSequence(const std::string& skillId,
             runtime.effectiveDurationMs = PickSequenceDurationMs(nextStep);
             if (ConsumeSequenceAmmoBudgetForStep(
                     skillId, runtime.currentMask, nextStep.buttonMask, ammoGuardEnabled, ammoGuardReserve)) {
-                CancelSequence(skillId, runtime, "ammo_guard_budget");
+                CancelSequenceAndBlockUntilRelease(
+                    skillId, runtime, "ammo_guard_budget");
                 return;
             }
-            EnterSequenceStep(skillId, runtime.currentMask, nextStep);
+            if (!EnterSequenceStep(skillId, runtime.currentMask, nextStep)) {
+                CancelSequenceAndBlockUntilRelease(
+                    skillId, runtime, "output_failed");
+                return;
+            }
 
             if (SequenceDiagnosticsEnabled()) {
                 Diagnostics::Aim("sequence.step skill=%s step=%zu mask=0x%02X durationMs=%d baseMs=%d scale=%.3f jitterMs=%d",
@@ -3852,7 +4117,10 @@ HeroSkillRunState RunViewpointController(const std::string& skillId,
                 targetPitch * kRadToDeg,
                 haveCurrent ? current.X * kRadToDeg : 0.0f,
                 floorSettled ? 1 : 0);
-            BeginSecondaryPulse(skillId, runtime, now);
+            if (!BeginSecondaryPulse(skillId, runtime, now)) {
+                CancelViewpoint(skillId, runtime, "secondary_output_failed");
+                return HeroSkillRunState::Cancelled;
+            }
             runtime.phase = ViewpointPhase::PitchUp;
             runtime.phaseStarted = now;
             runtime.lastTick = runtime.phaseStarted;
@@ -3885,6 +4153,8 @@ HeroSkillRunState RunViewpointController(const std::string& skillId,
                 if (runtime.jumpVk > 0 && !BeginKeyboardPulse(skillId, runtime, runtime.jumpVk, now)) {
                     Diagnostics::Warn("Hero skill keyboard pulse failed. skill=%s vk=%d",
                         skillId.c_str(), runtime.jumpVk);
+                    CancelViewpoint(skillId, runtime, "jump_output_failed");
+                    return HeroSkillRunState::Cancelled;
                 }
                 runtime.jumped = true;
                 Diagnostics::Info("Hero skill viewpoint jump gate passed. skill=%s pitch=%.2f yaw=%.2f elapsedMs=%lld",
@@ -3928,10 +4198,10 @@ HeroSkillRunState RunViewpointController(const std::string& skillId,
     return HeroSkillRunState::InProgress;
 }
 
-void CancelActiveSkill()
-{
-    TimedOutputScheduler().CancelAllAndJoin();
+namespace {
 
+void CancelActiveSkillStateLocked()
+{
     for (auto& item : g_sequences)
         CancelSequence(item.first, item.second, "cancel_all");
 
@@ -3945,14 +4215,35 @@ void CancelActiveSkill()
     for (auto& item : g_viewpoints)
         CancelViewpoint(item.first, item.second, "cancel_all");
 
-    ReleaseAllButtons();
+    // Hero cancellation must not disturb independent global aim, trigger or
+    // one-shot GameAction owners that share the scheduler.
+    TimedOutputScheduler().CancelSource(OutputOwnerSource::HeroTimedAction);
+    TimedOutputScheduler().CancelSource(OutputOwnerSource::ZaryaPulse);
+    TimedOutputScheduler().CancelSource(OutputOwnerSource::Sequence);
+    TimedOutputScheduler().CancelSource(OutputOwnerSource::Viewpoint);
+    TimedOutputScheduler().CancelSource(OutputOwnerSource::GenjiCombo);
     g_lastActionExecutions.clear();
     g_zaryaAmmoProbes.clear();
     RefreshAnyInputSequenceActive();
 }
 
+} // namespace
+
+void CancelActiveSkill()
+{
+    std::lock_guard<std::mutex> lock(g_heroSkillRuntimeMutex);
+    CancelActiveSkillStateLocked();
+}
+
 void ProcessHeroSkills()
 {
+    // A backend transaction closes the controller gate, then waits here before
+    // cancelling scheduler state. This keeps one hero tick from moving on the
+    // old backend and scheduling its action on the replacement generation.
+    std::lock_guard<std::mutex> producerTransitionLock(
+        RuntimeOutputProducerTransitionMutex());
+    std::lock_guard<std::mutex> lock(g_heroSkillRuntimeMutex);
+
     const OutputRuntimeState outputRuntime =
         CurrentKmboxOutputRuntimeState();
     const bool generationChanged =
@@ -3960,18 +4251,29 @@ void ProcessHeroSkills()
         outputRuntime.backendGeneration != g_lastTimedOutputGeneration;
     const bool outputGateClosed =
         g_lastTimedOutputGateOpen && !outputRuntime.outputGateOpen;
+
+    // Quiesce independent producers before SynchronizeRuntime is allowed to
+    // resume a paused scheduler on a new generation. The worker also carries
+    // its own expected-generation barrier; this ordering is not its only
+    // protection.
+    if (generationChanged || outputGateClosed)
+        CancelActiveSkillStateLocked();
+
     const bool outputReady =
         TimedOutputScheduler().SynchronizeRuntime(outputRuntime);
     g_lastTimedOutputGeneration = outputRuntime.backendGeneration;
     g_lastTimedOutputGateOpen = outputRuntime.outputGateOpen;
 
-    if (generationChanged || outputGateClosed)
-        CancelActiveSkill();
-    if (!outputReady)
+    if (!outputReady) {
+        // A failed unmask can outlive cancellation. Retry safety cleanup even
+        // while normal output is gated; positive remasks remain gate-blocked.
+        (void)RetryPendingPhysicalMouseMaskLeases();
         return;
+    }
 
     if (Config::doingentity == 0 || !ProcessConnection::IsConnected()) {
-        CancelActiveSkill();
+        CancelActiveSkillStateLocked();
+        (void)RetryPendingPhysicalMouseMaskLeases();
         return;
     }
 
@@ -3981,9 +4283,19 @@ void ProcessHeroSkills()
     const bool forceSelfTestSkill = selfTest.enabled && selfTest.forceSkill;
     const uint64_t heroId = forceSelfTestSkill ? selfTest.heroId : localSnapshot.HeroID;
     if (heroId != g_lastHeroId) {
-        CancelActiveSkill();
+        // A hero switch is an explicit ownership boundary for all producers.
+        // Stop the old hero's independent sequence worker first; otherwise it
+        // can reacquire output in the gap after a global CancelAll.
+        CancelActiveSkillStateLocked();
+        TimedOutputScheduler().CancelAllAndJoin(
+            OutputActionCancelReason::RuntimeChanged);
         g_lastHeroId = heroId;
     }
+
+    // Retry only after invalid producers have been cancelled. This prevents a
+    // pending positive mask from being rebuilt for a disconnected or old hero;
+    // generation changes clear stale leases without touching the new backend.
+    (void)RetryPendingPhysicalMouseMaskLeases();
 
     if (heroId == 0)
         return;
@@ -4098,7 +4410,7 @@ void ProcessHeroSkills()
     }
 
     if (!processedAnyForHero)
-        CancelActiveSkill();
+        CancelActiveSkillStateLocked();
 }
 
 } // namespace OW

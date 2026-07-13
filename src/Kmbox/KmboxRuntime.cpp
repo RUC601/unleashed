@@ -7,6 +7,7 @@
 #include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace kmbox
@@ -16,6 +17,33 @@ namespace kmbox
         std::mutex g_runtimeFacadeMutex;
         std::mutex g_preReconcileHookMutex;
         RuntimePreReconcileHook g_preReconcileHook;
+        constexpr auto kMaxTransportCompletionWait =
+            std::chrono::milliseconds(500);
+
+        std::chrono::milliseconds BoundedTransportCompletionWait(
+            std::chrono::milliseconds timeout)
+        {
+            return (std::min)(timeout, kMaxTransportCompletionWait);
+        }
+
+        int WaitForTransportCompletion(
+            const std::shared_ptr<KmBoxCommandCompletion>& completion,
+            std::chrono::milliseconds timeout,
+            const char* operation)
+        {
+            std::unique_lock<std::mutex> completionLock(completion->mutex);
+            if (!completion->cv.wait_for(
+                    completionLock,
+                    timeout,
+                    [&completion]() { return completion->completed; })) {
+                Diagnostics::Warn(
+                    "[KMBOX-NET] Timed out waiting for %s transport completion. timeout_ms=%lld",
+                    operation ? operation : "command",
+                    static_cast<long long>(timeout.count()));
+                return err_completion_timeout;
+            }
+            return completion->status;
+        }
 
         void RecordFirstFailure(int& aggregate, int status)
         {
@@ -40,6 +68,10 @@ namespace kmbox
             std::lock_guard<std::mutex> transitionLock(g_runtimeFacadeMutex);
             KmboxRuntimeController& controller = RuntimeController();
             if (!IsReconcileNoOp(controller, desired)) {
+                // Linearize the transaction's "pause new output" step before
+                // producer cancellation. Direct move/mask paths do not pass
+                // through the scheduler hook and must see the closed gate too.
+                controller.PauseOutputForTransition();
                 RuntimePreReconcileHook hook;
                 {
                     std::lock_guard<std::mutex> hookLock(
@@ -259,14 +291,25 @@ namespace kmbox
         SetOutputGate(false);
         const int status = backendOps_.ReleaseAll(active_.backend, timeout);
         lastError_ = status;
-        if (status == success)
+        if (status == success) {
+            // A successful all-up is an output-session boundary even though
+            // the transport remains initialized. Invalidate every producer
+            // token captured before the cleanup before reopening dispatch.
+            generation_.fetch_add(1, std::memory_order_acq_rel);
             SetOutputGate(true);
+        }
         return status;
     }
 
     int KmboxRuntimeController::ShutdownActive(std::chrono::milliseconds timeout)
     {
         return Reconcile(KmboxRuntimeDescriptor::Disabled(), timeout);
+    }
+
+    void KmboxRuntimeController::PauseOutputForTransition()
+    {
+        std::lock_guard<std::mutex> lock(reconcileMutex_);
+        SetOutputGate(false);
     }
 
     int KmboxRuntimeController::DispatchActive(
@@ -438,6 +481,38 @@ namespace kmbox
             });
     }
 
+    int DispatchMouseMoveForGeneration(
+        std::uint64_t expectedGeneration,
+        int x,
+        int y,
+        int runtimeMs)
+    {
+        if (expectedGeneration == 0)
+            return err_queue_stopped;
+
+        return RuntimeController().DispatchActive(
+            [=](const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                switch (active.descriptor.backend) {
+                case KmboxRuntimeBackend::Network:
+                    return runtimeMs > 0
+                        ? KmBoxMgr.Mouse.Move_Auto(x, y, runtimeMs)
+                        : KmBoxMgr.Mouse.Move(x, y);
+                case KmboxRuntimeBackend::Serial:
+                    if (runtimeMs > 0)
+                        kmBoxBMgr.km_move_auto(x, y, runtimeMs);
+                    else
+                        kmBoxBMgr.km_move(x, y);
+                    return success;
+                case KmboxRuntimeBackend::Mock:
+                    return MockHardwareMgr.RecordMove(x, y, runtimeMs);
+                default:
+                    return err_queue_stopped;
+                }
+            });
+    }
+
     int DispatchMouseButton(int button, bool down)
     {
         if (button < 0 || button > 2)
@@ -499,6 +574,34 @@ namespace kmbox
                     return kmBoxBMgr.km_middle(down);
                 case KmboxRuntimeBackend::Mock:
                     return MockHardwareMgr.RecordButton(button, down);
+                default:
+                    return err_queue_stopped;
+                }
+            });
+    }
+
+    int DispatchForceReleaseMouseButtonForGeneration(
+        std::uint64_t expectedGeneration,
+        int button)
+    {
+        if (button < 0 || button > 2)
+            return err_net_cmd;
+
+        return RuntimeController().DispatchActive(
+            [=](const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                switch (active.descriptor.backend) {
+                case KmboxRuntimeBackend::Network:
+                    return KmBoxMgr.ForceReleaseMouseButton(button);
+                case KmboxRuntimeBackend::Serial:
+                    if (button == 0)
+                        return kmBoxBMgr.km_left(false);
+                    if (button == 1)
+                        return kmBoxBMgr.km_right(false);
+                    return kmBoxBMgr.km_middle(false);
+                case KmboxRuntimeBackend::Mock:
+                    return MockHardwareMgr.ForceReleaseMouseButton(button);
                 default:
                     return err_queue_stopped;
                 }
@@ -603,6 +706,165 @@ namespace kmbox
                     return err_queue_stopped;
                 }
             });
+    }
+
+    int DispatchMouseMaskForGeneration(
+        std::uint64_t expectedGeneration,
+        std::uint32_t mask)
+    {
+        const std::uint32_t effectiveMask = mask & 0x7Fu;
+        if (effectiveMask == 0)
+            return err_net_cmd;
+        return RuntimeController().DispatchActive(
+            [=](const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                switch (active.descriptor.backend) {
+                case KmboxRuntimeBackend::Network:
+                    return KmBoxMgr.MaskMouse(effectiveMask);
+                case KmboxRuntimeBackend::Mock:
+                    return MockHardwareMgr.MaskMouse(effectiveMask);
+                case KmboxRuntimeBackend::Serial:
+                    return err_net_cmd;
+                default:
+                    return err_queue_stopped;
+                }
+            });
+    }
+
+    int DispatchMouseMaskAndWaitForGeneration(
+        std::uint64_t expectedGeneration,
+        std::uint32_t mask,
+        std::chrono::milliseconds timeout)
+    {
+        const std::uint32_t effectiveMask = mask & 0x7Fu;
+        if (effectiveMask == 0 || expectedGeneration == 0 ||
+            timeout < std::chrono::milliseconds::zero()) {
+            return err_net_cmd;
+        }
+        timeout = BoundedTransportCompletionWait(timeout);
+
+        auto completion = std::make_shared<KmBoxCommandCompletion>();
+        bool waitForNetworkWorker = false;
+        const int enqueueStatus = RuntimeController().DispatchActive(
+            [=, &waitForNetworkWorker](
+                const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                switch (active.descriptor.backend) {
+                case KmboxRuntimeBackend::Network:
+                    waitForNetworkWorker = true;
+                    return KmBoxMgr.MaskMouseTracked(effectiveMask, completion);
+                case KmboxRuntimeBackend::Mock:
+                    return MockHardwareMgr.MaskMouse(effectiveMask);
+                case KmboxRuntimeBackend::Serial:
+                    return err_net_cmd;
+                default:
+                    return err_queue_stopped;
+                }
+            });
+        if (enqueueStatus != success || !waitForNetworkWorker)
+            return enqueueStatus;
+
+        // DispatchActive has returned here, so neither the runtime reconcile
+        // mutex nor the network queue mutex is held while transport completes.
+        const int completionStatus = WaitForTransportCompletion(
+            completion,
+            timeout,
+            "mouse mask");
+        if (completionStatus != err_completion_timeout)
+            return completionStatus;
+
+        // If the worker has not popped the mask, remove it by token. Otherwise
+        // it may still arrive after this call returns, so place a safety
+        // unmask directly behind the in-flight command and wait for it. The
+        // cleanup stays queued even if its own bounded wait expires.
+        if (KmBoxMgr.CancelQueuedMouseMask(completion))
+            return err_completion_timeout;
+
+        auto cleanupCompletion = std::make_shared<KmBoxCommandCompletion>();
+        const int cleanupEnqueueStatus = RuntimeController().DispatchActive(
+            [=](const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                if (active.descriptor.backend != KmboxRuntimeBackend::Network)
+                    return err_net_cmd;
+                return KmBoxMgr.QueueMouseUnmaskCleanup(cleanupCompletion);
+            });
+        if (cleanupEnqueueStatus == success) {
+            const int cleanupStatus = WaitForTransportCompletion(
+                cleanupCompletion,
+                timeout,
+                "timed-out mouse mask cleanup");
+            if (cleanupStatus != success) {
+                Diagnostics::Warn(
+                    "[KMBOX-NET] Timed-out mouse mask cleanup remains pending or failed. status=%d",
+                    cleanupStatus);
+            }
+        } else if (cleanupEnqueueStatus != err_queue_stopped) {
+            Diagnostics::Warn(
+                "[KMBOX-NET] Could not queue timed-out mouse mask cleanup. status=%d",
+                cleanupEnqueueStatus);
+        }
+        return err_completion_timeout;
+    }
+
+    int DispatchMouseUnmaskForGeneration(
+        std::uint64_t expectedGeneration)
+    {
+        return RuntimeController().DispatchActive(
+            [=](const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                switch (active.descriptor.backend) {
+                case KmboxRuntimeBackend::Network:
+                    return KmBoxMgr.UnmaskAll();
+                case KmboxRuntimeBackend::Mock:
+                    return MockHardwareMgr.UnmaskAll();
+                case KmboxRuntimeBackend::Serial:
+                    return err_net_cmd;
+                default:
+                    return err_queue_stopped;
+                }
+            });
+    }
+
+    int DispatchMouseUnmaskAndWaitForGeneration(
+        std::uint64_t expectedGeneration,
+        std::chrono::milliseconds timeout)
+    {
+        if (expectedGeneration == 0 ||
+            timeout < std::chrono::milliseconds::zero()) {
+            return err_net_cmd;
+        }
+        timeout = BoundedTransportCompletionWait(timeout);
+
+        auto completion = std::make_shared<KmBoxCommandCompletion>();
+        bool waitForNetworkWorker = false;
+        const int enqueueStatus = RuntimeController().DispatchActive(
+            [=, &waitForNetworkWorker](
+                const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                switch (active.descriptor.backend) {
+                case KmboxRuntimeBackend::Network:
+                    waitForNetworkWorker = true;
+                    return KmBoxMgr.UnmaskAllTracked(completion);
+                case KmboxRuntimeBackend::Mock:
+                    return MockHardwareMgr.UnmaskAll();
+                case KmboxRuntimeBackend::Serial:
+                    return err_net_cmd;
+                default:
+                    return err_queue_stopped;
+                }
+            });
+        if (enqueueStatus != success || !waitForNetworkWorker)
+            return enqueueStatus;
+
+        return WaitForTransportCompletion(
+            completion,
+            timeout,
+            "mouse unmask");
     }
 
     int DispatchKeyboardReport(

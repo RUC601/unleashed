@@ -115,6 +115,7 @@ namespace kmbox
             std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
         int ShutdownActive(
             std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
+        void PauseOutputForTransition();
         int DispatchActive(
             const std::function<int(const KmboxRuntimeAppliedState&)>& dispatch);
 
@@ -152,16 +153,36 @@ namespace kmbox
         std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
 
     int DispatchMouseMove(int x, int y, int runtimeMs = 0);
+    int DispatchMouseMoveForGeneration(
+        std::uint64_t expectedGeneration,
+        int x,
+        int y,
+        int runtimeMs = 0);
     int DispatchMouseButton(int button, bool down);
     int DispatchMouseButtonForGeneration(
         std::uint64_t expectedGeneration,
         int button,
         bool down);
+    int DispatchForceReleaseMouseButtonForGeneration(
+        std::uint64_t expectedGeneration,
+        int button);
     int DispatchMouseButtonStateMask(std::uint32_t mask, bool force = false);
     int DispatchForceReleaseMouseButtons();
     int DispatchForceReleaseMouseButton(int button);
     int DispatchMouseMask(std::uint32_t mask);
     int DispatchMouseUnmask();
+    int DispatchMouseMaskForGeneration(
+        std::uint64_t expectedGeneration,
+        std::uint32_t mask);
+    int DispatchMouseMaskAndWaitForGeneration(
+        std::uint64_t expectedGeneration,
+        std::uint32_t mask,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
+    int DispatchMouseUnmaskForGeneration(
+        std::uint64_t expectedGeneration);
+    int DispatchMouseUnmaskAndWaitForGeneration(
+        std::uint64_t expectedGeneration,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
     int DispatchKeyboardReport(
         unsigned char modifierMask,
         const std::vector<unsigned char>& usages);

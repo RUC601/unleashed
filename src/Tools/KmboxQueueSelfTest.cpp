@@ -975,6 +975,262 @@ namespace
         return 0;
     }
 
+    int TestTrackedMouseMaskCompletionAndForceGate()
+    {
+        {
+            KmBoxNetManager manager;
+            std::vector<unsigned int> sends;
+            int forceReleaseAttempts = 0;
+            KmboxQueueSelfTestAccess::PrepareNetwork(
+                manager,
+                [&](unsigned int command, const client_data&, int) {
+                    sends.push_back(command);
+                    return success;
+                });
+            KmboxQueueSelfTestAccess::StartNetworkWorker(manager);
+
+            auto maskCompletion = std::make_shared<KmBoxCommandCompletion>();
+            const int maskEnqueue = manager.MaskMouseTracked(
+                0x01u,
+                maskCompletion);
+            const int maskStatus = maskEnqueue == success
+                ? WaitForCompletion(maskCompletion, 100ms)
+                : maskEnqueue;
+            if (maskStatus == success)
+                ++forceReleaseAttempts;
+
+            auto unmaskCompletion = std::make_shared<KmBoxCommandCompletion>();
+            const int unmaskEnqueue = manager.UnmaskAllTracked(
+                unmaskCompletion);
+            const int unmaskStatus = unmaskEnqueue == success
+                ? WaitForCompletion(unmaskCompletion, 100ms)
+                : unmaskEnqueue;
+            KmboxQueueSelfTestAccess::StopNetworkWorker(manager);
+            if (maskStatus != success || unmaskStatus != success ||
+                sends != std::vector<unsigned int>{
+                    cmd_mask_mouse,
+                    cmd_unmask_all
+                } ||
+                forceReleaseAttempts != 1) {
+                return Fail("tracked mask/unmask success was not transport-confirmed");
+            }
+        }
+
+        {
+            KmBoxNetManager manager;
+            int sendAttempts = 0;
+            int forceReleaseAttempts = 0;
+            KmboxQueueSelfTestAccess::PrepareNetwork(
+                manager,
+                [&](unsigned int, const client_data&, int) {
+                    ++sendAttempts;
+                    return err_net_tx;
+                });
+            KmboxQueueSelfTestAccess::StartNetworkWorker(manager);
+
+            auto completion = std::make_shared<KmBoxCommandCompletion>();
+            const int enqueueStatus = manager.MaskMouseTracked(0x01u, completion);
+            const int status = enqueueStatus == success
+                ? WaitForCompletion(completion, 100ms)
+                : enqueueStatus;
+            if (status == success)
+                ++forceReleaseAttempts;
+            KmboxQueueSelfTestAccess::StopNetworkWorker(manager);
+            if (status != err_net_tx || sendAttempts != 1 ||
+                forceReleaseAttempts != 0) {
+                return Fail("failed network mask opened the force-release gate");
+            }
+        }
+
+        {
+            KmBoxNetManager manager;
+            int sendAttempts = 0;
+            KmboxQueueSelfTestAccess::PrepareNetwork(
+                manager,
+                [&](unsigned int command, const client_data&, int) {
+                    if (command == cmd_unmask_all)
+                        ++sendAttempts;
+                    return err_net_tx;
+                });
+            KmboxQueueSelfTestAccess::StartNetworkWorker(manager);
+
+            auto completion = std::make_shared<KmBoxCommandCompletion>();
+            const int enqueueStatus = manager.UnmaskAllTracked(completion);
+            const int status = enqueueStatus == success
+                ? WaitForCompletion(completion, 100ms)
+                : enqueueStatus;
+            KmboxQueueSelfTestAccess::StopNetworkWorker(manager);
+            if (status != err_net_tx || sendAttempts != 1)
+                return Fail("failed tracked unmask was reported as successful");
+        }
+
+        {
+            KmBoxNetManager manager;
+            std::vector<unsigned int> sends;
+            int forceReleaseAttempts = 0;
+            KmboxQueueSelfTestAccess::PrepareNetwork(
+                manager,
+                [&](unsigned int command, const client_data&, int) {
+                    sends.push_back(command);
+                    return success;
+                });
+            KmboxQueueSelfTestAccess::StartNetworkWorker(manager);
+
+            OW::Config::Menu = true;
+            auto maskCompletion = std::make_shared<KmBoxCommandCompletion>();
+            const int maskEnqueue = manager.MaskMouseTracked(
+                0x01u,
+                maskCompletion);
+            const int maskStatus = maskEnqueue == success
+                ? WaitForCompletion(maskCompletion, 100ms)
+                : maskEnqueue;
+            if (maskStatus == success)
+                ++forceReleaseAttempts;
+
+            auto unmaskCompletion = std::make_shared<KmBoxCommandCompletion>();
+            const int unmaskEnqueue = manager.UnmaskAllTracked(
+                unmaskCompletion);
+            const int unmaskStatus = unmaskEnqueue == success
+                ? WaitForCompletion(unmaskCompletion, 100ms)
+                : unmaskEnqueue;
+            OW::Config::Menu = false;
+            KmboxQueueSelfTestAccess::StopNetworkWorker(manager);
+
+            if (maskStatus != err_output_suppressed ||
+                unmaskStatus != success ||
+                sends != std::vector<unsigned int>{ cmd_unmask_all } ||
+                forceReleaseAttempts != 0) {
+                return Fail("menu-suppressed mask was confirmed or safety unmask was suppressed");
+            }
+        }
+
+        {
+            KmBoxNetManager manager;
+            std::mutex gateMutex;
+            std::condition_variable gateCv;
+            bool releaseSender = false;
+            std::atomic<bool> maskAttempted{ false };
+            std::vector<unsigned int> sends;
+            int forceReleaseAttempts = 0;
+            KmboxQueueSelfTestAccess::PrepareNetwork(
+                manager,
+                [&](unsigned int command, const client_data&, int) {
+                    sends.push_back(command);
+                    if (command == cmd_mask_mouse) {
+                        maskAttempted.store(true, std::memory_order_release);
+                        std::unique_lock<std::mutex> lock(gateMutex);
+                        gateCv.wait(lock, [&releaseSender]() {
+                            return releaseSender;
+                        });
+                    }
+                    return success;
+                });
+            KmboxQueueSelfTestAccess::StartNetworkWorker(manager);
+
+            auto maskCompletion = std::make_shared<KmBoxCommandCompletion>();
+            const int maskEnqueue = manager.MaskMouseTracked(
+                0x01u,
+                maskCompletion);
+            const auto started = std::chrono::steady_clock::now();
+            const int maskStatus = maskEnqueue == success
+                ? WaitForCompletion(maskCompletion, 20ms)
+                : maskEnqueue;
+            const auto elapsed = std::chrono::steady_clock::now() - started;
+            if (maskStatus == success)
+                ++forceReleaseAttempts;
+
+            const bool maskCancelled = maskEnqueue == success
+                ? manager.CancelQueuedMouseMask(maskCompletion)
+                : false;
+
+            auto cleanupCompletion =
+                std::make_shared<KmBoxCommandCompletion>();
+            const int cleanupEnqueue =
+                maskEnqueue == success && !maskCancelled
+                    ? manager.QueueMouseUnmaskCleanup(cleanupCompletion)
+                    : err_queue_stopped;
+            {
+                std::lock_guard<std::mutex> lock(gateMutex);
+                releaseSender = true;
+            }
+            gateCv.notify_all();
+            const int cleanupStatus = cleanupEnqueue == success
+                ? WaitForCompletion(cleanupCompletion, 100ms)
+                : cleanupEnqueue;
+            KmboxQueueSelfTestAccess::StopNetworkWorker(manager);
+
+            if (maskEnqueue != success)
+                return Fail("could not enqueue tracked mask timeout fixture");
+            if (maskStatus != err_completion_timeout || elapsed > 250ms ||
+                !maskAttempted.load(std::memory_order_acquire) ||
+                forceReleaseAttempts != 0) {
+                return Fail("timed-out mask was not bounded and fail-closed");
+            }
+            if (maskCancelled)
+                return Fail("in-flight mask timeout fixture was incorrectly cancellable");
+            if (cleanupEnqueue != success)
+                return Fail("could not queue paired late-mask cleanup");
+            if (cleanupStatus != success ||
+                sends != std::vector<unsigned int>{
+                    cmd_mask_mouse,
+                    cmd_unmask_all
+                } ||
+                forceReleaseAttempts != 0) {
+                return Fail("late mask was not followed by confirmed safety unmask");
+            }
+        }
+
+        {
+            KmBoxNetManager manager;
+            std::mutex gateMutex;
+            std::condition_variable gateCv;
+            bool releaseSender = false;
+            std::atomic<bool> unmaskAttempted{ false };
+            std::vector<unsigned int> sends;
+            KmboxQueueSelfTestAccess::PrepareNetwork(
+                manager,
+                [&](unsigned int command, const client_data&, int) {
+                    sends.push_back(command);
+                    if (command == cmd_unmask_all) {
+                        unmaskAttempted.store(true, std::memory_order_release);
+                        std::unique_lock<std::mutex> lock(gateMutex);
+                        gateCv.wait(lock, [&releaseSender]() {
+                            return releaseSender;
+                        });
+                    }
+                    return success;
+                });
+            KmboxQueueSelfTestAccess::StartNetworkWorker(manager);
+
+            auto completion = std::make_shared<KmBoxCommandCompletion>();
+            const int enqueueStatus = manager.UnmaskAllTracked(completion);
+            const auto started = std::chrono::steady_clock::now();
+            const int initialStatus = enqueueStatus == success
+                ? WaitForCompletion(completion, 20ms)
+                : enqueueStatus;
+            const auto elapsed = std::chrono::steady_clock::now() - started;
+            {
+                std::lock_guard<std::mutex> lock(gateMutex);
+                releaseSender = true;
+            }
+            gateCv.notify_all();
+            const int lateStatus = enqueueStatus == success
+                ? WaitForCompletion(completion, 100ms)
+                : enqueueStatus;
+            KmboxQueueSelfTestAccess::StopNetworkWorker(manager);
+
+            if (enqueueStatus != success ||
+                initialStatus != err_completion_timeout || elapsed > 250ms ||
+                !unmaskAttempted.load(std::memory_order_acquire) ||
+                lateStatus != success ||
+                sends != std::vector<unsigned int>{ cmd_unmask_all }) {
+                return Fail("tracked unmask timeout was not bounded or observable");
+            }
+        }
+
+        return 0;
+    }
+
     int TestNetworkTimeoutIsBounded()
     {
         KmBoxNetManager manager;
@@ -1109,6 +1365,7 @@ int main()
         TestSafetyIntentRejectsPresses() != 0 ||
         TestNetworkPriorityAndSequence() != 0 ||
         TestNetworkFullQueueAndFailure() != 0 ||
+        TestTrackedMouseMaskCompletionAndForceGate() != 0 ||
         TestNetworkTimeoutIsBounded() != 0 ||
         TestSerialPriorityAndSequence() != 0 ||
         TestMockReleaseAll() != 0) {

@@ -13,6 +13,44 @@
 
 namespace OW {
 
+namespace HeroSkillDetail {
+
+enum class SequenceWorkerExitReason : std::uint8_t {
+    Running,
+    StopRequested,
+    RuntimeChanged,
+    AmmoBudget,
+    OutputFailure
+};
+
+constexpr bool SequenceWorkerExitRequiresRelease(SequenceWorkerExitReason reason)
+{
+    return reason == SequenceWorkerExitReason::RuntimeChanged ||
+        reason == SequenceWorkerExitReason::AmmoBudget ||
+        reason == SequenceWorkerExitReason::OutputFailure;
+}
+
+// Returns true only when a sequence may enter its normal start/update path.
+// A blocked sequence consumes one observed release tick before it can rearm.
+constexpr bool AdvanceSequenceRearmGate(bool& blockedUntilRelease, bool held)
+{
+    if (!blockedUntilRelease)
+        return true;
+    if (!held)
+        blockedUntilRelease = false;
+    return false;
+}
+
+constexpr bool SequenceWorkerRuntimeMatches(std::uint64_t startGeneration,
+                                            std::uint64_t currentGeneration,
+                                            bool outputGateOpen)
+{
+    return outputGateOpen && startGeneration != 0 &&
+        startGeneration == currentGeneration;
+}
+
+} // namespace HeroSkillDetail
+
 enum class HeroSkillCategory {
     Skill,
     Ultimate

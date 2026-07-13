@@ -9547,10 +9547,44 @@ namespace AimbotDetail {
         OW::SendMouseMove(delta, effective_move_time_ms);
     }
 
-    inline void ClickMouseButton(int button, DWORD sleep_ms = 10) {
-        OW::SendMouseButton(button, true);
+    inline constexpr const char* kGlobalAimClickOwnerKey =
+        "overwatch.global_aim.click";
+    inline constexpr const char* kGlobalAimTrackingFireOwnerKey =
+        "overwatch.global_aim.tracking_fire";
+    inline constexpr const char* kGlobalAimCloseRangeOwnerKey =
+        "overwatch.global_aim.close_range";
+    inline constexpr const char* kGlobalAimGeneratedFireOwnerKey =
+        "overwatch.global_aim.generated_fire";
+    inline constexpr const char* kTriggerGeneratedFireOwnerKey =
+        "overwatch.trigger.generated_fire";
+    inline constexpr const char* kTriggerCloseRangeOwnerKey =
+        "overwatch.trigger.close_range";
+    inline constexpr const char* kTriggerHanzoCustomOwnerKey =
+        "overwatch.trigger.hanzo_custom_charge";
+
+    inline void ClickMouseButton(
+        int button,
+        DWORD sleep_ms = 10,
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimClickOwnerKey) {
+        const std::uint64_t operationGeneration =
+            kmbox::ActiveRuntimeSnapshot().generation;
+        const OW::ActionOutputStatus pressStatus =
+            OW::SendMouseButtonActionState(
+                button,
+                true,
+                ownerSource,
+                ownerKey,
+                operationGeneration);
+        if (!OW::ActionOutputSucceeded(pressStatus))
+            return;
         Sleep(sleep_ms);
-        OW::SendMouseButton(button, false);
+        (void)OW::SendMouseButtonActionState(
+            button,
+            false,
+            ownerSource,
+            ownerKey,
+            operationGeneration);
     }
 
     inline constexpr uint32_t PhysicalMouseMaskForButton(int button) {
@@ -9589,60 +9623,187 @@ namespace AimbotDetail {
             key);
     }
 
-    inline void ClickDmaMouseKey(uint32_t key, DWORD sleep_ms = 10) {
+    inline void ClickDmaMouseKey(
+        uint32_t key,
+        DWORD sleep_ms = 10,
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey) {
         int button = -1;
         if (OW::DmaKeyToMouseButton(key, button)) {
-            ClickMouseButton(button, sleep_ms);
+            ClickMouseButton(
+                button,
+                sleep_ms,
+                ownerSource,
+                ownerKey);
         } else {
             LogInvalidGeneratedFireKey("click", key);
         }
     }
 
-    inline void UnmaskPhysicalMouseButtonsBestEffort(const char* reason) {
-        for (int attempt = 0; attempt < 3; ++attempt) {
-            const bool ok = OW::UnmaskPhysicalMouseButtons();
-            Diagnostics::Aim("fire.unmask_all reason=%s attempt=%d ok=%d",
-                reason ? reason : "unknown",
-                attempt + 1,
-                ok ? 1 : 0);
-            if (attempt < 2)
-                Sleep(1);
+    inline std::string PhysicalMouseMaskLeaseKey(
+        OW::OutputOwnerSource ownerSource,
+        const char* ownerKey,
+        int button) {
+        const std::string resolvedOwnerKey = ownerKey && *ownerKey
+            ? std::string(ownerKey)
+            : OW::DefaultMouseButtonOwnerKey(ownerSource, button);
+        return resolvedOwnerKey + ".physical_mask." +
+            std::to_string(button);
+    }
+
+    struct MouseOwnerReleaseResult {
+        OW::ActionOutputStatus ownerReleaseStatus =
+            OW::ActionOutputStatus::TransportError;
+        bool physicalFallbackReleased = false;
+    };
+
+    inline MouseOwnerReleaseResult ReleaseMouseOwnerWithPhysicalFallback(
+        int button,
+        OW::OutputOwnerSource ownerSource,
+        const char* ownerKey,
+        std::uint64_t expectedGeneration) {
+        MouseOwnerReleaseResult result{};
+        result.ownerReleaseStatus =
+            OW::ReleaseMouseButtonActionStateOrPhysicalFallback(
+            button,
+            ownerSource,
+            ownerKey,
+            expectedGeneration,
+            &result.physicalFallbackReleased);
+        return result;
+    }
+
+    inline MouseOwnerReleaseResult ReleaseMouseOwnerAfterPhysicalMask(
+        int button,
+        OW::OutputOwnerSource ownerSource,
+        const char* ownerKey,
+        std::uint64_t expectedGeneration,
+        bool physicalDown,
+        bool physicalMaskConfirmed) {
+        if (!physicalDown || physicalMaskConfirmed) {
+            return ReleaseMouseOwnerWithPhysicalFallback(
+                button,
+                ownerSource,
+                ownerKey,
+                expectedGeneration);
         }
+
+        MouseOwnerReleaseResult result{};
+        result.ownerReleaseStatus =
+            OW::ReleaseMouseButtonActionStateForGeneration(
+                button,
+                ownerSource,
+                ownerKey,
+                expectedGeneration);
+        return result;
     }
 
-    inline void RecoverMouseAfterMaskedRelease(const char* reason, int button = 0) {
-        if (!OW::Config::kmboxEnabled ||
-            (OW::Config::kmboxDeviceType != 0 && OW::Config::kmboxDeviceType != 2))
+    inline void RecoverMouseAfterMaskedRelease(
+        const char* reason,
+        int button = 0,
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey,
+        std::uint64_t expectedGeneration = 0) {
+        const kmbox::KmboxRuntimeAppliedState applied =
+            kmbox::ActiveRuntimeSnapshot();
+        const std::uint64_t operationGeneration = expectedGeneration != 0
+            ? expectedGeneration
+            : applied.generation;
+        if (operationGeneration == 0 ||
+            applied.generation != operationGeneration ||
+            (applied.descriptor.backend != kmbox::KmboxRuntimeBackend::Network &&
+             applied.descriptor.backend != kmbox::KmboxRuntimeBackend::Mock)) {
             return;
+        }
 
-        Diagnostics::Aim("fire.recover_mouse reason=%s button=%d stage=force_release",
-            reason ? reason : "unknown",
+        const std::string maskLeaseKey = PhysicalMouseMaskLeaseKey(
+            ownerSource,
+            ownerKey,
             button);
-        OW::ForceReleaseMouseButton(button);
+        const int vk = VkForMouseButton(button);
+        const bool physicalDown = vk != 0 && IsInputVkDownQuiet(vk);
+        const bool physicalMaskConfirmed =
+            OW::IsPhysicalMouseMaskLeaseConfirmed(
+                maskLeaseKey,
+                ownerSource);
+        Diagnostics::Aim("fire.recover_mouse reason=%s button=%d stage=owner_release physicalDown=%d maskConfirmed=%d",
+            reason ? reason : "unknown",
+            button,
+            physicalDown ? 1 : 0,
+            physicalMaskConfirmed ? 1 : 0);
+        const MouseOwnerReleaseResult release =
+            ReleaseMouseOwnerAfterPhysicalMask(
+            button,
+            ownerSource,
+            ownerKey,
+            operationGeneration,
+            physicalDown,
+            physicalMaskConfirmed);
+        Diagnostics::Aim(
+            "fire.recover_mouse ownerReleaseStatus=%d physicalFallbackReleased=%d",
+            static_cast<int>(release.ownerReleaseStatus),
+            release.physicalFallbackReleased ? 1 : 0);
         Sleep(1);
-        UnmaskPhysicalMouseButtonsBestEffort(reason);
+        const bool maskReleased = OW::ReleasePhysicalMouseMaskLease(
+            maskLeaseKey,
+            ownerSource,
+            operationGeneration);
+        Diagnostics::Aim(
+            "fire.recover_mouse mask_owner_release reason=%s ok=%d",
+            reason ? reason : "unknown",
+            maskReleased ? 1 : 0);
     }
 
-    inline void RecoverHanzoPostFireMouseState() {
-        if (!OW::Config::kmboxEnabled ||
-            (OW::Config::kmboxDeviceType != 0 && OW::Config::kmboxDeviceType != 2))
+    inline void RecoverHanzoPostFireMouseState(
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey,
+        std::uint64_t expectedGeneration = 0) {
+        const kmbox::KmboxRuntimeAppliedState applied =
+            kmbox::ActiveRuntimeSnapshot();
+        const std::uint64_t operationGeneration = expectedGeneration != 0
+            ? expectedGeneration
+            : applied.generation;
+        if (operationGeneration == 0 ||
+            applied.generation != operationGeneration ||
+            (applied.descriptor.backend != kmbox::KmboxRuntimeBackend::Network &&
+             applied.descriptor.backend != kmbox::KmboxRuntimeBackend::Mock)) {
             return;
+        }
 
-        RecoverMouseAfterMaskedRelease("hanzo_post_fire", 0);
+        RecoverMouseAfterMaskedRelease(
+            "hanzo_post_fire", 0, ownerSource, ownerKey, operationGeneration);
         Sleep(8);
-        RecoverMouseAfterMaskedRelease("hanzo_post_fire_delayed", 0);
+        RecoverMouseAfterMaskedRelease(
+            "hanzo_post_fire_delayed", 0, ownerSource, ownerKey, operationGeneration);
     }
 
-    inline void ReleaseDmaMouseKey(uint32_t key, DWORD sleep_ms = 10, bool allowPhysicalMask = true) {
+    inline void ReleaseDmaMouseKey(
+        uint32_t key,
+        DWORD sleep_ms = 10,
+        bool allowPhysicalMask = true,
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey,
+        std::uint64_t expectedGeneration = 0) {
+        const std::uint64_t operationGeneration = expectedGeneration != 0
+            ? expectedGeneration
+            : kmbox::ActiveRuntimeSnapshot().generation;
         int button = -1;
         if (OW::DmaKeyToMouseButton(key, button)) {
             const uint32_t physicalMask = PhysicalMouseMaskForButton(button);
+            const std::string maskLeaseKey = PhysicalMouseMaskLeaseKey(
+                ownerSource,
+                ownerKey,
+                button);
             const int vk = VkForMouseButton(button);
             const bool physicalDown = vk != 0 && IsInputVkDownQuiet(vk);
             const bool masked = allowPhysicalMask &&
                 physicalDown &&
                 physicalMask != 0 &&
-                OW::MaskPhysicalMouseButtons(physicalMask);
+                OW::AcquirePhysicalMouseMaskLease(
+                    maskLeaseKey,
+                    ownerSource,
+                    physicalMask,
+                    operationGeneration);
             Diagnostics::Aim("fire.release_mouse keyMask=0x%X button=%d physicalMask=0x%02X physicalDown=%d masked=%d allowMask=%d",
                 key,
                 button,
@@ -9652,10 +9813,29 @@ namespace AimbotDetail {
                 allowPhysicalMask ? 1 : 0);
             if (masked)
                 Sleep(1);
-            OW::ForceReleaseMouseButton(button);
+            const MouseOwnerReleaseResult release =
+                ReleaseMouseOwnerAfterPhysicalMask(
+                    button,
+                    ownerSource,
+                    ownerKey,
+                    operationGeneration,
+                    physicalDown,
+                    masked);
+            Diagnostics::Aim(
+                "fire.release_mouse ownerReleaseStatus=%d physicalFallbackReleased=%d",
+                static_cast<int>(release.ownerReleaseStatus),
+                release.physicalFallbackReleased ? 1 : 0);
             Sleep(sleep_ms);
-            if (masked)
-                UnmaskPhysicalMouseButtonsBestEffort("release_mouse");
+            if (masked) {
+                const bool maskReleased =
+                    OW::ReleasePhysicalMouseMaskLease(
+                        maskLeaseKey,
+                        ownerSource,
+                        operationGeneration);
+                Diagnostics::Aim(
+                    "fire.release_mouse mask_owner_release ok=%d",
+                    maskReleased ? 1 : 0);
+            }
         } else {
             LogInvalidGeneratedFireKey("charge_release", key);
         }
@@ -9699,7 +9879,11 @@ namespace AimbotDetail {
         return true;
     }
 
-    inline void FireConfiguredAction(const OW::c_entity& local, DWORD sleep_ms = 10) {
+    inline void FireConfiguredAction(
+        const OW::c_entity& local,
+        DWORD sleep_ms = 10,
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey) {
         const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
         const uint32_t fireKey = OW::ResolveGeneratedFireKeyMask(weapon, OW::Config::aimbotAttack);
         if (fireKey == 0)
@@ -9713,23 +9897,32 @@ namespace AimbotDetail {
                 OW::Config::aimbotAttack,
                 weapon ? weapon->weaponId.data() : "none",
                 fireKey);
-            ReleaseDmaMouseKey(fireKey, sleep_ms);
+            ReleaseDmaMouseKey(
+                fireKey, sleep_ms, true, ownerSource, ownerKey);
             return;
         }
 
-        ClickDmaMouseKey(fireKey, sleep_ms);
+        ClickDmaMouseKey(fireKey, sleep_ms, ownerSource, ownerKey);
     }
 
-    inline void PressWithSensitivity(uint32_t key, float origin_sens, DWORD sleep_ms = 1) {
+    inline void PressWithSensitivity(
+        uint32_t key,
+        float origin_sens,
+        DWORD sleep_ms = 1,
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey) {
         if (key == 0)
             return;
         SetSensitivityLocked(true, origin_sens);
-        ClickDmaMouseKey(key, sleep_ms);
+        ClickDmaMouseKey(key, sleep_ms, ownerSource, ownerKey);
         SetSensitivityLocked(false, origin_sens);
     }
 
-    inline void ClickConfiguredFire(DWORD sleep_ms = 10) {
-        FireConfiguredAction(LocalEntity(), sleep_ms);
+    inline void ClickConfiguredFire(
+        DWORD sleep_ms = 10,
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey) {
+        FireConfiguredAction(LocalEntity(), sleep_ms, ownerSource, ownerKey);
     }
 
     inline bool CurrentTarget(c_entity& target, bool requireVisible = false) {
@@ -10402,12 +10595,16 @@ namespace AimbotDetail {
         return false;
     }
 
-    inline void FireHanzo();
+    inline void FireHanzo(
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey);
 
-    inline void FirePrimaryNormal() {
+    inline void FirePrimaryNormal(
+        OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
+        const char* ownerKey = kGlobalAimGeneratedFireOwnerKey) {
         const c_entity local = LocalEntity();
         if (local.HeroID == OW::eHero::HERO_HANJO) {
-            FireHanzo();
+            FireHanzo(ownerSource, ownerKey);
             return;
         }
 
@@ -10424,7 +10621,8 @@ namespace AimbotDetail {
                 OW::Config::aimbotAttack,
                 weapon ? weapon->weaponId.data() : "none",
                 fireKey);
-            ReleaseDmaMouseKey(fireKey);
+            ReleaseDmaMouseKey(
+                fireKey, 10, true, ownerSource, ownerKey);
             return;
         }
 
@@ -10432,23 +10630,39 @@ namespace AimbotDetail {
             (local.HeroID == OW::eHero::HERO_ANA ||
              local.HeroID == OW::eHero::HERO_WIDOWMAKER ||
              local.HeroID == OW::eHero::HERO_ASHE) && IsInputVkDown(VK_RBUTTON)) {
-            OW::PulseAction(OW::GameAction::PrimaryFire, 30);
+            ClickMouseButton(
+                0,
+                30,
+                ownerSource,
+                ownerKey);
         } else {
-            ClickDmaMouseKey(fireKey);
+            ClickDmaMouseKey(fireKey, 10, ownerSource, ownerKey);
         }
     }
 
-    inline void FireHanzo() {
+    inline void FireHanzo(
+        OW::OutputOwnerSource ownerSource,
+        const char* ownerKey) {
+        const std::uint64_t operationGeneration =
+            kmbox::ActiveRuntimeSnapshot().generation;
         const c_entity local = LocalEntity();
         if (local.skill2act) {
             Diagnostics::Aim("hanzo.fire mode=storm_arrow_tap");
-            ClickMouseButton(0);
+            ClickMouseButton(
+                0,
+                10,
+                ownerSource,
+                ownerKey);
             return;
         }
 
         Diagnostics::Aim("hanzo.fire mode=charge_release_no_physical_mask keyMask=0x1");
-        ReleaseDmaMouseKey(0x1, 10, false);
-        RecoverHanzoPostFireMouseState();
+        ReleaseDmaMouseKey(
+            0x1, 10, false, ownerSource, ownerKey, operationGeneration);
+        RecoverHanzoPostFireMouseState(
+            ownerSource,
+            ownerKey,
+            operationGeneration);
     }
 
     inline void RunAutoScaleFov() {
@@ -10477,7 +10691,9 @@ namespace AimbotDetail {
         }
     }
 
-    inline void RunCloseRangeActions(const Vector3& target_pos) {
+    inline void RunCloseRangeActions(
+        const Vector3& target_pos,
+        OW::OutputOwnerSource ownerSource) {
         const float dist = CameraPosition().DistTo(target_pos);
         if (OW::Config::health <= OW::Config::meleehealth &&
             dist <= OW::Config::meleedistance &&
@@ -10487,7 +10703,13 @@ namespace AimbotDetail {
         if (OW::Config::health <= OW::Config::AutoRMBhealth &&
             dist <= OW::Config::AutoRMBdistance &&
             OW::Config::AutoRMB) {
-            ClickMouseButton(1);
+            ClickMouseButton(
+                1,
+                10,
+                ownerSource,
+                ownerSource == OW::OutputOwnerSource::Trigger
+                    ? kTriggerCloseRangeOwnerKey
+                    : kGlobalAimCloseRangeOwnerKey);
         }
     }
 
@@ -10606,11 +10828,20 @@ namespace AimbotDetail {
         const c_entity local = LocalEntity();
         if (local.HeroID == OW::eHero::HERO_HANJO) {
             SetSensitivityLocked(true, origin_sens);
-            FireHanzo();
+            FireHanzo(
+                OW::OutputOwnerSource::Trigger,
+                kTriggerGeneratedFireOwnerKey);
             SetSensitivityLocked(false, origin_sens);
         } else {
             const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
-            PressWithSensitivity(OW::ResolveGeneratedFireKeyMask(weapon, OW::Config::aimbotAttack), origin_sens, 2);
+            PressWithSensitivity(
+                OW::ResolveGeneratedFireKeyMask(
+                    weapon,
+                    OW::Config::aimbotAttack),
+                origin_sens,
+                2,
+                OW::OutputOwnerSource::Trigger,
+                kTriggerGeneratedFireOwnerKey);
         }
         lastFireTick = GetTickCount();
     }
@@ -10636,6 +10867,12 @@ namespace AimbotDetail {
     }
 
     inline void RunTracking(RuntimeState& state, float origin_sens) {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+            return;
         if (InputSequenceBlocksAim("tracking"))
             return;
         if (!IsAimKeyPressed()) {
@@ -10713,16 +10950,37 @@ namespace AimbotDetail {
         const DWORD sessionStartedTick = state.trackingSessionStartedTick != 0
             ? state.trackingSessionStartedTick
             : GetTickCount();
-        auto releaseHeldFire = [&]() {
-            if (fireHeld && holdFireButton >= 0) {
-                OW::SendMouseButton(holdFireButton, false);
+        auto synchronizeHeldFireState = [&]() {
+            if (fireHeld &&
+                !OW::RuntimeOutputScheduler().IsActive(
+                    kGlobalAimTrackingFireOwnerKey)) {
                 fireHeld = false;
+            }
+        };
+        auto releaseHeldFire = [&]() {
+            synchronizeHeldFireState();
+            if (fireHeld && holdFireButton >= 0) {
+                const OW::ActionOutputStatus releaseStatus =
+                    OW::SendMouseButtonActionState(
+                    holdFireButton,
+                    false,
+                    OW::OutputOwnerSource::GlobalAim,
+                    kGlobalAimTrackingFireOwnerKey);
+                if (OW::ActionOutputSucceeded(releaseStatus) ||
+                    !OW::RuntimeOutputScheduler().IsActive(
+                        kGlobalAimTrackingFireOwnerKey)) {
+                    fireHeld = false;
+                }
             }
         };
 
         while (IsAimKeyPressed() &&
+               OW::ProcessConnection::IsConnected() &&
+               OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
+               OW::RuntimeOutputTransitionMatches(outputTransitionEpoch) &&
                !OW::Config::reloading &&
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
+            synchronizeHeldFireState();
             if (AimSessionTimedOut(sessionStartedTick, "tracking")) {
                 state.trackingSessionTimedOut = true;
                 break;
@@ -10750,8 +11008,13 @@ namespace AimbotDetail {
                     OW::ResetAimSmoothingState();
                     holdThisTick = ShouldHoldFireWhileTracking();
                     if (holdThisTick && !fireHeld && holdFireButton >= 0) {
-                        OW::SendMouseButton(holdFireButton, true);
-                        fireHeld = true;
+                        synchronizeHeldFireState();
+                        fireHeld = OW::ActionOutputSucceeded(
+                            OW::SendMouseButtonActionState(
+                                holdFireButton,
+                                true,
+                                OW::OutputOwnerSource::GlobalAim,
+                                kGlobalAimTrackingFireOwnerKey));
                     } else if (!holdThisTick) {
                         releaseHeldFire();
                     }
@@ -10779,8 +11042,13 @@ namespace AimbotDetail {
                 ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
                 holdThisTick = ShouldHoldFireWhileTracking();
                 if (holdThisTick && !fireHeld && holdFireButton >= 0) {
-                    OW::SendMouseButton(holdFireButton, true);
-                    fireHeld = true;
+                    synchronizeHeldFireState();
+                    fireHeld = OW::ActionOutputSucceeded(
+                        OW::SendMouseButtonActionState(
+                            holdFireButton,
+                            true,
+                            OW::OutputOwnerSource::GlobalAim,
+                            kGlobalAimTrackingFireOwnerKey));
                 }
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
@@ -10793,7 +11061,9 @@ namespace AimbotDetail {
                             (aim.smoothed_angle.X - aim.local_angle.X) * OW::Config::KmboxPitchCountsPerRadian(),
                             CameraPosition().DistTo(aimTarget));
                     }
-                    RunCloseRangeActions(aimTarget);
+                    RunCloseRangeActions(
+                        aimTarget,
+                        OW::OutputOwnerSource::GlobalAim);
                 } else {
                     Diagnostics::Aim("tracking no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
                         aim.local_angle.X,
@@ -10821,7 +11091,17 @@ namespace AimbotDetail {
         if (state.hanzoCustomLeftDown) {
             Diagnostics::Aim("hanzo.custom reset reason=%s release_left=1",
                 reason ? reason : "unknown");
-            OW::SendMouseButton(0, false);
+            const OW::ActionOutputStatus releaseStatus =
+                OW::SendMouseButtonActionState(
+                    0,
+                    false,
+                    OW::OutputOwnerSource::Trigger,
+                    kTriggerHanzoCustomOwnerKey);
+            if (!OW::ActionOutputSucceeded(releaseStatus) &&
+                OW::RuntimeOutputScheduler().IsActive(
+                    kTriggerHanzoCustomOwnerKey)) {
+                return;
+            }
         } else if (state.hanzoCustomCharging) {
             Diagnostics::Aim("hanzo.custom reset reason=%s release_left=0",
                 reason ? reason : "unknown");
@@ -10834,6 +11114,18 @@ namespace AimbotDetail {
     }
 
     inline void MaintainHanzoCustomFlickState(RuntimeState& state) {
+        if (state.hanzoCustomLeftDown &&
+            !OW::RuntimeOutputScheduler().IsActive(
+                kTriggerHanzoCustomOwnerKey)) {
+            Diagnostics::Aim(
+                "hanzo.custom reset reason=output_owner_inactive release_left=0");
+            state.hanzoCustomCharging = false;
+            state.hanzoCustomLeftDown = false;
+            state.hanzoCustomChargeStartedTick = 0;
+            state.hanzoCustomLastLogTick = 0;
+            return;
+        }
+
         if (!state.hanzoCustomCharging && !state.hanzoCustomLeftDown)
             return;
 
@@ -10932,20 +11224,49 @@ namespace AimbotDetail {
             aimVk,
             ResolveHanzoCustomMinChargePercent(),
             static_cast<unsigned long>(ResolveHanzoCustomFallbackChargeMs(ResolveHanzoCustomMinChargePercent())));
-        OW::SendMouseButton(0, true);
+        const OW::ActionOutputStatus pressStatus =
+            OW::SendMouseButtonActionState(
+                0,
+                true,
+                OW::OutputOwnerSource::Trigger,
+                kTriggerHanzoCustomOwnerKey);
+        if (!OW::ActionOutputSucceeded(pressStatus)) {
+            state.hanzoCustomCharging = false;
+            state.hanzoCustomLeftDown = false;
+            state.hanzoCustomChargeStartedTick = 0;
+            state.hanzoCustomLastLogTick = 0;
+            return false;
+        }
         return true;
     }
 
-    inline void FireHanzoCustomChargedShot(RuntimeState& state) {
+    inline bool FireHanzoCustomChargedShot(RuntimeState& state) {
         Diagnostics::Aim("hanzo.custom release_left");
-        OW::SendMouseButton(0, false);
+        const OW::ActionOutputStatus releaseStatus =
+            OW::SendMouseButtonActionState(
+                0,
+                false,
+                OW::OutputOwnerSource::Trigger,
+                kTriggerHanzoCustomOwnerKey);
+        if (!OW::ActionOutputSucceeded(releaseStatus) &&
+            OW::RuntimeOutputScheduler().IsActive(
+                kTriggerHanzoCustomOwnerKey)) {
+            return false;
+        }
         state.hanzoCustomLeftDown = false;
         state.hanzoCustomCharging = false;
         state.hanzoCustomChargeStartedTick = 0;
         state.hanzoCustomLastLogTick = 0;
+        return true;
     }
 
     inline void RunHanzoCustomFlick(RuntimeState& state, float origin_sens) {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+            return;
         if (!state.hanzoCustomCharging && !BeginHanzoCustomCharge(state))
             return;
 
@@ -10955,6 +11276,9 @@ namespace AimbotDetail {
             : GetTickCount();
 
         while (IsAimKeyPressed() &&
+               OW::ProcessConnection::IsConnected() &&
+               OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
+               OW::RuntimeOutputTransitionMatches(outputTransitionEpoch) &&
                !OW::Config::shooted &&
                !OW::Config::reloading &&
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
@@ -11068,10 +11392,14 @@ namespace AimbotDetail {
                     chargePercent,
                     static_cast<unsigned long>(elapsedMs));
                 SetSensitivityLocked(true, origin_sens);
-                FireHanzoCustomChargedShot(state);
+                const bool released = FireHanzoCustomChargedShot(state);
+                SetSensitivityLocked(false, origin_sens);
+                if (!released) {
+                    Sleep(1);
+                    continue;
+                }
                 StampFlickFire(state);
                 ++g_flickFires;
-                SetSensitivityLocked(false, origin_sens);
                 OW::Config::shooted = true;
                 if (OW::Config::dontshot)
                     OW::Config::shotcount++;
@@ -11095,6 +11423,12 @@ namespace AimbotDetail {
     }
 
     inline void RunMagneticTrigger(RuntimeState& state, float origin_sens) {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+            return;
         if (InputSequenceBlocksAim("magnetic_trigger"))
             return;
         MaintainHanzoCustomFlickState(state);
@@ -11189,6 +11523,9 @@ namespace AimbotDetail {
             : GetTickCount();
 
         while (IsAimKeyPressed() &&
+               OW::ProcessConnection::IsConnected() &&
+               OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
+               OW::RuntimeOutputTransitionMatches(outputTransitionEpoch) &&
                !OW::Config::shooted &&
                !OW::Config::reloading &&
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
@@ -11287,7 +11624,9 @@ namespace AimbotDetail {
                         hitBeforeMove ? 1 : 0,
                         hitAfterMove ? 1 : 0);
                 }
-                RunCloseRangeActions(aimTarget);
+                RunCloseRangeActions(
+                    aimTarget,
+                    OW::OutputOwnerSource::GlobalAim);
             } else {
                 Diagnostics::Aim("magnetic_trigger no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
                     aim.local_angle.X,
@@ -11344,6 +11683,12 @@ namespace AimbotDetail {
     }
 
     inline void RunFlick(RuntimeState& state, float origin_sens) {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+            return;
         if (InputSequenceBlocksAim("flick"))
             return;
         MaintainHanzoCustomFlickState(state);
@@ -11410,6 +11755,9 @@ namespace AimbotDetail {
         const DWORD sessionStartedTick = GetTickCount();
 
         while (IsAimKeyPressed() &&
+               OW::ProcessConnection::IsConnected() &&
+               OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
+               OW::RuntimeOutputTransitionMatches(outputTransitionEpoch) &&
                !OW::Config::shooted &&
                !OW::Config::reloading &&
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
@@ -11546,8 +11894,14 @@ namespace AimbotDetail {
     }
 
     inline void RunGenjiBlade() {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
         c_entity local = LocalEntity();
-        if (!OW::Config::GenjiBlade || !IsInputVkDown('Q') ||
+        if (connectionEpoch == 0 ||
+            !OW::ProcessConnection::IsConnected() ||
+            !OW::Config::GenjiBlade || !IsInputVkDown('Q') ||
             local.HeroID != OW::eHero::HERO_GENJI ||
             local.ultimate != 100.f) {
             return;
@@ -11561,7 +11915,11 @@ namespace AimbotDetail {
         int detecttoggle = 0;
         int first = 1;
         float speed = 0.f;
-        while (OW::Config::GenjiBlade && (OW::Config::Qtime - OW::Config::Qstarttime) <= 7000) {
+        while (OW::Config::GenjiBlade &&
+               OW::ProcessConnection::IsConnected() &&
+               OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
+               OW::RuntimeOutputTransitionMatches(outputTransitionEpoch) &&
+               (OW::Config::Qtime - OW::Config::Qstarttime) <= 7000) {
             local = LocalEntity();
             speed = !local.skillcd1 ? OW::Config::Tracking_smooth : OW::Config::bladespeed;
             OW::Config::Qtime = GetTickCount();
@@ -11633,6 +11991,12 @@ namespace AimbotDetail {
     }
 
     inline void RunAutoShiftGenji() {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+            return;
         if (!OW::Config::AutoShiftGenji) return;
 
         const Vector3 vec = OW::GetVector3(false);
@@ -11657,7 +12021,11 @@ namespace AimbotDetail {
             if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f)) {
                 if (OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::Ability1))) {
                     Sleep(500);
-                    OW::PulseAction(OW::GameAction::Melee);
+                    if (OW::ProcessConnection::IsConnected() &&
+                        OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
+                        OW::RuntimeOutputTransitionMatches(outputTransitionEpoch)) {
+                        OW::PulseAction(OW::GameAction::Melee);
+                    }
                 }
             }
         }
@@ -11738,20 +12106,40 @@ namespace AimbotDetail {
     }
 
     inline void RunReaperReloadCancel() {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
         const c_entity local = LocalEntity();
-        if (local.HeroID == OW::eHero::HERO_REAPER && OW::Config::reloading) {
+        if (connectionEpoch != 0 &&
+            OW::ProcessConnection::IsConnected() &&
+            local.HeroID == OW::eHero::HERO_REAPER &&
+            OW::Config::reloading) {
             Sleep(300);
-            OW::PulseAction(OW::GameAction::Melee);
+            if (OW::ProcessConnection::IsConnected() &&
+                OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
+                OW::RuntimeOutputTransitionMatches(outputTransitionEpoch)) {
+                OW::PulseAction(OW::GameAction::Melee);
+            }
         }
     }
 
     inline void RunSecondAim() {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+            return;
         if (!OW::Config::secondaim) return;
         if (InputSequenceBlocksAim("secondaim"))
             return;
 
         const DWORD sessionStartedTick = GetTickCount();
         while (IsSecondAimKeyPressed() &&
+               OW::ProcessConnection::IsConnected() &&
+               OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
+               OW::RuntimeOutputTransitionMatches(outputTransitionEpoch) &&
                !OW::Config::shooted2 &&
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
             if (AimSessionTimedOut(sessionStartedTick, "secondaim")) {
@@ -11784,7 +12172,9 @@ namespace AimbotDetail {
                 ApplyAiAimNoise(aim.smoothed_angle, 300.f, false);
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
-                    RunCloseRangeActions(vec);
+                    RunCloseRangeActions(
+                        vec,
+                        OW::OutputOwnerSource::GlobalAim);
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     if (OW::Config::Flick2 &&
                         OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::aimbotEffectiveHitWindow2)) {
@@ -11814,12 +12204,23 @@ namespace AimbotDetail {
     }
 
     inline void RunAimbotTick(RuntimeState& state, float& origin_sens) {
+        const std::uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        const std::uint64_t outputTransitionEpoch =
+            OW::RuntimeOutputTransitionEpoch();
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+            return;
         if (InputSequenceBlocksAim("aimbot_tick"))
             return;
 
         if (OW::Config::AntiAFK) {
             OW::PulseAction(OW::GameAction::MoveForward);
             Sleep(1000);
+            if (!OW::ProcessConnection::IsConnected() ||
+                OW::ProcessConnection::ConnectionEpoch() != connectionEpoch ||
+                !OW::RuntimeOutputTransitionMatches(outputTransitionEpoch)) {
+                return;
+            }
         }
 
         OW::RefreshAutoGameMouseSensitivity();

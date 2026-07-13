@@ -3,6 +3,11 @@
 #include "Game/AimArchitecture.hpp"
 #include "Game/OutputScheduler.hpp"
 #include "Kmbox/KmboxRuntime.hpp"
+#include "Utils/Config.hpp"
+
+#include <atomic>
+#include <cstdint>
+#include <mutex>
 
 namespace OW {
 
@@ -37,13 +42,51 @@ inline bool ShouldYieldToExecution(const ExecutionToken& current, const Executio
     return owner.active && owner.priority > current.priority;
 }
 
+namespace InputOrchestratorDetail {
+inline std::atomic<bool> runtimeOutputSessionEnabled{ true };
+inline std::atomic<std::uint64_t> runtimeOutputTransitionEpoch{ 1 };
+inline std::mutex runtimeOutputProducerTransitionMutex;
+}
+
+inline void SetRuntimeOutputSessionEnabled(bool enabled) noexcept
+{
+    InputOrchestratorDetail::runtimeOutputSessionEnabled.store(
+        enabled,
+        std::memory_order_release);
+}
+
+inline bool RuntimeOutputSessionEnabled() noexcept
+{
+    return InputOrchestratorDetail::runtimeOutputSessionEnabled.load(
+        std::memory_order_acquire);
+}
+
+inline std::uint64_t RuntimeOutputTransitionEpoch() noexcept
+{
+    return InputOrchestratorDetail::runtimeOutputTransitionEpoch.load(
+        std::memory_order_acquire);
+}
+
+inline bool RuntimeOutputTransitionMatches(
+    std::uint64_t expectedEpoch) noexcept
+{
+    return expectedEpoch != 0 &&
+        RuntimeOutputTransitionEpoch() == expectedEpoch;
+}
+
+inline std::mutex& RuntimeOutputProducerTransitionMutex() noexcept
+{
+    return InputOrchestratorDetail::runtimeOutputProducerTransitionMutex;
+}
+
 inline OutputRuntimeState CurrentKmboxOutputRuntimeState()
 {
     const kmbox::KmboxRuntimeAppliedState applied =
         kmbox::ActiveRuntimeSnapshot();
     return {
         applied.generation,
-        applied.descriptor.backend != kmbox::KmboxRuntimeBackend::None &&
+        RuntimeOutputSessionEnabled() &&
+            applied.descriptor.backend != kmbox::KmboxRuntimeBackend::None &&
             kmbox::IsRuntimeOutputGateOpen() &&
             !Config::KmboxOutputSuppressedByMenu()
     };
@@ -102,6 +145,11 @@ inline OutputScheduler& RuntimeOutputScheduler()
                 MakeKmboxOutputRuntimeStateSource())
         {
             kmbox::SetRuntimePreReconcileHook([this]() {
+                std::lock_guard<std::mutex> producerLock(
+                    RuntimeOutputProducerTransitionMutex());
+                InputOrchestratorDetail::runtimeOutputTransitionEpoch.fetch_add(
+                    1,
+                    std::memory_order_acq_rel);
                 scheduler.PrepareForRuntimeTransition();
             });
         }
