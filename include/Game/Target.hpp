@@ -24,9 +24,7 @@
 #include "Game/LeadPrediction.hpp"
 #include "Game/Motion.hpp"
 #include "Game/WeaponSpec.hpp"
-#include "Kmbox/KmBoxMock.h"
-#include "Kmbox/KmBoxNetManager.h"
-#include "Kmbox/KmboxB.h"
+#include "Kmbox/KmboxRuntime.hpp"
 #include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
@@ -211,9 +209,13 @@ namespace OW {
     }
 
     inline const char* KmboxTransportName() {
-        if (Config::kmboxDeviceType == 2)
-            return "mock";
-        return Config::kmboxDeviceType == 0 ? "network" : "serial";
+        switch (kmbox::RuntimeController().Applied().descriptor.backend) {
+        case kmbox::KmboxRuntimeBackend::Network: return "network";
+        case kmbox::KmboxRuntimeBackend::Serial:  return "serial";
+        case kmbox::KmboxRuntimeBackend::Mock:    return "mock";
+        case kmbox::KmboxRuntimeBackend::None:    return "none";
+        default:                                  return "unknown";
+        }
     }
 
     inline bool ShouldSuppressKmboxOutput(
@@ -235,21 +237,7 @@ namespace OW {
         if (ShouldSuppressKmboxOutput("mouse_move"))
             return Config::kKmboxOutputSuppressedStatus;
 
-        if (Config::kmboxDeviceType == 2)
-            return kmbox::MockHardwareMgr.RecordMove(pixelX, pixelY, automoveRuntimeMs);
-
-        if (Config::kmboxDeviceType == 0) {
-            return automoveRuntimeMs > 0
-                ? kmbox::KmBoxMgr.Mouse.Move_Auto(pixelX, pixelY, automoveRuntimeMs)
-                : kmbox::KmBoxMgr.Mouse.Move(pixelX, pixelY);
-        }
-
-        if (automoveRuntimeMs > 0)
-            kmbox::kmBoxBMgr.km_move_auto(pixelX, pixelY, automoveRuntimeMs);
-        else
-            kmbox::kmBoxBMgr.km_move(pixelX, pixelY);
-
-        return success;
+        return kmbox::DispatchMouseMove(pixelX, pixelY, automoveRuntimeMs);
     }
 
     namespace OutputMotionTelemetry {
@@ -361,13 +349,16 @@ namespace OW {
             automoveRuntimeMs,
             Config::kmboxEnabled ? 1 : 0,
             Config::kmboxDeviceType);
-        if (!Config::kmboxEnabled) {
+        const kmbox::KmboxRuntimeAppliedState applied = kmbox::RuntimeController().Applied();
+        if (applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None ||
+            !kmbox::RuntimeController().CanDispatch(applied.generation)) {
             static bool once = false;
             if (!once) {
-                std::printf("[KMBOX] SendMouseMove called but kmboxEnabled is false!\n");
+                std::printf("[KMBOX] SendMouseMove called without an active KMBox runtime!\n");
                 once = true;
             }
-            Diagnostics::Aim("mouse.move early_return reason=kmbox_disabled");
+            Diagnostics::Aim("mouse.move early_return reason=no_active_runtime lastError=%d",
+                kmbox::RuntimeController().LastError());
             return;
         }
         if (ShouldSuppressKmboxOutput("mouse_move")) {
@@ -562,12 +553,11 @@ namespace OW {
         // 3. Send a known horizontal mouse move (only yaw matters)
         int moveX = Config::calibrationMovePixels;
         int moveY = 0;
-        if (Config::kmboxDeviceType == 2)
-            kmbox::MockHardwareMgr.RecordMove(moveX, moveY, 0);
-        else if (Config::kmboxDeviceType == 0)
-            kmbox::KmBoxMgr.Mouse.Move(moveX, moveY);
-        else
-            kmbox::kmBoxBMgr.km_move(moveX, moveY);
+        if (kmbox::DispatchMouseMove(moveX, moveY, 0) != success) {
+            Diagnostics::Warn("[CALIBRATE] Horizontal calibration output was rejected by the active runtime.");
+            Config::calibrationInProgress = false;
+            return 0.0f;
+        }
 
         // 4. Wait for movement to register
         Sleep(Config::calibrationStabilityWaitMs);
@@ -602,12 +592,11 @@ namespace OW {
 
             int pitchMoveX = 0;
             int pitchMoveY = Config::calibrationMovePixels;
-            if (Config::kmboxDeviceType == 2)
-                kmbox::MockHardwareMgr.RecordMove(pitchMoveX, pitchMoveY, 0);
-            else if (Config::kmboxDeviceType == 0)
-                kmbox::KmBoxMgr.Mouse.Move(pitchMoveX, pitchMoveY);
-            else
-                kmbox::kmBoxBMgr.km_move(pitchMoveX, pitchMoveY);
+            if (kmbox::DispatchMouseMove(pitchMoveX, pitchMoveY, 0) != success) {
+                Diagnostics::Warn("[CALIBRATE] Vertical calibration output was rejected by the active runtime.");
+                Config::calibrationInProgress = false;
+                return 0.0f;
+            }
 
             Sleep(Config::calibrationStabilityWaitMs);
 
@@ -703,39 +692,35 @@ namespace OW {
         return status == ActionOutputStatus::Sent;
     }
 
+    inline ActionOutputStatus UnavailableActionOutputStatus() {
+        return kmbox::RuntimeController().Desired().backend == kmbox::KmboxRuntimeBackend::None
+            ? ActionOutputStatus::Disabled
+            : ActionOutputStatus::TransportError;
+    }
+
     inline ActionOutputStatus SendMouseButtonActionState(int button, bool down) {
-        if (!Config::kmboxEnabled)
-            return ActionOutputStatus::Disabled;
+        if (button < 0 || button > 2)
+            return ActionOutputStatus::InvalidAction;
+        const kmbox::KmboxRuntimeAppliedState applied = kmbox::RuntimeController().Applied();
+        if (applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None ||
+            !kmbox::RuntimeController().CanDispatch(applied.generation)) {
+            return UnavailableActionOutputStatus();
+        }
         const KmBoxOutputIntent intent = OutputIntentForState(down);
         if (ShouldSuppressKmboxOutput("mouse_button", intent))
             return ActionOutputStatus::Suppressed;
-        if (button < 0 || button > 2)
-            return ActionOutputStatus::InvalidAction;
 
         if (Config::kmboxDebugLog) {
-            std::printf("[KMBOX] mouse.button button=%d down=%d type=%d\n",
-                button, down ? 1 : 0, Config::kmboxDeviceType);
+            std::printf("[KMBOX] mouse.button button=%d down=%d transport=%s generation=%llu\n",
+                button,
+                down ? 1 : 0,
+                KmboxTransportName(),
+                static_cast<unsigned long long>(applied.generation));
         }
 
-        if (Config::kmboxDeviceType == 2) {
-            return kmbox::MockHardwareMgr.RecordButton(button, down) == success
-                ? ActionOutputStatus::Sent
-                : ActionOutputStatus::TransportError;
-        }
-        if (Config::kmboxDeviceType == 0) {
-            int status = err_net_cmd;
-            if (button == 0) status = kmbox::KmBoxMgr.Mouse.Left(down);
-            else if (button == 1) status = kmbox::KmBoxMgr.Mouse.Right(down);
-            else if (button == 2) status = kmbox::KmBoxMgr.Mouse.Middle(down);
-            return status == success ? ActionOutputStatus::Sent : ActionOutputStatus::TransportError;
-        }
-        if (Config::kmboxDeviceType == 1) {
-            if (button == 0) kmbox::kmBoxBMgr.km_left(down);
-            else if (button == 1) kmbox::kmBoxBMgr.km_right(down);
-            else if (button == 2) kmbox::kmBoxBMgr.km_middle(down);
-            return ActionOutputStatus::Sent;
-        }
-        return ActionOutputStatus::UnsupportedTransport;
+        return kmbox::DispatchMouseButton(button, down) == success
+            ? ActionOutputStatus::Sent
+            : ActionOutputStatus::TransportError;
     }
 
     inline void SendMouseButton(int button, bool down) {
@@ -768,23 +753,20 @@ namespace OW {
         const unsigned char hidCode = GameActionKeyboardHid(action);
         if (hidCode == 0)
             return ActionOutputStatus::InvalidAction;
-        if (!Config::kmboxEnabled)
-            return ActionOutputStatus::Disabled;
+        const kmbox::KmboxRuntimeAppliedState applied = kmbox::RuntimeController().Applied();
+        if (applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None ||
+            !kmbox::RuntimeController().CanDispatch(applied.generation)) {
+            return UnavailableActionOutputStatus();
+        }
         const KmBoxOutputIntent intent = OutputIntentForState(down);
         if (ShouldSuppressKmboxOutput("keyboard", intent))
             return ActionOutputStatus::Suppressed;
 
-        if (Config::kmboxDeviceType == 2) {
-            return kmbox::MockHardwareMgr.RecordKeyboardKey(hidCode, down) == success
-                ? ActionOutputStatus::Sent
-                : ActionOutputStatus::TransportError;
-        }
-        if (Config::kmboxDeviceType == 0) {
-            return kmbox::KmBoxMgr.SendKeyboardKey(hidCode, down) == success
-                ? ActionOutputStatus::Sent
-                : ActionOutputStatus::TransportError;
-        }
-        return ActionOutputStatus::UnsupportedTransport;
+        if (!kmbox::SupportsKeyboardOutput(applied.descriptor.backend))
+            return ActionOutputStatus::UnsupportedTransport;
+        return kmbox::DispatchKeyboardKey(hidCode, down) == success
+            ? ActionOutputStatus::Sent
+            : ActionOutputStatus::TransportError;
     }
 
     inline ActionOutputStatus PulseAction(GameAction action, DWORD durationMs = 10) {
@@ -797,89 +779,36 @@ namespace OW {
     }
 
     inline void ForceReleaseMouseButtons() {
-        if (!Config::kmboxEnabled)
-            return;
         if (ShouldSuppressKmboxOutput(
                 "force_release_buttons", KmBoxOutputIntent::SafetyRelease))
             return;
-
-        if (Config::kmboxDeviceType == 2) {
-            kmbox::MockHardwareMgr.ForceReleaseMouseButtons();
-        } else if (Config::kmboxDeviceType == 0) {
-            kmbox::KmBoxMgr.ForceReleaseMouseButtons();
-        } else {
-            kmbox::kmBoxBMgr.km_left(false);
-            kmbox::kmBoxBMgr.km_right(false);
-            kmbox::kmBoxBMgr.km_middle(false);
-        }
+        (void)kmbox::DispatchForceReleaseMouseButtons();
     }
 
     inline void ForceReleaseMouseButton(int button) {
-        if (!Config::kmboxEnabled)
-            return;
         if (ShouldSuppressKmboxOutput(
                 "force_release_button", KmBoxOutputIntent::SafetyRelease))
             return;
-
-        if (Config::kmboxDeviceType == 2) {
-            kmbox::MockHardwareMgr.ForceReleaseMouseButton(button);
-        } else if (Config::kmboxDeviceType == 0) {
-            kmbox::KmBoxMgr.ForceReleaseMouseButton(button);
-        } else {
-            switch (button) {
-            case 0:
-                kmbox::kmBoxBMgr.km_left(false);
-                break;
-            case 1:
-                kmbox::kmBoxBMgr.km_right(false);
-                break;
-            case 2:
-                kmbox::kmBoxBMgr.km_middle(false);
-                break;
-            default:
-                break;
-            }
-        }
+        (void)kmbox::DispatchForceReleaseMouseButton(button);
     }
 
     inline bool SendMouseButtonStateMask(uint32_t stateMask, bool force = false) {
-        if (!Config::kmboxEnabled)
-            return false;
         if (ShouldSuppressKmboxOutput("mouse_button_state"))
             return false;
-
-        if (Config::kmboxDeviceType == 2)
-            return kmbox::MockHardwareMgr.SetMouseButtonStateMask(stateMask & 0x7u, force) == success;
-        if (Config::kmboxDeviceType != 0)
-            return false;
-        return kmbox::KmBoxMgr.SetMouseButtonStateMask(stateMask & 0x7u, force) == success;
+        return kmbox::DispatchMouseButtonStateMask(stateMask & 0x7u, force) == success;
     }
 
     inline bool MaskPhysicalMouseButtons(uint32_t mask) {
-        if (!Config::kmboxEnabled)
-            return false;
         if (ShouldSuppressKmboxOutput("mouse_mask"))
             return false;
-
-        if (Config::kmboxDeviceType == 2)
-            return kmbox::MockHardwareMgr.MaskMouse(mask & 0x7Fu) == success;
-        if (Config::kmboxDeviceType != 0)
-            return false;
-        return kmbox::KmBoxMgr.MaskMouse(mask & 0x7Fu) == success;
+        return kmbox::DispatchMouseMask(mask & 0x7Fu) == success;
     }
 
     inline bool UnmaskPhysicalMouseButtons() {
-        if (!Config::kmboxEnabled)
-            return false;
         if (ShouldSuppressKmboxOutput(
                 "mouse_unmask", KmBoxOutputIntent::SafetyRelease))
             return false;
-
-        if (Config::kmboxDeviceType == 2)
-            return kmbox::MockHardwareMgr.UnmaskAll() == success;
-        if (Config::kmboxDeviceType != 0)
-            return false;
-        return kmbox::KmBoxMgr.UnmaskAll() == success;
+        return kmbox::DispatchMouseUnmask() == success;
     }
 
     inline int get_bind_id(int setting) {

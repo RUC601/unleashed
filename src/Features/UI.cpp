@@ -1,14 +1,10 @@
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <Windows.h>
 #include <shellapi.h>
 
 #include "Features/UI.hpp"
-#include "Kmbox/KmBoxConfig.h"
 #include "Kmbox/KmBoxMock.h"
-#include "Kmbox/KmBoxNetManager.h"
-#include "Kmbox/KmboxB.h"
 #include "Kmbox/KmboxMoveTest.h"
-#include "Kmbox/KmboxTimerResolution.h"
+#include "Kmbox/KmboxRuntime.hpp"
 #include "Utils/Config.hpp"
 #include "Game/HeroSkills.hpp"
 #include "Game/Offsets.hpp"
@@ -30,7 +26,6 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
-#include <cstdlib>
 #include <cfloat>
 #include <cstdint>
 #include <cstring>
@@ -284,32 +279,11 @@ namespace {
             (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
     }
 
-    std::string SocketErrorMessage(const char* prefix, int error)
-    {
-        char buffer[96]{};
-        std::snprintf(buffer, sizeof(buffer), "%s (WSA %d)", prefix, error);
-        return buffer;
-    }
-
     std::string Win32ErrorMessage(const char* prefix, DWORD error)
     {
         char buffer[96]{};
         std::snprintf(buffer, sizeof(buffer), "%s (error %lu)", prefix, static_cast<unsigned long>(error));
         return buffer;
-    }
-
-    bool TryParseHexU32(const char* text, unsigned int& value)
-    {
-        if (text == nullptr || *text == '\0')
-            return false;
-
-        char* end = nullptr;
-        const unsigned long parsed = std::strtoul(text, &end, 16);
-        if (end == text || (end != nullptr && *end != '\0'))
-            return false;
-
-        value = static_cast<unsigned int>(parsed);
-        return true;
     }
 
     std::wstring PowerShellSingleQuoted(const char* text)
@@ -452,238 +426,81 @@ namespace {
         return { true, "NIC restart requested" };
     }
 
-    KmboxConnectionTestResult TestNetworkKmboxConnection()
-    {
-        if (OW::Config::kmboxPort <= 0 || OW::Config::kmboxPort > 65535)
-            return { false, "Invalid port" };
-
-        unsigned int deviceMac = 0;
-        if (!TryParseHexU32(OW::Config::kmboxMac, deviceMac))
-            return { false, "Invalid MAC" };
-
-        WSADATA wsaData{};
-        const int startupStatus = WSAStartup(MAKEWORD(2, 2), &wsaData);
-        if (startupStatus != 0)
-            return { false, SocketErrorMessage("WSAStartup failed", startupStatus) };
-
-        SOCKET socketHandle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (socketHandle == INVALID_SOCKET) {
-            const int error = WSAGetLastError();
-            WSACleanup();
-            return { false, SocketErrorMessage("Socket failed", error) };
-        }
-
-        const int timeoutMs = 1000;
-        setsockopt(socketHandle, SOL_SOCKET, SO_RCVTIMEO,
-                   reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
-        setsockopt(socketHandle, SOL_SOCKET, SO_SNDTIMEO,
-                   reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
-
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_port = htons(static_cast<u_short>(OW::Config::kmboxPort));
-        if (InetPtonA(AF_INET, OW::Config::kmboxIp, &address.sin_addr) != 1) {
-            closesocket(socketHandle);
-            WSACleanup();
-            return { false, "Invalid IP" };
-        }
-
-        cmd_head_t testPacket{};
-        testPacket.mac = deviceMac;
-        testPacket.rand = GetTickCount();
-        testPacket.indexpts = 0;
-        testPacket.cmd = cmd_connect;
-
-        const int sent = sendto(socketHandle, reinterpret_cast<const char*>(&testPacket),
-                                sizeof(testPacket), 0,
-                                reinterpret_cast<const sockaddr*>(&address), sizeof(address));
-        if (sent == SOCKET_ERROR || sent != static_cast<int>(sizeof(testPacket))) {
-            const int error = WSAGetLastError();
-            closesocket(socketHandle);
-            WSACleanup();
-            return { false, SocketErrorMessage("Send failed", error) };
-        }
-
-        client_data response{};
-        sockaddr_in from{};
-        int fromLength = sizeof(from);
-        const int received = recvfrom(socketHandle, reinterpret_cast<char*>(&response), sizeof(response), 0,
-                                      reinterpret_cast<sockaddr*>(&from), &fromLength);
-        if (received == SOCKET_ERROR) {
-            const int error = WSAGetLastError();
-            closesocket(socketHandle);
-            WSACleanup();
-            if (error == WSAETIMEDOUT || error == WSAEWOULDBLOCK)
-                return { false, "Timeout" };
-            return { false, SocketErrorMessage("Receive failed", error) };
-        }
-
-        if (received < static_cast<int>(sizeof(cmd_head_t))) {
-            closesocket(socketHandle);
-            WSACleanup();
-            return { false, "Short response" };
-        }
-
-        if (response.head.cmd != testPacket.cmd) {
-            closesocket(socketHandle);
-            WSACleanup();
-            return { false, "Command mismatch" };
-        }
-
-        if (response.head.indexpts != testPacket.indexpts) {
-            closesocket(socketHandle);
-            WSACleanup();
-            return { false, "Sequence mismatch" };
-        }
-
-        closesocket(socketHandle);
-        WSACleanup();
-        return { true, "OK: connect" };
-    }
-
-    std::string NormalizeComPortPath(const char* comPort)
-    {
-        const std::string port = (comPort && *comPort) ? comPort : "COM1";
-        if (port.rfind("\\\\.\\", 0) == 0)
-            return port;
-        return "\\\\.\\" + port;
-    }
-
-    KmboxConnectionTestResult TestSerialKmboxConnection()
-    {
-        const std::string portPath = NormalizeComPortPath(OW::Config::kmboxComPort);
-        HANDLE portHandle = CreateFileA(portPath.c_str(), GENERIC_READ | GENERIC_WRITE,
-                                        0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (portHandle == INVALID_HANDLE_VALUE)
-            return { false, Win32ErrorMessage("Open failed", GetLastError()) };
-
-        CloseHandle(portHandle);
-        return { true, "OK: opened" };
-    }
-
     KmboxConnectionTestResult TestKmboxConnection()
     {
-        if (OW::Config::kmboxDeviceType == 2) {
-            if (!kmbox::MockHardwareMgr.IsInitialized())
-                kmbox::MockHardwareMgr.Initialize();
-            return { true, "Mock ready" };
-        }
+        const kmbox::KmboxRuntimeAppliedState applied =
+            kmbox::RuntimeController().Applied();
+        const int lastError = kmbox::RuntimeController().LastError();
 
-        return OW::Config::kmboxDeviceType == 0
-            ? TestNetworkKmboxConnection()
-            : TestSerialKmboxConnection();
-    }
-
-    KmboxConnectionTestResult InitializeKmboxFromCurrentConfig()
-    {
-        if (!OW::Config::kmboxEnabled)
-            return { false, "Disabled" };
-
-        if (OW::Config::kmboxDeviceType == 2) {
-            const int status = kmbox::MockHardwareMgr.Initialize();
-            if (status == success) {
-                Diagnostics::Info("KMBox UI enable mock init succeeded.");
-                Diagnostics::Aim("kmbox.ui_enable mock success");
-                return { true, "Mock ready" };
-            }
-
-            Diagnostics::Error("KMBox UI enable mock init failed. status=%d", status);
-            Diagnostics::Aim("kmbox.ui_enable mock failure status=%d", status);
-            return { false, "Mock init failed" };
-        }
-
-        kmbox::EnsureTimerResolution();
-
-        if (OW::Config::kmboxDeviceType == 0) {
-            OW::Config::NormalizeKmboxPorts();
-            if (OW::Config::kmboxPort <= 0 || OW::Config::kmboxPort > 65535)
-                return { false, "Invalid port" };
-
-            unsigned int deviceMac = 0;
-            if (!TryParseHexU32(OW::Config::kmboxMac, deviceMac))
-                return { false, "Invalid MAC" };
-
-            const int status = kmbox::KmBoxMgr.InitDevice(
-                OW::Config::kmboxIp,
-                static_cast<WORD>(OW::Config::kmboxPort),
-                OW::Config::kmboxMac);
-            if (status != success || !kmbox::KmBoxMgr.IsConnected()) {
-                char message[96] = {};
-                std::snprintf(message, sizeof(message), "Init failed: %d", status);
-                Diagnostics::Error("KMBox UI enable network init failed. status=%d state=%s",
-                    status, ToString(kmbox::KmBoxMgr.GetConnectionState()));
+        if (!kmbox::RuntimeController().IsOutputGateOpen() ||
+            applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None) {
+            if (lastError != success) {
+                char message[96]{};
+                std::snprintf(message, sizeof(message), "Inactive: error %d", lastError);
                 return { false, message };
             }
-
-            const WORD monitorPort = static_cast<WORD>(OW::Config::EffectiveKmboxMonitorPort());
-            const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
-            if (monitorStatus != success) {
-                char message[96] = {};
-                std::snprintf(message, sizeof(message), "Init OK, monitor failed: %d", monitorStatus);
-                Diagnostics::Warn("KMBox UI enable network init succeeded, monitor failed. commandPort=%d effectiveMonitorPort=%u manualOverride=%d status=%d",
-                    OW::Config::kmboxPort,
-                    monitorPort,
-                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
-                    monitorStatus);
-                return { true, message };
-            }
-
-            Diagnostics::Info("KMBox UI enable network init succeeded. ip=%s commandPort=%d effectiveMonitorPort=%u manualOverride=%d",
-                OW::Config::kmboxIp,
-                OW::Config::kmboxPort,
-                monitorPort,
-                OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
-            Diagnostics::Aim("kmbox.ui_enable network success ip=%s commandPort=%d effectiveMonitorPort=%u manualOverride=%d",
-                OW::Config::kmboxIp,
-                OW::Config::kmboxPort,
-                monitorPort,
-                OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
-            return { true, "Init OK" };
+            return { false, "Runtime inactive" };
         }
 
-        const int status = kmbox::kmBoxBMgr.init(OW::Config::kmboxComPort);
-        if (status != success || !kmbox::kmBoxBMgr.IsConnected()) {
-            char message[96] = {};
-            std::snprintf(message, sizeof(message), "Init failed: %d", status);
-            Diagnostics::Error("KMBox UI enable serial init failed. status=%d state=%s",
-                status, ToString(kmbox::kmBoxBMgr.GetConnectionState()));
+        const char* backend = "unknown";
+        switch (applied.descriptor.backend) {
+        case kmbox::KmboxRuntimeBackend::Network: backend = "network"; break;
+        case kmbox::KmboxRuntimeBackend::Serial:  backend = "serial"; break;
+        case kmbox::KmboxRuntimeBackend::Mock:    backend = "mock"; break;
+        default: break;
+        }
+
+        const KmBoxConnectionState connectionState =
+            kmbox::ActiveRuntimeConnectionState();
+        if (connectionState != KmBoxConnectionState::Connected) {
+            char message[96]{};
+            std::snprintf(message, sizeof(message), "Active %s: %s",
+                backend,
+                ToString(connectionState));
             return { false, message };
         }
 
-        Diagnostics::Info("KMBox UI enable serial init succeeded. port=%s", OW::Config::kmboxComPort);
-        Diagnostics::Aim("kmbox.ui_enable serial success port=%s", OW::Config::kmboxComPort);
-        return { true, "Init OK" };
+        char message[96]{};
+        std::snprintf(message, sizeof(message), "Connected: %s (gen %llu)",
+            backend,
+            static_cast<unsigned long long>(applied.generation));
+        return { true, message };
     }
 
-    KmboxConnectionTestResult ReinitializeKmboxRuntimeFromCurrentConfig()
+    KmboxConnectionTestResult ApplyKmboxRuntimeFromCurrentConfig(
+        std::chrono::milliseconds timeout = std::chrono::milliseconds(500))
     {
-        kmbox::KmBoxMgr.KeyBoard.EndMonitor();
-        if (OW::Config::kmboxDeviceType != 2)
-            kmbox::MockHardwareMgr.Shutdown();
-        if (OW::Config::kmboxDeviceType != 0)
-            kmbox::ReleaseTimerResolution();
+        const int status = kmbox::ReconcileRuntimeFromConfig(timeout);
+        const kmbox::KmboxRuntimeAppliedState applied =
+            kmbox::RuntimeController().Applied();
 
-        const int effectiveMonitorPort = OW::Config::EffectiveKmboxMonitorPort();
-        Diagnostics::Info("KMBox UI runtime reinit requested. deviceType=%d ip=%s commandPort=%d effectiveMonitorPort=%d monitorPortSetting=%d manualOverride=%d mac=%s com=%s",
+        Diagnostics::Info(
+            "KMBox UI runtime reconcile completed. status=%d enabled=%d desiredType=%d activeBackend=%d generation=%llu",
+            status,
+            OW::Config::kmboxEnabled ? 1 : 0,
             OW::Config::kmboxDeviceType,
-            OW::Config::kmboxIp,
-            OW::Config::kmboxPort,
-            effectiveMonitorPort,
-            OW::Config::kmboxMonitorPort,
-            OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
-            OW::Config::kmboxMac,
-            OW::Config::kmboxComPort);
-        Diagnostics::Aim("kmbox.ui_reinit requested deviceType=%d ip=%s commandPort=%d effectiveMonitorPort=%d monitorPortSetting=%d manualOverride=%d mac=%s com=%s",
+            static_cast<int>(applied.descriptor.backend),
+            static_cast<unsigned long long>(applied.generation));
+        Diagnostics::Aim(
+            "kmbox.ui_reconcile status=%d enabled=%d desiredType=%d activeBackend=%d generation=%llu",
+            status,
+            OW::Config::kmboxEnabled ? 1 : 0,
             OW::Config::kmboxDeviceType,
-            OW::Config::kmboxIp,
-            OW::Config::kmboxPort,
-            effectiveMonitorPort,
-            OW::Config::kmboxMonitorPort,
-            OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
-            OW::Config::kmboxMac,
-            OW::Config::kmboxComPort);
+            static_cast<int>(applied.descriptor.backend),
+            static_cast<unsigned long long>(applied.generation));
 
-        return InitializeKmboxFromCurrentConfig();
+        if (status != success) {
+            char message[96]{};
+            std::snprintf(message, sizeof(message), "Apply failed: %d", status);
+            return { false, message };
+        }
+        if (!OW::Config::kmboxEnabled)
+            return { true, "Disabled" };
+        if (!kmbox::RuntimeController().IsOutputGateOpen() ||
+            applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None) {
+            return { false, "Runtime inactive" };
+        }
+        return TestKmboxConnection();
     }
 
     void CopyConfigProfileName(char (&destination)[kConfigProfileNameBufferSize], const std::string& name)
@@ -732,6 +549,14 @@ namespace {
         OW::Config::LoadConfig(path);
         OW::Config::configFileName = savedName;
         OW::RefreshScreenSizeFromConfig();
+        const KmboxConnectionTestResult runtimeResult =
+            ApplyKmboxRuntimeFromCurrentConfig();
+        if (!runtimeResult.ok) {
+            Diagnostics::Warn(
+                "KMBox profile reconcile failed. profile=%s result=%s",
+                savedName.c_str(),
+                runtimeResult.message.c_str());
+        }
     }
 
     void SelectConfigProfile(const char* name, char (&profileName)[kConfigProfileNameBufferSize])
@@ -5555,15 +5380,17 @@ static void DrawMiscKmboxPage() {
             kmboxNetworkRestartMessage.clear();
             kmboxFirewallMessage.clear();
             if (OW::Config::kmboxEnabled && !wasKmboxEnabled) {
-                const KmboxConnectionTestResult initResult = InitializeKmboxFromCurrentConfig();
+                const KmboxConnectionTestResult initResult =
+                    ApplyKmboxRuntimeFromCurrentConfig();
                 kmboxConnectionTestOk = initResult.ok;
                 kmboxConnectionTestMessage = initResult.message;
             } else if (!OW::Config::kmboxEnabled && wasKmboxEnabled) {
-                kmboxConnectionTestOk = true;
-                kmboxConnectionTestMessage = T(UiText::Disabled);
-                kmbox::KmBoxMgr.KeyBoard.EndMonitor();
-                kmbox::MockHardwareMgr.Shutdown();
-                kmbox::ReleaseTimerResolution();
+                const KmboxConnectionTestResult disableResult =
+                    ApplyKmboxRuntimeFromCurrentConfig();
+                kmboxConnectionTestOk = disableResult.ok;
+                kmboxConnectionTestMessage = disableResult.ok
+                    ? T(UiText::Disabled)
+                    : disableResult.message;
             }
         }
         if (!kmboxConnectionTestMessage.empty()) {
@@ -5917,7 +5744,8 @@ static void DrawMiscKmboxPage() {
         }
 
         if (kmboxRuntimeReinitRequested) {
-            const KmboxConnectionTestResult initResult = ReinitializeKmboxRuntimeFromCurrentConfig();
+            const KmboxConnectionTestResult initResult =
+                ApplyKmboxRuntimeFromCurrentConfig();
             kmboxConnectionTestOk = initResult.ok;
             kmboxConnectionTestMessage = initResult.message;
         }

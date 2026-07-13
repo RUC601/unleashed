@@ -4,8 +4,7 @@
 
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
-#include "Kmbox/KmBoxMock.h"
-#include "Kmbox/KmBoxNetManager.h"
+#include "Kmbox/KmboxRuntime.hpp"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
 #include "Utils/ProcessConnection.hpp"
@@ -590,23 +589,9 @@ namespace {
             return false;
 
         const KmBoxOutputIntent intent = OutputIntentForState(down);
-        if (Config::kmboxEnabled && ShouldSuppressKmboxOutput("keyboard", intent))
+        if (ShouldSuppressKmboxOutput("keyboard", intent))
             return false;
-
-        if (Config::kmboxEnabled && Config::kmboxDeviceType == 2) {
-            return kmbox::MockHardwareMgr.RecordKeyboardKey(hidCode, down) == success;
-        }
-
-        if (Config::kmboxEnabled && Config::kmboxDeviceType == 0) {
-            kmbox::KmBoxMgr.SendKeyboardKey(hidCode, down);
-            return true;
-        }
-
-        INPUT input{};
-        input.type = INPUT_KEYBOARD;
-        input.ki.wVk = static_cast<WORD>(vk);
-        input.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
-        return SendInput(1, &input, sizeof(input)) == 1;
+        return kmbox::DispatchKeyboardKey(hidCode, down) == success;
     }
 
     void BeginSecondaryPulse(const std::string& skillId, ViewpointRuntime& runtime, Clock::time_point now)
@@ -1182,26 +1167,11 @@ namespace {
         const int px = static_cast<int>(std::lround(yawDeg * kViewpointPixelsPerDegree));
         const int py = static_cast<int>(std::lround(pitchDeg * kViewpointPixelsPerDegree));
 
-        if (Config::kmboxEnabled) {
-            if (ShouldSuppressKmboxOutput("fast_raw_mouse_move"))
-                return;
-
-            if (Config::kmboxDeviceType == 2) {
-                if (px != 0 || py != 0)
-                    kmbox::MockHardwareMgr.RecordMove(px, py, 0);
-            } else if (Config::kmboxDeviceType == 0) {
-                if (px != 0 || py != 0)
-                    kmbox::KmBoxMgr.Mouse.Move(px, py);
-            } else {
-                if (px != 0 || py != 0)
-                    kmbox::kmBoxBMgr.km_move(px, py);
-            }
+        if (px == 0 && py == 0)
             return;
-        }
-
-        // Non-KMBox fallback: use the normal pipeline (local testing only).
-        if (px != 0 || py != 0)
-            SendMouseMove(Vector3(pitchDeg * kDegToRad, yawDeg * kDegToRad, 0.0f), 0);
+        if (ShouldSuppressKmboxOutput("fast_raw_mouse_move"))
+            return;
+        (void)kmbox::DispatchMouseMove(px, py, 0);
     }
 
     bool MovePitchToward(float targetPitch, float speedDeg, float deltaSeconds)
@@ -1926,22 +1896,14 @@ namespace {
     {
         switch (vk) {
         case VK_LBUTTON:
-            SendMouseButton(0, down);
-            return true;
+            return ActionOutputSucceeded(SendMouseButtonActionState(0, down));
         case VK_RBUTTON:
-            SendMouseButton(1, down);
-            return true;
+            return ActionOutputSucceeded(SendMouseButtonActionState(1, down));
         case VK_MBUTTON:
-            SendMouseButton(2, down);
-            return true;
+            return ActionOutputSucceeded(SendMouseButtonActionState(2, down));
         case VK_XBUTTON1:
-        case VK_XBUTTON2: {
-            INPUT input{};
-            input.type = INPUT_MOUSE;
-            input.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
-            input.mi.mouseData = vk == VK_XBUTTON1 ? XBUTTON1 : XBUTTON2;
-            return SendInput(1, &input, sizeof(input)) == 1;
-        }
+        case VK_XBUTTON2:
+            return false;
         default:
             return false;
         }

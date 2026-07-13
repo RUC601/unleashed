@@ -2,10 +2,7 @@
 
 #include <Windows.h>
 
-#include "Kmbox/KmBoxNetManager.h"
-#include "Kmbox/KmBoxMock.h"
-#include "Kmbox/KmboxB.h"
-#include "Kmbox/KmboxTimerResolution.h"
+#include "Kmbox/KmboxRuntime.hpp"
 #include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
 
@@ -69,49 +66,16 @@ namespace
         Diagnostics::Aim("kmbox.move_test %s", message);
     }
 
-    bool EnsureNetworkKmboxReady()
+    const char* BackendName(kmbox::KmboxRuntimeBackend backend)
     {
-        KmBoxConnectionState state = kmbox::KmBoxMgr.GetConnectionState();
-        PrintLine("Network KMBox state=%s.", ToString(state));
-        if (state == KmBoxConnectionState::Connected)
-            return true;
-
-        PrintLine("Network KMBox is not connected; attempting init from current config.");
-        kmbox::EnsureTimerResolution();
-        const int status = kmbox::KmBoxMgr.InitDevice(
-            OW::Config::kmboxIp,
-            static_cast<WORD>(OW::Config::kmboxPort),
-            OW::Config::kmboxMac);
-        state = kmbox::KmBoxMgr.GetConnectionState();
-        PrintLine("Network KMBox init status=%d state=%s.", status, ToString(state));
-
-        if (status != success || state != KmBoxConnectionState::Connected) {
-            PrintLine("Network KMBox is not connected; aborting move test.");
-            return false;
+        using kmbox::KmboxRuntimeBackend;
+        switch (backend) {
+        case KmboxRuntimeBackend::Network: return "network";
+        case KmboxRuntimeBackend::Serial:  return "serial";
+        case KmboxRuntimeBackend::Mock:    return "mock";
+        case KmboxRuntimeBackend::None:    return "none";
+        default:                           return "unknown";
         }
-
-        return true;
-    }
-
-    bool EnsureSerialKmboxReady()
-    {
-        KmBoxConnectionState state = kmbox::kmBoxBMgr.GetConnectionState();
-        PrintLine("Serial KMBox state=%s.", ToString(state));
-        if (state == KmBoxConnectionState::Connected)
-            return true;
-
-        PrintLine("Serial KMBox is not connected; attempting init from current config.");
-        kmbox::EnsureTimerResolution();
-        const int status = kmbox::kmBoxBMgr.init(OW::Config::kmboxComPort);
-        state = kmbox::kmBoxBMgr.GetConnectionState();
-        PrintLine("Serial KMBox init status=%d state=%s.", status, ToString(state));
-
-        if (status != success || state != KmBoxConnectionState::Connected) {
-            PrintLine("Serial KMBox is not connected; aborting move test.");
-            return false;
-        }
-
-        return true;
     }
 }
 
@@ -121,30 +85,21 @@ void RunKmboxMoveTest()
     PrintLine("Configured: enabled=%d deviceType=%d", OW::Config::kmboxEnabled ? 1 : 0,
         OW::Config::kmboxDeviceType);
 
-    if (!OW::Config::kmboxEnabled) {
-        PrintLine("KMBox output is disabled in config; aborting move test.");
-        return;
-    }
     if (OW::Config::KmboxOutputSuppressedByMenu()) {
         PrintLine("KMBox output is blocked while the menu is open; aborting move test.");
         return;
     }
 
-    const int deviceType = OW::Config::kmboxDeviceType;
-    if (deviceType != 0 && deviceType != 1 && deviceType != 2) {
-        PrintLine("Unsupported KMBox deviceType=%d; expected 0=network, 1=serial, or 2=mock.", deviceType);
+    const kmbox::KmboxRuntimeAppliedState applied = kmbox::RuntimeController().Applied();
+    if (applied.descriptor.backend == kmbox::KmboxRuntimeBackend::None ||
+        !kmbox::RuntimeController().CanDispatch(applied.generation)) {
+        PrintLine("No active KMBox runtime is available; aborting move test. lastError=%d",
+            kmbox::RuntimeController().LastError());
         return;
     }
-
-    if (deviceType == 0) {
-        if (!EnsureNetworkKmboxReady())
-            return;
-    } else if (deviceType == 2) {
-        if (!kmbox::MockHardwareMgr.IsInitialized())
-            kmbox::MockHardwareMgr.Initialize();
-    } else if (!EnsureSerialKmboxReady()) {
-        return;
-    }
+    PrintLine("Active runtime: backend=%s generation=%llu",
+        BackendName(applied.descriptor.backend),
+        static_cast<unsigned long long>(applied.generation));
 
     PrintLine("Trajectory: 500px right, 300px down, 500px left, 300px up.");
     PrintLine("Submitting %zu moves in a tight loop with no sleep.", kSquareTrajectory.size());
@@ -155,38 +110,16 @@ void RunKmboxMoveTest()
     for (std::size_t index = 0; index < kSquareTrajectory.size(); ++index) {
         const MoveDelta& move = kSquareTrajectory[index];
 
-        if (deviceType == 2) {
-            const int status = kmbox::MockHardwareMgr.RecordMove(move.dx, move.dy, 0);
-            if (status == success)
-                ++movesSent;
-            PrintLine("step=%02zu/%zu dx=%d dy=%d status=%d sent=%d",
-                index + 1,
-                kSquareTrajectory.size(),
-                move.dx,
-                move.dy,
-                status,
-                movesSent);
-        } else if (deviceType == 0) {
-            const int status = kmbox::KmBoxMgr.Mouse.Move(move.dx, move.dy);
-            if (status == success)
-                ++movesSent;
-            PrintLine("step=%02zu/%zu dx=%d dy=%d status=%d sent=%d",
-                index + 1,
-                kSquareTrajectory.size(),
-                move.dx,
-                move.dy,
-                status,
-                movesSent);
-        } else {
-            kmbox::kmBoxBMgr.km_move(move.dx, move.dy);
+        const int status = kmbox::DispatchMouseMove(move.dx, move.dy, 0);
+        if (status == success)
             ++movesSent;
-            PrintLine("step=%02zu/%zu dx=%d dy=%d status=queued sent=%d",
-                index + 1,
-                kSquareTrajectory.size(),
-                move.dx,
-                move.dy,
-                movesSent);
-        }
+        PrintLine("step=%02zu/%zu dx=%d dy=%d status=%d sent=%d",
+            index + 1,
+            kSquareTrajectory.size(),
+            move.dx,
+            move.dy,
+            status,
+            movesSent);
 
         std::this_thread::yield();
     }

@@ -1,10 +1,12 @@
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
 #include "Kmbox/KmBoxMock.h"
+#include "Kmbox/KmBoxNetManager.h"
 #include "Utils/Diagnostics.hpp"
 
 #include <Windows.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 
@@ -332,9 +334,14 @@ namespace
         }
 
         OW::Config::kmboxEnabled = false;
+        if (kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(50)) != success)
+            return Fail("failed to disable active mock runtime");
         if (OW::SetActionState(OW::GameAction::Melee, true) != OW::ActionOutputStatus::Disabled)
             return Fail("disabled keyboard output did not fail closed");
         OW::Config::kmboxEnabled = true;
+        OW::Config::kmboxDeviceType = 2;
+        if (kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(50)) != success)
+            return Fail("failed to restore active mock runtime");
 
         kmbox::MockHardwareMgr.Reset();
         OW::Config::kmboxSuppressOutputWhileMenuOpen = true;
@@ -350,8 +357,12 @@ namespace
             return Fail("invalid typed action did not fail closed");
 
         OW::Config::kmboxDeviceType = 1;
-        if (OW::SetActionState(OW::GameAction::Melee, true) != OW::ActionOutputStatus::UnsupportedTransport)
-            return Fail("serial keyboard output did not report unsupported transport");
+        if (!OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::Melee, 0)))
+            return Fail("mutable desired config rerouted the still-active mock backend");
+        if (kmbox::RuntimeController().Applied().descriptor.backend !=
+            kmbox::KmboxRuntimeBackend::Mock) {
+            return Fail("active runtime changed without a reconcile transaction");
+        }
         OW::Config::kmboxDeviceType = 2;
 
         return EXIT_SUCCESS;
@@ -367,8 +378,8 @@ int main()
         return EXIT_FAILURE;
 
     ConfigureMockRuntime();
-    if (kmbox::MockHardwareMgr.Initialize() != success)
-        return Fail("initialize returned failure");
+    if (kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(50)) != success)
+        return Fail("mock runtime reconcile returned failure");
 
     if (!kmbox::MockHardwareMgr.IsInitialized())
         return Fail("mock is not initialized");
@@ -466,7 +477,7 @@ int main()
     if (kmbox::MockHardwareMgr.Snapshot().totalEvents != 0)
         return Fail("DropOutput recorded an event");
 
-    kmbox::MockHardwareMgr.Shutdown();
+    kmbox::ShutdownActiveRuntime(std::chrono::milliseconds(50));
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
     return EXIT_SUCCESS;

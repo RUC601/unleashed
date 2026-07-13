@@ -30,11 +30,8 @@
 #include "Game/Decrypt.hpp"       // OW::GetGlobalKey, OW::DecryptComponent
 #include "Game/Overwatch.hpp"     // main threads: viewmatrix, entity, aimbot, ...
 #include "Game/Offsets.hpp"       // offset constants
-#include "Kmbox/KmBoxNetManager.h" // kmbox::KmBoxMgr
-#include "Kmbox/KmboxB.h"         // kmbox::kmBoxBMgr
-#include "Kmbox/KmBoxMock.h"      // kmbox::MockHardwareMgr
+#include "Kmbox/KmboxRuntime.hpp" // single-owner KMBox runtime controller
 #include "Kmbox/KmboxMoveTest.h"  // RunKmboxMoveTest
-#include "Kmbox/KmboxTimerResolution.h" // kmbox::EnsureTimerResolution
 #include "Utils/Config.hpp"       // OW::Config
 #include "Utils/HostMouseDpi.hpp" // OW::RefreshHostMouseDpi
 #include "Utils/ProcessConnection.hpp"
@@ -1132,102 +1129,38 @@ void RenderCallback()
     DrawDiagnosticLogOverlay();
 }
 
-static void InitializeKmBoxFromConfig()
+static int InitializeKmBoxFromConfig()
 {
-    kmbox::EnsureTimerResolution();
+    constexpr auto timeout = std::chrono::milliseconds(500);
+    const int status = kmbox::ReconcileRuntimeFromConfig(timeout);
+    const kmbox::KmboxRuntimeAppliedState applied = kmbox::RuntimeController().Applied();
 
     if (!OW::Config::kmboxEnabled) {
-        std::printf("[KMBOX] Disabled by config; output is disabled.\n");
-        Diagnostics::Info("KMBox disabled by config.");
-        Diagnostics::Aim("kmbox.init early_return disabled_by_config");
-        return;
+        std::printf("[KMBOX] Disabled by config; runtime is stopped.\n");
+        Diagnostics::Info("KMBox disabled by config; runtime reconciled to None.");
+        Diagnostics::Aim("kmbox.init reconciled disabled status=%d generation=%llu",
+            status,
+            static_cast<unsigned long long>(applied.generation));
+        return status;
     }
 
-    if (OW::Config::kmboxDeviceType == 2) {
-        const int status = kmbox::MockHardwareMgr.Initialize();
-        std::printf("[KMBOX] Mock hardware ready. status=%d\n", status);
-        Diagnostics::Info("KMBox mock hardware ready. status=%d", status);
-        Diagnostics::Aim("kmbox.init mock success status=%d", status);
-        return;
+    if (status == success && applied.descriptor.backend != kmbox::KmboxRuntimeBackend::None) {
+        std::printf("[KMBOX] Runtime ready. backend=%d generation=%llu\n",
+            static_cast<int>(applied.descriptor.backend),
+            static_cast<unsigned long long>(applied.generation));
+        Diagnostics::Info("KMBox runtime ready. backend=%d generation=%llu",
+            static_cast<int>(applied.descriptor.backend),
+            static_cast<unsigned long long>(applied.generation));
+        Diagnostics::Aim("kmbox.init reconciled success backend=%d generation=%llu",
+            static_cast<int>(applied.descriptor.backend),
+            static_cast<unsigned long long>(applied.generation));
+        return success;
     }
 
-    if (OW::Config::kmboxDeviceType == 0) {
-        OW::Config::NormalizeKmboxPorts();
-        std::printf("[KMBOX] Initialising network device %s:%d...\n",
-            OW::Config::kmboxIp, OW::Config::kmboxPort);
-        Diagnostics::Aim("kmbox.init network start ip=%s port=%d mac=%s",
-            OW::Config::kmboxIp,
-            OW::Config::kmboxPort,
-            OW::Config::kmboxMac);
-        const int status = kmbox::KmBoxMgr.InitDevice(
-            OW::Config::kmboxIp,
-            static_cast<WORD>(OW::Config::kmboxPort),
-            OW::Config::kmboxMac);
-        if (status == success) {
-            const int recoveryStatus = kmbox::KmBoxMgr.RecoverMousePassthrough();
-            if (recoveryStatus != success) {
-                std::printf("[KMBOX] Mouse passthrough recovery warning. status=%d\n", recoveryStatus);
-                Diagnostics::Warn("KMBox mouse passthrough recovery warning. status=%d", recoveryStatus);
-            }
-            OW::ForceReleaseMouseButtons();
-            OW::UnmaskPhysicalMouseButtons();
-            std::printf("[KMBOX] Network device ready.\n");
-            Diagnostics::Info("KMBox network device ready. ip=%s commandPort=%d effectiveMonitorPort=%d manualOverride=%d",
-                OW::Config::kmboxIp,
-                OW::Config::kmboxPort,
-                OW::Config::EffectiveKmboxMonitorPort(),
-                OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
-            Diagnostics::Aim("kmbox.init network success ip=%s commandPort=%d effectiveMonitorPort=%d manualOverride=%d",
-                OW::Config::kmboxIp,
-                OW::Config::kmboxPort,
-                OW::Config::EffectiveKmboxMonitorPort(),
-                OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
-
-            const WORD monitorPort = static_cast<WORD>(OW::Config::EffectiveKmboxMonitorPort());
-            const int monitorStatus = kmbox::KmBoxMgr.KeyBoard.StartMonitor(monitorPort);
-            if (monitorStatus == success) {
-                std::printf("[KMBOX] Monitor started on port %u.\n", monitorPort);
-                Diagnostics::Info("KMBox monitor started. commandPort=%d effectiveMonitorPort=%u manualOverride=%d",
-                    OW::Config::kmboxPort,
-                    monitorPort,
-                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
-                Diagnostics::Aim("kmbox.monitor success commandPort=%d effectiveMonitorPort=%u manualOverride=%d",
-                    OW::Config::kmboxPort,
-                    monitorPort,
-                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
-            } else {
-                std::printf("[KMBOX] Monitor failed to start on port %u. status=%d\n",
-                    monitorPort, monitorStatus);
-                Diagnostics::Warn("KMBox monitor failed to start. commandPort=%d effectiveMonitorPort=%u manualOverride=%d status=%d",
-                    OW::Config::kmboxPort,
-                    monitorPort,
-                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
-                    monitorStatus);
-                Diagnostics::Aim("kmbox.monitor failure commandPort=%d effectiveMonitorPort=%u manualOverride=%d status=%d",
-                    OW::Config::kmboxPort,
-                    monitorPort,
-                    OW::Config::kmboxMonitorPortManualOverride ? 1 : 0,
-                    monitorStatus);
-            }
-        } else {
-            std::printf("[KMBOX] Network initialisation failed. status=%d\n", status);
-            Diagnostics::Error("KMBox network initialisation failed. status=%d", status);
-            Diagnostics::Aim("kmbox.init network failure status=%d", status);
-        }
-    } else {
-        std::printf("[KMBOX] Initialising serial device on %s...\n", OW::Config::kmboxComPort);
-        Diagnostics::Aim("kmbox.init serial start port=%s", OW::Config::kmboxComPort);
-        const int status = kmbox::kmBoxBMgr.init(OW::Config::kmboxComPort);
-        if (status == success) {
-            std::printf("[KMBOX] Serial device ready.\n");
-            Diagnostics::Info("KMBox serial device ready. port=%s", OW::Config::kmboxComPort);
-            Diagnostics::Aim("kmbox.init serial success port=%s", OW::Config::kmboxComPort);
-        } else {
-            std::printf("[KMBOX] Serial initialisation failed. status=%d\n", status);
-            Diagnostics::Error("KMBox serial initialisation failed. status=%d", status);
-            Diagnostics::Aim("kmbox.init serial failure status=%d", status);
-        }
-    }
+    std::printf("[KMBOX] Runtime initialisation failed. status=%d\n", status);
+    Diagnostics::Error("KMBox runtime initialisation failed. status=%d", status);
+    Diagnostics::Aim("kmbox.init reconciled failure status=%d", status);
+    return status != success ? status : err_queue_stopped;
 }
 
 static void StartBackgroundThreads();
@@ -1238,22 +1171,11 @@ static int ReleaseKmboxMouseStateForShutdown(
     const char* reason,
     DWORD timeoutMs = 500)
 {
-    if (!OW::Config::kmboxEnabled)
-        return success;
-
-    Diagnostics::Aim("kmbox.shutdown_output_cleanup reason=%s deviceType=%d timeoutMs=%lu",
+    Diagnostics::Aim("kmbox.shutdown_output_cleanup reason=%s timeoutMs=%lu",
         reason ? reason : "unknown",
-        OW::Config::kmboxDeviceType,
         static_cast<unsigned long>(timeoutMs));
     const auto timeout = std::chrono::milliseconds(timeoutMs);
-    int status = err_net_cmd;
-    if (OW::Config::kmboxDeviceType == 2) {
-        status = kmbox::MockHardwareMgr.ReleaseAllOutputAndWait(timeout);
-    } else if (OW::Config::kmboxDeviceType == 0) {
-        status = kmbox::KmBoxMgr.ReleaseAllOutputAndWait(timeout);
-    } else if (OW::Config::kmboxDeviceType == 1) {
-        status = kmbox::kmBoxBMgr.ReleaseAllOutputAndWait(timeout);
-    }
+    const int status = kmbox::ReleaseActiveRuntime(timeout);
     if (status != success) {
         Diagnostics::Warn(
             "KMBox output cleanup completed with status=%d reason=%s timeoutMs=%lu.",
@@ -1270,16 +1192,8 @@ static int ShutdownKmboxRuntime(const char* reason, DWORD timeoutMs = 500)
         reason ? reason : "unknown",
         static_cast<unsigned long>(timeoutMs));
 
-    const auto timeout = std::chrono::milliseconds(timeoutMs);
-    int status = success;
-    const auto record = [&status](int result) {
-        if (status == success && result != success)
-            status = result;
-    };
-
-    record(kmbox::KmBoxMgr.Shutdown(timeout));
-    record(kmbox::kmBoxBMgr.Shutdown(timeout));
-    record(kmbox::MockHardwareMgr.Shutdown(timeout));
+    const int status = kmbox::ShutdownActiveRuntime(
+        std::chrono::milliseconds(timeoutMs));
     if (status != success) {
         Diagnostics::Warn("KMBox lifecycle shutdown completed with status=%d reason=%s.",
             status, reason ? reason : "unknown");
@@ -1326,7 +1240,6 @@ static void ShutdownHeadlessRuntime()
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
     ShutdownKmboxRuntime("headless_shutdown");
-    kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
 }
@@ -1360,12 +1273,22 @@ static int RunKmboxMoveTestCli()
     Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
     LoadRuntimeConfigForDiagnostics();
     OW::Config::Menu = false;
-    InitializeKmBoxFromConfig();
-    RunKmboxMoveTest();
+    const int initStatus = InitializeKmBoxFromConfig();
+    const auto applied = kmbox::RuntimeController().Applied();
+    const bool runtimeReady = kmbox::IsRuntimeReady(
+        initStatus,
+        applied,
+        kmbox::RuntimeController().CanDispatch(applied.generation));
+    if (runtimeReady)
+        RunKmboxMoveTest();
     ShutdownKmboxRuntime("kmbox_move_test");
-    kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
+    if (!runtimeReady) {
+        std::fprintf(stderr, "[KMBOX] Move test aborted: no active runtime. status=%d\n",
+            initStatus != success ? initStatus : err_queue_stopped);
+        return 1;
+    }
     return 0;
 }
 
@@ -1375,13 +1298,18 @@ static int RunKmboxRecoverMouseCli()
     Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
     LoadRuntimeConfigForDiagnostics();
     OW::Config::Menu = false;
-    InitializeKmBoxFromConfig();
-    int recoveryStatus = ReleaseKmboxMouseStateForShutdown(
-        "kmbox_recover_mouse_cli", 1500);
+    const int initStatus = InitializeKmBoxFromConfig();
+    const auto applied = kmbox::RuntimeController().Applied();
+    const bool runtimeReady = kmbox::IsRuntimeReady(
+        initStatus,
+        applied,
+        kmbox::RuntimeController().CanDispatch(applied.generation));
+    int recoveryStatus = runtimeReady
+        ? ReleaseKmboxMouseStateForShutdown("kmbox_recover_mouse_cli", 1500)
+        : (initStatus != success ? initStatus : err_queue_stopped);
     const int shutdownStatus = ShutdownKmboxRuntime("kmbox_recover_mouse_cli", 1500);
     if (recoveryStatus == success)
         recoveryStatus = shutdownStatus;
-    kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
     if (recoveryStatus == success) {
@@ -1407,7 +1335,17 @@ static int RunKmboxCalibrationCli(float referenceGameSensitivityOverride = 0.0f)
     Diagnostics::InitializeAimLog("./unleashed_aim_diag.log");
     LoadRuntimeConfigForDiagnostics();
     OW::Config::Menu = false;
-    InitializeKmBoxFromConfig();
+    const int initStatus = InitializeKmBoxFromConfig();
+    const auto applied = kmbox::RuntimeController().Applied();
+    if (!kmbox::IsRuntimeReady(
+            initStatus,
+            applied,
+            kmbox::RuntimeController().CanDispatch(applied.generation))) {
+        std::fprintf(stderr, "[KMBOX] Calibration failed: no active runtime. status=%d\n",
+            initStatus != success ? initStatus : err_queue_stopped);
+        ShutdownHeadlessRuntime();
+        return 2;
+    }
     Diagnostics::SetDmaReady(true);
     StartProcessConnectionThread();
     StartBackgroundThreads();
@@ -1817,7 +1755,6 @@ int main(int argc, char** argv)
         Diagnostics::SetDmaReady(false);
         Diagnostics::SetProcessAttached(false);
         ShutdownKmboxRuntime("overlay_init_failure");
-        kmbox::ReleaseTimerResolution();
         Diagnostics::ShutdownAimLog();
         Diagnostics::Shutdown();
         std::printf("[INFO] Press Enter to exit.\n");
@@ -1860,7 +1797,6 @@ int main(int argc, char** argv)
     Diagnostics::SetProcessAttached(false);
     Diagnostics::Info("DMA subsystem closed.");
     ShutdownKmboxRuntime("overlay_shutdown");
-    kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
 

@@ -11935,6 +11935,14 @@ inline void configsavenloadthread() {
             }
 
             OW::Config::LoadConfigForHero(OW::Config::ConfigPath(), currentHeroId, localSnapshot.LinkBase);
+            const int kmboxReconcileStatus =
+                kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(500));
+            if (kmboxReconcileStatus != success) {
+                Diagnostics::Warn(
+                    "KMBox hero-profile reconcile failed. heroId=0x%llX status=%d",
+                    static_cast<unsigned long long>(currentHeroId),
+                    kmboxReconcileStatus);
+            }
             lastHeroId = currentHeroId;
             OW::Config::nowhero = "Now using: " + OW::GetHeroEngNames(currentHeroId, localSnapshot.LinkBase);
         } else if (OW::Config::manualsave && lastHeroId != 0) {
