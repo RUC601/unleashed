@@ -1224,13 +1224,30 @@ int KmBoxNetManager::UnmaskAll()
     return EnqueueCommand(command);
 }
 
+bool KmBoxNetManager::BuildKeyboardReport(unsigned char HidCode, bool Down, soft_keyboard_t& Report)
+{
+    Report = {};
+    if (HidCode == 0)
+        return false;
+
+    if (!Down)
+        return true;
+
+    if (HidCode >= KEY_LEFTCONTROL && HidCode <= KEY_RIGHT_GUI) {
+        const unsigned int modifierBit = 1u << (HidCode - KEY_LEFTCONTROL);
+        Report.ctrl = static_cast<char>(modifierBit);
+    } else {
+        Report.button[0] = static_cast<char>(HidCode);
+    }
+    return true;
+}
+
 int KmBoxNetManager::SendKeyboardKey(unsigned char hidCode, bool down)
 {
     client_data packet = BuildPacket(cmd_keyboard_all, NextRandom());
     soft_keyboard_t kb{};
-    if (down) {
-        kb.button[0] = static_cast<char>(hidCode);
-    }
+    if (!BuildKeyboardReport(hidCode, down, kb))
+        return err_net_cmd;
 
     memcpy_s(&packet.cmd_keyboard, sizeof(soft_keyboard_t), &kb, sizeof(soft_keyboard_t));
 

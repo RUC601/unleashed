@@ -676,29 +676,119 @@ namespace OW {
         return Config::calibratedCountsPerRadian;
     }
 
-    inline void SendMouseButton(int button, bool down) {
-        if (Config::kmboxEnabled) {
-            if (ShouldSuppressKmboxOutput("mouse_button"))
-                return;
+    enum class GameAction : uint8_t {
+        PrimaryFire = 0,
+        SecondaryFire,
+        MiddleMouse,
+        Ability1,
+        Ability2,
+        Ultimate,
+        Melee,
+        MoveForward
+    };
 
-            if (Config::kmboxDebugLog) {
-                std::printf("[KMBOX] mouse.button button=%d down=%d type=%d\n",
-                    button, down ? 1 : 0, Config::kmboxDeviceType);
-            }
+    enum class ActionOutputStatus : uint8_t {
+        Sent = 0,
+        Disabled,
+        Suppressed,
+        UnsupportedTransport,
+        InvalidAction,
+        TransportError
+    };
 
-            if (Config::kmboxDeviceType == 2) {
-                kmbox::MockHardwareMgr.RecordButton(button, down);
-            } else if (Config::kmboxDeviceType == 0) {
-                if (button == 0) kmbox::KmBoxMgr.Mouse.Left(down);
-                else if (button == 1) kmbox::KmBoxMgr.Mouse.Right(down);
-                else if (button == 2) kmbox::KmBoxMgr.Mouse.Middle(down);
-            } else {
-                if (button == 0) kmbox::kmBoxBMgr.km_left(down);
-                else if (button == 1) kmbox::kmBoxBMgr.km_right(down);
-                else if (button == 2) kmbox::kmBoxBMgr.km_middle(down);
-            }
-            return;
+    inline bool ActionOutputSucceeded(ActionOutputStatus status) {
+        return status == ActionOutputStatus::Sent;
+    }
+
+    inline ActionOutputStatus SendMouseButtonActionState(int button, bool down) {
+        if (!Config::kmboxEnabled)
+            return ActionOutputStatus::Disabled;
+        if (ShouldSuppressKmboxOutput("mouse_button"))
+            return ActionOutputStatus::Suppressed;
+        if (button < 0 || button > 2)
+            return ActionOutputStatus::InvalidAction;
+
+        if (Config::kmboxDebugLog) {
+            std::printf("[KMBOX] mouse.button button=%d down=%d type=%d\n",
+                button, down ? 1 : 0, Config::kmboxDeviceType);
         }
+
+        if (Config::kmboxDeviceType == 2) {
+            return kmbox::MockHardwareMgr.RecordButton(button, down) == success
+                ? ActionOutputStatus::Sent
+                : ActionOutputStatus::TransportError;
+        }
+        if (Config::kmboxDeviceType == 0) {
+            int status = err_net_cmd;
+            if (button == 0) status = kmbox::KmBoxMgr.Mouse.Left(down);
+            else if (button == 1) status = kmbox::KmBoxMgr.Mouse.Right(down);
+            else if (button == 2) status = kmbox::KmBoxMgr.Mouse.Middle(down);
+            return status == success ? ActionOutputStatus::Sent : ActionOutputStatus::TransportError;
+        }
+        if (Config::kmboxDeviceType == 1) {
+            if (button == 0) kmbox::kmBoxBMgr.km_left(down);
+            else if (button == 1) kmbox::kmBoxBMgr.km_right(down);
+            else if (button == 2) kmbox::kmBoxBMgr.km_middle(down);
+            return ActionOutputStatus::Sent;
+        }
+        return ActionOutputStatus::UnsupportedTransport;
+    }
+
+    inline void SendMouseButton(int button, bool down) {
+        (void)SendMouseButtonActionState(button, down);
+    }
+
+    inline unsigned char GameActionKeyboardHid(GameAction action) {
+        switch (action) {
+        case GameAction::Ability1:    return KEY_LEFTSHIFT;
+        case GameAction::Ability2:    return KEY_E;
+        case GameAction::Ultimate:    return KEY_Q;
+        case GameAction::Melee:       return KEY_V;
+        case GameAction::MoveForward: return KEY_W;
+        default:                      return 0;
+        }
+    }
+
+    inline ActionOutputStatus SetActionState(GameAction action, bool down) {
+        switch (action) {
+        case GameAction::PrimaryFire:
+            return SendMouseButtonActionState(0, down);
+        case GameAction::SecondaryFire:
+            return SendMouseButtonActionState(1, down);
+        case GameAction::MiddleMouse:
+            return SendMouseButtonActionState(2, down);
+        default:
+            break;
+        }
+
+        const unsigned char hidCode = GameActionKeyboardHid(action);
+        if (hidCode == 0)
+            return ActionOutputStatus::InvalidAction;
+        if (!Config::kmboxEnabled)
+            return ActionOutputStatus::Disabled;
+        if (ShouldSuppressKmboxOutput("keyboard"))
+            return ActionOutputStatus::Suppressed;
+
+        if (Config::kmboxDeviceType == 2) {
+            return kmbox::MockHardwareMgr.RecordKeyboardKey(hidCode, down) == success
+                ? ActionOutputStatus::Sent
+                : ActionOutputStatus::TransportError;
+        }
+        if (Config::kmboxDeviceType == 0) {
+            return kmbox::KmBoxMgr.SendKeyboardKey(hidCode, down) == success
+                ? ActionOutputStatus::Sent
+                : ActionOutputStatus::TransportError;
+        }
+        return ActionOutputStatus::UnsupportedTransport;
+    }
+
+    inline ActionOutputStatus PulseAction(GameAction action, DWORD durationMs = 10) {
+        const ActionOutputStatus pressStatus = SetActionState(action, true);
+        if (!ActionOutputSucceeded(pressStatus))
+            return pressStatus;
+
+        Sleep(durationMs);
+        return SetActionState(action, false);
     }
 
     inline void ForceReleaseMouseButtons() {
@@ -784,32 +874,6 @@ namespace OW {
         return kmbox::KmBoxMgr.UnmaskAll() == success;
     }
 
-    inline bool SendMouseButtonMask(uint32_t keyMask, bool down) {
-        if (!Config::kmboxEnabled || keyMask == 0 || (keyMask & ~0x7u) != 0)
-            return false;
-        if (ShouldSuppressKmboxOutput("mouse_button_mask"))
-            return false;
-
-        bool sent = false;
-        if (keyMask & 0x1u) { SendMouseButton(0, down); sent = true; }
-        if (keyMask & 0x2u) { SendMouseButton(1, down); sent = true; }
-        if (keyMask & 0x4u) { SendMouseButton(2, down); sent = true; }
-        return sent;
-    }
-
-    inline DWORD HoldDurationMs(float duration) {
-        if (duration <= 0.0f)
-            return 0;
-        return static_cast<DWORD>(duration);
-    }
-
-    inline void SetKey(uint32_t key) {
-        if (SendMouseButtonMask(key, true)) {
-            Sleep(10);
-            SendMouseButtonMask(key, false);
-        }
-    }
-
     inline int get_bind_id(int setting) {
         return Labels::AimActivationKeyVk(setting);
     }
@@ -890,26 +954,6 @@ namespace OW {
         } __except (1) {
             return Result;
         }
-    }
-
-    // =========================================================================
-    // Key hold helpers
-    // =========================================================================
-
-    inline void SetKeyscopeHold(int Key, float duration) {
-        const uint32_t keyMask = static_cast<uint32_t>(Key + 2);
-        if (!SendMouseButtonMask(keyMask, true))
-            return;
-        Sleep(HoldDurationMs(duration));
-        SendMouseButtonMask(keyMask, false);
-    }
-
-    inline void SetKeyHold(int Key, float duration) {
-        const uint32_t keyMask = static_cast<uint32_t>(Key);
-        if (!SendMouseButtonMask(keyMask, true))
-            return;
-        Sleep(HoldDurationMs(duration));
-        SendMouseButtonMask(keyMask, false);
     }
 
     // =========================================================================

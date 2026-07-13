@@ -9576,13 +9576,25 @@ namespace AimbotDetail {
             (OW::Config::aimbotKeepFiring && OW::Config::Tracking);
     }
 
+    inline void LogInvalidGeneratedFireKey(const char* operation, uint32_t key) {
+        static std::atomic<DWORD> lastLogTick{ 0 };
+        const DWORD now = GetTickCount();
+        DWORD observed = lastLogTick.load(std::memory_order_relaxed);
+        if (observed != 0 && now - observed < 1000)
+            return;
+        if (!lastLogTick.compare_exchange_strong(observed, now, std::memory_order_relaxed))
+            return;
+        Diagnostics::Warn("Generated fire key is not a mouse mask. operation=%s keyMask=0x%X",
+            operation ? operation : "unknown",
+            key);
+    }
+
     inline void ClickDmaMouseKey(uint32_t key, DWORD sleep_ms = 10) {
         int button = -1;
         if (OW::DmaKeyToMouseButton(key, button)) {
             ClickMouseButton(button, sleep_ms);
         } else {
-            OW::SetKey(key);
-            Sleep(sleep_ms);
+            LogInvalidGeneratedFireKey("click", key);
         }
     }
 
@@ -9645,8 +9657,7 @@ namespace AimbotDetail {
             if (masked)
                 UnmaskPhysicalMouseButtonsBestEffort("release_mouse");
         } else {
-            OW::SetKey(key);
-            Sleep(sleep_ms);
+            LogInvalidGeneratedFireKey("charge_release", key);
         }
     }
 
@@ -10421,7 +10432,7 @@ namespace AimbotDetail {
             (local.HeroID == OW::eHero::HERO_ANA ||
              local.HeroID == OW::eHero::HERO_WIDOWMAKER ||
              local.HeroID == OW::eHero::HERO_ASHE) && IsInputVkDown(VK_RBUTTON)) {
-            OW::SetKeyscopeHold(0x1, 30);
+            OW::PulseAction(OW::GameAction::PrimaryFire, 30);
         } else {
             ClickDmaMouseKey(fireKey);
         }
@@ -10471,7 +10482,7 @@ namespace AimbotDetail {
         if (OW::Config::health <= OW::Config::meleehealth &&
             dist <= OW::Config::meleedistance &&
             OW::Config::AutoMelee) {
-            OW::SetKey(0x800);
+            OW::PulseAction(OW::GameAction::Melee);
         }
         if (OW::Config::health <= OW::Config::AutoRMBhealth &&
             dist <= OW::Config::AutoRMBdistance &&
@@ -11576,8 +11587,8 @@ namespace AimbotDetail {
                             Sleep(50);
                             continue;
                         }
-                        OW::SetKeyHold(0x8, 70);
-                        first = 0;
+                        if (OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::Ability1, 70)))
+                            first = 0;
                     }
                     if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f) && dist2 < 5.f)
                         ClickMouseButton(0);
@@ -11599,7 +11610,7 @@ namespace AimbotDetail {
             if (OW::Config::health <= OW::Config::meleehealth &&
                 dist <= OW::Config::meleedistance &&
                 !(target.skill1act && target.HeroID == OW::eHero::HERO_VENTURE)) {
-                OW::SetKey(0x800);
+                OW::PulseAction(OW::GameAction::Melee);
                 Sleep(1);
             }
         }
@@ -11641,12 +11652,13 @@ namespace AimbotDetail {
             OW::Config::AimBehaviorAcceleration(0));
         if (OW::Config::health <= 50.f && dist <= 15.f) {
             if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f))
-                OW::SetKeyHold(0x8, 40);
+                OW::PulseAction(OW::GameAction::Ability1, 40);
         } else if (OW::Config::health <= 80.f && dist >= 15.f && dist <= 17.f) {
             if (OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, 1.f)) {
-                OW::SetKey(0x8);
-                Sleep(500);
-                OW::SetKey(0x800);
+                if (OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::Ability1))) {
+                    Sleep(500);
+                    OW::PulseAction(OW::GameAction::Melee);
+                }
             }
         }
     }
@@ -11668,22 +11680,25 @@ namespace AimbotDetail {
         if (hID == OW::eHero::HERO_TRACER || hID == OW::eHero::HERO_SOMBRA ||
             hID == OW::eHero::HERO_ROADHOG || hID == OW::eHero::HERO_TORBJORN ||
             hID == OW::eHero::HERO_SOLDIER76 || hID == OW::eHero::HERO_VENTURE) {
-            OW::SetKey(0x10);
-            OW::Config::skilled = true;
-            Sleep(1);
-            OW::Config::lasthealth = local.PlayerHealth;
+            if (OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::Ability2))) {
+                OW::Config::skilled = true;
+                Sleep(1);
+                OW::Config::lasthealth = local.PlayerHealth;
+            }
         } else if (hID == OW::eHero::HERO_REAPER || hID == OW::eHero::HERO_MEI ||
                    hID == OW::eHero::HERO_JUNKERQUEEN || hID == OW::eHero::HERO_MOIRA ||
                    hID == OW::eHero::HERO_ZARYA) {
-            OW::SetKey(0x8);
-            OW::Config::skilled = true;
-            Sleep(1);
-            OW::Config::lasthealth = local.PlayerHealth;
+            if (OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::Ability1))) {
+                OW::Config::skilled = true;
+                Sleep(1);
+                OW::Config::lasthealth = local.PlayerHealth;
+            }
         } else if (hID == OW::eHero::HERO_WINSTON || hID == OW::eHero::HERO_ZENYATTA) {
-            OW::SetKey(0x20);
-            OW::Config::skilled = true;
-            Sleep(1);
-            OW::Config::lasthealth = local.PlayerHealth;
+            if (OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::Ultimate))) {
+                OW::Config::skilled = true;
+                Sleep(1);
+                OW::Config::lasthealth = local.PlayerHealth;
+            }
         }
     }
 
@@ -11726,7 +11741,7 @@ namespace AimbotDetail {
         const c_entity local = LocalEntity();
         if (local.HeroID == OW::eHero::HERO_REAPER && OW::Config::reloading) {
             Sleep(300);
-            OW::SetKey(0x800);
+            OW::PulseAction(OW::GameAction::Melee);
         }
     }
 
@@ -11803,7 +11818,7 @@ namespace AimbotDetail {
             return;
 
         if (OW::Config::AntiAFK) {
-            OW::SetKey(0x57);
+            OW::PulseAction(OW::GameAction::MoveForward);
             Sleep(1000);
         }
 

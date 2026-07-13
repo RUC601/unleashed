@@ -116,6 +116,7 @@ public:
     int SetMouseButtonStateMask(unsigned int StateMask, bool Force = false);
     int MaskMouse(unsigned int Mask);
     int UnmaskAll();
+    static bool BuildKeyboardReport(unsigned char HidCode, bool Down, soft_keyboard_t& Report);
     int SendKeyboardKey(unsigned char hidCode, bool down);
     KmBoxConnectionState GetConnectionState() const;
     bool IsConnected() const;

@@ -130,6 +130,149 @@ namespace
         OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
         return EXIT_SUCCESS;
     }
+
+    int VerifyKeyboardReportBuilder()
+    {
+        soft_keyboard_t report{};
+        if (!KmBoxNetManager::BuildKeyboardReport(KEY_LEFTSHIFT, true, report))
+            return Fail("Shift keyboard report was rejected");
+        if ((static_cast<unsigned char>(report.ctrl) & BIT1) == 0)
+            return Fail("Shift keyboard report did not set the modifier bit");
+        for (char key : report.button) {
+            if (key != 0)
+                return Fail("Shift keyboard report incorrectly used a normal key slot");
+        }
+
+        if (!KmBoxNetManager::BuildKeyboardReport(KEY_E, true, report))
+            return Fail("E keyboard report was rejected");
+        if (report.ctrl != 0 || static_cast<unsigned char>(report.button[0]) != KEY_E)
+            return Fail("E keyboard report did not use button[0]");
+
+        if (!KmBoxNetManager::BuildKeyboardReport(KEY_E, false, report))
+            return Fail("keyboard release report was rejected");
+        if (report.ctrl != 0)
+            return Fail("keyboard release report retained a modifier");
+        for (char key : report.button) {
+            if (key != 0)
+                return Fail("keyboard release report retained a key");
+        }
+
+        if (KmBoxNetManager::BuildKeyboardReport(0, true, report))
+            return Fail("zero HID code was accepted");
+        return EXIT_SUCCESS;
+    }
+
+    int VerifyTypedActionOutput()
+    {
+        kmbox::MockHardwareMgr.Reset();
+        if (!OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::PrimaryFire, 0)))
+            return Fail("typed primary-fire pulse failed");
+        {
+            const auto events = kmbox::MockHardwareMgr.RecentEvents();
+            if (events.size() != 2)
+                return Fail("primary-fire pulse did not emit exactly two events");
+            for (const auto& event : events) {
+                if (event.type != kmbox::MockEventType::Button || event.button != 0)
+                    return Fail("primary-fire pulse emitted a non-left-button event");
+            }
+            if (!events[0].down || events[1].down)
+                return Fail("primary-fire pulse did not emit down then up");
+        }
+
+        struct MouseActionCase {
+            OW::GameAction action;
+            int button;
+        };
+        constexpr MouseActionCase mouseCases[] = {
+            { OW::GameAction::SecondaryFire, 1 },
+            { OW::GameAction::MiddleMouse, 2 }
+        };
+        for (const auto& testCase : mouseCases) {
+            kmbox::MockHardwareMgr.Reset();
+            if (!OW::ActionOutputSucceeded(OW::PulseAction(testCase.action, 0)))
+                return Fail("typed mouse action pulse failed");
+            const auto events = kmbox::MockHardwareMgr.RecentEvents();
+            if (events.size() != 2 ||
+                events[0].type != kmbox::MockEventType::Button ||
+                events[1].type != kmbox::MockEventType::Button ||
+                events[0].button != testCase.button ||
+                events[1].button != testCase.button ||
+                !events[0].down || events[1].down) {
+                return Fail("typed mouse action emitted the wrong button sequence");
+            }
+        }
+
+        kmbox::MockHardwareMgr.Reset();
+        if (kmbox::MockHardwareMgr.RecordButton(1, true) != success)
+            return Fail("failed to seed held right button for scoped-fire test");
+        if (!OW::ActionOutputSucceeded(OW::PulseAction(OW::GameAction::PrimaryFire, 0)))
+            return Fail("scoped primary-fire pulse failed");
+        {
+            const auto snapshot = kmbox::MockHardwareMgr.Snapshot();
+            const auto events = kmbox::MockHardwareMgr.RecentEvents();
+            if (snapshot.outputMouseButtons != 0x02u)
+                return Fail("scoped primary-fire pulse changed held right-button state");
+            if (events.size() != 3 ||
+                events[1].type != kmbox::MockEventType::Button ||
+                events[2].type != kmbox::MockEventType::Button ||
+                events[1].button != 0 || events[2].button != 0 ||
+                !events[1].down || events[2].down) {
+                return Fail("scoped primary-fire pulse emitted events other than left down/up");
+            }
+        }
+
+        struct KeyboardActionCase {
+            OW::GameAction action;
+            unsigned char hidCode;
+        };
+        constexpr KeyboardActionCase cases[] = {
+            { OW::GameAction::Ability1, KEY_LEFTSHIFT },
+            { OW::GameAction::Ability2, KEY_E },
+            { OW::GameAction::Ultimate, KEY_Q },
+            { OW::GameAction::Melee, KEY_V },
+            { OW::GameAction::MoveForward, KEY_W }
+        };
+
+        for (const auto& testCase : cases) {
+            kmbox::MockHardwareMgr.Reset();
+            if (!OW::ActionOutputSucceeded(OW::PulseAction(testCase.action, 0)))
+                return Fail("typed keyboard action pulse failed");
+            const auto events = kmbox::MockHardwareMgr.RecentEvents();
+            if (events.size() != 2 ||
+                events[0].type != kmbox::MockEventType::Keyboard ||
+                events[1].type != kmbox::MockEventType::Keyboard ||
+                events[0].hidCode != testCase.hidCode ||
+                events[1].hidCode != testCase.hidCode ||
+                !events[0].down || events[1].down) {
+                return Fail("typed keyboard action emitted the wrong HID sequence");
+            }
+        }
+
+        OW::Config::kmboxEnabled = false;
+        if (OW::SetActionState(OW::GameAction::Melee, true) != OW::ActionOutputStatus::Disabled)
+            return Fail("disabled keyboard output did not fail closed");
+        OW::Config::kmboxEnabled = true;
+
+        kmbox::MockHardwareMgr.Reset();
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = true;
+        OW::Config::Menu = true;
+        if (OW::SetActionState(OW::GameAction::Melee, true) != OW::ActionOutputStatus::Suppressed)
+            return Fail("menu-suppressed keyboard output did not report suppression");
+        if (kmbox::MockHardwareMgr.Snapshot().keyboardEvents != 0)
+            return Fail("menu-suppressed keyboard output emitted an event");
+        OW::Config::Menu = false;
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
+
+        if (OW::SetActionState(static_cast<OW::GameAction>(0xFF), true) != OW::ActionOutputStatus::InvalidAction)
+            return Fail("invalid typed action did not fail closed");
+
+        OW::Config::kmboxDeviceType = 1;
+        if (OW::SetActionState(OW::GameAction::Melee, true) != OW::ActionOutputStatus::UnsupportedTransport)
+            return Fail("serial keyboard output did not report unsupported transport");
+        OW::Config::kmboxDeviceType = 2;
+
+        return EXIT_SUCCESS;
+    }
 }
 
 int main()
@@ -146,6 +289,11 @@ int main()
 
     if (!kmbox::MockHardwareMgr.IsInitialized())
         return Fail("mock is not initialized");
+
+    if (VerifyKeyboardReportBuilder() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
+    if (VerifyTypedActionOutput() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
 
     {
         const kmbox::MockHardwareSnapshot before = kmbox::MockHardwareMgr.Snapshot();
@@ -207,6 +355,14 @@ int main()
 
     kmbox::MockHardwareMgr.Reset();
     kmbox::MockHardwareMgr.SetFaultMode(kmbox::MockFaultMode::OutputTimeout);
+    if (OW::PulseAction(OW::GameAction::Melee, 1) != OW::ActionOutputStatus::TransportError)
+        return Fail("typed action did not propagate mock output timeout");
+    {
+        const auto events = kmbox::MockHardwareMgr.RecentEvents();
+        if (events.size() != 1 || events.back().type != kmbox::MockEventType::Keyboard ||
+            !events.back().down || !events.back().attempted)
+            return Fail("failed typed action emitted an unexpected release");
+    }
     if (kmbox::MockHardwareMgr.RecordMove(1, 2, 0) != err_net_rx_timeout)
         return Fail("OutputTimeout did not return timeout status");
     {
