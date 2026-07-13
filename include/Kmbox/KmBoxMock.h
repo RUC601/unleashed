@@ -5,6 +5,7 @@
 #include <Windows.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -65,11 +66,20 @@ namespace kmbox
     class MockHardware
     {
     public:
+        enum class LifecycleState : int {
+            Stopped = 0,
+            Starting,
+            Running,
+            Stopping
+        };
+
+        ~MockHardware();
         int Initialize();
-        void Shutdown();
+        int Shutdown(std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
         void Reset();
 
         bool IsInitialized() const;
+        LifecycleState GetLifecycleState() const;
         void SetFaultMode(MockFaultMode mode);
         MockFaultMode GetFaultMode() const;
 
@@ -92,6 +102,8 @@ namespace kmbox
         void ClearStateLocked(bool keepInitialized);
 
         mutable std::mutex mutex_;
+        mutable std::mutex lifecycleMutex_;
+        std::atomic<LifecycleState> lifecycleState_{ LifecycleState::Stopped };
         bool initialized_ = false;
         MockFaultMode faultMode_ = MockFaultMode::None;
         std::array<bool, 256> hidStates_{};

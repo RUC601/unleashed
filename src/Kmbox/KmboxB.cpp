@@ -153,13 +153,17 @@ static std::string normalize_port_name(const std::string& portName)
 
 KmBoxBManager::~KmBoxBManager()
 {
-    StopWorkers();
-    ClosePort();
+    (void)Shutdown();
 }
 
 KmBoxConnectionState KmBoxBManager::GetConnectionState() const
 {
     return connectionState.load(std::memory_order_acquire);
+}
+
+KmBoxBManager::LifecycleState KmBoxBManager::GetLifecycleState() const
+{
+    return lifecycleState.load(std::memory_order_acquire);
 }
 
 bool KmBoxBManager::IsConnected() const
@@ -176,14 +180,24 @@ void KmBoxBManager::SetConnectionState(KmBoxConnectionState state)
     }
 }
 
-bool KmBoxBManager::OpenConfiguredPort()
+bool KmBoxBManager::OpenConfiguredPort(bool AllowDuringStopping)
 {
+    const LifecycleState lifecycle = lifecycleState.load(std::memory_order_acquire);
+    if (lifecycle == LifecycleState::Stopping && !AllowDuringStopping)
+        return false;
+    if (lifecycle == LifecycleState::Stopped)
+        return false;
+
     if (serialPortName.empty()) {
         SetConnectionState(KmBoxConnectionState::Disconnected);
         return false;
     }
 
     std::lock_guard<std::mutex> lock(serialMutex);
+    if (lifecycleState.load(std::memory_order_acquire) == LifecycleState::Stopping &&
+        !AllowDuringStopping) {
+        return false;
+    }
     if (hSerial != INVALID_HANDLE_VALUE) {
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
@@ -198,7 +212,8 @@ bool KmBoxBManager::OpenConfiguredPort()
     }
 
     hSerial = newHandle;
-    SetConnectionState(KmBoxConnectionState::Connected);
+    if (lifecycleState.load(std::memory_order_acquire) != LifecycleState::Stopping)
+        SetConnectionState(KmBoxConnectionState::Connected);
     return true;
 }
 
@@ -238,12 +253,17 @@ bool KmBoxBManager::SendCommandOnce(const std::string& command)
     return true;
 }
 
-bool KmBoxBManager::SendCommandWithRetry(const std::string& command, KmBoxCommandType type)
+bool KmBoxBManager::SendCommandWithRetry(
+    const std::string& command,
+    KmBoxCommandType type,
+    bool AllowReconnectDuringStopping)
 {
     for (int attempt = 1; attempt <= KmBoxRuntimeConfig::CommandMaxRetries; ++attempt) {
         if (SendCommandOnce(command)) {
-            if (connectionState.load(std::memory_order_acquire) != KmBoxConnectionState::Connected)
+            if (lifecycleState.load(std::memory_order_acquire) != LifecycleState::Stopping &&
+                connectionState.load(std::memory_order_acquire) != KmBoxConnectionState::Connected) {
                 SetConnectionState(KmBoxConnectionState::Connected);
+            }
             if (IsSerialOutputCommand(type)) {
                 const unsigned long long count =
                     g_KmBoxBOutputSendCount.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -259,11 +279,16 @@ bool KmBoxBManager::SendCommandWithRetry(const std::string& command, KmBoxComman
         Diagnostics::Error("[KMBOX-B] %s command failed on attempt %d/%d.",
             ToString(type), attempt, KmBoxRuntimeConfig::CommandMaxRetries);
 
+        if (lifecycleState.load(std::memory_order_acquire) == LifecycleState::Stopping &&
+            !AllowReconnectDuringStopping) {
+            break;
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(
             KmBoxRuntimeConfig::CommandRetryBackoffMs * attempt));
 
         if (attempt < KmBoxRuntimeConfig::CommandMaxRetries)
-            OpenConfiguredPort();
+            OpenConfiguredPort(AllowReconnectDuringStopping);
     }
 
     return false;
@@ -288,6 +313,18 @@ int KmBoxBManager::EnqueueCommand(
     std::vector<std::shared_ptr<KmBoxCommandCompletion>> cancelledCompletions;
     {
         std::unique_lock<std::mutex> lock(queueMutex);
+        const LifecycleState lifecycle = lifecycleState.load(std::memory_order_acquire);
+        const bool offlineTestSeam =
+            lifecycle == LifecycleState::Stopped &&
+            workerRunning.load(std::memory_order_acquire) &&
+            static_cast<bool>(writeOverride);
+        if (priority == KmBoxCommandPriority::Normal &&
+            lifecycle != LifecycleState::Running && !offlineTestSeam) {
+            const auto completionToFail = queued.completion;
+            lock.unlock();
+            CompleteCommand(completionToFail, err_queue_stopped);
+            return err_queue_stopped;
+        }
         if (priority == KmBoxCommandPriority::Safety &&
             !workerRunning.load(std::memory_order_acquire)) {
             const auto completionToFail = queued.completion;
@@ -358,7 +395,7 @@ int KmBoxBManager::ExecuteSafetyReleaseAll()
 {
     int aggregateStatus = success;
     const auto sendRelease = [this, &aggregateStatus](const char* command) {
-        if (!SendCommandWithRetry(command, KmBoxCommandType::MouseButton) &&
+        if (!SendCommandWithRetry(command, KmBoxCommandType::MouseButton, true) &&
             aggregateStatus == success) {
             aggregateStatus = err_net_tx;
         }
@@ -399,20 +436,32 @@ void KmBoxBManager::StartWorkers()
 
 void KmBoxBManager::StopWorkers()
 {
-    if (workerRunning.exchange(false, std::memory_order_acq_rel)) {
-        queueCv.notify_all();
-        if (queueThread.joinable())
-            queueThread.join();
-    }
-    if (heartbeatRunning.exchange(false, std::memory_order_acq_rel)) {
-        if (heartbeatThread.joinable())
-            heartbeatThread.join();
-    }
+    workerRunning.store(false, std::memory_order_release);
+    heartbeatRunning.store(false, std::memory_order_release);
+    queueCv.notify_all();
+    heartbeatCv.notify_all();
 
+    const std::thread::id current = std::this_thread::get_id();
+    if (queueThread.joinable() && queueThread.get_id() != current)
+        queueThread.join();
+    if (heartbeatThread.joinable() && heartbeatThread.get_id() != current)
+        heartbeatThread.join();
+}
+
+void KmBoxBManager::CompletePendingCommands(int Status)
+{
+    std::deque<KmBoxQueuedSerialCommand> pending;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        pending.swap(commandQueue);
+    }
+    for (const auto& command : pending)
+        CompleteCommand(command.completion, Status);
 }
 
 void KmBoxBManager::QueueWorkerLoop()
 {
+    queueThreadId.store(GetCurrentThreadId(), std::memory_order_release);
     auto lastFlush = std::chrono::steady_clock::now();
     while (workerRunning.load(std::memory_order_acquire)) {
         KmBoxQueuedSerialCommand command{};
@@ -446,6 +495,12 @@ void KmBoxBManager::QueueWorkerLoop()
         if (elapsed < flushInterval)
             std::this_thread::sleep_for(flushInterval - elapsed);
 
+        if (command.priority == KmBoxCommandPriority::Normal &&
+            lifecycleState.load(std::memory_order_acquire) != LifecycleState::Running) {
+            CompleteCommand(command.completion, err_queue_stopped);
+            continue;
+        }
+
         if (IsSerialOutputCommand(command.type) &&
             ShouldSuppressOutputForMenu(
                 OW::Config::KmboxOutputSuppressedByMenu(), command.outputIntent)) {
@@ -465,14 +520,25 @@ void KmBoxBManager::QueueWorkerLoop()
 
         lastFlush = std::chrono::steady_clock::now();
     }
+    queueThreadId.store(0, std::memory_order_release);
 }
 
 void KmBoxBManager::HeartbeatLoop()
 {
+    heartbeatThreadId.store(GetCurrentThreadId(), std::memory_order_release);
     while (heartbeatRunning.load(std::memory_order_acquire)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(KmBoxRuntimeConfig::HeartbeatIntervalMs));
+        {
+            std::unique_lock<std::mutex> lock(heartbeatMutex);
+            heartbeatCv.wait_for(lock,
+                std::chrono::milliseconds(KmBoxRuntimeConfig::HeartbeatIntervalMs),
+                [this]() {
+                    return !heartbeatRunning.load(std::memory_order_acquire);
+                });
+        }
         if (!heartbeatRunning.load(std::memory_order_acquire))
             break;
+        if (lifecycleState.load(std::memory_order_acquire) != LifecycleState::Running)
+            continue;
 
         if (OW::Config::KmboxOutputSuppressedByMenu())
             continue;
@@ -487,6 +553,47 @@ void KmBoxBManager::HeartbeatLoop()
             OpenConfiguredPort();
         }
     }
+    heartbeatThreadId.store(0, std::memory_order_release);
+}
+
+bool KmBoxBManager::IsOwnedWorkerThread() const
+{
+    const DWORD current = GetCurrentThreadId();
+    return current != 0 &&
+        (current == queueThreadId.load(std::memory_order_acquire) ||
+         current == heartbeatThreadId.load(std::memory_order_acquire));
+}
+
+int KmBoxBManager::Shutdown(std::chrono::milliseconds timeout)
+{
+    if (IsOwnedWorkerThread()) {
+        lifecycleState.store(LifecycleState::Stopping, std::memory_order_release);
+        workerRunning.store(false, std::memory_order_release);
+        heartbeatRunning.store(false, std::memory_order_release);
+        queueCv.notify_all();
+        heartbeatCv.notify_all();
+        Diagnostics::Warn("[KMBOX-B] Shutdown deferred from an owned worker thread.");
+        return err_queue_stopped;
+    }
+
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex);
+    if (lifecycleState.load(std::memory_order_acquire) == LifecycleState::Stopped)
+        return success;
+
+    lifecycleState.store(LifecycleState::Stopping, std::memory_order_release);
+    heartbeatCv.notify_all();
+
+    int cleanupStatus = success;
+    if (workerRunning.load(std::memory_order_acquire))
+        cleanupStatus = ReleaseAllOutputAndWait(timeout);
+
+    StopWorkers();
+    CompletePendingCommands(err_queue_stopped);
+    ClosePort();
+    writeOverride = {};
+    lifecycleState.store(LifecycleState::Stopped, std::memory_order_release);
+    Diagnostics::Info("[KMBOX-B] lifecycle stopped. cleanup_status=%d", cleanupStatus);
+    return cleanupStatus;
 }
 
 int KmBoxBManager::init()
@@ -496,18 +603,30 @@ int KmBoxBManager::init()
 
 int KmBoxBManager::init(const std::string& portName)
 {
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex);
+    const LifecycleState previousLifecycle = lifecycleState.load(std::memory_order_acquire);
+    if (previousLifecycle == LifecycleState::Stopping)
+        return err_queue_stopped;
+    if (previousLifecycle == LifecycleState::Stopped)
+        lifecycleState.store(LifecycleState::Starting, std::memory_order_release);
+
     SetConnectionState(KmBoxConnectionState::Connecting);
     std::string port = portName.empty() ? find_port("USB-SERIAL CH340") : normalize_port_name(portName);
     if (port.empty()) {
         Diagnostics::Error("[KMBOX-B] Serial port not found.");
         SetConnectionState(KmBoxConnectionState::Disconnected);
+        if (previousLifecycle == LifecycleState::Stopped)
+            lifecycleState.store(LifecycleState::Stopped, std::memory_order_release);
         return -1;
     }
     serialPortName = port;
     if (!OpenConfiguredPort()) {
+        if (previousLifecycle == LifecycleState::Stopped)
+            lifecycleState.store(LifecycleState::Stopped, std::memory_order_release);
         return -2;
     }
     StartWorkers();
+    lifecycleState.store(LifecycleState::Running, std::memory_order_release);
     return 0;
 }
 

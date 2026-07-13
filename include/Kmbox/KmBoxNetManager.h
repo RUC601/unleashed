@@ -45,6 +45,7 @@ public:
     int monitorStartStatus = err_creat_socket;
     std::atomic<unsigned long long> inputPacketCount{ 0 };
     std::atomic<unsigned char> lastLoggedMouseButtons{ 0 };
+    std::atomic<DWORD> listenerThreadId{ 0 };
 public:
     standard_keyboard_report_t hw_Keyboard;
     standard_mouse_report_t hw_Mouse;
@@ -61,6 +62,14 @@ public:
 
 class KmBoxNetManager
 {
+public:
+    enum class LifecycleState : int {
+        Stopped = 0,
+        Starting,
+        Running,
+        Stopping
+    };
+
 private:
     SOCKADDR_IN AddrServer;
     SOCKET s_Client = 0;
@@ -73,18 +82,24 @@ private:
     bool wsaStarted = false;
 
     std::atomic<KmBoxConnectionState> connectionState{ KmBoxConnectionState::Disconnected };
+    std::atomic<LifecycleState> lifecycleState{ LifecycleState::Stopped };
     std::atomic<bool> queueRunning{ false };
     std::atomic<bool> heartbeatRunning{ false };
 
+    std::mutex lifecycleMutex;
     std::mutex sendMutex;
     std::mutex dataMutex;
     std::mutex mouseStateMutex;
     std::mutex reconnectMutex;
     std::mutex queueMutex;
     std::condition_variable queueCv;
+    std::mutex heartbeatMutex;
+    std::condition_variable heartbeatCv;
     std::deque<KmBoxQueuedNetCommand> commandQueue;
     std::thread queueThread;
     std::thread heartbeatThread;
+    std::atomic<DWORD> queueThreadId{ 0 };
+    std::atomic<DWORD> heartbeatThreadId{ 0 };
     std::atomic<unsigned long long> outputSendCount{ 0 };
     std::function<int(unsigned int, const client_data&, int)> safetySendOverride;
 private:
@@ -105,25 +120,31 @@ private:
     bool OpenSocket();
     int ConnectLocked();
     bool EnsureConnected();
+    bool LifecycleAllowsReconnect() const;
+    bool IsOwnedWorkerThread() const;
     void StartWorkers();
     void StopWorkers();
+    void CompletePendingCommands(int Status);
     void QueueWorkerLoop();
     void HeartbeatLoop();
     int SetMouseButton(unsigned int Mask, bool Down, unsigned int Cmd, bool Force = false);
 public:
     friend class KmboxQueueSelfTestAccess;
+    friend class KmboxLifecycleSelfTestAccess;
     KmBoxNetManager();
     ~KmBoxNetManager();
     int RecoverMousePassthrough();
     int ForceReleaseMouseButton(int button);
     int ForceReleaseMouseButtons();
     int ReleaseAllOutputAndWait(std::chrono::milliseconds Timeout);
+    int Shutdown(std::chrono::milliseconds Timeout = std::chrono::milliseconds(500));
     int SetMouseButtonStateMask(unsigned int StateMask, bool Force = false);
     int MaskMouse(unsigned int Mask);
     int UnmaskAll();
     static bool BuildKeyboardReport(unsigned char HidCode, bool Down, soft_keyboard_t& Report);
     int SendKeyboardKey(unsigned char hidCode, bool down);
     KmBoxConnectionState GetConnectionState() const;
+    LifecycleState GetLifecycleState() const;
     bool IsConnected() const;
     // Initialize device connection
     int InitDevice(const std::string& IP, WORD Port, const std::string& Mac);

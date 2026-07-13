@@ -299,19 +299,17 @@ KmBoxNetManager::KmBoxNetManager()
 
 KmBoxNetManager::~KmBoxNetManager()
 {
-    StopWorkers();
-    KeyBoard.EndMonitor();
-    CloseSocket();
-
-    if (wsaStarted) {
-        WSACleanup();
-        wsaStarted = false;
-    }
+    (void)Shutdown();
 }
 
 KmBoxConnectionState KmBoxNetManager::GetConnectionState() const
 {
     return connectionState.load(std::memory_order_acquire);
+}
+
+KmBoxNetManager::LifecycleState KmBoxNetManager::GetLifecycleState() const
+{
+    return lifecycleState.load(std::memory_order_acquire);
 }
 
 bool KmBoxNetManager::IsConnected() const
@@ -560,6 +558,9 @@ int KmBoxNetManager::SendPacketWithRetry(client_data& packet, int DataLength, Km
 
 int KmBoxNetManager::ConnectLocked()
 {
+    if (!LifecycleAllowsReconnect())
+        return err_queue_stopped;
+
     {
         std::lock_guard<std::mutex> lock(dataMutex);
         if (configuredIp.empty() || configuredPort == 0 || configuredMac.empty())
@@ -581,11 +582,13 @@ int KmBoxNetManager::ConnectLocked()
         packet = PostData;
     }
 
-    const int status = SendPacketWithRetry(packet, sizeof(cmd_head_t), KmBoxCommandType::Connect);
-    if (status == success) {
+    int status = SendPacketWithRetry(packet, sizeof(cmd_head_t), KmBoxCommandType::Connect);
+    if (status == success && LifecycleAllowsReconnect()) {
         SetConnectionState(KmBoxConnectionState::Connected);
     } else {
-        Diagnostics::Error("[KMBOX-NET] Device connect failed. status=%d", status);
+        if (status == success)
+            status = err_queue_stopped;
+        Diagnostics::Error("[KMBOX-NET] Device connect failed or stopped. status=%d", status);
         CloseSocket();
         SetConnectionState(KmBoxConnectionState::Error);
     }
@@ -595,20 +598,35 @@ int KmBoxNetManager::ConnectLocked()
 
 bool KmBoxNetManager::EnsureConnected()
 {
+    if (!LifecycleAllowsReconnect())
+        return false;
     if (connectionState.load(std::memory_order_acquire) == KmBoxConnectionState::Connected)
         return true;
 
     std::lock_guard<std::mutex> lock(reconnectMutex);
+    if (!LifecycleAllowsReconnect())
+        return false;
     if (connectionState.load(std::memory_order_acquire) == KmBoxConnectionState::Connected)
         return true;
 
     const int status = ConnectLocked();
     if (status != success) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(KmBoxRuntimeConfig::ReconnectBackoffMs));
+        if (LifecycleAllowsReconnect()) {
+            std::unique_lock<std::mutex> waitLock(heartbeatMutex);
+            heartbeatCv.wait_for(waitLock,
+                std::chrono::milliseconds(KmBoxRuntimeConfig::ReconnectBackoffMs),
+                [this]() { return !LifecycleAllowsReconnect(); });
+        }
         return false;
     }
 
     return true;
+}
+
+bool KmBoxNetManager::LifecycleAllowsReconnect() const
+{
+    const LifecycleState state = lifecycleState.load(std::memory_order_acquire);
+    return state == LifecycleState::Starting || state == LifecycleState::Running;
 }
 
 void KmBoxNetManager::StartWorkers()
@@ -623,16 +641,27 @@ void KmBoxNetManager::StartWorkers()
 
 void KmBoxNetManager::StopWorkers()
 {
-    if (queueRunning.exchange(false, std::memory_order_acq_rel)) {
-        queueCv.notify_all();
-        if (queueThread.joinable())
-            queueThread.join();
-    }
+    queueRunning.store(false, std::memory_order_release);
+    heartbeatRunning.store(false, std::memory_order_release);
+    queueCv.notify_all();
+    heartbeatCv.notify_all();
 
-    if (heartbeatRunning.exchange(false, std::memory_order_acq_rel)) {
-        if (heartbeatThread.joinable())
-            heartbeatThread.join();
+    const std::thread::id current = std::this_thread::get_id();
+    if (queueThread.joinable() && queueThread.get_id() != current)
+        queueThread.join();
+    if (heartbeatThread.joinable() && heartbeatThread.get_id() != current)
+        heartbeatThread.join();
+}
+
+void KmBoxNetManager::CompletePendingCommands(int Status)
+{
+    std::deque<KmBoxQueuedNetCommand> pending;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        pending.swap(commandQueue);
     }
+    for (const auto& command : pending)
+        CompleteCommand(command.completion, Status);
 }
 
 int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
@@ -660,6 +689,15 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
     int enqueueStatus = success;
     {
         std::lock_guard<std::mutex> lock(queueMutex);
+        const LifecycleState lifecycle = lifecycleState.load(std::memory_order_acquire);
+        const bool offlineTestSeam =
+            lifecycle == LifecycleState::Stopped &&
+            queueRunning.load(std::memory_order_acquire) &&
+            static_cast<bool>(safetySendOverride);
+        if (Command.priority == KmBoxCommandPriority::Normal &&
+            lifecycle != LifecycleState::Running && !offlineTestSeam) {
+            enqueueStatus = err_queue_stopped;
+        }
         if ((Command.completion || Command.priority == KmBoxCommandPriority::Safety) &&
             !queueRunning.load(std::memory_order_acquire)) {
             enqueueStatus = err_queue_stopped;
@@ -894,6 +932,7 @@ int KmBoxNetManager::ExecuteSafetyReleaseAll()
 
 void KmBoxNetManager::QueueWorkerLoop()
 {
+    queueThreadId.store(GetCurrentThreadId(), std::memory_order_release);
     auto lastFlush = std::chrono::steady_clock::now();
     while (queueRunning.load(std::memory_order_acquire)) {
         KmBoxQueuedNetCommand command{};
@@ -926,6 +965,12 @@ void KmBoxNetManager::QueueWorkerLoop()
         const auto elapsed = std::chrono::steady_clock::now() - lastFlush;
         if (elapsed < flushInterval)
             std::this_thread::sleep_for(flushInterval - elapsed);
+
+        if (command.priority == KmBoxCommandPriority::Normal &&
+            lifecycleState.load(std::memory_order_acquire) != LifecycleState::Running) {
+            CompleteCommand(command.completion, err_queue_stopped);
+            continue;
+        }
 
         if (IsOutputCommand(command.type) &&
             ShouldSuppressOutputForMenu(
@@ -1001,14 +1046,25 @@ void KmBoxNetManager::QueueWorkerLoop()
         CompleteCommand(command.completion, status);
         lastFlush = std::chrono::steady_clock::now();
     }
+    queueThreadId.store(0, std::memory_order_release);
 }
 
 void KmBoxNetManager::HeartbeatLoop()
 {
+    heartbeatThreadId.store(GetCurrentThreadId(), std::memory_order_release);
     while (heartbeatRunning.load(std::memory_order_acquire)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(KmBoxRuntimeConfig::HeartbeatIntervalMs));
+        {
+            std::unique_lock<std::mutex> lock(heartbeatMutex);
+            heartbeatCv.wait_for(lock,
+                std::chrono::milliseconds(KmBoxRuntimeConfig::HeartbeatIntervalMs),
+                [this]() {
+                    return !heartbeatRunning.load(std::memory_order_acquire);
+                });
+        }
         if (!heartbeatRunning.load(std::memory_order_acquire))
             break;
+        if (lifecycleState.load(std::memory_order_acquire) != LifecycleState::Running)
+            continue;
 
         if (OW::Config::KmboxOutputSuppressedByMenu())
             continue;
@@ -1025,6 +1081,64 @@ void KmBoxNetManager::HeartbeatLoop()
             EnsureConnected();
         }
     }
+    heartbeatThreadId.store(0, std::memory_order_release);
+}
+
+bool KmBoxNetManager::IsOwnedWorkerThread() const
+{
+    const DWORD current = GetCurrentThreadId();
+    return current != 0 &&
+        (current == queueThreadId.load(std::memory_order_acquire) ||
+         current == heartbeatThreadId.load(std::memory_order_acquire) ||
+         current == KeyBoard.listenerThreadId.load(std::memory_order_acquire));
+}
+
+int KmBoxNetManager::Shutdown(std::chrono::milliseconds Timeout)
+{
+    if (IsOwnedWorkerThread()) {
+        lifecycleState.store(LifecycleState::Stopping, std::memory_order_release);
+        queueRunning.store(false, std::memory_order_release);
+        heartbeatRunning.store(false, std::memory_order_release);
+        queueCv.notify_all();
+        heartbeatCv.notify_all();
+        if (GetCurrentThreadId() ==
+            KeyBoard.listenerThreadId.load(std::memory_order_acquire)) {
+            KeyBoard.ListenerRuned.store(false, std::memory_order_release);
+            if (IsValidSocket(KeyBoard.s_ListenSocket))
+                closesocket(KeyBoard.s_ListenSocket);
+            KeyBoard.s_ListenSocket = 0;
+            KeyBoard.MonitorPort = 0;
+        }
+        Diagnostics::Warn("[KMBOX-NET] Shutdown deferred from an owned worker thread.");
+        return err_queue_stopped;
+    }
+
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex);
+    if (lifecycleState.load(std::memory_order_acquire) == LifecycleState::Stopped)
+        return success;
+
+    lifecycleState.store(LifecycleState::Stopping, std::memory_order_release);
+    heartbeatCv.notify_all();
+
+    int cleanupStatus = success;
+    if (queueRunning.load(std::memory_order_acquire))
+        cleanupStatus = ReleaseAllOutputAndWait(Timeout);
+
+    StopWorkers();
+    KeyBoard.EndMonitor();
+    CompletePendingCommands(err_queue_stopped);
+    CloseSocket();
+    SetConnectionState(KmBoxConnectionState::Disconnected);
+
+    if (wsaStarted) {
+        WSACleanup();
+        wsaStarted = false;
+    }
+
+    safetySendOverride = {};
+    lifecycleState.store(LifecycleState::Stopped, std::memory_order_release);
+    Diagnostics::Info("[KMBOX-NET] lifecycle stopped. cleanup_status=%d", cleanupStatus);
+    return cleanupStatus;
 }
 
 int KmBoxNetManager::SendSynchronousCommand(unsigned int Cmd, unsigned int RandValue, int DataLength,
@@ -1042,6 +1156,13 @@ int KmBoxNetManager::SendSynchronousCommand(unsigned int Cmd, unsigned int RandV
 
 int KmBoxNetManager::InitDevice(const std::string& IP, WORD Port, const std::string& Mac)
 {
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex);
+    const LifecycleState previousLifecycle = lifecycleState.load(std::memory_order_acquire);
+    if (previousLifecycle == LifecycleState::Stopping)
+        return err_queue_stopped;
+    if (previousLifecycle == LifecycleState::Stopped)
+        lifecycleState.store(LifecycleState::Starting, std::memory_order_release);
+
     WORD wVersionRequested = MAKEWORD(2, 2);
     WSADATA wsaData{};
 
@@ -1050,6 +1171,8 @@ int KmBoxNetManager::InitDevice(const std::string& IP, WORD Port, const std::str
         if (status != success) {
             Diagnostics::Error("[KMBOX-NET] WSAStartup failed. status=%d", status);
             SetConnectionState(KmBoxConnectionState::Error);
+            if (previousLifecycle == LifecycleState::Stopped)
+                lifecycleState.store(LifecycleState::Stopped, std::memory_order_release);
             return err_creat_socket;
         }
         wsaStarted = true;
@@ -1069,13 +1192,30 @@ int KmBoxNetManager::InitDevice(const std::string& IP, WORD Port, const std::str
     } catch (const std::exception&) {
         Diagnostics::Error("[KMBOX-NET] Invalid device MAC: %s", Mac.c_str());
         SetConnectionState(KmBoxConnectionState::Error);
+        if (previousLifecycle == LifecycleState::Stopped) {
+            CloseSocket();
+            if (wsaStarted) {
+                WSACleanup();
+                wsaStarted = false;
+            }
+            lifecycleState.store(LifecycleState::Stopped, std::memory_order_release);
+        }
         return err_net_cmd;
     }
 
     std::lock_guard<std::mutex> reconnectLock(reconnectMutex);
     const int status = ConnectLocked();
-    if (status == success)
+    if (status == success) {
         StartWorkers();
+        lifecycleState.store(LifecycleState::Running, std::memory_order_release);
+    } else if (previousLifecycle == LifecycleState::Stopped) {
+        CloseSocket();
+        if (wsaStarted) {
+            WSACleanup();
+            wsaStarted = false;
+        }
+        lifecycleState.store(LifecycleState::Stopped, std::memory_order_release);
+    }
     return status;
 }
 
@@ -1521,6 +1661,7 @@ int KmBoxMouse::Middle(bool Down)
 
 void KmBoxKeyBoard::ListenThread()
 {
+    this->listenerThreadId.store(GetCurrentThreadId(), std::memory_order_release);
     WORD wVersionRequested = MAKEWORD(2, 2);
     WSADATA wsaData{};
     int Status = WSAStartup(wVersionRequested, &wsaData);
@@ -1532,6 +1673,7 @@ void KmBoxKeyBoard::ListenThread()
             this->monitorStartResolved = true;
         }
         this->monitorStartCv.notify_all();
+        this->listenerThreadId.store(0, std::memory_order_release);
         return;
     }
 
@@ -1545,6 +1687,7 @@ void KmBoxKeyBoard::ListenThread()
         }
         this->monitorStartCv.notify_all();
         WSACleanup();
+        this->listenerThreadId.store(0, std::memory_order_release);
         return;
     }
     DisableUdpConnectionReset(this->s_ListenSocket, "monitor");
@@ -1567,6 +1710,7 @@ void KmBoxKeyBoard::ListenThread()
         }
         this->monitorStartCv.notify_all();
         WSACleanup();
+        this->listenerThreadId.store(0, std::memory_order_release);
         return;
     }
 
@@ -1624,6 +1768,7 @@ void KmBoxKeyBoard::ListenThread()
         closesocket(this->s_ListenSocket);
     this->s_ListenSocket = 0;
     WSACleanup();
+    this->listenerThreadId.store(0, std::memory_order_release);
 }
 
 int KmBoxKeyBoard::StartMonitor(WORD Port)
@@ -1703,8 +1848,10 @@ void KmBoxKeyBoard::EndMonitor()
     this->s_ListenSocket = 0;
     this->MonitorPort = 0;
 
-    if (this->t_Listen.joinable())
+    if (this->t_Listen.joinable() &&
+        this->t_Listen.get_id() != std::this_thread::get_id()) {
         this->t_Listen.join();
+    }
 }
 
 unsigned long long KmBoxKeyBoard::InputPacketCount() const

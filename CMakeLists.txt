@@ -166,6 +166,14 @@ add_executable(KmboxQueueSelfTest
     src/Utils/Diagnostics.cpp
 )
 
+add_executable(KmboxLifecycleSelfTest
+    src/Tools/KmboxLifecycleSelfTest.cpp
+    src/Kmbox/KmBoxMock.cpp
+    src/Kmbox/KmBoxNetManager.cpp
+    src/Kmbox/KmboxB.cpp
+    src/Utils/Diagnostics.cpp
+)
+
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
@@ -178,6 +186,7 @@ add_test(NAME HeroSkillConfigSelfTest COMMAND HeroSkillConfigSelfTest)
 add_test(NAME HeroPerkClassifierSelfTest COMMAND HeroPerkClassifierSelfTest)
 add_test(NAME MockHardwareSelfTest COMMAND MockHardwareSelfTest)
 add_test(NAME KmboxQueueSelfTest COMMAND KmboxQueueSelfTest)
+add_test(NAME KmboxLifecycleSelfTest COMMAND KmboxLifecycleSelfTest)
 
 # ============================================================================
 # Include directories
@@ -259,6 +268,12 @@ target_include_directories(KmboxQueueSelfTest PRIVATE
     vendor/imgui
 )
 
+target_include_directories(KmboxLifecycleSelfTest PRIVATE
+    include
+    vendor/leechcore
+    vendor/imgui
+)
+
 # ============================================================================
 # Link libraries
 # ============================================================================
@@ -284,6 +299,11 @@ target_link_libraries(MockHardwareSelfTest PRIVATE
 )
 
 target_link_libraries(KmboxQueueSelfTest PRIVATE
+    ws2_32
+    setupapi
+)
+
+target_link_libraries(KmboxLifecycleSelfTest PRIVATE
     ws2_32
     setupapi
 )
@@ -390,3 +410,5 @@ target_compile_options(MockHardwareSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 
 target_compile_definitions(MockHardwareSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(KmboxQueueSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(KmboxQueueSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(KmboxLifecycleSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(KmboxLifecycleSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)

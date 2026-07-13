@@ -1264,6 +1264,29 @@ static int ReleaseKmboxMouseStateForShutdown(
     return status;
 }
 
+static int ShutdownKmboxRuntime(const char* reason, DWORD timeoutMs = 500)
+{
+    Diagnostics::Aim("kmbox.lifecycle_shutdown reason=%s timeoutMs=%lu",
+        reason ? reason : "unknown",
+        static_cast<unsigned long>(timeoutMs));
+
+    const auto timeout = std::chrono::milliseconds(timeoutMs);
+    int status = success;
+    const auto record = [&status](int result) {
+        if (status == success && result != success)
+            status = result;
+    };
+
+    record(kmbox::KmBoxMgr.Shutdown(timeout));
+    record(kmbox::kmBoxBMgr.Shutdown(timeout));
+    record(kmbox::MockHardwareMgr.Shutdown(timeout));
+    if (status != success) {
+        Diagnostics::Warn("KMBox lifecycle shutdown completed with status=%d reason=%s.",
+            status, reason ? reason : "unknown");
+    }
+    return status;
+}
+
 static void LoadRuntimeConfigForDiagnostics()
 {
     const std::string configPath = OW::Config::ConfigPath();
@@ -1302,8 +1325,7 @@ static void ShutdownHeadlessRuntime()
     mem.CloseDma();
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
-    ReleaseKmboxMouseStateForShutdown("headless_shutdown");
-    kmbox::MockHardwareMgr.Shutdown();
+    ShutdownKmboxRuntime("headless_shutdown");
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
@@ -1340,7 +1362,7 @@ static int RunKmboxMoveTestCli()
     OW::Config::Menu = false;
     InitializeKmBoxFromConfig();
     RunKmboxMoveTest();
-    ReleaseKmboxMouseStateForShutdown("kmbox_move_test");
+    ShutdownKmboxRuntime("kmbox_move_test");
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
@@ -1354,8 +1376,11 @@ static int RunKmboxRecoverMouseCli()
     LoadRuntimeConfigForDiagnostics();
     OW::Config::Menu = false;
     InitializeKmBoxFromConfig();
-    const int recoveryStatus = ReleaseKmboxMouseStateForShutdown(
+    int recoveryStatus = ReleaseKmboxMouseStateForShutdown(
         "kmbox_recover_mouse_cli", 1500);
+    const int shutdownStatus = ShutdownKmboxRuntime("kmbox_recover_mouse_cli", 1500);
+    if (recoveryStatus == success)
+        recoveryStatus = shutdownStatus;
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
@@ -1791,7 +1816,7 @@ int main(int argc, char** argv)
         mem.CloseDma();
         Diagnostics::SetDmaReady(false);
         Diagnostics::SetProcessAttached(false);
-        ReleaseKmboxMouseStateForShutdown("overlay_init_failure");
+        ShutdownKmboxRuntime("overlay_init_failure");
         kmbox::ReleaseTimerResolution();
         Diagnostics::ShutdownAimLog();
         Diagnostics::Shutdown();
@@ -1834,8 +1859,7 @@ int main(int argc, char** argv)
     Diagnostics::SetDmaReady(false);
     Diagnostics::SetProcessAttached(false);
     Diagnostics::Info("DMA subsystem closed.");
-    ReleaseKmboxMouseStateForShutdown("overlay_shutdown");
-    kmbox::MockHardwareMgr.Shutdown();
+    ShutdownKmboxRuntime("overlay_shutdown");
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();

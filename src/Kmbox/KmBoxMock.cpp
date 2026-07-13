@@ -13,6 +13,11 @@ namespace kmbox
 
     MockHardware MockHardwareMgr;
 
+    MockHardware::~MockHardware()
+    {
+        (void)Shutdown();
+    }
+
     const char* ToString(MockFaultMode mode)
     {
         switch (mode) {
@@ -39,18 +44,31 @@ namespace kmbox
 
     int MockHardware::Initialize()
     {
+        std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+        lifecycleState_.store(LifecycleState::Starting, std::memory_order_release);
         std::lock_guard<std::mutex> lock(mutex_);
         ClearStateLocked(true);
+        lifecycleState_.store(LifecycleState::Running, std::memory_order_release);
         Diagnostics::Info("[KMBOX-MOCK] initialized.");
         Diagnostics::Aim("kmbox.mock init success");
         return success;
     }
 
-    void MockHardware::Shutdown()
+    int MockHardware::Shutdown(std::chrono::milliseconds timeout)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        ClearStateLocked(false);
+        std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+        if (lifecycleState_.load(std::memory_order_acquire) == LifecycleState::Stopped)
+            return success;
+
+        lifecycleState_.store(LifecycleState::Stopping, std::memory_order_release);
+        const int cleanupStatus = ReleaseAllOutputAndWait(timeout);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ClearStateLocked(false);
+        }
+        lifecycleState_.store(LifecycleState::Stopped, std::memory_order_release);
         Diagnostics::Info("[KMBOX-MOCK] shutdown.");
+        return cleanupStatus;
     }
 
     void MockHardware::Reset()
@@ -66,6 +84,11 @@ namespace kmbox
     {
         std::lock_guard<std::mutex> lock(mutex_);
         return initialized_;
+    }
+
+    MockHardware::LifecycleState MockHardware::GetLifecycleState() const
+    {
+        return lifecycleState_.load(std::memory_order_acquire);
     }
 
     void MockHardware::SetFaultMode(MockFaultMode mode)
@@ -85,6 +108,8 @@ namespace kmbox
     int MockHardware::RecordMove(int x, int y, int runtimeMs)
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (lifecycleState_.load(std::memory_order_acquire) != LifecycleState::Running)
+            return err_queue_stopped;
         if (!initialized_)
             return err_creat_socket;
 
@@ -112,6 +137,8 @@ namespace kmbox
     int MockHardware::RecordButton(int button, bool down)
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (lifecycleState_.load(std::memory_order_acquire) != LifecycleState::Running)
+            return err_queue_stopped;
         if (!initialized_)
             return err_creat_socket;
 
@@ -150,6 +177,8 @@ namespace kmbox
     int MockHardware::SetMouseButtonStateMask(uint32_t stateMask, bool force)
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (lifecycleState_.load(std::memory_order_acquire) != LifecycleState::Running)
+            return err_queue_stopped;
         if (!initialized_)
             return err_creat_socket;
 
@@ -243,6 +272,8 @@ namespace kmbox
     int MockHardware::MaskMouse(uint32_t mask)
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (lifecycleState_.load(std::memory_order_acquire) != LifecycleState::Running)
+            return err_queue_stopped;
         if (!initialized_)
             return err_creat_socket;
 
@@ -269,6 +300,8 @@ namespace kmbox
     int MockHardware::UnmaskAll()
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (lifecycleState_.load(std::memory_order_acquire) != LifecycleState::Running)
+            return err_queue_stopped;
         if (!initialized_)
             return err_creat_socket;
 
@@ -294,6 +327,8 @@ namespace kmbox
     int MockHardware::RecordKeyboardKey(unsigned char hidCode, bool down)
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (lifecycleState_.load(std::memory_order_acquire) != LifecycleState::Running)
+            return err_queue_stopped;
         if (!initialized_)
             return err_creat_socket;
 
