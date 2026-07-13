@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstring>
 #include <ctime>
+#include <vector>
 
 namespace
 {
@@ -182,7 +183,8 @@ namespace
             type == KmBoxCommandType::MouseButton ||
             type == KmBoxCommandType::MouseMask ||
             type == KmBoxCommandType::MouseUnmask ||
-            type == KmBoxCommandType::Keyboard;
+            type == KmBoxCommandType::Keyboard ||
+            type == KmBoxCommandType::SafetyReleaseAll;
     }
 
     bool IsMouseMoveCommand(KmBoxCommandType type)
@@ -221,11 +223,12 @@ namespace
     }
 
     bool DropOldestMouseMove(std::deque<KmBoxQueuedNetCommand>& queue,
-                             KmBoxQueuedNetCommand& dropped)
+                              KmBoxQueuedNetCommand& dropped)
     {
         const auto item = std::find_if(queue.begin(), queue.end(),
             [](const KmBoxQueuedNetCommand& queued) {
-                return IsMouseMoveCommand(queued.type);
+                return queued.priority == KmBoxCommandPriority::Normal &&
+                    IsMouseMoveCommand(queued.type);
             });
         if (item == queue.end())
             return false;
@@ -235,13 +238,46 @@ namespace
         return true;
     }
 
+    bool DropOldestNormalCommand(std::deque<KmBoxQueuedNetCommand>& queue,
+                                  KmBoxQueuedNetCommand& dropped)
+    {
+        const auto item = std::find_if(queue.begin(), queue.end(),
+            [](const KmBoxQueuedNetCommand& queued) {
+                return queued.priority == KmBoxCommandPriority::Normal;
+            });
+        if (item == queue.end())
+            return false;
+
+        dropped = *item;
+        queue.erase(item);
+        return true;
+    }
+
+    void CompleteCommand(
+        const std::shared_ptr<KmBoxCommandCompletion>& completion,
+        int status)
+    {
+        if (!completion)
+            return;
+
+        {
+            std::lock_guard<std::mutex> lock(completion->mutex);
+            if (completion->completed)
+                return;
+            completion->status = status;
+            completion->completed = true;
+        }
+        completion->cv.notify_all();
+    }
+
     int FlushIntervalForCommand(KmBoxCommandType type)
     {
         const bool latencySensitive =
             type == KmBoxCommandType::MouseButton ||
             type == KmBoxCommandType::MouseMask ||
             type == KmBoxCommandType::MouseUnmask ||
-            type == KmBoxCommandType::Keyboard;
+            type == KmBoxCommandType::Keyboard ||
+            type == KmBoxCommandType::SafetyReleaseAll;
 
         return latencySensitive
             ? KmBoxRuntimeConfig::MouseButtonFlushIntervalMs
@@ -592,6 +628,7 @@ void KmBoxNetManager::StopWorkers()
         if (queueThread.joinable())
             queueThread.join();
     }
+
     if (heartbeatRunning.exchange(false, std::memory_order_acq_rel)) {
         if (heartbeatThread.joinable())
             heartbeatThread.join();
@@ -608,11 +645,25 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
                 Command.data.cmd_mouse.y,
                 Command.data.cmd_mouse.button);
         }
+        CompleteCommand(Command.completion, err_creat_socket);
         return err_creat_socket;
     }
 
+    if ((Command.completion || Command.priority == KmBoxCommandPriority::Safety) &&
+        !queueRunning.load(std::memory_order_acquire)) {
+        CompleteCommand(Command.completion, err_queue_stopped);
+        return err_queue_stopped;
+    }
+
+    std::shared_ptr<KmBoxCommandCompletion> droppedCompletion;
+    std::vector<std::shared_ptr<KmBoxCommandCompletion>> cancelledCompletions;
+    int enqueueStatus = success;
     {
         std::lock_guard<std::mutex> lock(queueMutex);
+        if ((Command.completion || Command.priority == KmBoxCommandPriority::Safety) &&
+            !queueRunning.load(std::memory_order_acquire)) {
+            enqueueStatus = err_queue_stopped;
+        }
         if (IsOutputCommand(Command.type)) {
             Diagnostics::Aim("udp.enqueue request type=%s queue_size_before=%zu x=%d y=%d button=%d len=%d",
                 ToString(Command.type),
@@ -623,11 +674,29 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
                 Command.length);
         }
 
-        if ((Command.type == KmBoxCommandType::MouseMove ||
+        if (enqueueStatus == success &&
+            Command.priority == KmBoxCommandPriority::Safety) {
+            for (auto pending = commandQueue.begin(); pending != commandQueue.end();) {
+                if (pending->priority == KmBoxCommandPriority::Normal &&
+                    IsOutputCommand(pending->type)) {
+                    cancelledCompletions.push_back(pending->completion);
+                    pending = commandQueue.erase(pending);
+                } else {
+                    ++pending;
+                }
+            }
+        }
+
+        if (enqueueStatus == success &&
+            Command.priority == KmBoxCommandPriority::Normal &&
+            !Command.completion &&
+            (Command.type == KmBoxCommandType::MouseMove ||
              Command.type == KmBoxCommandType::MouseAutoMove) &&
             !commandQueue.empty()) {
             KmBoxQueuedNetCommand& back = commandQueue.back();
-            if (back.type == Command.type) {
+            if (back.priority == KmBoxCommandPriority::Normal &&
+                !back.completion &&
+                back.type == Command.type) {
                 back.data.cmd_mouse.x += Command.data.cmd_mouse.x;
                 back.data.cmd_mouse.y += Command.data.cmd_mouse.y;
                 if (Command.type == KmBoxCommandType::MouseAutoMove)
@@ -644,26 +713,49 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
             }
         }
 
-        if (commandQueue.size() >= KmBoxRuntimeConfig::CommandQueueMaxSize) {
-            Diagnostics::Error("[KMBOX-NET] Command queue full; dropping oldest command.");
+        if (enqueueStatus == success &&
+            commandQueue.size() >= KmBoxRuntimeConfig::CommandQueueMaxSize) {
             KmBoxQueuedNetCommand dropped{};
             bool droppedMove = false;
-            if (ShouldDropMouseMoveFirst(Command.type))
+            if (Command.priority == KmBoxCommandPriority::Normal &&
+                ShouldDropMouseMoveFirst(Command.type)) {
                 droppedMove = DropOldestMouseMove(commandQueue, dropped);
-            if (!droppedMove && !commandQueue.empty()) {
-                dropped = commandQueue.front();
-                commandQueue.pop_front();
             }
-            Diagnostics::Aim("udp.enqueue drop_oldest reason=queue_full prefer_move=%d dropped_type=%s dropped_x=%d dropped_y=%d dropped_button=%d queue_size=%zu",
-                ShouldDropMouseMoveFirst(Command.type) ? 1 : 0,
-                ToString(dropped.type),
-                dropped.data.cmd_mouse.x,
-                dropped.data.cmd_mouse.y,
-                dropped.data.cmd_mouse.button,
-                commandQueue.size());
+            const bool droppedNormal = droppedMove ||
+                DropOldestNormalCommand(commandQueue, dropped);
+            if (!droppedNormal) {
+                enqueueStatus = err_queue_full;
+                Diagnostics::Error(
+                    "[KMBOX-NET] Command queue full; no normal command can be displaced for %s.",
+                    ToString(Command.type));
+            } else {
+                droppedCompletion = dropped.completion;
+                Diagnostics::Error("[KMBOX-NET] Command queue full; dropping oldest normal command.");
+                Diagnostics::Aim("udp.enqueue drop_oldest reason=queue_full prefer_move=%d dropped_type=%s dropped_x=%d dropped_y=%d dropped_button=%d queue_size=%zu",
+                    Command.priority == KmBoxCommandPriority::Normal &&
+                        ShouldDropMouseMoveFirst(Command.type) ? 1 : 0,
+                    ToString(dropped.type),
+                    dropped.data.cmd_mouse.x,
+                    dropped.data.cmd_mouse.y,
+                    dropped.data.cmd_mouse.button,
+                    commandQueue.size());
+            }
         }
 
-        if (ShouldPrioritizeAheadOfQueuedMoves(Command.type)) {
+        if (enqueueStatus != success) {
+            // The incoming command was never queued; completion is resolved below.
+        } else if (Command.priority == KmBoxCommandPriority::Safety) {
+            const auto insertAt = std::find_if(commandQueue.begin(), commandQueue.end(),
+                [](const KmBoxQueuedNetCommand& queued) {
+                    return queued.priority == KmBoxCommandPriority::Normal;
+                });
+            commandQueue.insert(insertAt, Command);
+            Diagnostics::Aim(
+                "udp.enqueue prioritized_safety type=%s queue_size_after=%zu cancelled_normal_outputs=%zu",
+                ToString(Command.type),
+                commandQueue.size(),
+                cancelledCompletions.size());
+        } else if (ShouldPrioritizeAheadOfQueuedMoves(Command.type)) {
             auto insertAt = commandQueue.end();
             while (insertAt != commandQueue.begin()) {
                 auto previous = insertAt;
@@ -692,15 +784,112 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
             commandQueue.push_back(Command);
         }
 
-        if (IsOutputCommand(Command.type)) {
+        if (enqueueStatus == success && IsOutputCommand(Command.type)) {
             Diagnostics::Aim("udp.enqueue pushed type=%s queue_size_after=%zu",
                 ToString(Command.type),
                 commandQueue.size());
         }
     }
 
+    for (const auto& completion : cancelledCompletions)
+        CompleteCommand(completion, err_queue_dropped);
+    CompleteCommand(droppedCompletion, err_queue_dropped);
+    if (enqueueStatus != success) {
+        CompleteCommand(Command.completion, enqueueStatus);
+        return enqueueStatus;
+    }
+
     queueCv.notify_one();
     return success;
+}
+
+int KmBoxNetManager::ExecuteSafetyReleaseAll()
+{
+    {
+        std::lock_guard<std::mutex> lock(mouseStateMutex);
+        Mouse.MouseData = {};
+    }
+
+    int status = success;
+    SOCKET releaseSocket = INVALID_SOCKET;
+    SOCKADDR_IN releaseTarget{};
+    std::unique_lock<std::mutex> sendLock;
+
+    if (!safetySendOverride) {
+        sendLock = std::unique_lock<std::mutex>(sendMutex);
+        std::string ip;
+        WORD port = 0;
+        {
+            std::lock_guard<std::mutex> dataLock(dataMutex);
+            ip = configuredIp;
+            port = configuredPort;
+        }
+        if (ip.empty() || port == 0)
+            return err_creat_socket;
+
+        releaseSocket = socket(AF_INET, SOCK_DGRAM, 0);
+        if (!IsValidSocket(releaseSocket))
+            return err_creat_socket;
+        if (!ConfigureSocketTimeouts(releaseSocket)) {
+            closesocket(releaseSocket);
+            return err_creat_socket;
+        }
+        DisableUdpConnectionReset(releaseSocket, "safety-release");
+        releaseTarget.sin_family = AF_INET;
+        releaseTarget.sin_port = htons(port);
+        releaseTarget.sin_addr.S_un.S_addr = inet_addr(ip.c_str());
+        if (releaseTarget.sin_addr.S_un.S_addr == INADDR_NONE) {
+            closesocket(releaseSocket);
+            return err_creat_socket;
+        }
+    }
+
+    const auto send = [&](client_data packet, int length, KmBoxCommandType type) {
+        StampPacketForSend(packet);
+        int sendStatus = success;
+        if (safetySendOverride) {
+            sendStatus = safetySendOverride(packet.head.cmd, packet, length);
+        } else {
+            const int sent = sendto(
+                releaseSocket,
+                reinterpret_cast<const char*>(&packet),
+                length,
+                0,
+                reinterpret_cast<sockaddr*>(&releaseTarget),
+                sizeof(releaseTarget));
+            if (sent == SOCKET_ERROR || sent != length)
+                sendStatus = err_net_tx;
+        }
+        RecordFirstFailure(status, sendStatus);
+        Diagnostics::Aim(
+            "udp.safety_release sendto type=%s cmd=0x%08X len=%d status=%d",
+            ToString(type), packet.head.cmd, length, sendStatus);
+    };
+
+    const auto sendMouseUp = [&](unsigned int cmd) {
+        client_data packet = BuildPacket(cmd, NextRandom());
+        packet.cmd_mouse = {};
+        send(packet, sizeof(cmd_head_t) + sizeof(soft_mouse_t), KmBoxCommandType::MouseButton);
+    };
+
+    sendMouseUp(cmd_mouse_left);
+    sendMouseUp(cmd_mouse_right);
+    sendMouseUp(cmd_mouse_middle);
+
+    client_data keyboard = BuildPacket(cmd_keyboard_all, NextRandom());
+    keyboard.cmd_keyboard = {};
+    send(keyboard, sizeof(cmd_head_t) + sizeof(soft_keyboard_t), KmBoxCommandType::Keyboard);
+
+    client_data unmask = BuildPacket(cmd_unmask_all, NextRandom());
+    send(unmask, sizeof(cmd_head_t), KmBoxCommandType::MouseUnmask);
+
+    if (IsValidSocket(releaseSocket))
+        closesocket(releaseSocket);
+
+    Diagnostics::Info(
+        "[KMBOX-NET] Safety release sendto sequence completed. status=%d",
+        status);
+    return status;
 }
 
 void KmBoxNetManager::QueueWorkerLoop()
@@ -744,6 +933,20 @@ void KmBoxNetManager::QueueWorkerLoop()
             Diagnostics::Aim("udp.queue drop reason=menu_open_suppressed type=%s intent=%s",
                 ToString(command.type),
                 ToString(command.outputIntent));
+            CompleteCommand(command.completion, err_output_suppressed);
+            continue;
+        }
+
+        if (command.type == KmBoxCommandType::SafetyReleaseAll) {
+            Diagnostics::Aim("udp.queue safety_release_all transport_start");
+            const int status = ExecuteSafetyReleaseAll();
+            if (status != success) {
+                Diagnostics::Error(
+                    "[KMBOX-NET] Safety release sendto sequence failed. status=%d",
+                    status);
+            }
+            CompleteCommand(command.completion, status);
+            lastFlush = std::chrono::steady_clock::now();
             continue;
         }
 
@@ -754,9 +957,10 @@ void KmBoxNetManager::QueueWorkerLoop()
                 Diagnostics::Aim("udp.queue drop reason=not_connected type=%s x=%d y=%d button=%d",
                     ToString(command.type),
                     command.data.cmd_mouse.x,
-                    command.data.cmd_mouse.y,
-                    command.data.cmd_mouse.button);
+                     command.data.cmd_mouse.y,
+                     command.data.cmd_mouse.button);
             }
+            CompleteCommand(command.completion, err_creat_socket);
             continue;
         }
 
@@ -771,6 +975,7 @@ void KmBoxNetManager::QueueWorkerLoop()
                 command.data.cmd_mouse.button);
         }
         const int status = SendPacketWithRetry(command.data, command.length, command.type);
+
         if (status != success) {
             Diagnostics::Error("[KMBOX-NET] Dropped %s command after retries. status=%d",
                 ToString(command.type), status);
@@ -793,6 +998,7 @@ void KmBoxNetManager::QueueWorkerLoop()
                 ToString(command.type));
         }
 
+        CompleteCommand(command.completion, status);
         lastFlush = std::chrono::steady_clock::now();
     }
 }
@@ -1120,6 +1326,39 @@ int KmBoxNetManager::ForceReleaseMouseButtons()
     if (status == success && middleStatus != success)
         status = middleStatus;
     return status;
+}
+
+int KmBoxNetManager::ReleaseAllOutputAndWait(std::chrono::milliseconds Timeout)
+{
+    auto completion = std::make_shared<KmBoxCommandCompletion>();
+
+    KmBoxQueuedNetCommand command{};
+    command.type = KmBoxCommandType::SafetyReleaseAll;
+    command.outputIntent = KmBoxOutputIntent::SafetyRelease;
+    command.priority = KmBoxCommandPriority::Safety;
+    command.completion = completion;
+    command.enqueuedAt = std::chrono::steady_clock::now();
+
+    {
+        std::lock_guard<std::mutex> lock(mouseStateMutex);
+        Mouse.MouseData = {};
+    }
+
+    const int enqueueStatus = EnqueueCommand(command);
+    if (enqueueStatus != success)
+        return enqueueStatus;
+
+    std::unique_lock<std::mutex> lock(completion->mutex);
+    if (!completion->cv.wait_for(lock, Timeout, [&completion]() {
+            return completion->completed;
+        })) {
+        Diagnostics::Warn(
+            "[KMBOX-NET] Timed out waiting for safety release transport completion. timeout_ms=%lld",
+            static_cast<long long>(Timeout.count()));
+        return err_completion_timeout;
+    }
+
+    return completion->status;
 }
 
 int KmBoxNetManager::ForceReleaseMouseButton(int button)

@@ -158,6 +158,14 @@ add_executable(MockHardwareSelfTest
     src/Utils/Diagnostics.cpp
 )
 
+add_executable(KmboxQueueSelfTest
+    src/Tools/KmboxQueueSelfTest.cpp
+    src/Kmbox/KmBoxMock.cpp
+    src/Kmbox/KmBoxNetManager.cpp
+    src/Kmbox/KmboxB.cpp
+    src/Utils/Diagnostics.cpp
+)
+
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
@@ -169,6 +177,7 @@ add_test(NAME HeroGeometrySpecSelfTest COMMAND HeroGeometrySpecSelfTest)
 add_test(NAME HeroSkillConfigSelfTest COMMAND HeroSkillConfigSelfTest)
 add_test(NAME HeroPerkClassifierSelfTest COMMAND HeroPerkClassifierSelfTest)
 add_test(NAME MockHardwareSelfTest COMMAND MockHardwareSelfTest)
+add_test(NAME KmboxQueueSelfTest COMMAND KmboxQueueSelfTest)
 
 # ============================================================================
 # Include directories
@@ -244,6 +253,12 @@ target_include_directories(MockHardwareSelfTest PRIVATE
     vendor/imgui
 )
 
+target_include_directories(KmboxQueueSelfTest PRIVATE
+    include
+    vendor/leechcore
+    vendor/imgui
+)
+
 # ============================================================================
 # Link libraries
 # ============================================================================
@@ -264,6 +279,11 @@ target_link_libraries(Unleashed PRIVATE
 )
 
 target_link_libraries(MockHardwareSelfTest PRIVATE
+    ws2_32
+    setupapi
+)
+
+target_link_libraries(KmboxQueueSelfTest PRIVATE
     ws2_32
     setupapi
 )
@@ -368,3 +388,5 @@ target_compile_options(HeroSkillConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd43
 target_compile_definitions(HeroSkillConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(MockHardwareSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(MockHardwareSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(KmboxQueueSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(KmboxQueueSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)

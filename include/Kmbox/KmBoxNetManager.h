@@ -6,6 +6,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <Windows.h>
@@ -85,12 +86,14 @@ private:
     std::thread queueThread;
     std::thread heartbeatThread;
     std::atomic<unsigned long long> outputSendCount{ 0 };
+    std::function<int(unsigned int, const client_data&, int)> safetySendOverride;
 private:
     int NetHandler();
     int SendData(int DataLength);
     int SendPacketWithRetry(client_data& packet, int DataLength, KmBoxCommandType Type);
     int SendPacketOnce(client_data& packet, int DataLength, KmBoxCommandType Type);
     int EnqueueCommand(const KmBoxQueuedNetCommand& Command);
+    int ExecuteSafetyReleaseAll();
     int SendSynchronousCommand(unsigned int Cmd, unsigned int RandValue, int DataLength,
         KmBoxCommandType Type, client_data* PacketOverride = nullptr);
     client_data BuildPacket(unsigned int Cmd, unsigned int RandValue);
@@ -108,11 +111,13 @@ private:
     void HeartbeatLoop();
     int SetMouseButton(unsigned int Mask, bool Down, unsigned int Cmd, bool Force = false);
 public:
+    friend class KmboxQueueSelfTestAccess;
     KmBoxNetManager();
     ~KmBoxNetManager();
     int RecoverMousePassthrough();
     int ForceReleaseMouseButton(int button);
     int ForceReleaseMouseButtons();
+    int ReleaseAllOutputAndWait(std::chrono::milliseconds Timeout);
     int SetMouseButtonStateMask(unsigned int StateMask, bool Force = false);
     int MaskMouse(unsigned int Mask);
     int UnmaskAll();

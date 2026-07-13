@@ -4,6 +4,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -25,21 +26,26 @@ private:
     std::deque<KmBoxQueuedSerialCommand> commandQueue;
     std::thread queueThread;
     std::thread heartbeatThread;
+    std::function<bool(const std::string&)> writeOverride;
 
     void SetConnectionState(KmBoxConnectionState state);
     bool OpenConfiguredPort();
     void ClosePort();
     bool SendCommandWithRetry(const std::string& command, KmBoxCommandType type);
     bool SendCommandOnce(const std::string& command);
-    void EnqueueCommand(
+    int EnqueueCommand(
         const std::string& command,
         KmBoxCommandType type,
-        KmBoxOutputIntent outputIntent = KmBoxOutputIntent::Normal);
+        KmBoxOutputIntent outputIntent = KmBoxOutputIntent::Normal,
+        KmBoxCommandPriority priority = KmBoxCommandPriority::Normal,
+        std::shared_ptr<KmBoxCommandCompletion> completion = {});
+    int ExecuteSafetyReleaseAll();
     void StartWorkers();
     void StopWorkers();
     void QueueWorkerLoop();
     void HeartbeatLoop();
 public:
+    friend class KmboxQueueSelfTestAccess;
     ~KmBoxBManager();
 
     KmBoxConnectionState GetConnectionState() const;
@@ -57,6 +63,7 @@ public:
     void km_left(bool down);
     void km_right(bool down);
     void km_middle(bool down);
+    int ReleaseAllOutputAndWait(std::chrono::milliseconds timeout);
 
 };
 

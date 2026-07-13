@@ -5,6 +5,7 @@
 #include <Windows.h>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -52,6 +53,7 @@ namespace kmbox
         MockFaultMode faultMode = MockFaultMode::None;
         uint32_t outputMouseButtons = 0;
         uint32_t maskedButtons = 0;
+        std::size_t outputKeyboardKeys = 0;
         unsigned long long totalEvents = 0;
         unsigned long long moveEvents = 0;
         unsigned long long buttonEvents = 0;
@@ -76,6 +78,7 @@ namespace kmbox
         int SetMouseButtonStateMask(uint32_t stateMask, bool force = false);
         int ForceReleaseMouseButton(int button);
         int ForceReleaseMouseButtons();
+        int ReleaseAllOutputAndWait(std::chrono::milliseconds timeout);
         int MaskMouse(uint32_t mask);
         int UnmaskAll();
         int RecordKeyboardKey(unsigned char hidCode, bool down);

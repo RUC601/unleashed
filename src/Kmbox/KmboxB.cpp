@@ -8,6 +8,7 @@
 #include <setupapi.h>
 #include <devguid.h>
 #include <thread>
+#include <vector>
 
 #pragma comment(lib, "setupapi.lib")
 
@@ -33,6 +34,36 @@ namespace
         return type == KmBoxCommandType::MouseButton
             ? KmBoxRuntimeConfig::MouseButtonFlushIntervalMs
             : KmBoxRuntimeConfig::CommandFlushIntervalMs;
+    }
+
+    void CompleteCommand(
+        const std::shared_ptr<KmBoxCommandCompletion>& completion,
+        int status)
+    {
+        if (!completion)
+            return;
+
+        {
+            std::lock_guard<std::mutex> lock(completion->mutex);
+            if (completion->completed)
+                return;
+            completion->status = status;
+            completion->completed = true;
+        }
+        completion->cv.notify_all();
+    }
+
+    int WaitForCommand(
+        const std::shared_ptr<KmBoxCommandCompletion>& completion,
+        std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(completion->mutex);
+        if (!completion->cv.wait_for(lock, timeout, [&completion]() {
+                return completion->completed;
+            })) {
+            return err_completion_timeout;
+        }
+        return completion->status;
     }
 }
 
@@ -183,6 +214,9 @@ void KmBoxBManager::ClosePort()
 
 bool KmBoxBManager::SendCommandOnce(const std::string& command)
 {
+    if (writeOverride)
+        return writeOverride(command);
+
     std::lock_guard<std::mutex> lock(serialMutex);
     if (hSerial == INVALID_HANDLE_VALUE) {
         return false;
@@ -235,25 +269,71 @@ bool KmBoxBManager::SendCommandWithRetry(const std::string& command, KmBoxComman
     return false;
 }
 
-void KmBoxBManager::EnqueueCommand(
+int KmBoxBManager::EnqueueCommand(
     const std::string& command,
     KmBoxCommandType type,
-    KmBoxOutputIntent outputIntent)
+    KmBoxOutputIntent outputIntent,
+    KmBoxCommandPriority priority,
+    std::shared_ptr<KmBoxCommandCompletion> completion)
 {
+    KmBoxQueuedSerialCommand queued{};
+    queued.command = command;
+    queued.type = type;
+    queued.outputIntent = outputIntent;
+    queued.priority = priority;
+    queued.completion = std::move(completion);
+    queued.enqueuedAt = std::chrono::steady_clock::now();
+
+    std::shared_ptr<KmBoxCommandCompletion> droppedCompletion;
+    std::vector<std::shared_ptr<KmBoxCommandCompletion>> cancelledCompletions;
     {
-        std::lock_guard<std::mutex> lock(queueMutex);
-        if (commandQueue.size() >= KmBoxRuntimeConfig::CommandQueueMaxSize) {
-            Diagnostics::Error("[KMBOX-B] Command queue full; dropping oldest command.");
-            commandQueue.pop_front();
+        std::unique_lock<std::mutex> lock(queueMutex);
+        if (priority == KmBoxCommandPriority::Safety &&
+            !workerRunning.load(std::memory_order_acquire)) {
+            const auto completionToFail = queued.completion;
+            lock.unlock();
+            CompleteCommand(completionToFail, err_queue_stopped);
+            return err_queue_stopped;
         }
 
-        KmBoxQueuedSerialCommand queued{};
-        queued.command = command;
-        queued.type = type;
-        queued.outputIntent = outputIntent;
-        queued.enqueuedAt = std::chrono::steady_clock::now();
+        if (priority == KmBoxCommandPriority::Safety) {
+            for (auto pending = commandQueue.begin(); pending != commandQueue.end();) {
+                if (pending->priority == KmBoxCommandPriority::Normal &&
+                    IsSerialOutputCommand(pending->type)) {
+                    cancelledCompletions.push_back(pending->completion);
+                    pending = commandQueue.erase(pending);
+                } else {
+                    ++pending;
+                }
+            }
+        }
 
-        if (type == KmBoxCommandType::MouseButton) {
+        if (commandQueue.size() >= KmBoxRuntimeConfig::CommandQueueMaxSize) {
+            const auto droppable = std::find_if(
+                commandQueue.begin(), commandQueue.end(),
+                [](const KmBoxQueuedSerialCommand& pending) {
+                    return pending.priority == KmBoxCommandPriority::Normal;
+                });
+            if (droppable == commandQueue.end()) {
+                Diagnostics::Error("[KMBOX-B] Command queue full; no normal command can be displaced.");
+                const auto completionToFail = queued.completion;
+                lock.unlock();
+                CompleteCommand(completionToFail, err_queue_full);
+                return err_queue_full;
+            }
+            Diagnostics::Error("[KMBOX-B] Command queue full; dropping oldest normal command.");
+            droppedCompletion = droppable->completion;
+            commandQueue.erase(droppable);
+        }
+
+        if (priority == KmBoxCommandPriority::Safety) {
+            const auto firstNormal = std::find_if(
+                commandQueue.begin(), commandQueue.end(),
+                [](const KmBoxQueuedSerialCommand& pending) {
+                    return pending.priority == KmBoxCommandPriority::Normal;
+                });
+            commandQueue.insert(firstNormal, std::move(queued));
+        } else if (type == KmBoxCommandType::MouseButton) {
             auto insertAt = commandQueue.end();
             while (insertAt != commandQueue.begin()) {
                 auto previous = insertAt;
@@ -267,7 +347,44 @@ void KmBoxBManager::EnqueueCommand(
             commandQueue.push_back(std::move(queued));
         }
     }
+    for (const auto& completionToCancel : cancelledCompletions)
+        CompleteCommand(completionToCancel, err_queue_dropped);
+    CompleteCommand(droppedCompletion, err_queue_dropped);
     queueCv.notify_one();
+    return success;
+}
+
+int KmBoxBManager::ExecuteSafetyReleaseAll()
+{
+    int aggregateStatus = success;
+    const auto sendRelease = [this, &aggregateStatus](const char* command) {
+        if (!SendCommandWithRetry(command, KmBoxCommandType::MouseButton) &&
+            aggregateStatus == success) {
+            aggregateStatus = err_net_tx;
+        }
+    };
+
+    sendRelease("km.left(0)\r\n");
+    sendRelease("km.right(0)\r\n");
+    sendRelease("km.middle(0)\r\n");
+    return aggregateStatus;
+}
+
+int KmBoxBManager::ReleaseAllOutputAndWait(std::chrono::milliseconds timeout)
+{
+    if (!workerRunning.load(std::memory_order_acquire))
+        return err_queue_stopped;
+
+    auto completion = std::make_shared<KmBoxCommandCompletion>();
+    const int enqueueStatus = EnqueueCommand(
+        {},
+        KmBoxCommandType::SafetyReleaseAll,
+        KmBoxOutputIntent::SafetyRelease,
+        KmBoxCommandPriority::Safety,
+        completion);
+    if (enqueueStatus != success)
+        return enqueueStatus;
+    return WaitForCommand(completion, timeout);
 }
 
 void KmBoxBManager::StartWorkers()
@@ -291,6 +408,7 @@ void KmBoxBManager::StopWorkers()
         if (heartbeatThread.joinable())
             heartbeatThread.join();
     }
+
 }
 
 void KmBoxBManager::QueueWorkerLoop()
@@ -313,6 +431,13 @@ void KmBoxBManager::QueueWorkerLoop()
 
             command = std::move(commandQueue.front());
             commandQueue.pop_front();
+        }
+
+        if (command.type == KmBoxCommandType::SafetyReleaseAll) {
+            const int status = ExecuteSafetyReleaseAll();
+            CompleteCommand(command.completion, status);
+            lastFlush = std::chrono::steady_clock::now();
+            continue;
         }
 
         const auto now = std::chrono::steady_clock::now();

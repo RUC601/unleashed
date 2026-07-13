@@ -1,6 +1,9 @@
 #pragma once
 
 #include <chrono>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
 #include <string>
 
 // Command definitions for KMbox NET communication
@@ -55,7 +58,20 @@ enum class KmBoxCommandType {
     Monitor,
     Reboot,
     SetConfig,
-    Serial
+    Serial,
+    SafetyReleaseAll
+};
+
+enum class KmBoxCommandPriority {
+    Normal = 0,
+    Safety
+};
+
+struct KmBoxCommandCompletion {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool completed = false;
+    int status = 0;
 };
 
 enum class KmBoxOutputIntent {
@@ -97,6 +113,7 @@ inline const char* ToString(KmBoxCommandType type) {
     case KmBoxCommandType::Reboot:        return "reboot";
     case KmBoxCommandType::SetConfig:     return "set_config";
     case KmBoxCommandType::Serial:        return "serial";
+    case KmBoxCommandType::SafetyReleaseAll: return "safety_release_all";
     default:                              return "unknown";
     }
 }
@@ -163,6 +180,8 @@ struct KmBoxQueuedNetCommand {
     int length = 0;
     KmBoxCommandType type = KmBoxCommandType::Unknown;
     KmBoxOutputIntent outputIntent = KmBoxOutputIntent::Normal;
+    KmBoxCommandPriority priority = KmBoxCommandPriority::Normal;
+    std::shared_ptr<KmBoxCommandCompletion> completion;
     int mouseButtonStateMask = -1;
     std::chrono::steady_clock::time_point enqueuedAt{};
 };
@@ -171,6 +190,8 @@ struct KmBoxQueuedSerialCommand {
     std::string command;
     KmBoxCommandType type = KmBoxCommandType::Serial;
     KmBoxOutputIntent outputIntent = KmBoxOutputIntent::Normal;
+    KmBoxCommandPriority priority = KmBoxCommandPriority::Normal;
+    std::shared_ptr<KmBoxCommandCompletion> completion;
     std::chrono::steady_clock::time_point enqueuedAt{};
 };
 
@@ -185,6 +206,11 @@ enum
     err_net_pts,               // Timestamp mismatch
     success = 0,               // Operation succeeded
     usb_dev_tx_timeout,        // USB device transmit timeout
+    err_queue_full = -8990,    // Queue has no droppable normal command
+    err_queue_dropped = -8989, // Command was displaced before transport
+    err_queue_stopped = -8988, // Worker stopped before transport
+    err_completion_timeout = -8987, // Transport completion wait expired
+    err_output_suppressed = -8986,  // Output was suppressed before transport
 };
 
 #pragma pack(1)

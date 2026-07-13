@@ -1234,16 +1234,34 @@ static void StartBackgroundThreads();
 static void StartProcessConnectionThread();
 static void StopProcessConnectionThread();
 
-static void ReleaseKmboxMouseStateForShutdown(const char* reason)
+static int ReleaseKmboxMouseStateForShutdown(
+    const char* reason,
+    DWORD timeoutMs = 500)
 {
     if (!OW::Config::kmboxEnabled)
-        return;
+        return success;
 
-    Diagnostics::Aim("kmbox.shutdown_mouse_cleanup reason=%s deviceType=%d",
+    Diagnostics::Aim("kmbox.shutdown_output_cleanup reason=%s deviceType=%d timeoutMs=%lu",
         reason ? reason : "unknown",
-        OW::Config::kmboxDeviceType);
-    OW::ForceReleaseMouseButtons();
-    OW::UnmaskPhysicalMouseButtons();
+        OW::Config::kmboxDeviceType,
+        static_cast<unsigned long>(timeoutMs));
+    const auto timeout = std::chrono::milliseconds(timeoutMs);
+    int status = err_net_cmd;
+    if (OW::Config::kmboxDeviceType == 2) {
+        status = kmbox::MockHardwareMgr.ReleaseAllOutputAndWait(timeout);
+    } else if (OW::Config::kmboxDeviceType == 0) {
+        status = kmbox::KmBoxMgr.ReleaseAllOutputAndWait(timeout);
+    } else if (OW::Config::kmboxDeviceType == 1) {
+        status = kmbox::kmBoxBMgr.ReleaseAllOutputAndWait(timeout);
+    }
+    if (status != success) {
+        Diagnostics::Warn(
+            "KMBox output cleanup completed with status=%d reason=%s timeoutMs=%lu.",
+            status,
+            reason ? reason : "unknown",
+            static_cast<unsigned long>(timeoutMs));
+    }
+    return status;
 }
 
 static void LoadRuntimeConfigForDiagnostics()
@@ -1336,12 +1354,19 @@ static int RunKmboxRecoverMouseCli()
     LoadRuntimeConfigForDiagnostics();
     OW::Config::Menu = false;
     InitializeKmBoxFromConfig();
-    ReleaseKmboxMouseStateForShutdown("kmbox_recover_mouse_cli");
+    const int recoveryStatus = ReleaseKmboxMouseStateForShutdown(
+        "kmbox_recover_mouse_cli", 1500);
     kmbox::ReleaseTimerResolution();
     Diagnostics::ShutdownAimLog();
     Diagnostics::Shutdown();
-    std::printf("[KMBOX] Mouse passthrough recovery sent.\n");
-    return 0;
+    if (recoveryStatus == success) {
+        std::printf("[KMBOX] Output safety recovery transport completed.\n");
+        return 0;
+    }
+    std::fprintf(stderr,
+        "[KMBOX] Output safety recovery failed or timed out. status=%d\n",
+        recoveryStatus);
+    return 1;
 }
 
 static int RunKmboxCalibrationCli(float referenceGameSensitivityOverride = 0.0f)

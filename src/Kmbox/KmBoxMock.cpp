@@ -2,6 +2,8 @@
 
 #include "Utils/Diagnostics.hpp"
 
+#include <algorithm>
+
 namespace kmbox
 {
     namespace
@@ -194,6 +196,50 @@ namespace kmbox
         return SetMouseButtonStateMask(0x00, true);
     }
 
+    int MockHardware::ReleaseAllOutputAndWait(std::chrono::milliseconds timeout)
+    {
+        (void)timeout;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_)
+            return err_creat_socket;
+
+        if (faultMode_ == MockFaultMode::OutputTimeout) {
+            MockEvent failed{};
+            failed.type = MockEventType::ButtonStateMask;
+            failed.stateMask = 0;
+            failed.status = err_net_rx_timeout;
+            failed.attempted = true;
+            PushOutputEventLocked(failed);
+            return err_net_rx_timeout;
+        }
+
+        if (faultMode_ == MockFaultMode::DropOutput)
+            return success;
+
+        MockEvent mouseRelease{};
+        mouseRelease.type = MockEventType::ButtonStateMask;
+        mouseRelease.stateMask = 0;
+        outputMouseButtons_ = 0;
+        PushOutputEventLocked(mouseRelease);
+
+        for (std::size_t hidCode = 0; hidCode < hidStates_.size(); ++hidCode) {
+            if (!hidStates_[hidCode])
+                continue;
+            hidStates_[hidCode] = false;
+            MockEvent keyRelease{};
+            keyRelease.type = MockEventType::Keyboard;
+            keyRelease.hidCode = static_cast<unsigned char>(hidCode);
+            keyRelease.down = false;
+            PushOutputEventLocked(keyRelease);
+        }
+
+        MockEvent unmask{};
+        unmask.type = MockEventType::UnmaskAll;
+        maskedButtons_ = 0;
+        PushOutputEventLocked(unmask);
+        return success;
+    }
+
     int MockHardware::MaskMouse(uint32_t mask)
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -280,6 +326,8 @@ namespace kmbox
         snapshot.faultMode = faultMode_;
         snapshot.outputMouseButtons = outputMouseButtons_;
         snapshot.maskedButtons = maskedButtons_;
+        snapshot.outputKeyboardKeys = static_cast<std::size_t>(std::count(
+            hidStates_.begin(), hidStates_.end(), true));
         snapshot.totalEvents = totalEvents_;
         snapshot.moveEvents = moveEvents_;
         snapshot.buttonEvents = buttonEvents_;
