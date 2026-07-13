@@ -45,6 +45,7 @@ set(GAME_HEADERS
     include/Game/LeadPrediction.hpp
     include/Game/Offsets.hpp
     include/Game/Overwatch.hpp
+    include/Game/OutputOwnership.hpp
     include/Game/SDK.hpp
     include/Game/Structs.hpp
     include/Game/Target.hpp
@@ -89,6 +90,7 @@ set(UNLEASHED_SOURCES
     src/Game/HeroPerkRuntime.cpp
     src/Game/HeroSkills.cpp
     src/Game/Offsets.cpp
+    src/Game/OutputOwnership.cpp
     src/Game/WeaponSpec.cpp
     src/Kmbox/KmboxB.cpp
     src/Kmbox/KmboxMoveTest.cpp
@@ -188,6 +190,11 @@ add_executable(KmboxRuntimeSwitchSelfTest
     src/Utils/Diagnostics.cpp
 )
 
+add_executable(InputOwnershipSelfTest
+    src/Tools/InputOwnershipSelfTest.cpp
+    src/Game/OutputOwnership.cpp
+)
+
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
@@ -202,6 +209,7 @@ add_test(NAME MockHardwareSelfTest COMMAND MockHardwareSelfTest)
 add_test(NAME KmboxQueueSelfTest COMMAND KmboxQueueSelfTest)
 add_test(NAME KmboxLifecycleSelfTest COMMAND KmboxLifecycleSelfTest)
 add_test(NAME KmboxRuntimeSwitchSelfTest COMMAND KmboxRuntimeSwitchSelfTest)
+add_test(NAME InputOwnershipSelfTest COMMAND InputOwnershipSelfTest)
 
 # ============================================================================
 # Include directories
@@ -293,6 +301,10 @@ target_include_directories(KmboxRuntimeSwitchSelfTest PRIVATE
     include
     vendor/leechcore
     vendor/imgui
+)
+
+target_include_directories(InputOwnershipSelfTest PRIVATE
+    include
 )
 
 # ============================================================================
@@ -442,3 +454,5 @@ target_compile_options(KmboxLifecycleSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd430
 target_compile_definitions(KmboxLifecycleSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(KmboxRuntimeSwitchSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(KmboxRuntimeSwitchSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(InputOwnershipSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(InputOwnershipSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
