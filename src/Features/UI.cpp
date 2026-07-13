@@ -1235,6 +1235,40 @@ static void DrawProbeState(const char* label, bool available, bool down) {
         !available ? T(UiText::StatusNa) : (down ? T(UiText::StatusDown) : T(UiText::StatusUp)));
 }
 
+static void DrawKeyStateSample(const char* label, const KeyState::KeyStateVkSample& sample) {
+    const bool available = sample.valid && sample.available;
+    const ImVec4 color = !available
+        ? ImVec4(0.55f, 0.58f, 0.62f, 1.0f)
+        : (sample.down ? ImVec4(0.25f, 1.0f, 0.45f, 1.0f) : ImVec4(0.86f, 0.88f, 0.92f, 1.0f));
+    ImGui::TextColored(color, "%s: %s  vk=0x%02X byte[%zu]=0x%02X mask=0x%02X",
+        label,
+        !available ? T(UiText::StatusNa) : (sample.down ? T(UiText::StatusDown) : T(UiText::StatusUp)),
+        sample.valid ? sample.vk : 0,
+        sample.byteIndex,
+        static_cast<unsigned>(sample.rawByte),
+        static_cast<unsigned>(sample.downMask));
+}
+
+static void DrawDmaMouseButtonSamples() {
+    struct MouseSample {
+        const char* label;
+        int vk;
+    };
+    constexpr MouseSample kMouseSamples[] = {
+        { "Left Mouse", VK_LBUTTON },
+        { "Right Mouse", VK_RBUTTON },
+        { "Middle Mouse", VK_MBUTTON },
+        { "Mouse 4 / X1", VK_XBUTTON1 },
+        { "Mouse 5 / X2", VK_XBUTTON2 },
+    };
+
+    ImGui::TextUnformatted("DMA mouse VK samples");
+    ImGui::Indent();
+    for (const MouseSample& entry : kMouseSamples)
+        DrawKeyStateSample(entry.label, KeyState::SampleVk(entry.vk));
+    ImGui::Unindent();
+}
+
 static void DrawAimHotkeyProbe() {
     const int keySetting = OW::Config::aim_key;
     const int vk = OW::get_bind_id(keySetting);
@@ -1243,13 +1277,12 @@ static void DrawAimHotkeyProbe() {
     ImGui::Text("%s: %s  vk=0x%02X", T(UiText::HotkeyProbe), keyLabel, vk > 0 ? vk : 0);
     if (vk <= 0) {
         DrawProbeState("DMA KeyState", false, false);
+        DrawDmaMouseButtonSamples();
         return;
     }
 
-    const bool dmaAvailable = DmaKeyStateAvailable();
-    const bool dmaDown = dmaAvailable && KeyState::IsKeyDown(vk);
-
-    DrawProbeState("DMA KeyState", dmaAvailable, dmaDown);
+    DrawKeyStateSample("DMA KeyState", KeyState::SampleVk(vk));
+    DrawDmaMouseButtonSamples();
 }
 
 static int ClampHeroPresetSlotIndex(int slotIndex) {

@@ -30,6 +30,7 @@
 #include "Utils/Config.hpp"
 #include "Utils/Diagnostics.hpp"
 #include "Utils/InputLabels.hpp"
+#include "Utils/ProcessConnection.hpp"
 
 extern std::mutex g_mutex;
 
@@ -110,7 +111,7 @@ namespace OW {
 
     inline bool PresentInterpolationEnabled()
     {
-        static const bool enabled = ReadPresentEnvFlagState("UN_DMA_PRESENT_INTERP", 1) == 1;
+        static const bool enabled = ReadPresentEnvFlagState("UN_DMA_PRESENT_INTERP", 0) == 1;
         return enabled;
     }
 
@@ -1170,17 +1171,39 @@ namespace OW {
             return PublishedEntityCount() > 0;
         }
 
-        inline size_t PublishEntitySnapshots(std::vector<c_entity>&& nextEntities,
-                                             std::vector<hpanddy>&& nextDynamicEntities) {
+        inline bool TryPublishEntitySnapshots(
+            std::vector<c_entity>&& nextEntities,
+            std::vector<hpanddy>&& nextDynamicEntities,
+            uint64_t expectedConnectionEpoch,
+            size_t& publishedCount)
+        {
             const size_t count = nextEntities.size();
             {
                 std::lock_guard<std::mutex> lock(::g_mutex);
+                if (expectedConnectionEpoch != 0 &&
+                    (!ProcessConnection::IsConnected() ||
+                     ProcessConnection::ConnectionEpoch() != expectedConnectionEpoch)) {
+                    return false;
+                }
                 entities = std::move(nextEntities);
                 hp_dy_entities = std::move(nextDynamicEntities);
+                SetPublishedEntityCount(count);
+                Diagnostics::SetEntityCount(count);
             }
 
-            SetPublishedEntityCount(count);
-            return count;
+            publishedCount = count;
+            return true;
+        }
+
+        inline size_t PublishEntitySnapshots(std::vector<c_entity>&& nextEntities,
+                                             std::vector<hpanddy>&& nextDynamicEntities) {
+            size_t publishedCount = 0;
+            TryPublishEntitySnapshots(
+                std::move(nextEntities),
+                std::move(nextDynamicEntities),
+                0,
+                publishedCount);
+            return publishedCount;
         }
 
         inline std::vector<c_entity> SnapshotEntities() {

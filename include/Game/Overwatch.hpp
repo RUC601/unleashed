@@ -100,6 +100,53 @@ namespace OW {
     inline Matrix viewMatrix_xor{};
     inline std::mutex g_viewMatrixMutex;
 
+    struct CriticalMatrixReadPlan {
+        uint64_t cameraViewPtr = 0;
+        uint64_t projectionPtr = 0;
+        uint64_t generation = 0;
+        uint64_t connectionEpoch = 0;
+        bool valid = false;
+    };
+
+    inline CriticalMatrixReadPlan criticalMatrixReadPlan{};
+
+    inline bool SetCriticalMatrixReadPlan(
+        uint64_t cameraViewPtr,
+        uint64_t projectionPtr,
+        uint64_t expectedConnectionEpoch)
+    {
+        std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
+        if (expectedConnectionEpoch == 0 ||
+            !ProcessConnection::IsConnected() ||
+            ProcessConnection::ConnectionEpoch() != expectedConnectionEpoch) {
+            return false;
+        }
+        const uint64_t nextGeneration = criticalMatrixReadPlan.generation + 1;
+        criticalMatrixReadPlan = {
+            cameraViewPtr,
+            projectionPtr,
+            nextGeneration,
+            expectedConnectionEpoch,
+            cameraViewPtr != 0 && projectionPtr != 0 &&
+                expectedConnectionEpoch != 0
+        };
+        return criticalMatrixReadPlan.valid;
+    }
+
+    inline CriticalMatrixReadPlan SnapshotCriticalMatrixReadPlan()
+    {
+        std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
+        return criticalMatrixReadPlan;
+    }
+
+    inline void ClearCriticalMatrixReadPlan()
+    {
+        std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
+        const uint64_t nextGeneration = criticalMatrixReadPlan.generation + 1;
+        criticalMatrixReadPlan = {};
+        criticalMatrixReadPlan.generation = nextGeneration;
+    }
+
     inline void SetViewMatrices(const Matrix& vm, const Matrix& vmx) {
         std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
         viewMatrix = vm;
@@ -324,9 +371,29 @@ namespace OW {
         return ReadEnvFlagState(name) == 1;
     }
 
+    inline bool CriticalBatchFusionEnabled()
+    {
+        static const int flag = ReadEnvFlagState("UN_DMA_CRITICAL_BATCH_FUSION");
+        static const bool enabled = flag != 0;
+        return enabled;
+    }
+
+    inline bool CriticalBatchFusionActive()
+    {
+        return CriticalBatchFusionEnabled() && offset::IsCnNeProfile();
+    }
+
+    inline bool SteadyEntitySchedulerEnabled()
+    {
+        static const int flag = ReadEnvFlagState("UN_DMA_STEADY_ENTITY_SCHEDULER");
+        static const bool enabled = flag != 0;
+        return enabled;
+    }
+
     inline bool EntityPipelineV2Enabled()
     {
-        static const bool enabled = EnvFlagEnabled("UN_DMA_ENTITY_PIPELINE_V2");
+        static const int flag = ReadEnvFlagState("UN_DMA_ENTITY_PIPELINE_V2");
+        static const bool enabled = flag != 0;
         return enabled;
     }
 
@@ -571,11 +638,18 @@ namespace OW {
         const Matrix& cameraViewMatrix,
         bool cameraViewValid,
         bool requireFreshCameraView,
+        uint64_t expectedConnectionEpoch,
         ViewMatrixPublishState& state,
         Matrix& publishedCameraView,
         const char*& rejectReason)
     {
         rejectReason = nullptr;
+        if (expectedConnectionEpoch == 0 ||
+            !ProcessConnection::IsConnected() ||
+            ProcessConnection::ConnectionEpoch() != expectedConnectionEpoch) {
+            rejectReason = "connection epoch changed";
+            return false;
+        }
         if (!IsRenderViewProjectionPlausible(renderViewProjection)) {
             state.hasPendingJump = false;
             rejectReason = "render view-projection implausible";
@@ -634,6 +708,11 @@ namespace OW {
 
         {
             std::lock_guard<std::mutex> lock(g_viewMatrixMutex);
+            if (!ProcessConnection::IsConnected() ||
+                ProcessConnection::ConnectionEpoch() != expectedConnectionEpoch) {
+                rejectReason = "connection epoch changed before publish";
+                return false;
+            }
             viewMatrix = renderViewProjection;
             if (cameraViewValid)
                 viewMatrix_xor = cameraViewMatrix;
@@ -926,6 +1005,8 @@ inline void entity_scan_thread() {
     DWORD lastScanCycleTick = 0;
     double entityScanHz = 0.0;
     std::unordered_map<uint64_t, std::pair<std::pair<uint64_t, uint64_t>, DWORD>> cnNeStableScanPairs{};
+    uint64_t scanOwnerEpoch = 0;
+    auto scanOwnerProfile = OW::offset::ActiveProfile();
     uint64_t scanLoopCount = 0;
     uint64_t scanDueCount = 0;
     uint64_t scanSkipPendingCount = 0;
@@ -1172,11 +1253,32 @@ inline void entity_scan_thread() {
     while (OW::Config::doingentity == 1) {
         ++scanLoopCount;
         if (!OW::ProcessConnection::IsConnected()) {
+            if (scanOwnerEpoch != 0) {
+                cnNeStableScanPairs.clear();
+                scanOwnerEpoch = 0;
+                lastScanTick = 0;
+                lastScanCycleTick = 0;
+            }
             OW::SetEntityScanNextDueTick(0);
             Diagnostics::RecordEntityScanCycle(0, 0.0);
             publishScanPipelineStats();
             Sleep(100);
             continue;
+        }
+
+        const uint64_t currentConnectionEpoch = OW::ProcessConnection::ConnectionEpoch();
+        const auto currentRuntimeProfile = OW::offset::ActiveProfile();
+        if (currentConnectionEpoch != scanOwnerEpoch ||
+            currentRuntimeProfile != scanOwnerProfile) {
+            cnNeStableScanPairs.clear();
+            lastScanTick = 0;
+            lastScanCycleTick = 0;
+            scanOwnerEpoch = currentConnectionEpoch;
+            scanOwnerProfile = currentRuntimeProfile;
+            Diagnostics::Info(
+                "Entity scan owner reset: profile=%s connection_epoch=%llu.",
+                OW::offset::ActiveProfileName(),
+                static_cast<unsigned long long>(scanOwnerEpoch));
         }
 
         const DWORD now = GetTickCount();
@@ -1257,6 +1359,8 @@ inline void entity_scan_thread() {
             OW::SetEntityScanNextDueTick(now + scanInterval);
 
             ++scanStartedCount;
+            const uint64_t scanConnectionEpoch = currentConnectionEpoch;
+            const auto scanRuntimeProfile = currentRuntimeProfile;
             const auto getOwEntitiesStartedAt = std::chrono::steady_clock::now();
             std::vector<std::pair<uint64_t, uint64_t>> scanned{};
             {
@@ -1267,6 +1371,15 @@ inline void entity_scan_thread() {
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - getOwEntitiesStartedAt).count()) / 1000.0;
             ++scanCompletedCount;
+            if (!OW::ProcessConnection::IsConnected() ||
+                OW::ProcessConnection::ConnectionEpoch() != scanConnectionEpoch ||
+                OW::offset::ActiveProfile() != scanRuntimeProfile) {
+                Diagnostics::Trace(
+                    "Discarded entity scan from stale connection epoch=%llu.",
+                    static_cast<unsigned long long>(scanConnectionEpoch));
+                publishScanPipelineStats();
+                continue;
+            }
             ++scanGeneration;
             if (scanGetOwEntitiesMs > scanMaxGetOwEntitiesMs) {
                 scanMaxGetOwEntitiesMs = scanGetOwEntitiesMs;
@@ -1335,21 +1448,36 @@ inline void entity_scan_thread() {
                     snapshot.scan_started_at = getOwEntitiesStartedAt;
                     snapshot.scan_finished_at = std::chrono::steady_clock::now();
                     snapshot.valid = true;
+                    bool published = false;
                     {
                         std::lock_guard<std::mutex> lock(OW::raw_scan_mutex);
-                        if (OW::latest_raw_scan_snapshot.valid &&
-                            OW::latest_raw_scan_snapshot.generation !=
-                                OW::last_consumed_raw_scan_generation) {
-                            ++scanOverwrittenCount;
+                        if (OW::ProcessConnection::IsConnected() &&
+                            OW::ProcessConnection::ConnectionEpoch() == scanConnectionEpoch &&
+                            OW::offset::ActiveProfile() == scanRuntimeProfile) {
+                            if (OW::latest_raw_scan_snapshot.valid &&
+                                OW::latest_raw_scan_snapshot.generation !=
+                                    OW::last_consumed_raw_scan_generation) {
+                                ++scanOverwrittenCount;
+                            }
+                            OW::latest_raw_scan_snapshot = std::move(snapshot);
+                            published = true;
                         }
-                        OW::latest_raw_scan_snapshot = std::move(snapshot);
                     }
-                    ++scanPublishSuccessCount;
-                    lastScanSuccessTick = GetTickCount();
+                    if (published) {
+                        ++scanPublishSuccessCount;
+                        lastScanSuccessTick = GetTickCount();
+                    } else {
+                        Diagnostics::Trace(
+                            "Discarded entity scan at stale latest-wins commit epoch=%llu.",
+                            static_cast<unsigned long long>(scanConnectionEpoch));
+                    }
                 }
             } else {
                 std::lock_guard<std::mutex> lock(g_mutex);
-                if (OW::abletotread == 0) {
+                if (OW::ProcessConnection::IsConnected() &&
+                    OW::ProcessConnection::ConnectionEpoch() == scanConnectionEpoch &&
+                    OW::offset::ActiveProfile() == scanRuntimeProfile &&
+                    OW::abletotread == 0) {
                     OW::ow_entities_scan = std::move(scanned);
                     OW::abletotread = 1;
                     ++scanPublishSuccessCount;
@@ -1435,14 +1563,25 @@ inline void entity_thread() {
         entityRecordStoreStartupEnabled ? 1 : 0,
         linkRetainStartupEnabled ? 1 : 0,
         baseDecryptLifetimeStartupEnabled ? 1 : 0);
+    Diagnostics::Info(
+        "Pipeline defaults: steady_scheduler=%d cbf_enabled=%d cbf_active_cn_ne=%d matrix_owner=viewmatrix_thread matrix_source=terminal_scatter_10ms rotation_leaf=entity_hot_scatter keystate=worker.",
+        OW::SteadyEntitySchedulerEnabled() ? 1 : 0,
+        OW::CriticalBatchFusionEnabled() ? 1 : 0,
+        OW::CriticalBatchFusionActive() ? 1 : 0);
     DWORD lastProcessTick = 0;
+    const auto entityProcessPeriod =
+        std::chrono::milliseconds(OW::kEntityProcessIntervalMs);
+    auto nextProcessTick = std::chrono::steady_clock::now();
+    bool lastCriticalBatchFusionActive = OW::CriticalBatchFusionActive();
+    uint64_t lastConnectionEpoch = OW::ProcessConnection::ConnectionEpoch();
+    auto lastRuntimeProfile = OW::offset::ActiveProfile();
     Vector3 lastpos{};
     size_t lastLoggedRawCount = static_cast<size_t>(-1);
     size_t lastLoggedValidatedCount = static_cast<size_t>(-1);
     size_t previousProcessedValidCount = 0;
     DWORD lastProcessLogTick = 0;
     uint64_t entityCycleCount = 0;
-    DWORD entityCycleRateTick = GetTickCount();
+    auto entityCycleRateTick = std::chrono::steady_clock::now();
     double entityCycleHz = 0.0;
 
     struct ComponentBaseCache {
@@ -1455,6 +1594,7 @@ inline void entity_thread() {
         uint64_t hero = 0;
         uint64_t bone = 0;
         uint64_t rotation = 0;
+        uint64_t rotationLeaf = 0;
         uint64_t skill = 0;
         uint64_t visibility = 0;
         uint64_t angle = 0;
@@ -2280,10 +2420,10 @@ inline void entity_thread() {
 
     auto recordEntityCycle = [&]() {
         ++entityCycleCount;
-        const DWORD now = GetTickCount();
         if ((entityCycleCount % 60ull) == 0ull) {
-            const DWORD elapsed = now - entityCycleRateTick;
-            entityCycleHz = elapsed > 0 ? (60000.0 / static_cast<double>(elapsed)) : 0.0;
+            const auto now = std::chrono::steady_clock::now();
+            const std::chrono::duration<double> elapsed = now - entityCycleRateTick;
+            entityCycleHz = elapsed.count() > 0.0 ? (60.0 / elapsed.count()) : 0.0;
             entityCycleRateTick = now;
             if (OW::PipelineDebugEnabled()) {
                 Diagnostics::Info("[PIPELINE] entity_thread cycle %llu at ~%.1f Hz.",
@@ -2496,16 +2636,58 @@ inline void entity_thread() {
 
     while (OW::Config::doingentity == 1) {
         if (!OW::ProcessConnection::IsConnected()) {
+            lastProcessTick = 0;
+            nextProcessTick = std::chrono::steady_clock::now();
             Sleep(100);
             continue;
         }
 
-        const DWORD cycleNow = GetTickCount();
-        if (lastProcessTick != 0 && cycleNow - lastProcessTick < OW::kEntityProcessIntervalMs) {
-            Sleep(1);
-            continue;
+        const bool criticalBatchFusionActive = OW::CriticalBatchFusionActive();
+        const uint64_t connectionEpoch = OW::ProcessConnection::ConnectionEpoch();
+        const auto runtimeProfile = OW::offset::ActiveProfile();
+        if (criticalBatchFusionActive != lastCriticalBatchFusionActive ||
+            connectionEpoch != lastConnectionEpoch ||
+            runtimeProfile != lastRuntimeProfile) {
+            componentBaseCache.clear();
+            dynamicEntityCache.clear();
+            entityRecordStore.clear();
+            entityRecordKeyByComponent.clear();
+            entityRoster.clear();
+            lastpos = {};
+            previousProcessedValidCount = 0;
+            lastLoggedRawCount = static_cast<size_t>(-1);
+            lastLoggedValidatedCount = static_cast<size_t>(-1);
+            Diagnostics::Info(
+                "Entity owner reset: cbf_active_cn_ne=%d profile=%s connection_epoch=%llu.",
+                criticalBatchFusionActive ? 1 : 0,
+                OW::offset::ActiveProfileName(),
+                static_cast<unsigned long long>(connectionEpoch));
+            lastCriticalBatchFusionActive = criticalBatchFusionActive;
+            lastConnectionEpoch = connectionEpoch;
+            lastRuntimeProfile = runtimeProfile;
         }
-        lastProcessTick = cycleNow;
+
+        if (OW::SteadyEntitySchedulerEnabled()) {
+            const auto schedulerNow = std::chrono::steady_clock::now();
+            if (schedulerNow < nextProcessTick) {
+                const auto remaining =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        nextProcessTick - schedulerNow).count();
+                Sleep(remaining > 1 ? 1 : 0);
+                continue;
+            }
+            if (schedulerNow - nextProcessTick > entityProcessPeriod)
+                nextProcessTick = schedulerNow;
+            nextProcessTick += entityProcessPeriod;
+        } else {
+            const DWORD cycleNow = GetTickCount();
+            if (lastProcessTick != 0 &&
+                cycleNow - lastProcessTick < OW::kEntityProcessIntervalMs) {
+                Sleep(1);
+                continue;
+            }
+            lastProcessTick = cycleNow;
+        }
 
         const auto pipelineCycleStartedAt = std::chrono::steady_clock::now();
         const Diagnostics::DmaReadStats pipelineDmaStart = Diagnostics::SnapshotDmaReadStats();
@@ -2652,12 +2834,21 @@ inline void entity_thread() {
             }
             const bool requestFastRescan =
                 rosterStats.fresh > 0 || rosterStats.missing > 0 || rosterStats.dead > 0;
+            if (!OW::ProcessConnection::IsConnected() ||
+                OW::ProcessConnection::ConnectionEpoch() != connectionEpoch ||
+                OW::offset::ActiveProfile() != runtimeProfile) {
+                continue;
+            }
             size_t published_count = 0;
             {
                 ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.publishMs);
-                published_count = OW::TargetingDetail::PublishEntitySnapshots(
-                    std::move(published_entities),
-                    std::vector<OW::hpanddy>{});
+                if (!OW::TargetingDetail::TryPublishEntitySnapshots(
+                        std::move(published_entities),
+                        std::vector<OW::hpanddy>{},
+                        connectionEpoch,
+                        published_count)) {
+                    continue;
+                }
             }
             pipelineStats.rawCount = 0;
             pipelineStats.validatedCount = 0;
@@ -2676,7 +2867,6 @@ inline void entity_thread() {
                 ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.recordSyncMs);
                 syncEntityRecordStoreFromRoster(processLoopTick, lifecycleStats);
             }
-            Diagnostics::SetEntityCount(rosterStats.fresh + rosterStats.dead + rosterStats.missing);
             Diagnostics::SetEntityProcessStats(stats);
             Diagnostics::SetLocalEntityStats(localStats);
             Diagnostics::SetRosterStats(rosterStats);
@@ -3029,6 +3219,17 @@ inline void entity_thread() {
             uint64_t componentParent = 0;
             uint64_t linkParent = 0;
             EntityHotFieldReads reads{};
+            OW::Vector3 rotation{};
+            DWORD rotationBytes = 0;
+            bool rotationRequested = false;
+
+            bool RotationRead() const {
+                return rotationRequested &&
+                    rotationBytes == sizeof(OW::Vector3) &&
+                    std::isfinite(rotation.X) &&
+                    std::isfinite(rotation.Y) &&
+                    std::isfinite(rotation.Z);
+            }
         };
         std::vector<HotFieldBatchItem> hotFieldBatchItems;
         std::unordered_map<uint64_t, size_t> hotFieldBatchIndex;
@@ -3104,15 +3305,30 @@ inline void entity_thread() {
                     hotFieldBatchItems.pop_back();
                     continue;
                 }
+                if (criticalBatchFusionActive && cached.rotationLeaf) {
+                    ++pipelineStats.hotScatterRequestedCount;
+                    item.rotationRequested = mem.AddScatterReadRequest(
+                        hotFieldScatter,
+                        cached.rotationLeaf + offset::RotationBase_Sub2,
+                        &item.rotation,
+                        sizeof(item.rotation),
+                        &item.rotationBytes);
+                    recordHotScatterPrepare(
+                        cached.rotationLeaf + offset::RotationBase_Sub2,
+                        sizeof(item.rotation),
+                        item.rotationRequested);
+                }
                 hotFieldBatchIndex.emplace(componentParent, itemIndex);
             }
             pipelineStats.hotScatterBatchItems = hotFieldBatchItems.size();
             for (const HotFieldBatchItem& item : hotFieldBatchItems)
-                pipelineStats.hotScatterBatchRequests += countHotFieldRequests(item.reads);
+                pipelineStats.hotScatterBatchRequests +=
+                    countHotFieldRequests(item.reads) +
+                    static_cast<size_t>(item.rotationRequested ? 1 : 0);
         }
 
+        bool hotBatchOk = false;
         if (!hotFieldBatchItems.empty()) {
-            bool hotBatchOk = false;
             {
                 ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.hotScatterExecuteMs);
                 Diagnostics::ScopedDmaCallsite dmaTag(
@@ -3667,6 +3883,10 @@ inline void entity_thread() {
                     if (!cache.enemyAngle)
                         cache.enemyAngle = decryptBase(LinkParent, OW::TYPE_ANGLE, linkSnapshot, true);
                 }
+                if (criticalBatchFusionActive && cache.rotation) {
+                    cache.rotationLeaf = SDK->RPM<uint64_t>(
+                        cache.rotation + offset::RotationBase_Sub1);
+                }
                 cacheIt = componentBaseCache.insert_or_assign(ComponentParent, cache).first;
             }
 
@@ -3922,9 +4142,38 @@ inline void entity_thread() {
                 sanitizeStaleRosterEntity(entity);
 
             // ---- Rotation ----
-            if (entity.RotationBase) {
+            bool rotationReadFromBatch = false;
+            if (criticalBatchFusionActive) {
+                const auto hotBatchIt = hotFieldBatchIndex.find(ComponentParent);
+                if (hotBatchIt != hotFieldBatchIndex.end()) {
+                    HotFieldBatchItem& item = hotFieldBatchItems[hotBatchIt->second];
+                    if (hotBatchOk &&
+                        item.linkParent == LinkParent &&
+                        item.RotationRead()) {
+                        entity.Rot = item.rotation;
+                        rotationReadFromBatch = true;
+                    } else if (item.linkParent == LinkParent && item.rotationRequested) {
+                        cacheIt->second.rotationLeaf = 0;
+                    }
+                }
+            }
+            if (!rotationReadFromBatch && entity.RotationBase) {
                 uint64_t rotPtr = SDK->RPM<uint64_t>(entity.RotationBase + offset::RotationBase_Sub1);
-                entity.Rot = SDK->RPM<Vector3>(rotPtr + offset::RotationBase_Sub2);
+                if (rotPtr) {
+                    const Vector3 rotation =
+                        SDK->RPM<Vector3>(rotPtr + offset::RotationBase_Sub2);
+                    if (std::isfinite(rotation.X) &&
+                        std::isfinite(rotation.Y) &&
+                        std::isfinite(rotation.Z)) {
+                        entity.Rot = rotation;
+                        if (criticalBatchFusionActive)
+                            cacheIt->second.rotationLeaf = rotPtr;
+                    } else if (criticalBatchFusionActive) {
+                        cacheIt->second.rotationLeaf = 0;
+                    }
+                } else if (criticalBatchFusionActive) {
+                    cacheIt->second.rotationLeaf = 0;
+                }
             }
 
             // ---- Velocity / position / bones ----
@@ -4922,6 +5171,12 @@ inline void entity_thread() {
         if (hotFieldScatter)
             mem.CloseScatterHandle(hotFieldScatter);
 
+        if (!OW::ProcessConnection::IsConnected() ||
+            OW::ProcessConnection::ConnectionEpoch() != connectionEpoch ||
+            OW::offset::ActiveProfile() != runtimeProfile) {
+            continue;
+        }
+
         // Swap processed entities
         const size_t valid_count = tmp_entities.size();
         const size_t dynamic_count = hpdy_entities.size();
@@ -4939,9 +5194,13 @@ inline void entity_thread() {
                     published_entities,
                     &lifecycleStats);
             published_count = published_entities.size();
-            OW::TargetingDetail::PublishEntitySnapshots(
-                std::move(published_entities),
-                std::move(hpdy_entities));
+            if (!OW::TargetingDetail::TryPublishEntitySnapshots(
+                    std::move(published_entities),
+                    std::move(hpdy_entities),
+                    connectionEpoch,
+                    published_count)) {
+                continue;
+            }
         }
         {
             ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.recordSyncMs);
@@ -4971,7 +5230,6 @@ inline void entity_thread() {
             }
         }
         previousProcessedValidCount = valid_count;
-        Diagnostics::SetEntityCount(published_count);
         Diagnostics::SetEntityProcessStats(processStats);
         Diagnostics::SetLocalEntityStats(localStats);
         Diagnostics::SetRosterStats(rosterStats);
@@ -5103,7 +5361,8 @@ inline void entity_thread() {
             }
         }
         recordEntityCycle();
-        Sleep(1);
+        if (!OW::SteadyEntitySchedulerEnabled())
+            Sleep(1);
     }
 }
 
@@ -5171,27 +5430,230 @@ inline DWORD ViewMatrixScanDueGuardMs() {
     return cachedGuardMs;
 }
 
+inline constexpr DWORD kCriticalMatrixPollSleepMs = 10;
+inline constexpr DWORD kCriticalMatrixPlanRefreshMs = 100;
+
 inline void viewmatrix_thread() {
     Diagnostics::ScopedDmaCallsite::Push(Diagnostics::DmaCallsite::ViewMatrix);
-    const DWORD pollSleepMs = ViewMatrixPollSleepMs();
     const DWORD scanBackoffMs = ViewMatrixScanBackoffMs();
     const DWORD scanDueGuardMs = ViewMatrixScanDueGuardMs();
     DWORD lastViewMatrixLogTick = 0;
     bool hasLastViewMatrixStatus = false;
     bool lastViewMatrixValid = false;
     OW::ViewMatrixPublishState publishState{};
+    DWORD lastCriticalPlanRefreshTick = 0;
+    const auto criticalMatrixPeriod =
+        std::chrono::milliseconds(kCriticalMatrixPollSleepMs);
+    auto nextCriticalMatrixTick = std::chrono::steady_clock::now();
+    bool lastCriticalBatchFusionActive = OW::CriticalBatchFusionActive();
+    uint64_t lastConnectionEpoch = OW::ProcessConnection::ConnectionEpoch();
+    auto lastRuntimeProfile = OW::offset::ActiveProfile();
+    bool wasConnected = false;
 
-    __try {
-        while (true) {
-            if (!OW::ProcessConnection::IsConnected()) {
+    auto resetCriticalLane = [&]() {
+        OW::ClearCriticalMatrixReadPlan();
+        lastCriticalPlanRefreshTick = 0;
+        nextCriticalMatrixTick = std::chrono::steady_clock::now();
+    };
+
+    auto sampleCriticalMatrices = [&](const OW::CriticalMatrixReadPlan& plan) {
+        if (!plan.valid ||
+            !OW::ProcessConnection::IsConnected() ||
+            plan.connectionEpoch != OW::ProcessConnection::ConnectionEpoch()) {
+            lastCriticalPlanRefreshTick = 0;
+            return;
+        }
+
+        OW::Matrix cameraViewMatrix{};
+        OW::Matrix projectionMatrix{};
+        DWORD cameraBytes = 0;
+        DWORD projectionBytes = 0;
+
+        VMMDLL_SCATTER_HANDLE scatter = mem.CreateScatterHandle();
+        if (!scatter) {
+            lastCriticalPlanRefreshTick = 0;
+            OW::RecordViewMatrixUnresolved(
+                "CBF2 terminal scatter unavailable",
+                plan.cameraViewPtr,
+                lastViewMatrixLogTick);
+            return;
+        }
+
+        bool cameraPrepared = false;
+        bool projectionPrepared = false;
+        bool scatterOk = false;
+        __try {
+            cameraPrepared = mem.AddScatterReadRequest(
+                scatter,
+                plan.cameraViewPtr,
+                &cameraViewMatrix,
+                sizeof(cameraViewMatrix),
+                &cameraBytes);
+            projectionPrepared = mem.AddScatterReadRequest(
+                scatter,
+                plan.projectionPtr,
+                &projectionMatrix,
+                sizeof(projectionMatrix),
+                &projectionBytes);
+            scatterOk = cameraPrepared && projectionPrepared &&
+                mem.ExecuteReadScatter(scatter);
+        } __finally {
+            mem.CloseScatterHandle(scatter);
+        }
+
+        if (!OW::ProcessConnection::IsConnected() ||
+            plan.connectionEpoch != OW::ProcessConnection::ConnectionEpoch()) {
+            lastCriticalPlanRefreshTick = 0;
+            return;
+        }
+
+        const bool complete = scatterOk &&
+            cameraBytes == sizeof(cameraViewMatrix) &&
+            projectionBytes == sizeof(projectionMatrix);
+        const bool cameraViewValid = complete &&
+            OW::IsCameraViewMatrixPlausible(cameraViewMatrix);
+        const bool projectionValid = complete &&
+            OW::IsMatrixNonIdentity(projectionMatrix);
+        if (!cameraViewValid || !projectionValid) {
+            lastCriticalPlanRefreshTick = 0;
+            OW::RecordViewMatrixUnresolved(
+                complete
+                    ? "CBF2 terminal matrix implausible"
+                    : "CBF2 terminal matrix short read",
+                plan.cameraViewPtr,
+                lastViewMatrixLogTick);
+            return;
+        }
+
+        const OW::Matrix renderViewProjection =
+            OW::ComposeCameraProjection(cameraViewMatrix, projectionMatrix);
+        if (!OW::IsRenderViewProjectionPlausible(renderViewProjection)) {
+            lastCriticalPlanRefreshTick = 0;
+            OW::RecordViewMatrixUnresolved(
+                "CBF2 composed view-projection implausible",
+                plan.projectionPtr,
+                lastViewMatrixLogTick);
+            return;
+        }
+
+        OW::Matrix publishedCameraView{};
+        const char* rejectReason = nullptr;
+        if (OW::TryPublishViewMatrices(
+                renderViewProjection,
+                cameraViewMatrix,
+                true,
+                true,
+                plan.connectionEpoch,
+                publishState,
+                publishedCameraView,
+                rejectReason)) {
+            OW::RecordViewMatrixResolved(
+                plan.projectionPtr,
+                plan.cameraViewPtr,
+                true,
+                hasLastViewMatrixStatus,
+                lastViewMatrixValid,
+                lastViewMatrixLogTick);
+        } else {
+            OW::RecordViewMatrixRejected(
+                rejectReason,
+                plan.projectionPtr,
+                plan.cameraViewPtr,
+                hasLastViewMatrixStatus,
+                lastViewMatrixValid,
+                lastViewMatrixLogTick);
+        }
+    };
+
+    Diagnostics::Info(
+        "CBF2 viewmatrix lane configured: enabled=%d active_cn_ne=%d address_refresh_ms=%lu terminal_poll_ms=%lu.",
+        OW::CriticalBatchFusionEnabled() ? 1 : 0,
+        lastCriticalBatchFusionActive ? 1 : 0,
+        static_cast<unsigned long>(kCriticalMatrixPlanRefreshMs),
+        static_cast<unsigned long>(kCriticalMatrixPollSleepMs));
+
+    for (;;) {
+        __try {
+            while (true) {
+            const bool connected = OW::ProcessConnection::IsConnected();
+            const bool criticalBatchFusionActive = OW::CriticalBatchFusionActive();
+            const uint64_t connectionEpoch = OW::ProcessConnection::ConnectionEpoch();
+            const auto runtimeProfile = OW::offset::ActiveProfile();
+            const bool laneChanged =
+                criticalBatchFusionActive != lastCriticalBatchFusionActive ||
+                connectionEpoch != lastConnectionEpoch ||
+                runtimeProfile != lastRuntimeProfile;
+            if (laneChanged) {
+                resetCriticalLane();
+                OW::SetViewMatrices(OW::Matrix{}, OW::Matrix{});
+                publishState = {};
+                hasLastViewMatrixStatus = false;
+                lastViewMatrixValid = false;
+                lastCriticalBatchFusionActive = criticalBatchFusionActive;
+                lastConnectionEpoch = connectionEpoch;
+                lastRuntimeProfile = runtimeProfile;
+                Diagnostics::Info(
+                    "CBF2 viewmatrix lane reset: active_cn_ne=%d profile=%s connection_epoch=%llu.",
+                    criticalBatchFusionActive ? 1 : 0,
+                    OW::offset::ActiveProfileName(),
+                    static_cast<unsigned long long>(connectionEpoch));
+            }
+
+            if (!connected) {
                 Diagnostics::SetViewMatrixStatus(false, false);
                 publishState = {};
+                if (wasConnected || OW::SnapshotCriticalMatrixReadPlan().valid) {
+                    resetCriticalLane();
+                    OW::SetViewMatrices(OW::Matrix{}, OW::Matrix{});
+                }
+                wasConnected = false;
                 Sleep(100);
                 continue;
             }
 
+            if (!wasConnected) {
+                if (!laneChanged)
+                    resetCriticalLane();
+                publishState = {};
+                hasLastViewMatrixStatus = false;
+                lastViewMatrixValid = false;
+                wasConnected = true;
+            }
+
+            const DWORD pollSleepMs = criticalBatchFusionActive
+                ? kCriticalMatrixPlanRefreshMs
+                : ViewMatrixPollSleepMs();
+            OW::CriticalMatrixReadPlan cachedCriticalPlan{};
+            if (criticalBatchFusionActive) {
+                const auto schedulerNow = std::chrono::steady_clock::now();
+                if (schedulerNow < nextCriticalMatrixTick) {
+                    const auto remaining =
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            nextCriticalMatrixTick - schedulerNow).count();
+                    Sleep(remaining > 1 ? 1 : 0);
+                    continue;
+                }
+                if (schedulerNow - nextCriticalMatrixTick > criticalMatrixPeriod)
+                    nextCriticalMatrixTick = schedulerNow;
+                nextCriticalMatrixTick += criticalMatrixPeriod;
+
+                cachedCriticalPlan = OW::SnapshotCriticalMatrixReadPlan();
+                const DWORD now = GetTickCount();
+                const bool refreshDue = !cachedCriticalPlan.valid ||
+                    lastCriticalPlanRefreshTick == 0 ||
+                    now - lastCriticalPlanRefreshTick >= kCriticalMatrixPlanRefreshMs;
+                if (!refreshDue) {
+                    sampleCriticalMatrices(cachedCriticalPlan);
+                    continue;
+                }
+            }
+
             if (scanBackoffMs > 0 && OW::IsEntityScanDmaActive()) {
                 OW::RecordViewMatrixScanBackoff();
+                if (criticalBatchFusionActive && cachedCriticalPlan.valid) {
+                    sampleCriticalMatrices(cachedCriticalPlan);
+                    continue;
+                }
                 Sleep(scanBackoffMs);
                 continue;
             }
@@ -5200,6 +5662,10 @@ inline void viewmatrix_thread() {
                 OW::EntityScanDueGuardSleepMs(GetTickCount(), scanDueGuardMs);
             if (scanDueGuardSleepMs > 0) {
                 OW::RecordViewMatrixScanDueGuard();
+                if (criticalBatchFusionActive && cachedCriticalPlan.valid) {
+                    sampleCriticalMatrices(cachedCriticalPlan);
+                    continue;
+                }
                 Sleep(scanDueGuardSleepMs);
                 continue;
             }
@@ -5209,6 +5675,8 @@ inline void viewmatrix_thread() {
             // and still follows the camera/projection chain.
             const auto& activeOffsets = OW::offset::Active();
             if (!activeOffsets.Address_viewmatrix_base) {
+                if (criticalBatchFusionActive)
+                    resetCriticalLane();
                 OW::RecordViewMatrixUnresolved("profile viewmatrix unresolved", 0, lastViewMatrixLogTick);
                 Sleep(100);
                 continue;
@@ -5221,6 +5689,8 @@ inline void viewmatrix_thread() {
                 viewMatrixMode == OW::offset::ViewMatrixMode::EncryptedChainSubXorSub;
             uint64_t root = SDK->RPM<uint64_t>(SDK->dwGameBase + activeOffsets.Address_viewmatrix_base);
             if (!root) {
+                if (criticalBatchFusionActive)
+                    resetCriticalLane();
                 OW::RecordViewMatrixUnresolved(
                     directViewMatrixRoot ? "direct root pointer" : "encrypted base pointer",
                     root,
@@ -5237,6 +5707,8 @@ inline void viewmatrix_thread() {
                     : ((root + activeOffsets.offset_viewmatrix_xor_key)
                         ^ activeOffsets.offset_viewmatrix_xor_key2));
             if (!dec) {
+                if (criticalBatchFusionActive)
+                    resetCriticalLane();
                 OW::RecordViewMatrixUnresolved("decoded base pointer", dec, lastViewMatrixLogTick);
                 Sleep(pollSleepMs);
                 continue;
@@ -5280,6 +5752,12 @@ inline void viewmatrix_thread() {
                 }
                 viewMatrix_xor_ptr = cameraViewValid ? cameraViewCandidatePtr : 0;
 
+                if (!OW::ProcessConnection::IsConnected() ||
+                    OW::ProcessConnection::ConnectionEpoch() != connectionEpoch ||
+                    OW::offset::ActiveProfile() != runtimeProfile) {
+                    continue;
+                }
+
                 OW::Matrix publishedCameraView{};
                 const char* rejectReason = nullptr;
                 if (!OW::TryPublishViewMatrices(
@@ -5287,6 +5765,7 @@ inline void viewmatrix_thread() {
                         cameraViewMatrix,
                         cameraViewValid,
                         false,
+                        connectionEpoch,
                         publishState,
                         publishedCameraView,
                         rejectReason)) {
@@ -5316,12 +5795,16 @@ inline void viewmatrix_thread() {
 
             uint64_t p1 = SDK->RPM<uint64_t>(dec + activeOffsets.VM_P1);
             if (!p1) {
+                if (criticalBatchFusionActive)
+                    resetCriticalLane();
                 OW::RecordViewMatrixUnresolved("p1", p1, lastViewMatrixLogTick);
                 Sleep(pollSleepMs);
                 continue;
             }
             uint64_t p2 = SDK->RPM<uint64_t>(p1 + activeOffsets.VM_P2);
             if (!p2) {
+                if (criticalBatchFusionActive)
+                    resetCriticalLane();
                 OW::RecordViewMatrixUnresolved("p2", p2, lastViewMatrixLogTick);
                 Sleep(pollSleepMs);
                 continue;
@@ -5331,6 +5814,8 @@ inline void viewmatrix_thread() {
 
             const uint64_t p3 = SDK->RPM<uint64_t>(p2 + activeOffsets.VM_ViewProjectionParent);
             if (!p3) {
+                if (criticalBatchFusionActive)
+                    resetCriticalLane();
                 OW::RecordViewMatrixUnresolved("view projection p3", p3, lastViewMatrixLogTick);
                 Sleep(pollSleepMs);
                 continue;
@@ -5338,6 +5823,8 @@ inline void viewmatrix_thread() {
 
             const uint64_t p4 = SDK->RPM<uint64_t>(p3 + activeOffsets.VM_ViewProjectionPtr);
             if (!p4) {
+                if (criticalBatchFusionActive)
+                    resetCriticalLane();
                 OW::RecordViewMatrixUnresolved("view projection p4", p4, lastViewMatrixLogTick);
                 Sleep(pollSleepMs);
                 continue;
@@ -5346,6 +5833,24 @@ inline void viewmatrix_thread() {
             viewMatrixPtr = p4 + activeOffsets.VM_ViewProjectionMatrix;
             viewMatrix_xor_ptr = p2 + activeOffsets.VM_ViewMatrix;
             const uint64_t projectionMatrixPtr = p2 + activeOffsets.VM_ProjMatrix;
+
+            if (criticalBatchFusionActive) {
+                if (!OW::ProcessConnection::IsConnected() ||
+                    OW::ProcessConnection::ConnectionEpoch() != connectionEpoch ||
+                    OW::offset::ActiveProfile() != runtimeProfile) {
+                    continue;
+                }
+                if (!OW::SetCriticalMatrixReadPlan(
+                        viewMatrix_xor_ptr,
+                        projectionMatrixPtr,
+                        connectionEpoch)) {
+                    resetCriticalLane();
+                    continue;
+                }
+                lastCriticalPlanRefreshTick = GetTickCount();
+                sampleCriticalMatrices(OW::SnapshotCriticalMatrixReadPlan());
+                continue;
+            }
 
             OW::Matrix renderViewProjection = SDK->RPM<OW::Matrix>(viewMatrixPtr);
             OW::Matrix cameraViewMatrix = SDK->RPM<OW::Matrix>(viewMatrix_xor_ptr);
@@ -5384,6 +5889,11 @@ inline void viewmatrix_thread() {
                 Sleep(pollSleepMs);
                 continue;
             }
+            if (!OW::ProcessConnection::IsConnected() ||
+                OW::ProcessConnection::ConnectionEpoch() != connectionEpoch ||
+                OW::offset::ActiveProfile() != runtimeProfile) {
+                continue;
+            }
             OW::Matrix publishedCameraView{};
             const char* rejectReason = nullptr;
             if (!OW::TryPublishViewMatrices(
@@ -5391,6 +5901,7 @@ inline void viewmatrix_thread() {
                     cameraViewMatrix,
                     cameraViewValid,
                     true,
+                    connectionEpoch,
                     publishState,
                     publishedCameraView,
                     rejectReason)) {
@@ -5415,9 +5926,22 @@ inline void viewmatrix_thread() {
                 lastViewMatrixValid,
                 lastViewMatrixLogTick);
 
-            Sleep(pollSleepMs);
+                Sleep(pollSleepMs);
+            }
+        } __except (1) {
+            resetCriticalLane();
+            OW::SetViewMatrices(OW::Matrix{}, OW::Matrix{});
+            Diagnostics::SetViewMatrixStatus(false, false);
+            publishState = {};
+            hasLastViewMatrixStatus = false;
+            lastViewMatrixValid = false;
+            wasConnected = false;
+            lastConnectionEpoch = 0;
+            Diagnostics::Warn(
+                "Viewmatrix owner recovered from structured exception; critical plan cleared.");
+            Sleep(100);
         }
-    } __except (1) {}
+    }
     Diagnostics::ScopedDmaCallsite::Pop();
 }
 
@@ -8848,29 +9372,47 @@ namespace AimbotDetail {
             int keySetting = -1;
             int vk = -1;
             bool pressed = false;
+            bool sampleAvailable = false;
+            size_t sampleByteIndex = 0;
+            uint8_t sampleRawByte = 0;
+            uint8_t sampleDownMask = 0;
             DWORD lastLogTick = 0;
         };
 
         static LastLogState state{};
+        const KeyState::KeyStateVkSample sample = KeyState::SampleVk(vk);
 
         const DWORD now = GetTickCount();
         const bool changed = !state.initialized ||
             state.keySetting != keySetting ||
             state.vk != vk ||
-            state.pressed != pressed;
+            state.pressed != pressed ||
+            state.sampleAvailable != sample.available ||
+            state.sampleByteIndex != sample.byteIndex ||
+            state.sampleRawByte != sample.rawByte ||
+            state.sampleDownMask != sample.downMask;
 
         if (changed || (pressed && (state.lastLogTick == 0 || now - state.lastLogTick >= 1000))) {
-            Diagnostics::Aim("hotkey state keySetting=%d vk=0x%X source=dma_keystate ready=%d addr=0x%llX pressed=%d",
+            Diagnostics::Aim("hotkey state keySetting=%d vk=0x%X source=dma_keystate ready=%d addr=0x%llX pressed=%d sampleAvailable=%d byte[%zu]=0x%02X mask=0x%02X sampleDown=%d",
                 keySetting,
                 vk,
                 (KeyState::initialized.load(std::memory_order_acquire) &&
                     KeyState::gafAsyncKeyStateAddr.load(std::memory_order_acquire) != 0) ? 1 : 0,
                 static_cast<unsigned long long>(KeyState::gafAsyncKeyStateAddr.load(std::memory_order_acquire)),
-                pressed ? 1 : 0);
+                pressed ? 1 : 0,
+                sample.available ? 1 : 0,
+                sample.byteIndex,
+                static_cast<unsigned>(sample.rawByte),
+                static_cast<unsigned>(sample.downMask),
+                sample.down ? 1 : 0);
             state.initialized = true;
             state.keySetting = keySetting;
             state.vk = vk;
             state.pressed = pressed;
+            state.sampleAvailable = sample.available;
+            state.sampleByteIndex = sample.byteIndex;
+            state.sampleRawByte = sample.rawByte;
+            state.sampleDownMask = sample.downMask;
             state.lastLogTick = now;
         }
     }

@@ -1134,6 +1134,8 @@ void RenderCallback()
 
 static void InitializeKmBoxFromConfig()
 {
+    kmbox::EnsureTimerResolution();
+
     if (!OW::Config::kmboxEnabled) {
         std::printf("[KMBOX] Disabled by config; output is disabled.\n");
         Diagnostics::Info("KMBox disabled by config.");
@@ -1148,8 +1150,6 @@ static void InitializeKmBoxFromConfig()
         Diagnostics::Aim("kmbox.init mock success status=%d", status);
         return;
     }
-
-    kmbox::EnsureTimerResolution();
 
     if (OW::Config::kmboxDeviceType == 0) {
         OW::Config::NormalizeKmboxPorts();
@@ -1453,6 +1453,7 @@ static void StartBackgroundThreads()
 static void ClearProcessRuntimeSnapshots()
 {
     OW::SDK->Reset();
+    OW::ClearCriticalMatrixReadPlan();
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         OW::ow_entities.clear();

@@ -3275,6 +3275,8 @@ std::string BuildHealthJson()
 std::string BuildDiagnosticsJson()
 {
     const Diagnostics::StatusSnapshot snapshot = Diagnostics::Snapshot();
+    const OW::CriticalMatrixReadPlan criticalMatrixPlan =
+        OW::SnapshotCriticalMatrixReadPlan();
     std::ostringstream out;
     out.imbue(std::locale::classic());
     AppendCommonStart(out);
@@ -3293,7 +3295,31 @@ std::string BuildDiagnosticsJson()
     AppendNumberOrNull(out, static_cast<float>(snapshot.fps));
     out << ",\"viewmatrix_publish_hz\":";
     AppendNumberOrNull(out, static_cast<float>(snapshot.viewMatrixPublish.hz));
-    out << ",\"viewmatrix_poll_sleep_ms\":" << ViewMatrixPollSleepMs()
+    out << ",\"runtime_profile\":";
+    AppendJsonString(out, OW::offset::ActiveProfileName());
+    out << ",\"entity_pipeline_v2_enabled\":"
+        << (OW::EntityPipelineV2Enabled() ? "true" : "false")
+        << ",\"scan_latest_wins_enabled\":"
+        << (OW::ScanLatestWinsEnabled() ? "true" : "false")
+        << ",\"cold_topology_scan_enabled\":"
+        << (OW::ColdTopologyScanEnabled() ? "true" : "false")
+        << ",\"viewmatrix_poll_sleep_ms\":" << ViewMatrixPollSleepMs()
+        << ",\"viewmatrix_effective_poll_sleep_ms\":"
+        << (OW::CriticalBatchFusionActive() ? kCriticalMatrixPollSleepMs : ViewMatrixPollSleepMs())
+        << ",\"steady_entity_scheduler_enabled\":"
+        << (OW::SteadyEntitySchedulerEnabled() ? "true" : "false")
+        << ",\"critical_batch_fusion_enabled\":"
+        << (OW::CriticalBatchFusionEnabled() ? "true" : "false")
+        << ",\"critical_batch_fusion_active\":"
+        << (OW::CriticalBatchFusionActive() ? "true" : "false")
+        << ",\"critical_matrix_plan_valid\":"
+        << (criticalMatrixPlan.valid ? "true" : "false")
+        << ",\"critical_matrix_plan_generation\":"
+        << criticalMatrixPlan.generation
+        << ",\"connection_epoch\":"
+        << OW::ProcessConnection::ConnectionEpoch()
+        << ",\"critical_matrix_plan_connection_epoch\":"
+        << criticalMatrixPlan.connectionEpoch
         << ",\"viewmatrix_scan_backoff_ms\":" << ViewMatrixScanBackoffMs()
         << ",\"viewmatrix_scan_due_guard_ms\":" << ViewMatrixScanDueGuardMs()
         << ",\"viewmatrix_scan_backoff_count\":" << OW::ViewMatrixScanBackoffCount()

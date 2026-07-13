@@ -69,6 +69,17 @@ bool TestCompactBitmapDecode()
     if (KeyState::IsKeyDownInBitmap(bitmap, 256))
         return false;
 
+    KeyState::KeyStateBitmap mouseBitmap{};
+    mouseBitmap[static_cast<size_t>(VK_XBUTTON2) / 4] =
+        static_cast<uint8_t>(1u << ((VK_XBUTTON2 % 4) * 2));
+
+    const KeyState::KeyStateVkSample x1 = KeyState::SampleVkInBitmap(mouseBitmap, VK_XBUTTON1);
+    const KeyState::KeyStateVkSample x2 = KeyState::SampleVkInBitmap(mouseBitmap, VK_XBUTTON2);
+    if (!x1.available || x1.byteIndex != 1 || x1.downMask != 0x04 || x1.down)
+        return false;
+    if (!x2.available || x2.byteIndex != 1 || x2.downMask != 0x10 || x2.rawByte != 0x10 || !x2.down)
+        return false;
+
     return true;
 }
 
@@ -106,6 +117,17 @@ bool TestWin1124H2FallbackCandidates()
     return offsets.size() == 2 &&
         offsets[0].value == 0x3808 &&
         offsets[1].value == 0x3830;
+}
+
+bool TestWin1124H2TrustedKeyOffsets()
+{
+    const KeyState::SessionSlotsProfile* profile = KeyState::SelectSessionSlotsProfile(26100);
+    if (!profile)
+        return false;
+
+    return KeyState::IsProfileKeyOffsetCandidate(26100, *profile, 0x3808) &&
+        KeyState::IsProfileKeyOffsetCandidate(26100, *profile, 0x3830) &&
+        !KeyState::IsProfileKeyOffsetCandidate(26100, *profile, 0x3800);
 }
 
 bool TestRipRelativeHelper()
@@ -180,6 +202,8 @@ int main()
         return Fail("session probe order");
     if (!TestWin1124H2FallbackCandidates())
         return Fail("Win11 24H2 fallback candidates");
+    if (!TestWin1124H2TrustedKeyOffsets())
+        return Fail("Win11 24H2 trusted key offsets");
     if (!TestRipRelativeHelper())
         return Fail("RIP-relative helper");
     if (!TestU32ValueHelper())

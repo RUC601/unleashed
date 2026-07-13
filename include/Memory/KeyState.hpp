@@ -26,6 +26,16 @@ namespace KeyState {
     inline constexpr size_t kKeyStateByteCount = 256 * 2 / 8;
     using KeyStateBitmap = std::array<uint8_t, kKeyStateByteCount>;
 
+    struct KeyStateVkSample {
+        int vk = 0;
+        bool valid = false;
+        bool available = false;
+        size_t byteIndex = 0;
+        uint8_t rawByte = 0;
+        uint8_t downMask = 0;
+        bool down = false;
+    };
+
     // Windows stores two bits per VK in the compact gafAsyncKeyState bitmap.
     inline KeyStateBitmap keyStateBitmap{};
     inline std::mutex keyStateMutex;
@@ -876,6 +886,34 @@ namespace KeyState {
         AddResolverCandidate(candidates, profile.keyStateOffset, "fallback_profile");
     }
 
+    inline bool IsProfileKeyOffsetCandidate(
+        DWORD build,
+        const SessionSlotsProfile& profile,
+        uint64_t keyStateOffset)
+    {
+        std::vector<ResolverValueCandidate> candidates;
+        AddProfileKeyOffsetCandidates(candidates, build, profile);
+        return std::any_of(
+            candidates.begin(),
+            candidates.end(),
+            [keyStateOffset](const ResolverValueCandidate& candidate) {
+                return candidate.value == keyStateOffset;
+            });
+    }
+
+    inline void AddTrustedScannedKeyOffsetCandidate(
+        std::vector<ResolverValueCandidate>& candidates,
+        DWORD build,
+        const SessionSlotsProfile& profile,
+        uint64_t keyStateOffset,
+        const char* method)
+    {
+        if (build >= 22621 && !IsProfileKeyOffsetCandidate(build, profile, keyStateOffset))
+            return;
+
+        AddResolverCandidate(candidates, keyStateOffset, method);
+    }
+
     inline std::vector<ResolverValueCandidate> BuildSessionSlotsRvaCandidates(
         DWORD pid,
         DWORD build,
@@ -902,14 +940,14 @@ namespace KeyState {
     {
         std::vector<ResolverValueCandidate> candidates;
         uint64_t value = 0;
-        if (TryScanKeyStateOffset(pid, value))
-            AddResolverCandidate(candidates, value, "signature_u32");
-        if (TryScanKeyStateOffsetLea(pid, value))
-            AddResolverCandidate(candidates, value, "signature_lea");
         if (TryPdbKeyStateOffset(pid, value))
-            AddResolverCandidate(candidates, value, "pdb");
+            AddTrustedScannedKeyOffsetCandidate(candidates, build, profile, value, "pdb");
+        if (TryScanKeyStateOffsetLea(pid, value))
+            AddTrustedScannedKeyOffsetCandidate(candidates, build, profile, value, "signature_lea");
 
         AddProfileKeyOffsetCandidates(candidates, build, profile);
+        if (TryScanKeyStateOffset(pid, value))
+            AddTrustedScannedKeyOffsetCandidate(candidates, build, profile, value, "signature_u32");
         return candidates;
     }
 
@@ -1252,14 +1290,50 @@ namespace KeyState {
         keyStateBitmap = latest;
     }
 
+    inline KeyStateVkSample MakeVkSampleLocation(int vkCode)
+    {
+        KeyStateVkSample sample{};
+        sample.vk = vkCode;
+
+        if (vkCode < 0 || vkCode >= 256)
+            return sample;
+
+        sample.valid = true;
+        sample.byteIndex = static_cast<size_t>(vkCode) / 4;
+        sample.downMask = static_cast<uint8_t>(1u << ((vkCode % 4) * 2));
+        return sample;
+    }
+
+    inline KeyStateVkSample SampleVkInBitmap(const KeyStateBitmap& bitmap, int vkCode)
+    {
+        KeyStateVkSample sample = MakeVkSampleLocation(vkCode);
+        if (!sample.valid || sample.byteIndex >= bitmap.size())
+            return sample;
+
+        sample.available = true;
+        sample.rawByte = bitmap[sample.byteIndex];
+        sample.down = (sample.rawByte & sample.downMask) != 0;
+        return sample;
+    }
+
     inline bool IsKeyDownInBitmap(const KeyStateBitmap& bitmap, int vkCode)
     {
-        if (vkCode < 0 || vkCode >= 256)
-            return false;
+        return SampleVkInBitmap(bitmap, vkCode).down;
+    }
 
-        const size_t byteIndex = static_cast<size_t>(vkCode) / 4;
-        const uint8_t downBit = static_cast<uint8_t>(1u << ((vkCode % 4) * 2));
-        return byteIndex < bitmap.size() && (bitmap[byteIndex] & downBit) != 0;
+    inline KeyStateVkSample SampleVk(int vkCode)
+    {
+        KeyStateVkSample sample = MakeVkSampleLocation(vkCode);
+        if (!sample.valid)
+            return sample;
+
+        if (!initialized.load(std::memory_order_acquire) ||
+            gafAsyncKeyStateAddr.load(std::memory_order_acquire) == 0) {
+            return sample;
+        }
+
+        std::lock_guard<std::mutex> lock(keyStateMutex);
+        return SampleVkInBitmap(keyStateBitmap, vkCode);
     }
 
     inline bool IsKeyDown(int vkCode)
