@@ -274,11 +274,11 @@ namespace {
     std::unordered_map<std::string, ZaryaAmmoProbeRuntime> g_zaryaAmmoProbes;
     std::unordered_map<std::string, SequenceAmmoBudgetState> g_sequenceAmmoBudgets;
     std::mutex g_sequenceAmmoBudgetMutex;
-    std::unordered_map<std::string, bool> g_timedActionsActive;
-    std::mutex g_timedActionsMutex;
     std::mt19937 g_random{ std::random_device{}() };
     std::mutex g_randomMutex;
     std::atomic<bool> g_anyInputSequenceActive{ false };
+    std::uint64_t g_lastTimedOutputGeneration = 0;
+    bool g_lastTimedOutputGateOpen = false;
     uint64_t g_lastHeroId = 0;
 
     void RefreshAnyInputSequenceActive();
@@ -1918,81 +1918,154 @@ namespace {
         return SendKeyboardState(vk, down);
     }
 
-    bool TryBeginTimedAction(const std::string& runtimeKey)
+    OutputScheduler& TimedOutputScheduler()
     {
-        std::lock_guard<std::mutex> lock(g_timedActionsMutex);
-        bool& active = g_timedActionsActive[runtimeKey];
-        if (active)
-            return false;
-        active = true;
-        return true;
+        return RuntimeOutputScheduler();
     }
 
-    void EndTimedAction(const std::string& runtimeKey)
+    bool TryMapVkToOutputControl(int vk, OutputControl& control)
     {
-        std::lock_guard<std::mutex> lock(g_timedActionsMutex);
-        g_timedActionsActive[runtimeKey] = false;
+        switch (vk) {
+        case VK_LBUTTON:
+            control = { OutputControlKind::MouseButton, 0 };
+            return true;
+        case VK_RBUTTON:
+            control = { OutputControlKind::MouseButton, 1 };
+            return true;
+        case VK_MBUTTON:
+            control = { OutputControlKind::MouseButton, 2 };
+            return true;
+        default:
+            break;
+        }
+
+        const unsigned char hidCode = VkToHidKeyCode(vk);
+        if (hidCode == 0)
+            return false;
+        control = {
+            hidCode >= 0xE0 && hidCode <= 0xE7
+                ? OutputControlKind::KeyboardModifier
+                : OutputControlKind::KeyboardUsage,
+            hidCode
+        };
+        return true;
     }
 
     bool StartTimedHotkey(const std::string& runtimeKey, int vk, std::chrono::milliseconds duration)
     {
-        if (vk <= 0 || !TryBeginTimedAction(runtimeKey))
+        OutputControl control{};
+        if (vk <= 0 || !TryMapVkToOutputControl(vk, control))
             return false;
 
         duration = (std::max)(duration, kBriefPulse);
-        std::thread([runtimeKey, vk, duration]() {
-            if (SetHotkeyState(vk, true)) {
-                std::this_thread::sleep_for(duration);
-                SetHotkeyState(vk, false);
-            }
-            EndTimedAction(runtimeKey);
-        }).detach();
-        return true;
+        return TimedOutputScheduler().ScheduleTimedHold(
+            runtimeKey,
+            OutputOwnerSource::HeroTimedAction,
+            { control },
+            duration);
     }
 
     bool StartZaryaAutoRightPulse(const std::string& runtimeKey,
                                   bool releaseLeftDuringPulse,
                                   ZaryaAutoRightTiming timing)
     {
-        if (!TryBeginTimedAction(runtimeKey))
-            return false;
+        struct PulseState
+        {
+            std::atomic<bool> releasedLeft{ false };
+            std::atomic<bool> rightPressed{ false };
+            std::atomic<bool> restoredLeft{ false };
+            std::atomic<bool> completed{ false };
+        };
 
-        std::thread([runtimeKey, releaseLeftDuringPulse, timing]() {
-            bool releasedLeft = false;
-            bool rightPressed = false;
-            bool restoredLeft = false;
-
-            rightPressed = SetHotkeyState(VK_RBUTTON, true);
-            if (rightPressed) {
-                if (releaseLeftDuringPulse) {
-                    std::this_thread::sleep_for(timing.leftReleaseDelay);
-                    releasedLeft = SetHotkeyState(VK_LBUTTON, false);
-                    std::this_thread::sleep_for(timing.afterLeftRelease);
-                } else {
-                    std::this_thread::sleep_for(timing.rightHold);
-                }
-                SetHotkeyState(VK_RBUTTON, false);
-            }
-
-            if (releasedLeft) {
-                std::this_thread::sleep_for(kZaryaAutoRightRestoreSettle);
-                if (AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON))
-                    restoredLeft = SetHotkeyState(VK_LBUTTON, true);
-            }
-
+        const auto state = std::make_shared<PulseState>();
+        const auto logCompletion = [runtimeKey, releaseLeftDuringPulse, timing, state](
+            const char* outcome) {
             Diagnostics::Aim(
-                "zarya.ammo_probe pulse_done skill=%s releaseLeft=%d releasedLeft=%d rightPressed=%d restoredLeft=%d xMs=%lld yMs=%lld zMs=%lld",
+                "zarya.ammo_probe pulse_done skill=%s outcome=%s releaseLeft=%d releasedLeft=%d rightPressed=%d restoredLeft=%d xMs=%lld yMs=%lld zMs=%lld",
                 runtimeKey.c_str(),
+                outcome,
                 releaseLeftDuringPulse ? 1 : 0,
-                releasedLeft ? 1 : 0,
-                rightPressed ? 1 : 0,
-                restoredLeft ? 1 : 0,
+                state->releasedLeft.load(std::memory_order_acquire) ? 1 : 0,
+                state->rightPressed.load(std::memory_order_acquire) ? 1 : 0,
+                state->restoredLeft.load(std::memory_order_acquire) ? 1 : 0,
                 static_cast<long long>(timing.rightHold.count()),
                 static_cast<long long>(timing.leftReleaseDelay.count()),
                 static_cast<long long>(timing.afterLeftRelease.count()));
-            EndTimedAction(runtimeKey);
-        }).detach();
-        return true;
+        };
+
+        OutputActionPlan plan{};
+        plan.key = runtimeKey;
+        plan.ownerSource = OutputOwnerSource::ZaryaPulse;
+        plan.acquire = { { OutputControlKind::MouseButton, 1 } };
+
+        if (releaseLeftDuringPulse) {
+            OutputActionStep releaseLeft{};
+            releaseLeft.afterStart = timing.leftReleaseDelay;
+            releaseLeft.callback = [state](std::uint64_t generation) {
+                state->releasedLeft.store(
+                    kmbox::DispatchMouseButtonForGeneration(
+                        generation, 0, false) == success,
+                    std::memory_order_release);
+            };
+            plan.steps.push_back(std::move(releaseLeft));
+        }
+
+        OutputActionStep releaseRight{};
+        releaseRight.afterStart = timing.rightHold;
+        releaseRight.release = { { OutputControlKind::MouseButton, 1 } };
+        if (!releaseLeftDuringPulse) {
+            releaseRight.callback = [state, logCompletion](std::uint64_t) {
+                state->completed.store(true, std::memory_order_release);
+                logCompletion("completed");
+            };
+            releaseRight.complete = true;
+        }
+        plan.steps.push_back(std::move(releaseRight));
+
+        if (releaseLeftDuringPulse) {
+            OutputActionStep restoreLeft{};
+            restoreLeft.afterStart = timing.rightHold + kZaryaAutoRightRestoreSettle;
+            restoreLeft.callback = [state, logCompletion](std::uint64_t generation) {
+                if (state->releasedLeft.load(std::memory_order_acquire) &&
+                    AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON)) {
+                    state->restoredLeft.store(
+                        kmbox::DispatchMouseButtonForGeneration(
+                            generation, 0, true) == success,
+                        std::memory_order_release);
+                }
+                state->completed.store(true, std::memory_order_release);
+                logCompletion("completed");
+            };
+            restoreLeft.complete = true;
+            plan.steps.push_back(std::move(restoreLeft));
+        }
+
+        plan.cancelCleanup = [state, logCompletion](
+            OutputActionCancelReason reason,
+            std::uint64_t generation) {
+            if (reason != OutputActionCancelReason::RuntimeChanged &&
+                state->releasedLeft.load(std::memory_order_acquire) &&
+                !state->restoredLeft.load(std::memory_order_acquire) &&
+                AimbotDetail::IsInputVkDownQuiet(VK_LBUTTON)) {
+                state->restoredLeft.store(
+                    kmbox::DispatchMouseButtonForGeneration(
+                        generation, 0, true) == success,
+                    std::memory_order_release);
+            }
+            if (!state->completed.load(std::memory_order_acquire)) {
+                logCompletion(
+                    reason == OutputActionCancelReason::RuntimeChanged
+                        ? "runtime_changed"
+                        : (reason == OutputActionCancelReason::OutputFailure
+                            ? "output_failure"
+                            : "cancelled"));
+            }
+        };
+
+        const bool scheduled = TimedOutputScheduler().Schedule(std::move(plan));
+        if (scheduled)
+            state->rightPressed.store(true, std::memory_order_release);
+        return scheduled;
     }
 
     const char* GenjiDashPositionClassName(GenjiDashPositionClass value)
@@ -3574,8 +3647,13 @@ namespace {
         return true;
     }
 
-    void CancelSkill(const std::string& skillId)
+    void CancelSkill(const std::string& skillId, bool cancelTimedAction)
     {
+        if (cancelTimedAction) {
+            (void)TimedOutputScheduler().Cancel(skillId);
+            (void)TimedOutputScheduler().Cancel(skillId + ":auto_right");
+        }
+
         auto sequence = g_sequences.find(skillId);
         if (sequence != g_sequences.end())
             CancelSequence(skillId, sequence->second, "disabled_or_inactive");
@@ -3852,6 +3930,8 @@ HeroSkillRunState RunViewpointController(const std::string& skillId,
 
 void CancelActiveSkill()
 {
+    TimedOutputScheduler().CancelAllAndJoin();
+
     for (auto& item : g_sequences)
         CancelSequence(item.first, item.second, "cancel_all");
 
@@ -3873,6 +3953,23 @@ void CancelActiveSkill()
 
 void ProcessHeroSkills()
 {
+    const OutputRuntimeState outputRuntime =
+        CurrentKmboxOutputRuntimeState();
+    const bool generationChanged =
+        g_lastTimedOutputGeneration != 0 &&
+        outputRuntime.backendGeneration != g_lastTimedOutputGeneration;
+    const bool outputGateClosed =
+        g_lastTimedOutputGateOpen && !outputRuntime.outputGateOpen;
+    const bool outputReady =
+        TimedOutputScheduler().SynchronizeRuntime(outputRuntime);
+    g_lastTimedOutputGeneration = outputRuntime.backendGeneration;
+    g_lastTimedOutputGateOpen = outputRuntime.outputGateOpen;
+
+    if (generationChanged || outputGateClosed)
+        CancelActiveSkill();
+    if (!outputReady)
+        return;
+
     if (Config::doingentity == 0 || !ProcessConnection::IsConnected()) {
         CancelActiveSkill();
         return;
@@ -3908,7 +4005,7 @@ void ProcessHeroSkills()
             definition.defaultSettings);
 
         if (!settings.enabled) {
-            CancelSkill(skillKey);
+            CancelSkill(skillKey, true);
             continue;
         }
 
@@ -3928,7 +4025,7 @@ void ProcessHeroSkills()
 
         if (!sequenceActive && !genjiComboActive &&
             IsInRechargeInterval(definition, settings, localSnapshot)) {
-            CancelSkill(skillKey);
+            CancelSkill(skillKey, false);
             if (ShouldLogSkillGuard(skillKey)) {
                 Diagnostics::Aim("skill.cooldown_guard block skill=%s input=%d reloading=%d skillcd1=%.3f skillcd2=%.3f ultimate=%.1f",
                     skillKey.c_str(),
@@ -3952,7 +4049,7 @@ void ProcessHeroSkills()
         }
 
         if (IsAmmoGuardBlocking(skillKey, settings, localSnapshot)) {
-            CancelSkill(skillKey);
+            CancelSkill(skillKey, false);
             continue;
         }
 

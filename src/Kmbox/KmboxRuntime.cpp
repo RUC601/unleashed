@@ -13,10 +13,43 @@ namespace kmbox
 {
     namespace
     {
+        std::mutex g_runtimeFacadeMutex;
+        std::mutex g_preReconcileHookMutex;
+        RuntimePreReconcileHook g_preReconcileHook;
+
         void RecordFirstFailure(int& aggregate, int status)
         {
             if (aggregate == success && status != success)
                 aggregate = status;
+        }
+
+        bool IsReconcileNoOp(
+            KmboxRuntimeController& controller,
+            const KmboxRuntimeDescriptor& desired)
+        {
+            const KmboxRuntimeAppliedState applied = controller.Applied();
+            return desired == applied.descriptor &&
+                (applied.descriptor.backend == KmboxRuntimeBackend::None ||
+                 controller.IsOutputGateOpen());
+        }
+
+        int ReconcileProductionRuntime(
+            const KmboxRuntimeDescriptor& desired,
+            std::chrono::milliseconds timeout)
+        {
+            std::lock_guard<std::mutex> transitionLock(g_runtimeFacadeMutex);
+            KmboxRuntimeController& controller = RuntimeController();
+            if (!IsReconcileNoOp(controller, desired)) {
+                RuntimePreReconcileHook hook;
+                {
+                    std::lock_guard<std::mutex> hookLock(
+                        g_preReconcileHookMutex);
+                    hook = g_preReconcileHook;
+                }
+                if (hook)
+                    hook();
+            }
+            return controller.Reconcile(desired, timeout);
         }
     }
 
@@ -295,6 +328,12 @@ namespace kmbox
         return controller;
     }
 
+    void SetRuntimePreReconcileHook(RuntimePreReconcileHook hook)
+    {
+        std::lock_guard<std::mutex> lock(g_preReconcileHookMutex);
+        g_preReconcileHook = std::move(hook);
+    }
+
     KmboxRuntimeDescriptor RuntimeDescriptorFromConfig()
     {
         std::lock_guard<std::mutex> lock(OW::Config::mutex);
@@ -327,7 +366,7 @@ namespace kmbox
     int ReconcileRuntimeFromConfig(std::chrono::milliseconds timeout)
     {
         const KmboxRuntimeDescriptor desired = RuntimeDescriptorFromConfig();
-        return RuntimeController().Reconcile(desired, timeout);
+        return ReconcileProductionRuntime(desired, timeout);
     }
 
     KmboxRuntimeAppliedState ActiveRuntimeSnapshot()
@@ -372,7 +411,8 @@ namespace kmbox
 
     int ShutdownActiveRuntime(std::chrono::milliseconds timeout)
     {
-        return RuntimeController().ShutdownActive(timeout);
+        return ReconcileProductionRuntime(
+            KmboxRuntimeDescriptor::Disabled(), timeout);
     }
 
     int DispatchMouseMove(int x, int y, int runtimeMs)
@@ -414,12 +454,49 @@ namespace kmbox
                     return KmBoxMgr.Mouse.Middle(down);
                 case KmboxRuntimeBackend::Serial:
                     if (button == 0)
-                        kmBoxBMgr.km_left(down);
-                    else if (button == 1)
-                        kmBoxBMgr.km_right(down);
-                    else
-                        kmBoxBMgr.km_middle(down);
-                    return success;
+                        return kmBoxBMgr.km_left(down);
+                    if (button == 1)
+                        return kmBoxBMgr.km_right(down);
+                    return kmBoxBMgr.km_middle(down);
+                case KmboxRuntimeBackend::Mock:
+                    return MockHardwareMgr.RecordButton(button, down);
+                default:
+                    return err_queue_stopped;
+                }
+            });
+    }
+
+    int DispatchMouseButtonForGeneration(
+        std::uint64_t expectedGeneration,
+        int button,
+        bool down)
+    {
+        if (button < 0 || button > 2)
+            return err_net_cmd;
+
+        const KmBoxOutputIntent intent = OutputIntentForState(down);
+        if (ShouldSuppressOutputForMenu(
+                OW::Config::KmboxOutputSuppressedByMenu(), intent)) {
+            return err_output_suppressed;
+        }
+
+        return RuntimeController().DispatchActive(
+            [=](const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                switch (active.descriptor.backend) {
+                case KmboxRuntimeBackend::Network:
+                    if (button == 0)
+                        return KmBoxMgr.Mouse.Left(down);
+                    if (button == 1)
+                        return KmBoxMgr.Mouse.Right(down);
+                    return KmBoxMgr.Mouse.Middle(down);
+                case KmboxRuntimeBackend::Serial:
+                    if (button == 0)
+                        return kmBoxBMgr.km_left(down);
+                    if (button == 1)
+                        return kmBoxBMgr.km_right(down);
+                    return kmBoxBMgr.km_middle(down);
                 case KmboxRuntimeBackend::Mock:
                     return MockHardwareMgr.RecordButton(button, down);
                 default:
@@ -454,10 +531,13 @@ namespace kmbox
                 case KmboxRuntimeBackend::Network:
                     return KmBoxMgr.ForceReleaseMouseButtons();
                 case KmboxRuntimeBackend::Serial:
-                    kmBoxBMgr.km_left(false);
-                    kmBoxBMgr.km_right(false);
-                    kmBoxBMgr.km_middle(false);
-                    return success;
+                {
+                    int status = success;
+                    RecordFirstFailure(status, kmBoxBMgr.km_left(false));
+                    RecordFirstFailure(status, kmBoxBMgr.km_right(false));
+                    RecordFirstFailure(status, kmBoxBMgr.km_middle(false));
+                    return status;
+                }
                 case KmboxRuntimeBackend::Mock:
                     return MockHardwareMgr.ForceReleaseMouseButtons();
                 default:
@@ -478,12 +558,10 @@ namespace kmbox
                     return KmBoxMgr.ForceReleaseMouseButton(button);
                 case KmboxRuntimeBackend::Serial:
                     if (button == 0)
-                        kmBoxBMgr.km_left(false);
-                    else if (button == 1)
-                        kmBoxBMgr.km_right(false);
-                    else
-                        kmBoxBMgr.km_middle(false);
-                    return success;
+                        return kmBoxBMgr.km_left(false);
+                    if (button == 1)
+                        return kmBoxBMgr.km_right(false);
+                    return kmBoxBMgr.km_middle(false);
                 case KmboxRuntimeBackend::Mock:
                     return MockHardwareMgr.ForceReleaseMouseButton(button);
                 default:
@@ -527,20 +605,93 @@ namespace kmbox
             });
     }
 
-    int DispatchKeyboardKey(unsigned char hidCode, bool down)
+    int DispatchKeyboardReport(
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages)
     {
+        soft_keyboard_t validated{};
+        if (!KmBoxNetManager::BuildKeyboardReport(
+                modifierMask, usages, validated)) {
+            return err_net_cmd;
+        }
+
+        const KmBoxOutputIntent intent = modifierMask == 0 && usages.empty()
+            ? KmBoxOutputIntent::SafetyRelease
+            : KmBoxOutputIntent::Normal;
+        if (ShouldSuppressOutputForMenu(
+                OW::Config::KmboxOutputSuppressedByMenu(), intent)) {
+            return err_output_suppressed;
+        }
+
         return RuntimeController().DispatchActive(
-            [=](const KmboxRuntimeAppliedState& active) -> int {
-                if (!SupportsKeyboardOutput(active.descriptor.backend))
-                    return err_net_cmd;
+            [modifierMask, usages, intent](
+                const KmboxRuntimeAppliedState& active) -> int {
                 switch (active.descriptor.backend) {
                 case KmboxRuntimeBackend::Network:
-                    return KmBoxMgr.SendKeyboardKey(hidCode, down);
+                    return KmBoxMgr.SendKeyboardReport(modifierMask, usages);
                 case KmboxRuntimeBackend::Mock:
-                    return MockHardwareMgr.RecordKeyboardKey(hidCode, down);
+                    return MockHardwareMgr.RecordKeyboardReport(
+                        modifierMask, usages, intent);
+                case KmboxRuntimeBackend::Serial:
+                    return err_net_cmd;
                 default:
                     return err_queue_stopped;
                 }
             });
+    }
+
+    int DispatchKeyboardReportForGeneration(
+        std::uint64_t expectedGeneration,
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages,
+        KmBoxOutputIntent intent)
+    {
+        soft_keyboard_t validated{};
+        if (!KmBoxNetManager::BuildKeyboardReport(
+                modifierMask, usages, validated)) {
+            return err_net_cmd;
+        }
+
+        if (ShouldSuppressOutputForMenu(
+                OW::Config::KmboxOutputSuppressedByMenu(), intent)) {
+            return err_output_suppressed;
+        }
+
+        return RuntimeController().DispatchActive(
+            [expectedGeneration, modifierMask, usages, intent](
+                const KmboxRuntimeAppliedState& active) -> int {
+                if (active.generation != expectedGeneration)
+                    return err_queue_stopped;
+                switch (active.descriptor.backend) {
+                case KmboxRuntimeBackend::Network:
+                    return KmBoxMgr.SendKeyboardReport(
+                        modifierMask, usages, intent);
+                case KmboxRuntimeBackend::Mock:
+                    return MockHardwareMgr.RecordKeyboardReport(
+                        modifierMask, usages, intent);
+                case KmboxRuntimeBackend::Serial:
+                    return err_net_cmd;
+                default:
+                    return err_queue_stopped;
+                }
+            });
+    }
+
+    int DispatchKeyboardKey(unsigned char hidCode, bool down)
+    {
+        const bool isModifier =
+            hidCode >= KEY_LEFTCONTROL && hidCode <= KEY_RIGHT_GUI;
+        const bool isUsage = hidCode >= KEY_A && hidCode < KEY_LEFTCONTROL;
+        if (!isModifier && !isUsage)
+            return err_net_cmd;
+
+        if (!down)
+            return DispatchKeyboardReport(0, {});
+        if (isModifier) {
+            const auto modifierBit = static_cast<unsigned char>(
+                1u << (hidCode - KEY_LEFTCONTROL));
+            return DispatchKeyboardReport(modifierBit, {});
+        }
+        return DispatchKeyboardReport(0, { hidCode });
     }
 }

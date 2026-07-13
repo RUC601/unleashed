@@ -46,6 +46,7 @@ set(GAME_HEADERS
     include/Game/Offsets.hpp
     include/Game/Overwatch.hpp
     include/Game/OutputOwnership.hpp
+    include/Game/OutputScheduler.hpp
     include/Game/SDK.hpp
     include/Game/Structs.hpp
     include/Game/Target.hpp
@@ -91,6 +92,7 @@ set(UNLEASHED_SOURCES
     src/Game/HeroSkills.cpp
     src/Game/Offsets.cpp
     src/Game/OutputOwnership.cpp
+    src/Game/OutputScheduler.cpp
     src/Game/WeaponSpec.cpp
     src/Kmbox/KmboxB.cpp
     src/Kmbox/KmboxMoveTest.cpp
@@ -156,6 +158,8 @@ add_executable(HeroPerkClassifierSelfTest
 
 add_executable(MockHardwareSelfTest
     src/Tools/MockHardwareSelfTest.cpp
+    src/Game/OutputOwnership.cpp
+    src/Game/OutputScheduler.cpp
     src/Kmbox/KmboxRuntime.cpp
     src/Kmbox/KmboxTimerResolution.cpp
     src/Kmbox/KmBoxMock.cpp
@@ -193,6 +197,7 @@ add_executable(KmboxRuntimeSwitchSelfTest
 add_executable(InputOwnershipSelfTest
     src/Tools/InputOwnershipSelfTest.cpp
     src/Game/OutputOwnership.cpp
+    src/Game/OutputScheduler.cpp
 )
 
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)

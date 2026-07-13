@@ -3,6 +3,7 @@
 #include "KmBoxConfig.h"
 
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -14,6 +15,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <vector>
 
 class KmBoxMouse
 {
@@ -90,6 +92,7 @@ private:
     std::mutex sendMutex;
     std::mutex dataMutex;
     std::mutex mouseStateMutex;
+    std::mutex keyboardStateMutex;
     std::mutex reconnectMutex;
     std::mutex queueMutex;
     std::condition_variable queueCv;
@@ -102,6 +105,11 @@ private:
     std::atomic<DWORD> heartbeatThreadId{ 0 };
     std::atomic<unsigned long long> outputSendCount{ 0 };
     std::function<int(unsigned int, const client_data&, int)> safetySendOverride;
+    unsigned char desiredKeyboardModifierMask = 0;
+    std::array<unsigned char, 10> desiredKeyboardUsages{};
+    unsigned char lastSentKeyboardModifierMask = 0;
+    std::array<unsigned char, 10> lastSentKeyboardUsages{};
+    unsigned int lastSentMouseButtonStateMask = 0;
 private:
     int NetHandler();
     int SendData(int DataLength);
@@ -125,6 +133,8 @@ private:
     void StartWorkers();
     void StopWorkers();
     void CompletePendingCommands(int Status);
+    void ClearDesiredKeyboardReport();
+    void ClearLastSentKeyboardReport();
     void QueueWorkerLoop();
     void HeartbeatLoop();
     int SetMouseButton(unsigned int Mask, bool Down, unsigned int Cmd, bool Force = false);
@@ -141,7 +151,18 @@ public:
     int SetMouseButtonStateMask(unsigned int StateMask, bool Force = false);
     int MaskMouse(unsigned int Mask);
     int UnmaskAll();
+    static bool BuildKeyboardReport(
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages,
+        soft_keyboard_t& report);
     static bool BuildKeyboardReport(unsigned char HidCode, bool Down, soft_keyboard_t& Report);
+    int SendKeyboardReport(
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages,
+        KmBoxOutputIntent intent);
+    int SendKeyboardReport(
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages);
     int SendKeyboardKey(unsigned char hidCode, bool down);
     KmBoxConnectionState GetConnectionState() const;
     LifecycleState GetLifecycleState() const;

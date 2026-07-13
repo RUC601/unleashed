@@ -998,7 +998,7 @@ namespace OW { namespace Config {
     // ---- Game state ----
     inline int  doingentity  = 1;
     inline int  lastheroid   = -2;
-    inline bool Menu         = true;
+    inline std::atomic<bool> Menu{ true };
     inline std::string nowhero = "Unknown";
 
     // ---- KMBox input output ----
@@ -1025,12 +1025,14 @@ namespace OW { namespace Config {
     inline bool  hostMouseDpiAutoDetected = false;
     inline int   kmboxInputDelayMs = 0;
     inline bool kmboxDebugLog = false;
-    inline bool kmboxSuppressOutputWhileMenuOpen = false;
+    inline std::atomic<bool> kmboxSuppressOutputWhileMenuOpen{ false };
     inline constexpr int kKmboxOutputSuppressedStatus = -9010;
 
     inline bool KmboxOutputSuppressedByMenu()
     {
-        return kmboxSuppressOutputWhileMenuOpen && Menu;
+        return
+            kmboxSuppressOutputWhileMenuOpen.load(std::memory_order_acquire) &&
+            Menu.load(std::memory_order_acquire);
     }
 
     inline int RecommendedKmboxMonitorPort(int commandPort)

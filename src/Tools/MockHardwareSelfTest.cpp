@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
 Memory::~Memory() = default;
 
@@ -219,6 +220,52 @@ namespace
     int VerifyKeyboardReportBuilder()
     {
         soft_keyboard_t report{};
+        if (!KmBoxNetManager::BuildKeyboardReport(
+                BIT1, std::vector<unsigned char>{ KEY_E }, report))
+            return Fail("Shift+E full keyboard report was rejected");
+        if (static_cast<unsigned char>(report.ctrl) != BIT1 ||
+            static_cast<unsigned char>(report.button[0]) != KEY_E) {
+            return Fail("Shift+E full keyboard report was encoded incorrectly");
+        }
+
+        if (!KmBoxNetManager::BuildKeyboardReport(
+                0, std::vector<unsigned char>{ KEY_E }, report) ||
+            report.ctrl != 0 ||
+            static_cast<unsigned char>(report.button[0]) != KEY_E) {
+            return Fail("releasing Shift did not preserve E in full report");
+        }
+
+        if (!KmBoxNetManager::BuildKeyboardReport(
+                0, std::vector<unsigned char>{ KEY_E, KEY_Q, KEY_V }, report) ||
+            static_cast<unsigned char>(report.button[0]) != KEY_E ||
+            static_cast<unsigned char>(report.button[1]) != KEY_Q ||
+            static_cast<unsigned char>(report.button[2]) != KEY_V) {
+            return Fail("multiple ordinary HID usages were encoded incorrectly");
+        }
+
+        if (!KmBoxNetManager::BuildKeyboardReport(
+                0, std::vector<unsigned char>{}, report) ||
+            report.ctrl != 0) {
+            return Fail("zero keyboard report was rejected");
+        }
+        for (char key : report.button) {
+            if (key != 0)
+                return Fail("zero keyboard report retained an ordinary key");
+        }
+
+        std::vector<unsigned char> tooManyUsages(11, KEY_A);
+        if (KmBoxNetManager::BuildKeyboardReport(
+                0, std::vector<unsigned char>{ KEY_NONE }, report) ||
+            KmBoxNetManager::BuildKeyboardReport(
+                0, std::vector<unsigned char>{ KEY_LEFTSHIFT }, report) ||
+            KmBoxNetManager::BuildKeyboardReport(
+                0, std::vector<unsigned char>{ 0xF0 }, report) ||
+            KmBoxNetManager::BuildKeyboardReport(
+                0, std::vector<unsigned char>{ KEY_E, KEY_E }, report) ||
+            KmBoxNetManager::BuildKeyboardReport(0, tooManyUsages, report)) {
+            return Fail("invalid or oversized keyboard report was accepted");
+        }
+
         if (!KmBoxNetManager::BuildKeyboardReport(KEY_LEFTSHIFT, true, report))
             return Fail("Shift keyboard report was rejected");
         if ((static_cast<unsigned char>(report.ctrl) & BIT1) == 0)
@@ -244,6 +291,149 @@ namespace
 
         if (KmBoxNetManager::BuildKeyboardReport(0, true, report))
             return Fail("zero HID code was accepted");
+        if (KmBoxNetManager::BuildKeyboardReport(0xF0, false, report))
+            return Fail("invalid released HID code was accepted");
+        return EXIT_SUCCESS;
+    }
+
+    int VerifyFullKeyboardReportRuntime()
+    {
+        kmbox::MockHardwareMgr.Reset();
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
+        OW::Config::Menu = false;
+
+        if (kmbox::SupportsKeyboardOutput(kmbox::KmboxRuntimeBackend::Serial))
+            return Fail("serial backend incorrectly advertises keyboard output");
+
+        if (kmbox::DispatchKeyboardReport(BIT1, { KEY_E }) != success)
+            return Fail("mock Shift+E full report failed");
+        {
+            const auto snapshot = kmbox::MockHardwareMgr.Snapshot();
+            const auto events = kmbox::MockHardwareMgr.RecentEvents();
+            if (snapshot.outputKeyboardModifierMask != BIT1 ||
+                snapshot.outputKeyboardUsages[0] != KEY_E ||
+                snapshot.outputKeyboardKeys != 2 || events.size() != 2 ||
+                events[0].hidCode != KEY_E || !events[0].down ||
+                events[1].hidCode != KEY_LEFTSHIFT || !events[1].down) {
+                return Fail("mock did not store/record exact Shift+E report");
+            }
+        }
+
+        if (kmbox::DispatchKeyboardReport(0, { KEY_E }) != success)
+            return Fail("mock Shift release with E held failed");
+        {
+            const auto snapshot = kmbox::MockHardwareMgr.Snapshot();
+            const auto events = kmbox::MockHardwareMgr.RecentEvents();
+            if (snapshot.outputKeyboardModifierMask != 0 ||
+                snapshot.outputKeyboardUsages[0] != KEY_E ||
+                snapshot.outputKeyboardKeys != 1 || events.size() != 3 ||
+                events.back().hidCode != KEY_LEFTSHIFT || events.back().down) {
+                return Fail("releasing Shift cleared E or recorded the wrong diff");
+            }
+        }
+
+        if (kmbox::DispatchKeyboardReport(
+                0, { KEY_E, KEY_Q, KEY_V }) != success) {
+            return Fail("mock multi-key full report failed");
+        }
+        {
+            const auto snapshot = kmbox::MockHardwareMgr.Snapshot();
+            if (snapshot.outputKeyboardKeys != 3 ||
+                snapshot.outputKeyboardUsages[0] != KEY_E ||
+                snapshot.outputKeyboardUsages[1] != KEY_Q ||
+                snapshot.outputKeyboardUsages[2] != KEY_V) {
+                return Fail("mock did not retain exact multi-key report");
+            }
+        }
+
+        if (kmbox::DispatchKeyboardReport(BIT1, { KEY_E }) != success)
+            return Fail("failed to seed Shift+E before menu safety test");
+
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = true;
+        OW::Config::Menu = true;
+        const std::uint64_t generation =
+            kmbox::ActiveRuntimeSnapshot().generation;
+        if (kmbox::DispatchKeyboardReportForGeneration(
+                generation,
+                0,
+                { KEY_E },
+                KmBoxOutputIntent::SafetyRelease) != success) {
+            return Fail("menu blocked release-only nonzero keyboard report");
+        }
+        {
+            const auto snapshot = kmbox::MockHardwareMgr.Snapshot();
+            if (snapshot.outputKeyboardModifierMask != 0 ||
+                snapshot.outputKeyboardUsages[0] != KEY_E ||
+                snapshot.outputKeyboardKeys != 1) {
+                return Fail("release-only report did not preserve held E");
+            }
+        }
+
+        const auto beforeInvalidSafety = kmbox::MockHardwareMgr.Snapshot();
+        if (kmbox::DispatchKeyboardReportForGeneration(
+                generation,
+                0,
+                { KEY_E, KEY_W },
+                KmBoxOutputIntent::SafetyRelease) != err_net_cmd) {
+            return Fail("mock accepted safety report that added a new key");
+        }
+        const auto afterInvalidSafety = kmbox::MockHardwareMgr.Snapshot();
+        if (afterInvalidSafety.totalEvents != beforeInvalidSafety.totalEvents ||
+            afterInvalidSafety.outputKeyboardKeys !=
+                beforeInvalidSafety.outputKeyboardKeys ||
+            afterInvalidSafety.outputKeyboardUsages !=
+                beforeInvalidSafety.outputKeyboardUsages) {
+            return Fail("invalid mock safety report changed output state");
+        }
+
+        const auto beforeSuppressed = kmbox::MockHardwareMgr.Snapshot();
+        if (kmbox::DispatchKeyboardReport(0, { KEY_W }) != err_output_suppressed)
+            return Fail("menu did not suppress a nonzero full keyboard report");
+        const auto afterSuppressed = kmbox::MockHardwareMgr.Snapshot();
+        if (afterSuppressed.totalEvents != beforeSuppressed.totalEvents ||
+            afterSuppressed.outputKeyboardKeys != beforeSuppressed.outputKeyboardKeys) {
+            return Fail("menu-suppressed full report changed mock state");
+        }
+
+        if (kmbox::DispatchKeyboardReport(0, {}) != success)
+            return Fail("menu blocked zero safety-release keyboard report");
+        {
+            const auto snapshot = kmbox::MockHardwareMgr.Snapshot();
+            if (snapshot.outputKeyboardKeys != 0 ||
+                snapshot.outputKeyboardModifierMask != 0 ||
+                snapshot.outputKeyboardUsages[0] != 0) {
+                return Fail("zero safety report did not clear mock keyboard state");
+            }
+        }
+
+        OW::Config::Menu = false;
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
+        const auto beforeStaleGeneration = kmbox::MockHardwareMgr.Snapshot();
+        if (kmbox::DispatchKeyboardReportForGeneration(
+                generation + 1,
+                0,
+                { KEY_W },
+                KmBoxOutputIntent::Normal) != err_queue_stopped) {
+            return Fail("stale generation keyboard report was accepted");
+        }
+        if (kmbox::MockHardwareMgr.Snapshot().totalEvents !=
+            beforeStaleGeneration.totalEvents) {
+            return Fail("stale generation keyboard report emitted mock events");
+        }
+
+        const auto beforeInvalid = kmbox::MockHardwareMgr.Snapshot();
+        std::vector<unsigned char> tooManyUsages(11, KEY_A);
+        if (kmbox::DispatchKeyboardReport(0, { KEY_NONE }) != err_net_cmd ||
+            kmbox::DispatchKeyboardReport(0, { KEY_LEFTSHIFT }) != err_net_cmd ||
+            kmbox::DispatchKeyboardReport(0, { 0xF0 }) != err_net_cmd ||
+            kmbox::DispatchKeyboardReport(0, { KEY_E, KEY_E }) != err_net_cmd ||
+            kmbox::DispatchKeyboardReport(0, tooManyUsages) != err_net_cmd) {
+            return Fail("runtime accepted invalid full keyboard report");
+        }
+        if (kmbox::MockHardwareMgr.Snapshot().totalEvents !=
+            beforeInvalid.totalEvents) {
+            return Fail("invalid full keyboard report emitted mock events");
+        }
         return EXIT_SUCCESS;
     }
 
@@ -367,6 +557,84 @@ namespace
 
         return EXIT_SUCCESS;
     }
+
+    int VerifyRuntimeSchedulerTransitionBoundary()
+    {
+        kmbox::MockHardwareMgr.Reset();
+        OW::Config::kmboxSuppressOutputWhileMenuOpen = false;
+        OW::Config::Menu = false;
+        OW::Config::kmboxEnabled = true;
+        OW::Config::kmboxDeviceType = 2;
+
+        OW::OutputScheduler& scheduler = OW::RuntimeOutputScheduler();
+        if (!scheduler.SynchronizeRuntime())
+            return Fail("runtime scheduler did not accept active mock generation");
+
+        const auto initial = kmbox::ActiveRuntimeSnapshot();
+        if (!scheduler.ScheduleTimedHold(
+                "mock-runtime-switch-hold",
+                OW::OutputOwnerSource::HeroTimedAction,
+                { { OW::OutputControlKind::KeyboardUsage, KEY_E } },
+                std::chrono::seconds(5))) {
+            return Fail("runtime scheduler failed to start long mock hold");
+        }
+        if (kmbox::MockHardwareMgr.Snapshot().outputKeyboardUsages[0] != KEY_E)
+            return Fail("runtime scheduler did not press the scheduled key");
+
+        if (kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(50)) !=
+            success) {
+            return Fail("same-descriptor runtime reconcile failed");
+        }
+        const auto afterNoOp = kmbox::ActiveRuntimeSnapshot();
+        if (afterNoOp.generation != initial.generation ||
+            !scheduler.IsActive("mock-runtime-switch-hold")) {
+            return Fail("no-op reconcile cancelled or regenerated active output");
+        }
+
+        OW::Config::kmboxEnabled = false;
+        if (kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(50)) !=
+            success) {
+            return Fail("runtime disable reconcile failed");
+        }
+        const auto disabled = kmbox::MockHardwareMgr.Snapshot();
+        if (scheduler.ActiveActionCount() != 0 ||
+            scheduler.PendingDeadlineCount() != 0 ||
+            scheduler.WorkerCount() != 0 ||
+            disabled.outputKeyboardKeys != 0) {
+            return Fail("runtime disable did not synchronously cancel timed output");
+        }
+        if (scheduler.ScheduleTimedHold(
+                "mock-disabled-hold",
+                OW::OutputOwnerSource::HeroTimedAction,
+                { { OW::OutputControlKind::KeyboardUsage, KEY_W } },
+                std::chrono::milliseconds(20))) {
+            return Fail("paused scheduler accepted output while runtime disabled");
+        }
+
+        OW::Config::kmboxEnabled = true;
+        OW::Config::kmboxDeviceType = 2;
+        if (kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(50)) !=
+            success) {
+            return Fail("runtime mock re-enable reconcile failed");
+        }
+        if (!scheduler.SynchronizeRuntime())
+            return Fail("runtime scheduler did not accept replacement generation");
+        if (!scheduler.ScheduleTimedHold(
+                "mock-reenabled-hold",
+                OW::OutputOwnerSource::HeroTimedAction,
+                { { OW::OutputControlKind::KeyboardUsage, KEY_W } },
+                std::chrono::milliseconds(20))) {
+            return Fail("scheduler did not resume on replacement generation");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        scheduler.CancelAllAndJoin();
+        if (kmbox::MockHardwareMgr.Snapshot().outputKeyboardKeys != 0 ||
+            scheduler.WorkerCount() != 0) {
+            return Fail("replacement-generation timed output did not release");
+        }
+
+        return EXIT_SUCCESS;
+    }
 }
 
 int main()
@@ -385,6 +653,10 @@ int main()
         return Fail("mock is not initialized");
 
     if (VerifyKeyboardReportBuilder() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
+    if (VerifyFullKeyboardReportRuntime() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
+    if (VerifyRuntimeSchedulerTransitionBoundary() != EXIT_SUCCESS)
         return EXIT_FAILURE;
     if (VerifyTypedActionOutput() != EXIT_SUCCESS)
         return EXIT_FAILURE;

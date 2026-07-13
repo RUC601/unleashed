@@ -55,6 +55,8 @@ namespace kmbox
         uint32_t outputMouseButtons = 0;
         uint32_t maskedButtons = 0;
         std::size_t outputKeyboardKeys = 0;
+        unsigned char outputKeyboardModifierMask = 0;
+        std::array<unsigned char, 10> outputKeyboardUsages{};
         unsigned long long totalEvents = 0;
         unsigned long long moveEvents = 0;
         unsigned long long buttonEvents = 0;
@@ -91,6 +93,13 @@ namespace kmbox
         int ReleaseAllOutputAndWait(std::chrono::milliseconds timeout);
         int MaskMouse(uint32_t mask);
         int UnmaskAll();
+        int RecordKeyboardReport(
+            unsigned char modifierMask,
+            const std::vector<unsigned char>& usages);
+        int RecordKeyboardReport(
+            unsigned char modifierMask,
+            const std::vector<unsigned char>& usages,
+            KmBoxOutputIntent intent);
         int RecordKeyboardKey(unsigned char hidCode, bool down);
 
         MockHardwareSnapshot Snapshot() const;
@@ -107,6 +116,8 @@ namespace kmbox
         bool initialized_ = false;
         MockFaultMode faultMode_ = MockFaultMode::None;
         std::array<bool, 256> hidStates_{};
+        unsigned char keyboardModifierMask_ = 0;
+        std::array<unsigned char, 10> keyboardUsages_{};
         uint32_t outputMouseButtons_ = 0;
         uint32_t maskedButtons_ = 0;
         unsigned long long totalEvents_ = 0;

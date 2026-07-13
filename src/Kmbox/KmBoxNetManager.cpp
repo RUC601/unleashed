@@ -13,6 +13,7 @@
 #include "Utils/Diagnostics.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -208,6 +209,69 @@ namespace
             type == KmBoxCommandType::Keyboard;
     }
 
+    bool IsOrderedSafetyCommand(const KmBoxQueuedNetCommand& command)
+    {
+        return command.outputIntent == KmBoxOutputIntent::SafetyRelease &&
+            command.type != KmBoxCommandType::SafetyReleaseAll;
+    }
+
+    bool IsSameOutputStateDomain(KmBoxCommandType left, KmBoxCommandType right)
+    {
+        if (left == KmBoxCommandType::Keyboard ||
+            right == KmBoxCommandType::Keyboard) {
+            return left == KmBoxCommandType::Keyboard &&
+                right == KmBoxCommandType::Keyboard;
+        }
+        if (left == KmBoxCommandType::MouseButton ||
+            right == KmBoxCommandType::MouseButton) {
+            return left == KmBoxCommandType::MouseButton &&
+                right == KmBoxCommandType::MouseButton;
+        }
+        const bool leftMask = left == KmBoxCommandType::MouseMask ||
+            left == KmBoxCommandType::MouseUnmask;
+        const bool rightMask = right == KmBoxCommandType::MouseMask ||
+            right == KmBoxCommandType::MouseUnmask;
+        return leftMask && rightMask;
+    }
+
+    bool IsRequiredOrderedSafetyPredecessor(
+        const std::deque<KmBoxQueuedNetCommand>& queue,
+        std::deque<KmBoxQueuedNetCommand>::const_iterator candidate,
+        KmBoxCommandType incomingSafetyDomain)
+    {
+        const auto hasLaterNormalInDomain = [&](auto end) {
+            return std::any_of(std::next(candidate), end,
+                [candidate](const KmBoxQueuedNetCommand& queued) {
+                    return queued.priority == KmBoxCommandPriority::Normal &&
+                        IsSameOutputStateDomain(candidate->type, queued.type);
+                });
+        };
+
+        for (auto safety = std::next(candidate); safety != queue.end(); ++safety) {
+            if (!IsOrderedSafetyCommand(*safety) ||
+                !IsSameOutputStateDomain(candidate->type, safety->type)) {
+                continue;
+            }
+            if (!hasLaterNormalInDomain(safety))
+                return true;
+        }
+
+        return incomingSafetyDomain != KmBoxCommandType::Unknown &&
+            IsSameOutputStateDomain(candidate->type, incomingSafetyDomain) &&
+            !hasLaterNormalInDomain(queue.end());
+    }
+
+    bool HasDependentOrderedSafety(
+        const std::deque<KmBoxQueuedNetCommand>& queue,
+        std::deque<KmBoxQueuedNetCommand>::const_iterator candidate)
+    {
+        return std::any_of(std::next(candidate), queue.end(),
+            [candidate](const KmBoxQueuedNetCommand& queued) {
+                return IsOrderedSafetyCommand(queued) &&
+                    IsSameOutputStateDomain(candidate->type, queued.type);
+            });
+    }
+
     int UpdateQueuedMouseMoveButtonState(std::deque<KmBoxQueuedNetCommand>& queue,
                                          std::deque<KmBoxQueuedNetCommand>::iterator begin,
                                          int buttonState)
@@ -238,13 +302,23 @@ namespace
         return true;
     }
 
-    bool DropOldestNormalCommand(std::deque<KmBoxQueuedNetCommand>& queue,
-                                  KmBoxQueuedNetCommand& dropped)
+    bool DropOldestNormalCommand(
+        std::deque<KmBoxQueuedNetCommand>& queue,
+        KmBoxQueuedNetCommand& dropped,
+        KmBoxCommandType incomingSafetyDomain = KmBoxCommandType::Unknown)
     {
-        const auto item = std::find_if(queue.begin(), queue.end(),
-            [](const KmBoxQueuedNetCommand& queued) {
-                return queued.priority == KmBoxCommandPriority::Normal;
-            });
+        auto item = queue.begin();
+        for (; item != queue.end(); ++item) {
+            if (item->priority != KmBoxCommandPriority::Normal)
+                continue;
+            if (incomingSafetyDomain == KmBoxCommandType::Unknown
+                    ? HasDependentOrderedSafety(queue, item)
+                    : IsRequiredOrderedSafetyPredecessor(
+                        queue, item, incomingSafetyDomain)) {
+                continue;
+            }
+            break;
+        }
         if (item == queue.end())
             return false;
 
@@ -288,6 +362,44 @@ namespace
     {
         if (status == success && result != success)
             status = result;
+    }
+
+    bool KeyboardReportIsSubset(
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages,
+        unsigned char currentModifierMask,
+        const std::array<unsigned char, 10>& currentUsages)
+    {
+        if ((modifierMask & static_cast<unsigned char>(~currentModifierMask)) != 0)
+            return false;
+
+        return std::all_of(usages.begin(), usages.end(),
+            [&currentUsages](unsigned char usage) {
+                return std::find(
+                    currentUsages.begin(), currentUsages.end(), usage) !=
+                    currentUsages.end();
+            });
+    }
+
+    bool KeyboardPacketIsSubset(
+        const soft_keyboard_t& report,
+        unsigned char currentModifierMask,
+        const std::array<unsigned char, 10>& currentUsages)
+    {
+        const auto modifierMask = static_cast<unsigned char>(report.ctrl);
+        if ((modifierMask & static_cast<unsigned char>(~currentModifierMask)) != 0)
+            return false;
+
+        for (char rawUsage : report.button) {
+            const auto usage = static_cast<unsigned char>(rawUsage);
+            if (usage == 0)
+                continue;
+            if (std::find(currentUsages.begin(), currentUsages.end(), usage) ==
+                currentUsages.end()) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 
@@ -664,8 +776,40 @@ void KmBoxNetManager::CompletePendingCommands(int Status)
         CompleteCommand(command.completion, Status);
 }
 
+void KmBoxNetManager::ClearDesiredKeyboardReport()
+{
+    std::lock_guard<std::mutex> lock(keyboardStateMutex);
+    desiredKeyboardModifierMask = 0;
+    desiredKeyboardUsages.fill(0);
+}
+
+void KmBoxNetManager::ClearLastSentKeyboardReport()
+{
+    std::lock_guard<std::mutex> lock(keyboardStateMutex);
+    lastSentKeyboardModifierMask = 0;
+    lastSentKeyboardUsages.fill(0);
+}
+
 int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
 {
+    if (Command.outputIntent == KmBoxOutputIntent::SafetyRelease &&
+        Command.priority != KmBoxCommandPriority::Safety) {
+        KmBoxQueuedNetCommand promoted = Command;
+        promoted.priority = KmBoxCommandPriority::Safety;
+        return EnqueueCommand(promoted);
+    }
+
+    const bool releaseAllBarrier =
+        Command.type == KmBoxCommandType::SafetyReleaseAll;
+    const bool orderedSafety = IsOrderedSafetyCommand(Command);
+    if (orderedSafety &&
+        Command.type != KmBoxCommandType::MouseButton &&
+        Command.type != KmBoxCommandType::MouseUnmask &&
+        Command.type != KmBoxCommandType::Keyboard) {
+        CompleteCommand(Command.completion, err_net_cmd);
+        return err_net_cmd;
+    }
+
     if (configuredIp.empty()) {
         if (IsOutputCommand(Command.type)) {
             Diagnostics::Aim("udp.enqueue early_return reason=missing_configured_ip type=%s x=%d y=%d button=%d",
@@ -712,10 +856,9 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
                 Command.length);
         }
 
-        if (enqueueStatus == success &&
-            Command.priority == KmBoxCommandPriority::Safety) {
+        if (enqueueStatus == success && releaseAllBarrier) {
             for (auto pending = commandQueue.begin(); pending != commandQueue.end();) {
-                if (pending->priority == KmBoxCommandPriority::Normal &&
+                if (pending->type != KmBoxCommandType::SafetyReleaseAll &&
                     IsOutputCommand(pending->type)) {
                     cancelledCompletions.push_back(pending->completion);
                     pending = commandQueue.erase(pending);
@@ -755,12 +898,15 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
             commandQueue.size() >= KmBoxRuntimeConfig::CommandQueueMaxSize) {
             KmBoxQueuedNetCommand dropped{};
             bool droppedMove = false;
-            if (Command.priority == KmBoxCommandPriority::Normal &&
+            if ((Command.priority == KmBoxCommandPriority::Normal || orderedSafety) &&
                 ShouldDropMouseMoveFirst(Command.type)) {
                 droppedMove = DropOldestMouseMove(commandQueue, dropped);
             }
             const bool droppedNormal = droppedMove ||
-                DropOldestNormalCommand(commandQueue, dropped);
+                DropOldestNormalCommand(
+                    commandQueue,
+                    dropped,
+                    orderedSafety ? Command.type : KmBoxCommandType::Unknown);
             if (!droppedNormal) {
                 enqueueStatus = err_queue_full;
                 Diagnostics::Error(
@@ -782,7 +928,7 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
 
         if (enqueueStatus != success) {
             // The incoming command was never queued; completion is resolved below.
-        } else if (Command.priority == KmBoxCommandPriority::Safety) {
+        } else if (releaseAllBarrier) {
             const auto insertAt = std::find_if(commandQueue.begin(), commandQueue.end(),
                 [](const KmBoxQueuedNetCommand& queued) {
                     return queued.priority == KmBoxCommandPriority::Normal;
@@ -843,10 +989,29 @@ int KmBoxNetManager::EnqueueCommand(const KmBoxQueuedNetCommand& Command)
 
 int KmBoxNetManager::ExecuteSafetyReleaseAll()
 {
-    {
-        std::lock_guard<std::mutex> lock(mouseStateMutex);
-        Mouse.MouseData = {};
-    }
+    const auto restoreFailedDesiredDomains =
+        [this](bool restoreMouse, bool restoreKeyboard) {
+            if (restoreMouse) {
+                std::lock_guard<std::mutex> lock(mouseStateMutex);
+                if (Mouse.MouseData.button == 0) {
+                    Mouse.MouseData.button = static_cast<int>(
+                        lastSentMouseButtonStateMask & 0x7u);
+                }
+            }
+            if (restoreKeyboard) {
+                std::lock_guard<std::mutex> lock(keyboardStateMutex);
+                const bool desiredIsZero =
+                    desiredKeyboardModifierMask == 0 &&
+                    std::all_of(
+                        desiredKeyboardUsages.begin(),
+                        desiredKeyboardUsages.end(),
+                        [](unsigned char usage) { return usage == 0; });
+                if (desiredIsZero) {
+                    desiredKeyboardModifierMask = lastSentKeyboardModifierMask;
+                    desiredKeyboardUsages = lastSentKeyboardUsages;
+                }
+            }
+        };
 
     int status = success;
     SOCKET releaseSocket = INVALID_SOCKET;
@@ -862,14 +1027,19 @@ int KmBoxNetManager::ExecuteSafetyReleaseAll()
             ip = configuredIp;
             port = configuredPort;
         }
-        if (ip.empty() || port == 0)
+        if (ip.empty() || port == 0) {
+            restoreFailedDesiredDomains(true, true);
             return err_creat_socket;
+        }
 
         releaseSocket = socket(AF_INET, SOCK_DGRAM, 0);
-        if (!IsValidSocket(releaseSocket))
+        if (!IsValidSocket(releaseSocket)) {
+            restoreFailedDesiredDomains(true, true);
             return err_creat_socket;
+        }
         if (!ConfigureSocketTimeouts(releaseSocket)) {
             closesocket(releaseSocket);
+            restoreFailedDesiredDomains(true, true);
             return err_creat_socket;
         }
         DisableUdpConnectionReset(releaseSocket, "safety-release");
@@ -878,6 +1048,7 @@ int KmBoxNetManager::ExecuteSafetyReleaseAll()
         releaseTarget.sin_addr.S_un.S_addr = inet_addr(ip.c_str());
         if (releaseTarget.sin_addr.S_un.S_addr == INADDR_NONE) {
             closesocket(releaseSocket);
+            restoreFailedDesiredDomains(true, true);
             return err_creat_socket;
         }
     }
@@ -902,27 +1073,49 @@ int KmBoxNetManager::ExecuteSafetyReleaseAll()
         Diagnostics::Aim(
             "udp.safety_release sendto type=%s cmd=0x%08X len=%d status=%d",
             ToString(type), packet.head.cmd, length, sendStatus);
+        return sendStatus;
     };
 
-    const auto sendMouseUp = [&](unsigned int cmd) {
+    const auto sendMouseUp = [&](unsigned int cmd, unsigned int buttonMask) {
         client_data packet = BuildPacket(cmd, NextRandom());
         packet.cmd_mouse = {};
-        send(packet, sizeof(cmd_head_t) + sizeof(soft_mouse_t), KmBoxCommandType::MouseButton);
+        const int sendStatus = send(
+            packet,
+            sizeof(cmd_head_t) + sizeof(soft_mouse_t),
+            KmBoxCommandType::MouseButton);
+        if (sendStatus == success) {
+            std::lock_guard<std::mutex> lock(mouseStateMutex);
+            lastSentMouseButtonStateMask &= ~buttonMask;
+        }
+        return sendStatus;
     };
 
-    sendMouseUp(cmd_mouse_left);
-    sendMouseUp(cmd_mouse_right);
-    sendMouseUp(cmd_mouse_middle);
+    const int leftStatus = sendMouseUp(cmd_mouse_left, 0x01u);
+    const int rightStatus = sendMouseUp(cmd_mouse_right, 0x02u);
+    const int middleStatus = sendMouseUp(cmd_mouse_middle, 0x04u);
 
     client_data keyboard = BuildPacket(cmd_keyboard_all, NextRandom());
     keyboard.cmd_keyboard = {};
-    send(keyboard, sizeof(cmd_head_t) + sizeof(soft_keyboard_t), KmBoxCommandType::Keyboard);
+    const int keyboardStatus = send(
+        keyboard,
+        sizeof(cmd_head_t) + sizeof(soft_keyboard_t),
+        KmBoxCommandType::Keyboard);
+    if (keyboardStatus == success)
+        ClearLastSentKeyboardReport();
 
     client_data unmask = BuildPacket(cmd_unmask_all, NextRandom());
     send(unmask, sizeof(cmd_head_t), KmBoxCommandType::MouseUnmask);
 
     if (IsValidSocket(releaseSocket))
         closesocket(releaseSocket);
+
+    const bool mouseReleaseFailed =
+        leftStatus != success ||
+        rightStatus != success ||
+        middleStatus != success;
+    restoreFailedDesiredDomains(
+        mouseReleaseFailed,
+        keyboardStatus != success);
 
     Diagnostics::Info(
         "[KMBOX-NET] Safety release sendto sequence completed. status=%d",
@@ -966,8 +1159,12 @@ void KmBoxNetManager::QueueWorkerLoop()
         if (elapsed < flushInterval)
             std::this_thread::sleep_for(flushInterval - elapsed);
 
+        const bool offlineTestSeam =
+            lifecycleState.load(std::memory_order_acquire) == LifecycleState::Stopped &&
+            static_cast<bool>(safetySendOverride);
         if (command.priority == KmBoxCommandPriority::Normal &&
-            lifecycleState.load(std::memory_order_acquire) != LifecycleState::Running) {
+            lifecycleState.load(std::memory_order_acquire) != LifecycleState::Running &&
+            !offlineTestSeam) {
             CompleteCommand(command.completion, err_queue_stopped);
             continue;
         }
@@ -995,7 +1192,32 @@ void KmBoxNetManager::QueueWorkerLoop()
             continue;
         }
 
-        if (!EnsureConnected()) {
+        if (IsOrderedSafetyCommand(command)) {
+            bool releaseOnly = true;
+            if (command.type == KmBoxCommandType::Keyboard) {
+                std::lock_guard<std::mutex> lock(keyboardStateMutex);
+                releaseOnly = KeyboardPacketIsSubset(
+                    command.data.cmd_keyboard,
+                    lastSentKeyboardModifierMask,
+                    lastSentKeyboardUsages);
+            } else if (command.type == KmBoxCommandType::MouseButton) {
+                std::lock_guard<std::mutex> lock(mouseStateMutex);
+                releaseOnly = command.mouseButtonStateMask >= 0 &&
+                    (static_cast<unsigned int>(command.mouseButtonStateMask) &
+                     ~lastSentMouseButtonStateMask) == 0;
+            }
+            if (!releaseOnly) {
+                Diagnostics::Warn(
+                    "[KMBOX-NET] Rejected safety output that would add unsent state. type=%s",
+                    ToString(command.type));
+                CompleteCommand(command.completion, err_net_cmd);
+                continue;
+            }
+        }
+
+        const bool useOutputOverride =
+            static_cast<bool>(safetySendOverride) && IsOutputCommand(command.type);
+        if (!useOutputOverride && !EnsureConnected()) {
             Diagnostics::Error("[KMBOX-NET] Dropping %s command; device is not connected.",
                 ToString(command.type));
             if (IsOutputCommand(command.type)) {
@@ -1019,7 +1241,12 @@ void KmBoxNetManager::QueueWorkerLoop()
                 command.data.cmd_mouse.y,
                 command.data.cmd_mouse.button);
         }
-        const int status = SendPacketWithRetry(command.data, command.length, command.type);
+        const int status = useOutputOverride
+            ? safetySendOverride(
+                command.data.head.cmd,
+                command.data,
+                command.length)
+            : SendPacketWithRetry(command.data, command.length, command.type);
 
         if (status != success) {
             Diagnostics::Error("[KMBOX-NET] Dropped %s command after retries. status=%d",
@@ -1029,9 +1256,29 @@ void KmBoxNetManager::QueueWorkerLoop()
                     ToString(command.type),
                     status);
             }
-            CloseSocket();
-            EnsureConnected();
+            if (!useOutputOverride) {
+                CloseSocket();
+                EnsureConnected();
+            }
         } else if (IsOutputCommand(command.type)) {
+            if (command.type == KmBoxCommandType::Keyboard) {
+                std::lock_guard<std::mutex> lock(keyboardStateMutex);
+                lastSentKeyboardModifierMask =
+                    static_cast<unsigned char>(command.data.cmd_keyboard.ctrl);
+                for (std::size_t index = 0;
+                     index < lastSentKeyboardUsages.size();
+                     ++index) {
+                    lastSentKeyboardUsages[index] = static_cast<unsigned char>(
+                        command.data.cmd_keyboard.button[index]);
+                }
+            } else if (command.type == KmBoxCommandType::MouseButton ||
+                       command.type == KmBoxCommandType::MouseMove ||
+                       command.type == KmBoxCommandType::MouseAutoMove) {
+                std::lock_guard<std::mutex> lock(mouseStateMutex);
+                lastSentMouseButtonStateMask = command.mouseButtonStateMask >= 0
+                    ? static_cast<unsigned int>(command.mouseButtonStateMask) & 0x7u
+                    : static_cast<unsigned int>(command.data.cmd_mouse.button) & 0x7u;
+            }
             const unsigned long long count =
                 outputSendCount.fetch_add(1, std::memory_order_acq_rel) + 1;
             if (OW::Config::kmboxDebugLog) {
@@ -1160,6 +1407,7 @@ int KmBoxNetManager::InitDevice(const std::string& IP, WORD Port, const std::str
     const LifecycleState previousLifecycle = lifecycleState.load(std::memory_order_acquire);
     if (previousLifecycle == LifecycleState::Stopping)
         return err_queue_stopped;
+
     if (previousLifecycle == LifecycleState::Stopped)
         lifecycleState.store(LifecycleState::Starting, std::memory_order_release);
 
@@ -1206,6 +1454,13 @@ int KmBoxNetManager::InitDevice(const std::string& IP, WORD Port, const std::str
     std::lock_guard<std::mutex> reconnectLock(reconnectMutex);
     const int status = ConnectLocked();
     if (status == success) {
+        ClearDesiredKeyboardReport();
+        ClearLastSentKeyboardReport();
+        {
+            std::lock_guard<std::mutex> lock(mouseStateMutex);
+            Mouse.MouseData = {};
+            lastSentMouseButtonStateMask = 0;
+        }
         StartWorkers();
         lifecycleState.store(LifecycleState::Running, std::memory_order_release);
     } else if (previousLifecycle == LifecycleState::Stopped) {
@@ -1322,23 +1577,21 @@ int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int C
 {
     soft_mouse_t payload{};
     int previousStateMask = 0;
-    {
-        std::lock_guard<std::mutex> lock(mouseStateMutex);
-        const int current = Mouse.MouseData.button;
-        const int next = Down
-            ? (current | static_cast<int>(Mask))
-            : (current & ~static_cast<int>(Mask));
+    std::unique_lock<std::mutex> stateLock(mouseStateMutex);
+    const int current = Mouse.MouseData.button;
+    const int next = Down
+        ? (current | static_cast<int>(Mask))
+        : (current & ~static_cast<int>(Mask));
 
-        if (!Force && next == current) {
-            Diagnostics::Trace("[KMBOX-NET] coalesced redundant mouse button state cmd=0x%08X down=%d",
-                Cmd, Down ? 1 : 0);
-            return success;
-        }
-
-        previousStateMask = current;
-        Mouse.MouseData.button = next;
-        payload = Mouse.MouseData;
+    if (!Force && next == current) {
+        Diagnostics::Trace("[KMBOX-NET] coalesced redundant mouse button state cmd=0x%08X down=%d",
+            Cmd, Down ? 1 : 0);
+        return success;
     }
+
+    previousStateMask = current;
+    payload = Mouse.MouseData;
+    payload.button = next;
 
     const int stateMask = payload.button;
     payload.button = stateMask;
@@ -1364,7 +1617,10 @@ int KmBoxNetManager::SetMouseButton(unsigned int Mask, bool Down, unsigned int C
     command.outputIntent = OutputIntentForState(Down);
     command.mouseButtonStateMask = stateMask;
     command.enqueuedAt = std::chrono::steady_clock::now();
-    return EnqueueCommand(command);
+    const int status = EnqueueCommand(command);
+    if (status == success)
+        Mouse.MouseData.button = next;
+    return status;
 }
 
 int KmBoxNetManager::RecoverMousePassthrough()
@@ -1440,9 +1696,10 @@ int KmBoxNetManager::RecoverMousePassthrough()
     shortPause();
     sendHeaderOnly(cmd_unmask_all, KmBoxCommandType::MouseUnmask, "unmask_end");
 
-    {
+    if (status == success) {
         std::lock_guard<std::mutex> lock(mouseStateMutex);
         Mouse.MouseData = {};
+        lastSentMouseButtonStateMask = 0;
     }
 
     if (status == success) {
@@ -1479,12 +1736,24 @@ int KmBoxNetManager::ReleaseAllOutputAndWait(std::chrono::milliseconds Timeout)
     command.completion = completion;
     command.enqueuedAt = std::chrono::steady_clock::now();
 
+    int enqueueStatus = success;
     {
-        std::lock_guard<std::mutex> lock(mouseStateMutex);
-        Mouse.MouseData = {};
-    }
+        std::scoped_lock stateLock(mouseStateMutex, keyboardStateMutex);
+        const soft_mouse_t previousMouseData = Mouse.MouseData;
+        const unsigned char previousModifierMask = desiredKeyboardModifierMask;
+        const auto previousUsages = desiredKeyboardUsages;
 
-    const int enqueueStatus = EnqueueCommand(command);
+        Mouse.MouseData = {};
+        desiredKeyboardModifierMask = 0;
+        desiredKeyboardUsages.fill(0);
+
+        enqueueStatus = EnqueueCommand(command);
+        if (enqueueStatus != success) {
+            Mouse.MouseData = previousMouseData;
+            desiredKeyboardModifierMask = previousModifierMask;
+            desiredKeyboardUsages = previousUsages;
+        }
+    }
     if (enqueueStatus != success)
         return enqueueStatus;
 
@@ -1608,30 +1877,82 @@ int KmBoxNetManager::UnmaskAll()
     return EnqueueCommand(command);
 }
 
-bool KmBoxNetManager::BuildKeyboardReport(unsigned char HidCode, bool Down, soft_keyboard_t& Report)
+bool KmBoxNetManager::BuildKeyboardReport(
+    unsigned char modifierMask,
+    const std::vector<unsigned char>& usages,
+    soft_keyboard_t& report)
 {
-    Report = {};
-    if (HidCode == 0)
+    report = {};
+    if (usages.size() > std::size(report.button))
         return false;
 
-    if (!Down)
-        return true;
-
-    if (HidCode >= KEY_LEFTCONTROL && HidCode <= KEY_RIGHT_GUI) {
-        const unsigned int modifierBit = 1u << (HidCode - KEY_LEFTCONTROL);
-        Report.ctrl = static_cast<char>(modifierBit);
-    } else {
-        Report.button[0] = static_cast<char>(HidCode);
+    std::array<bool, 256> seen{};
+    for (std::size_t index = 0; index < usages.size(); ++index) {
+        const unsigned char usage = usages[index];
+        if (usage < KEY_A || usage >= KEY_LEFTCONTROL || seen[usage]) {
+            report = {};
+            return false;
+        }
+        seen[usage] = true;
+        report.button[index] = static_cast<char>(usage);
     }
+
+    report.ctrl = static_cast<char>(modifierMask);
     return true;
 }
 
-int KmBoxNetManager::SendKeyboardKey(unsigned char hidCode, bool down)
+bool KmBoxNetManager::BuildKeyboardReport(
+    unsigned char hidCode,
+    bool down,
+    soft_keyboard_t& report)
 {
-    client_data packet = BuildPacket(cmd_keyboard_all, NextRandom());
+    report = {};
+    const bool isModifier =
+        hidCode >= KEY_LEFTCONTROL && hidCode <= KEY_RIGHT_GUI;
+    const bool isUsage = hidCode >= KEY_A && hidCode < KEY_LEFTCONTROL;
+    if (!isModifier && !isUsage)
+        return false;
+
+    if (!down)
+        return BuildKeyboardReport(
+            0, std::vector<unsigned char>{}, report);
+
+    if (isModifier) {
+        const auto modifierBit = static_cast<unsigned char>(
+            1u << (hidCode - KEY_LEFTCONTROL));
+        return BuildKeyboardReport(
+            modifierBit, std::vector<unsigned char>{}, report);
+    }
+    return BuildKeyboardReport(
+        0, std::vector<unsigned char>{ hidCode }, report);
+}
+
+int KmBoxNetManager::SendKeyboardReport(
+    unsigned char modifierMask,
+    const std::vector<unsigned char>& usages,
+    KmBoxOutputIntent intent)
+{
     soft_keyboard_t kb{};
-    if (!BuildKeyboardReport(hidCode, down, kb))
+    if (!BuildKeyboardReport(modifierMask, usages, kb))
         return err_net_cmd;
+
+    std::unique_lock<std::mutex> stateLock(keyboardStateMutex);
+    if (intent == KmBoxOutputIntent::SafetyRelease &&
+        !KeyboardReportIsSubset(
+            modifierMask,
+            usages,
+            desiredKeyboardModifierMask,
+            desiredKeyboardUsages)) {
+        return err_net_cmd;
+    }
+
+    const unsigned char previousModifierMask = desiredKeyboardModifierMask;
+    const auto previousUsages = desiredKeyboardUsages;
+    desiredKeyboardModifierMask = modifierMask;
+    desiredKeyboardUsages.fill(0);
+    std::copy(usages.begin(), usages.end(), desiredKeyboardUsages.begin());
+
+    client_data packet = BuildPacket(cmd_keyboard_all, NextRandom());
 
     memcpy_s(&packet.cmd_keyboard, sizeof(soft_keyboard_t), &kb, sizeof(soft_keyboard_t));
 
@@ -1639,9 +1960,44 @@ int KmBoxNetManager::SendKeyboardKey(unsigned char hidCode, bool down)
     command.data = packet;
     command.length = sizeof(cmd_head_t) + sizeof(soft_keyboard_t);
     command.type = KmBoxCommandType::Keyboard;
-    command.outputIntent = OutputIntentForState(down);
+    command.outputIntent = intent;
     command.enqueuedAt = std::chrono::steady_clock::now();
-    return EnqueueCommand(command);
+    const int status = EnqueueCommand(command);
+    if (status != success) {
+        desiredKeyboardModifierMask = previousModifierMask;
+        desiredKeyboardUsages = previousUsages;
+    }
+    return status;
+}
+
+int KmBoxNetManager::SendKeyboardReport(
+    unsigned char modifierMask,
+    const std::vector<unsigned char>& usages)
+{
+    return SendKeyboardReport(
+        modifierMask,
+        usages,
+        modifierMask == 0 && usages.empty()
+            ? KmBoxOutputIntent::SafetyRelease
+            : KmBoxOutputIntent::Normal);
+}
+
+int KmBoxNetManager::SendKeyboardKey(unsigned char hidCode, bool down)
+{
+    const bool isModifier =
+        hidCode >= KEY_LEFTCONTROL && hidCode <= KEY_RIGHT_GUI;
+    const bool isUsage = hidCode >= KEY_A && hidCode < KEY_LEFTCONTROL;
+    if (!isModifier && !isUsage)
+        return err_net_cmd;
+
+    if (!down)
+        return SendKeyboardReport(0, {});
+    if (isModifier) {
+        const auto modifierBit = static_cast<unsigned char>(
+            1u << (hidCode - KEY_LEFTCONTROL));
+        return SendKeyboardReport(modifierBit, {});
+    }
+    return SendKeyboardReport(0, { hidCode });
 }
 
 int KmBoxMouse::Left(bool Down)

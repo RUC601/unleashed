@@ -1231,6 +1231,8 @@ static void LoadRuntimeConfigForDiagnostics()
 static void ShutdownHeadlessRuntime()
 {
     OW::Config::doingentity = 0;
+    StopHeroSkillRuntimeThread();
+    OW::CancelActiveSkill();
     TestServer::Stop();
     KeyState::Stop();
     StopProcessConnectionThread();
@@ -1477,6 +1479,7 @@ static void MarkProcessDisconnected(const char* statusText)
     if (wasConnected) {
         Diagnostics::Warn("Target process disconnected.");
         std::printf("[MAIN] Target process disconnected; waiting for %s...\n", kTargetProcessName);
+        OW::CancelActiveSkill();
         ReleaseKmboxMouseStateForShutdown("target_disconnect");
     }
 

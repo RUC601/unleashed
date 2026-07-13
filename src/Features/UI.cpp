@@ -5617,9 +5617,17 @@ static void DrawMiscKmboxPage() {
         ImGui::PopItemWidth();
 
         SettingRow(T(UiText::BlockOutputWhenMenuOpen));
-        kmboxSaveRequested |= UICheckbox(
-            "##SuppressOutputWhileMenuOpen",
-            &OW::Config::kmboxSuppressOutputWhileMenuOpen);
+        bool suppressOutputWhileMenuOpen =
+            OW::Config::kmboxSuppressOutputWhileMenuOpen.load(
+                std::memory_order_acquire);
+        if (UICheckbox(
+                "##SuppressOutputWhileMenuOpen",
+                &suppressOutputWhileMenuOpen)) {
+            OW::Config::kmboxSuppressOutputWhileMenuOpen.store(
+                suppressOutputWhileMenuOpen,
+                std::memory_order_release);
+            kmboxSaveRequested = true;
+        }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("When enabled, KMBox mouse and keyboard output commands are skipped while this menu is open.");
 

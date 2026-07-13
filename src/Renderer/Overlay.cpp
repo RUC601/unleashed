@@ -448,7 +448,9 @@ void Overlay::Run(std::function<void()> renderCallback) {
             break;
 
         if (IsMenuTogglePressed() && !m_minimizedToTaskbar)
-            OW::Config::Menu = !OW::Config::Menu;
+            OW::Config::Menu.store(
+                !OW::Config::Menu.load(std::memory_order_acquire),
+                std::memory_order_release);
 
         if (m_minimizedToTaskbar) {
             Sleep(16);

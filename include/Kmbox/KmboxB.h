@@ -81,9 +81,9 @@ public:
 
     void km_click();
 
-    void km_left(bool down);
-    void km_right(bool down);
-    void km_middle(bool down);
+    int km_left(bool down);
+    int km_right(bool down);
+    int km_middle(bool down);
     int ReleaseAllOutputAndWait(std::chrono::milliseconds timeout);
     int Shutdown(std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
 

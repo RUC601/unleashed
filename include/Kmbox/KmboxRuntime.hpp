@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace kmbox
 {
@@ -136,6 +137,8 @@ namespace kmbox
     };
 
     KmboxRuntimeController& RuntimeController();
+    using RuntimePreReconcileHook = std::function<void()>;
+    void SetRuntimePreReconcileHook(RuntimePreReconcileHook hook);
     KmboxRuntimeDescriptor RuntimeDescriptorFromConfig();
     int ReconcileRuntimeFromConfig(
         std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
@@ -150,10 +153,22 @@ namespace kmbox
 
     int DispatchMouseMove(int x, int y, int runtimeMs = 0);
     int DispatchMouseButton(int button, bool down);
+    int DispatchMouseButtonForGeneration(
+        std::uint64_t expectedGeneration,
+        int button,
+        bool down);
     int DispatchMouseButtonStateMask(std::uint32_t mask, bool force = false);
     int DispatchForceReleaseMouseButtons();
     int DispatchForceReleaseMouseButton(int button);
     int DispatchMouseMask(std::uint32_t mask);
     int DispatchMouseUnmask();
+    int DispatchKeyboardReport(
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages);
+    int DispatchKeyboardReportForGeneration(
+        std::uint64_t expectedGeneration,
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages,
+        KmBoxOutputIntent intent = KmBoxOutputIntent::Normal);
     int DispatchKeyboardKey(unsigned char hidCode, bool down);
 }

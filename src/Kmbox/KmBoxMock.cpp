@@ -9,6 +9,34 @@ namespace kmbox
     namespace
     {
         constexpr std::size_t kMaxRecentEvents = 512;
+
+        bool BuildKeyboardState(
+            unsigned char modifierMask,
+            const std::vector<unsigned char>& usages,
+            std::array<bool, 256>& state,
+            std::array<unsigned char, 10>& usageSlots)
+        {
+            state.fill(false);
+            usageSlots.fill(0);
+            if (usages.size() > usageSlots.size())
+                return false;
+
+            for (unsigned int bit = 0; bit < 8; ++bit) {
+                if ((modifierMask & (1u << bit)) != 0)
+                    state[KEY_LEFTCONTROL + bit] = true;
+            }
+
+            std::array<bool, 256> seen{};
+            for (std::size_t index = 0; index < usages.size(); ++index) {
+                const unsigned char usage = usages[index];
+                if (usage < KEY_A || usage >= KEY_LEFTCONTROL || seen[usage])
+                    return false;
+                seen[usage] = true;
+                state[usage] = true;
+                usageSlots[index] = usage;
+            }
+            return true;
+        }
     }
 
     MockHardware MockHardwareMgr;
@@ -261,6 +289,8 @@ namespace kmbox
             keyRelease.down = false;
             PushOutputEventLocked(keyRelease);
         }
+        keyboardModifierMask_ = 0;
+        keyboardUsages_.fill(0);
 
         MockEvent unmask{};
         unmask.type = MockEventType::UnmaskAll;
@@ -324,33 +354,102 @@ namespace kmbox
         return success;
     }
 
-    int MockHardware::RecordKeyboardKey(unsigned char hidCode, bool down)
+    int MockHardware::RecordKeyboardReport(
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages)
     {
+        return RecordKeyboardReport(
+            modifierMask,
+            usages,
+            modifierMask == 0 && usages.empty()
+                ? KmBoxOutputIntent::SafetyRelease
+                : KmBoxOutputIntent::Normal);
+    }
+
+    int MockHardware::RecordKeyboardReport(
+        unsigned char modifierMask,
+        const std::vector<unsigned char>& usages,
+        KmBoxOutputIntent intent)
+    {
+        std::array<bool, 256> desiredState{};
+        std::array<unsigned char, 10> desiredUsages{};
+        if (!BuildKeyboardState(
+                modifierMask, usages, desiredState, desiredUsages)) {
+            return err_net_cmd;
+        }
+
         std::lock_guard<std::mutex> lock(mutex_);
         if (lifecycleState_.load(std::memory_order_acquire) != LifecycleState::Running)
             return err_queue_stopped;
         if (!initialized_)
             return err_creat_socket;
 
-        MockEvent event{};
-        event.type = MockEventType::Keyboard;
-        event.hidCode = hidCode;
-        event.down = down;
+        if (intent == KmBoxOutputIntent::SafetyRelease) {
+            for (std::size_t index = 0; index < desiredState.size(); ++index) {
+                if (desiredState[index] && !hidStates_[index])
+                    return err_net_cmd;
+            }
+        }
+
+        std::vector<MockEvent> changes;
+        changes.reserve(hidStates_.size());
+        for (std::size_t hidCode = 0; hidCode < hidStates_.size(); ++hidCode) {
+            if (hidStates_[hidCode] && !desiredState[hidCode]) {
+                MockEvent event{};
+                event.type = MockEventType::Keyboard;
+                event.hidCode = static_cast<unsigned char>(hidCode);
+                event.down = false;
+                changes.push_back(event);
+            }
+        }
+        for (std::size_t hidCode = 0; hidCode < hidStates_.size(); ++hidCode) {
+            if (!hidStates_[hidCode] && desiredState[hidCode]) {
+                MockEvent event{};
+                event.type = MockEventType::Keyboard;
+                event.hidCode = static_cast<unsigned char>(hidCode);
+                event.down = true;
+                changes.push_back(event);
+            }
+        }
 
         if (faultMode_ == MockFaultMode::OutputTimeout) {
-            event.status = err_net_rx_timeout;
-            event.attempted = true;
-            PushOutputEventLocked(event);
+            for (MockEvent& event : changes) {
+                event.status = err_net_rx_timeout;
+                event.attempted = true;
+                PushOutputEventLocked(event);
+            }
             return err_net_rx_timeout;
         }
 
         if (faultMode_ == MockFaultMode::DropOutput)
             return success;
 
-        hidStates_[hidCode] = down;
-        event.status = success;
-        PushOutputEventLocked(event);
+        hidStates_ = desiredState;
+        keyboardModifierMask_ = modifierMask;
+        keyboardUsages_ = desiredUsages;
+        for (MockEvent& event : changes) {
+            event.status = success;
+            PushOutputEventLocked(event);
+        }
         return success;
+    }
+
+    int MockHardware::RecordKeyboardKey(unsigned char hidCode, bool down)
+    {
+        const bool isModifier =
+            hidCode >= KEY_LEFTCONTROL && hidCode <= KEY_RIGHT_GUI;
+        const bool isUsage = hidCode >= KEY_A && hidCode < KEY_LEFTCONTROL;
+        if (!isModifier && !isUsage)
+            return err_net_cmd;
+
+        if (!down)
+            return RecordKeyboardReport(0, {});
+        if (isModifier) {
+            const auto modifierBit = static_cast<unsigned char>(
+                1u << (hidCode - KEY_LEFTCONTROL));
+            return RecordKeyboardReport(modifierBit, {});
+        }
+        return RecordKeyboardReport(0, { hidCode });
     }
 
     MockHardwareSnapshot MockHardware::Snapshot() const
@@ -363,6 +462,8 @@ namespace kmbox
         snapshot.maskedButtons = maskedButtons_;
         snapshot.outputKeyboardKeys = static_cast<std::size_t>(std::count(
             hidStates_.begin(), hidStates_.end(), true));
+        snapshot.outputKeyboardModifierMask = keyboardModifierMask_;
+        snapshot.outputKeyboardUsages = keyboardUsages_;
         snapshot.totalEvents = totalEvents_;
         snapshot.moveEvents = moveEvents_;
         snapshot.buttonEvents = buttonEvents_;
@@ -436,6 +537,8 @@ namespace kmbox
         initialized_ = keepInitialized;
         faultMode_ = MockFaultMode::None;
         hidStates_.fill(false);
+        keyboardModifierMask_ = 0;
+        keyboardUsages_.fill(0);
         outputMouseButtons_ = 0;
         maskedButtons_ = 0;
         totalEvents_ = 0;
