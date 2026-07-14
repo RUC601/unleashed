@@ -48,7 +48,7 @@ bool TestProfileSelection()
         ExpectProfile(26099, "Win11 22H2/23H2", "win32ksgd.sys", 0x3110, 0x36A8) &&
         ExpectProfile(26100, "Win11 24H2", "win32k.sys", 0x824F0, 0x3808) &&
         ExpectProfile(26199, "Win11 24H2", "win32k.sys", 0x824F0, 0x3808) &&
-        ExpectProfile(26200, "Win11 25H2+", "win32k.sys", 0x86678, 0x3808);
+        ExpectProfile(26200, "Win11 25H2+", "win32k.sys", 0x86678, 0x3800);
 }
 
 bool TestCompactBitmapDecode()
@@ -114,9 +114,10 @@ bool TestWin1124H2FallbackCandidates()
 
     std::vector<KeyState::ResolverValueCandidate> offsets;
     KeyState::AddProfileKeyOffsetCandidates(offsets, 26100, *profile);
-    return offsets.size() == 2 &&
+    return offsets.size() == 3 &&
         offsets[0].value == 0x3808 &&
-        offsets[1].value == 0x3830;
+        offsets[1].value == 0x3830 &&
+        offsets[2].value == 0x3800;
 }
 
 bool TestWin1124H2TrustedKeyOffsets()
@@ -127,7 +128,37 @@ bool TestWin1124H2TrustedKeyOffsets()
 
     return KeyState::IsProfileKeyOffsetCandidate(26100, *profile, 0x3808) &&
         KeyState::IsProfileKeyOffsetCandidate(26100, *profile, 0x3830) &&
-        !KeyState::IsProfileKeyOffsetCandidate(26100, *profile, 0x3800);
+        KeyState::IsProfileKeyOffsetCandidate(26100, *profile, 0x3800);
+}
+
+bool TestWin11LayoutPairedKeyOffset()
+{
+    const KeyState::SessionSlotsProfile* profile = KeyState::SelectSessionSlotsProfile(26100);
+    if (!profile)
+        return false;
+
+    const std::vector<KeyState::ResolverValueCandidate> baseCandidates = {
+        { 0x3808, "fallback_26100_ubr3323" },
+        { 0x3830, "fallback_26100_pre3323" },
+        { 0x3800, "fallback_layout_86678" },
+    };
+    const std::vector<KeyState::ResolverValueCandidate> paired =
+        KeyState::PrioritizeKeyStateOffsetsForSlots(
+            baseCandidates,
+            { 0x86678, "signature" },
+            *profile);
+    if (paired.size() != 3 ||
+        paired[0].value != 0x3800 ||
+        std::strcmp(paired[0].method, "layout_86678") != 0) {
+        return false;
+    }
+
+    const std::vector<KeyState::ResolverValueCandidate> legacy =
+        KeyState::PrioritizeKeyStateOffsetsForSlots(
+            baseCandidates,
+            { 0x824F0, "fallback_26100_ubr3323" },
+            *profile);
+    return legacy.size() == 3 && legacy[0].value == 0x3808;
 }
 
 bool TestRipRelativeHelper()
@@ -204,6 +235,8 @@ int main()
         return Fail("Win11 24H2 fallback candidates");
     if (!TestWin1124H2TrustedKeyOffsets())
         return Fail("Win11 24H2 trusted key offsets");
+    if (!TestWin11LayoutPairedKeyOffset())
+        return Fail("Win11 session-slots/key-offset layout pairing");
     if (!TestRipRelativeHelper())
         return Fail("RIP-relative helper");
     if (!TestU32ValueHelper())

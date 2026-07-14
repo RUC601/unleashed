@@ -196,8 +196,8 @@ namespace KeyState {
     inline const SessionSlotsProfile* SelectSessionSlotsProfile(DWORD build)
     {
         static constexpr SessionSlotsProfile profiles[] = {
-            // 25H2+ / build 26200+ per current memflow fallback table.
-            { 26200, "Win11 25H2+", "win32k.sys", 0x86678, 0x3808 },
+            // The 0x86678 session-slots layout stores gafAsyncKeyState at +0x3800.
+            { 26200, "Win11 25H2+", "win32k.sys", 0x86678, 0x3800 },
             // 24H2 / build 26100 keeps the session slot path in win32k.sys.
             { 26100, "Win11 24H2", "win32k.sys", 0x824F0, 0x3808 },
             // 22H2/23H2 builds keep the session slot path in win32ksgd.sys.
@@ -880,6 +880,7 @@ namespace KeyState {
         if (build >= 26100 && build < 26200 && EqualsNoCase(profile.moduleName, "win32k.sys")) {
             AddResolverCandidate(candidates, 0x3808, "fallback_26100_ubr3323");
             AddResolverCandidate(candidates, 0x3830, "fallback_26100_pre3323");
+            AddResolverCandidate(candidates, 0x3800, "fallback_layout_86678");
             return;
         }
 
@@ -949,6 +950,22 @@ namespace KeyState {
         if (TryScanKeyStateOffset(pid, value))
             AddTrustedScannedKeyOffsetCandidate(candidates, build, profile, value, "signature_u32");
         return candidates;
+    }
+
+    inline std::vector<ResolverValueCandidate> PrioritizeKeyStateOffsetsForSlots(
+        const std::vector<ResolverValueCandidate>& candidates,
+        const ResolverValueCandidate& slotsCandidate,
+        const SessionSlotsProfile& profile)
+    {
+        std::vector<ResolverValueCandidate> ordered;
+        if (EqualsNoCase(profile.moduleName, "win32k.sys") &&
+            slotsCandidate.value == 0x86678) {
+            AddResolverCandidate(ordered, 0x3800, "layout_86678");
+        }
+
+        for (const ResolverValueCandidate& candidate : candidates)
+            AddResolverCandidate(ordered, candidate.value, candidate.method);
+        return ordered;
     }
 
     inline uint64_t ResolveExportAddress(DWORD pid, const char* moduleName, const char* exportName)
@@ -1080,18 +1097,23 @@ namespace KeyState {
 
         const std::vector<ResolverValueCandidate> slotsCandidates =
             BuildSessionSlotsRvaCandidates(proxy.pid, build, moduleInfo, profile);
-        const std::vector<ResolverValueCandidate> keyOffsetCandidates =
+        const std::vector<ResolverValueCandidate> baseKeyOffsetCandidates =
             BuildKeyStateOffsetCandidates(proxy.pid, build, profile);
         if (slotsCandidates.empty()) {
             AppendResolverFailure(failureDetails, proxy, 0, "slots_candidates", moduleBase);
             return 0;
         }
-        if (keyOffsetCandidates.empty()) {
+        if (baseKeyOffsetCandidates.empty()) {
             AppendResolverFailure(failureDetails, proxy, 0, "key_offset_candidates", moduleBase);
             return 0;
         }
 
         for (const ResolverValueCandidate& slotsCandidate : slotsCandidates) {
+            const std::vector<ResolverValueCandidate> keyOffsetCandidates =
+                PrioritizeKeyStateOffsetsForSlots(
+                    baseKeyOffsetCandidates,
+                    slotsCandidate,
+                    profile);
             uint64_t slots = 0;
             const uint64_t slotsAddress = moduleBase + slotsCandidate.value;
             if (!ReadU64(proxy.pid, slotsAddress, slots) || !slots) {

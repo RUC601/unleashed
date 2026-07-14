@@ -210,6 +210,7 @@ namespace OW {
     inline constexpr DWORD kEntityDeadComponentRefreshMs = 250;
     inline constexpr DWORD kEntityLiveComponentRefreshMs = 2000;
     inline constexpr DWORD kEntityFastRescanWindowMs = 2000;
+    inline constexpr DWORD kEntityTopologyRescanCooldownMs = 5000;
     inline constexpr DWORD kEntityScannerIdleSleepMs = 5;
     inline DWORD entity_fast_scan_until_tick = 0;
     inline uint64_t entity_topology_rescan_request_count = 0;
@@ -992,7 +993,7 @@ inline void entity_scan_thread() {
     Diagnostics::ScopedDmaCallsite tag(Diagnostics::DmaCallsite::EntityScan);
     const bool scanLatestWinsEnabled = OW::ScanLatestWinsEnabled();
     const bool coldTopologyScanEnabled = OW::ColdTopologyScanEnabled();
-    Diagnostics::Info("Entity scan thread started. scan_interval_ms=%lu empty_interval_ms=%lu latest_wins=%d cold_topology_scan=%d startup_reconnect_scan_only=%d.",
+    Diagnostics::Info("Entity scan thread started. scan_interval_ms=%lu empty_interval_ms=%lu latest_wins=%d cold_topology_scan=%d adaptive_topology_rescan=%d.",
         static_cast<unsigned long>(OW::kEntityScanIntervalMs),
         static_cast<unsigned long>(OW::kEntityEmptyScanIntervalMs),
         scanLatestWinsEnabled ? 1 : 0,
@@ -1014,6 +1015,7 @@ inline void entity_scan_thread() {
     uint64_t scanSkipStableTopologyCount = 0;
     uint64_t scanStartedCount = 0;
     uint64_t scanCompletedCount = 0;
+    uint64_t ownerScanCompletedCount = 0;
     uint64_t scanFailedCount = 0;
     uint64_t scanPublishAttemptCount = 0;
     uint64_t scanPublishSuccessCount = 0;
@@ -1258,6 +1260,10 @@ inline void entity_scan_thread() {
                 scanOwnerEpoch = 0;
                 lastScanTick = 0;
                 lastScanCycleTick = 0;
+                lastTopologyCountProbeTick = 0;
+                scanTopologyCandidateCount = 0;
+                hasTopologyCandidateBaseline = false;
+                ownerScanCompletedCount = 0;
             }
             OW::SetEntityScanNextDueTick(0);
             Diagnostics::RecordEntityScanCycle(0, 0.0);
@@ -1273,6 +1279,10 @@ inline void entity_scan_thread() {
             cnNeStableScanPairs.clear();
             lastScanTick = 0;
             lastScanCycleTick = 0;
+            lastTopologyCountProbeTick = GetTickCount();
+            scanTopologyCandidateCount = 0;
+            hasTopologyCandidateBaseline = false;
+            ownerScanCompletedCount = 0;
             scanOwnerEpoch = currentConnectionEpoch;
             scanOwnerProfile = currentRuntimeProfile;
             Diagnostics::Info(
@@ -1315,6 +1325,9 @@ inline void entity_scan_thread() {
             !known_entities_empty &&
             !fast_rescan;
         if (stableTopologyCanReuse) {
+            bool topologyProbeRequestedRescan = false;
+            bool topologyProbeWasConfirmation = false;
+            size_t previousTopologyCandidateCount = scanTopologyCandidateCount;
             if (topologyCountProbeIntervalMs > 0 &&
                 (lastTopologyCountProbeTick == 0 ||
                  now - lastTopologyCountProbeTick >= topologyCountProbeIntervalMs)) {
@@ -1327,16 +1340,40 @@ inline void entity_scan_thread() {
                         : scanTopologyCandidateCount - candidateCount;
                     if (delta >= topologyCountProbeDeltaThreshold) {
                         ++scanTopologyCountProbeChangeCount;
+                        topologyProbeRequestedRescan = true;
                     }
+                } else {
+                    topologyProbeRequestedRescan = ownerScanCompletedCount <= 1;
+                    topologyProbeWasConfirmation = topologyProbeRequestedRescan;
                 }
                 scanTopologyCandidateCount = candidateCount;
                 hasTopologyCandidateBaseline = true;
             }
-            ++scanSkipStableTopologyCount;
-            updateScanPendingAge(now);
-            publishScanPipelineStats();
-            Sleep(OW::kEntityScannerIdleSleepMs);
-            continue;
+            if (topologyProbeRequestedRescan) {
+                {
+                    std::lock_guard<std::mutex> lock(g_mutex);
+                    ++OW::entity_topology_rescan_request_count;
+                    OW::entity_fast_scan_until_tick =
+                        now + OW::kEntityFastRescanWindowMs;
+                    topologyRescanRequestCountSnapshot =
+                        OW::entity_topology_rescan_request_count;
+                }
+                scanTopologyRescanRequestCount = topologyRescanRequestCountSnapshot;
+                fast_rescan = true;
+                OW::SetEntityScanNextDueTick(now);
+                Diagnostics::Info(
+                    "Entity topology rescan requested by %s probe: previous_candidates=%zu candidates=%zu request=%llu.",
+                    topologyProbeWasConfirmation ? "confirmation" : "change",
+                    previousTopologyCandidateCount,
+                    scanTopologyCandidateCount,
+                    static_cast<unsigned long long>(topologyRescanRequestCountSnapshot));
+            } else {
+                ++scanSkipStableTopologyCount;
+                updateScanPendingAge(now);
+                publishScanPipelineStats();
+                Sleep(OW::kEntityScannerIdleSleepMs);
+                continue;
+            }
         }
 
         const DWORD scanInterval = (known_entities_empty || fast_rescan)
@@ -1371,6 +1408,7 @@ inline void entity_scan_thread() {
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - getOwEntitiesStartedAt).count()) / 1000.0;
             ++scanCompletedCount;
+            ++ownerScanCompletedCount;
             if (!OW::ProcessConnection::IsConnected() ||
                 OW::ProcessConnection::ConnectionEpoch() != scanConnectionEpoch ||
                 OW::offset::ActiveProfile() != scanRuntimeProfile) {
@@ -1551,7 +1589,7 @@ inline void entity_thread() {
             buffer[0] != 'f' &&
             buffer[0] != 'F';
     }() || coldTopologyScanEnabled;
-    Diagnostics::Info("Entity processing thread started. process_interval_ms=%lu health_interval_ms=%lu team_name_interval_ms=%lu skill_status_interval_ms=%lu local_skill_interval_ms=%lu visibility=scatter_cn_ne_with_fallback latest_wins=%d cold_topology_scan=%d startup_reconnect_scan_only=%d record_store=%d link_retain=%d base_lifetime=%d.",
+    Diagnostics::Info("Entity processing thread started. process_interval_ms=%lu health_interval_ms=%lu team_name_interval_ms=%lu skill_status_interval_ms=%lu local_skill_interval_ms=%lu visibility=scatter_cn_ne_with_fallback latest_wins=%d cold_topology_scan=%d adaptive_topology_rescan=%d record_store=%d link_retain=%d base_lifetime=%d.",
         static_cast<unsigned long>(OW::kEntityProcessIntervalMs),
         static_cast<unsigned long>(OW::kEntityHealthIntervalMs),
         static_cast<unsigned long>(OW::kEntityTeamNameIntervalMs),
@@ -2634,6 +2672,34 @@ inline void entity_thread() {
         Diagnostics::SetEntityPipelineProcessStats(stats);
     };
 
+    DWORD lastTopologyRescanRequestTick = 0;
+    auto requestTopologyRescan = [&](DWORD requestTick, bool urgent = false) {
+        if (!coldTopologyScanEnabled)
+            return;
+        if (lastTopologyRescanRequestTick != 0 &&
+            requestTick - lastTopologyRescanRequestTick <
+                OW::kEntityTopologyRescanCooldownMs) {
+            return;
+        }
+
+        uint64_t requestCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (OW::entity_fast_scan_until_tick != 0 &&
+                requestTick < OW::entity_fast_scan_until_tick) {
+                return;
+            }
+            requestCount = ++OW::entity_topology_rescan_request_count;
+            OW::entity_fast_scan_until_tick =
+                requestTick + OW::kEntityFastRescanWindowMs;
+        }
+        lastTopologyRescanRequestTick = requestTick;
+        Diagnostics::Trace(
+            "Entity topology rescan requested by processor: urgent=%d request=%llu.",
+            urgent ? 1 : 0,
+            static_cast<unsigned long long>(requestCount));
+    };
+
     while (OW::Config::doingentity == 1) {
         if (!OW::ProcessConnection::IsConnected()) {
             lastProcessTick = 0;
@@ -2655,6 +2721,7 @@ inline void entity_thread() {
             entityRoster.clear();
             lastpos = {};
             previousProcessedValidCount = 0;
+            lastTopologyRescanRequestTick = 0;
             lastLoggedRawCount = static_cast<size_t>(-1);
             lastLoggedValidatedCount = static_cast<size_t>(-1);
             Diagnostics::Info(
@@ -2749,10 +2816,6 @@ inline void entity_thread() {
         }
         std::unordered_set<uint64_t> scanMissHotReadComponents{};
         std::unordered_set<uint64_t> scanMissHotReadSucceededComponents{};
-        auto requestTopologyRescan = [&](DWORD, bool = false) {
-            // Full component/link topology scans are limited to startup and
-            // reconnect, where the raw topology cache is empty.
-        };
         resetRosterCycleFlags();
 
         const DWORD softRefreshGapMs = OW::EntitySoftRefreshGapMs();
