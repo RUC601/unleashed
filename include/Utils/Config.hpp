@@ -12,6 +12,8 @@
 #include <vector>
 #include <imgui.h>
 
+#include "Game/AimStartLimiter.hpp"
+#include "Game/GameData.hpp"
 #include "Game/TriggerBoneSelection.hpp"
 
 // -----------------------------------------------------------------------
@@ -163,6 +165,7 @@ namespace OW { namespace Config {
     inline float triggerbotShotInterval = 0.0f;   // scaled 0-100 → 0-500ms (slider value)
     inline bool  triggerbotChargeAware  = false;  // wait for charge before firing
     inline float triggerbotMinCharge    = 30.0f;  // minimum charge % (0-100, for charge-aware)
+    inline bool  triggerbotDisableWhileReloading = false;
     inline bool  triggerbotIgnoreInvisible = true;
     inline TriggerBoneMask triggerbotBoneMask = kDefaultTriggerBoneMask;
 
@@ -172,6 +175,7 @@ namespace OW { namespace Config {
     inline float triggerbotShotInterval2 = 0.0f;
     inline bool  triggerbotChargeAware2  = false;
     inline float triggerbotMinCharge2    = 30.0f;
+    inline bool  triggerbotDisableWhileReloading2 = false;
     inline bool  triggerbotIgnoreInvisible2 = true;
     inline TriggerBoneMask triggerbotBoneMask2 = kDefaultTriggerBoneMask;
 
@@ -262,6 +266,7 @@ namespace OW { namespace Config {
     inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0, 0 };
     inline std::array<int, kAimBehaviorCount> aimBehaviorMethodPreset = { -1, -1, -1, -1, -1 };
     inline std::array<float, kAimBehaviorCount> aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+    inline std::array<AimStartLimiterProfile, kAimBehaviorCount> aimBehaviorStartLimiterProfiles{};
     // Legacy behavior acceleration is kept for config compatibility; method-level
     // acceleration now owns the Accel Limited controller tuning.
     inline std::array<float, kAimBehaviorCount> aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
@@ -320,6 +325,7 @@ namespace OW { namespace Config {
         int method = 0;
         int methodPresetId = -1;
         float baseSpeed = 100.0f;
+        AimStartLimiterProfile startLimiter{};
         bool moveSplitEnabled = true;
         int moveSplitMaxPixels = 4;
         int moveSplitDelayUs = 800;
@@ -682,6 +688,15 @@ namespace OW { namespace Config {
         }
         const float value = aimBehaviorBaseSpeed[static_cast<size_t>(normalized)];
         return std::isfinite(value) ? std::clamp(value, 0.0f, 100.0f) : 100.0f;
+    }
+
+    inline AimStartLimiterProfile ResolveAimStartLimiterProfile(int behavior)
+    {
+        const int normalized = ClampAimBehaviorIndex(behavior);
+        if (const AimBehaviorPreset* preset = ActiveAimBehaviorPreset(normalized))
+            return ValidateAimStartLimiterProfile(preset->startLimiter);
+        return ValidateAimStartLimiterProfile(
+            aimBehaviorStartLimiterProfiles[static_cast<size_t>(normalized)]);
     }
 
     inline int ClampMoveSplitMaxPixels(int value)
@@ -1147,10 +1162,17 @@ namespace OW { namespace Config {
         float shotInterval = 0.0f;
         bool chargeAware = false;
         float minCharge = 30.0f;
+        bool disableWhileReloading = false;
         bool ignoreInvisible = true;
         TriggerBoneMask boneMask = kDefaultTriggerBoneMask;
         bool drawHitbox = false;
     };
+
+    constexpr bool ShouldBlockTriggerForReload(bool disableWhileReloading,
+                                               bool reloading)
+    {
+        return disableWhileReloading && reloading;
+    }
 
     struct HeroPreset {
         float fov = kDefaultFovDeg; // angular separation from current view direction, in degrees
@@ -1227,10 +1249,61 @@ namespace OW { namespace Config {
         return ResolveHeroPresetFovForDistance(preset, distanceM);
     }
 
+    enum class AimScopeRequirement : int {
+        All = 0,
+        ScopedOnly = 1,
+    };
+
+    inline AimScopeRequirement NormalizeAimScopeRequirement(int value)
+    {
+        return value == static_cast<int>(AimScopeRequirement::ScopedOnly)
+            ? AimScopeRequirement::ScopedOnly
+            : AimScopeRequirement::All;
+    }
+
+    inline const char* AimScopeRequirementName(AimScopeRequirement requirement)
+    {
+        return NormalizeAimScopeRequirement(static_cast<int>(requirement)) ==
+                AimScopeRequirement::ScopedOnly
+            ? "ScopedOnly"
+            : "All";
+    }
+
+    inline bool AimScopeRequirementMatches(AimScopeRequirement requirement, bool rmbHeld)
+    {
+        return NormalizeAimScopeRequirement(static_cast<int>(requirement)) ==
+                AimScopeRequirement::All ||
+            rmbHeld;
+    }
+
+    // Higher values win. Activation-key setting 0 is RMB; explicit scoped
+    // hotkeys must outrank the RMB-bound scoped tracking baseline.
+    inline int AimScopePressedSelectionPriority(AimScopeRequirement requirement,
+                                                bool rmbHeld,
+                                                int activationKeySetting)
+    {
+        requirement = NormalizeAimScopeRequirement(static_cast<int>(requirement));
+        if (!AimScopeRequirementMatches(requirement, rmbHeld))
+            return -1;
+        if (requirement == AimScopeRequirement::ScopedOnly)
+            return activationKeySetting == 0 ? 2 : 3;
+        return 1;
+    }
+
+    inline int AimScopeFallbackSelectionPriority(AimScopeRequirement requirement,
+                                                 bool rmbHeld)
+    {
+        requirement = NormalizeAimScopeRequirement(static_cast<int>(requirement));
+        if (!AimScopeRequirementMatches(requirement, rmbHeld))
+            return -1;
+        return requirement == AimScopeRequirement::ScopedOnly ? 1 : 0;
+    }
+
     struct HeroSlotPreset {
         std::string name = "Preset";
         bool present = false;
         bool enabled = false;
+        AimScopeRequirement scopeRequirement = AimScopeRequirement::All;
         HeroPreset preset{};
     };
 
@@ -1327,6 +1400,30 @@ namespace OW { namespace Config {
     void SetHeroPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset);
     void SetHeroAimPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset);
     void SetHeroTriggerPreset(uint64_t heroId, int slotIndex, const HeroPreset& preset);
+    inline bool HeroUsesScopedWeaponActionSplit(uint64_t heroId)
+    {
+        switch (heroId) {
+        case OW::GameData::MakeHeroId(0x00A): // Widowmaker
+        case OW::GameData::MakeHeroId(0x13B): // Ana
+        case OW::GameData::MakeHeroId(0x200): // Ashe
+        case OW::GameData::MakeHeroId(0x32A): // Freja
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline AimScopeRequirement DefaultAimScopeRequirementForHeroAction(uint64_t heroId,
+                                                                       int action)
+    {
+        return HeroUsesScopedWeaponActionSplit(heroId) && action == 2
+            ? AimScopeRequirement::ScopedOnly
+            : AimScopeRequirement::All;
+    }
+
+    void SetHeroAimSlotScopeRequirement(uint64_t heroId,
+                                        int slotIndex,
+                                        AimScopeRequirement requirement);
     std::string GetHeroSlotName(uint64_t heroId, int slotIndex);
     std::string GetHeroAimSlotName(uint64_t heroId, int slotIndex);
     std::string GetHeroTriggerSlotName(uint64_t heroId, int slotIndex);

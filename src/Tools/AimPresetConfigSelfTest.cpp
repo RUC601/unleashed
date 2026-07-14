@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 
 namespace {
 
@@ -30,6 +31,7 @@ void ResetAimPresetState()
     aimBehaviorMethod = { 0, 0, 0, 0, 0 };
     aimBehaviorMethodPreset = { -1, -1, -1, -1, -1 };
     aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+    aimBehaviorStartLimiterProfiles = {};
     aimBehaviorMoveSplitEnabled = { true, false, false, true, true };
     aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4, 4 };
     aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800, 800 };
@@ -63,12 +65,148 @@ bool TestActivationKeySelectionIsExact()
     return true;
 }
 
+bool TestAimScopeRequirementPolicy()
+{
+    using namespace OW::Config;
+
+    constexpr AimScopeRequirement all = AimScopeRequirement::All;
+    constexpr AimScopeRequirement scopedOnly = AimScopeRequirement::ScopedOnly;
+    if (!AimScopeRequirementMatches(all, false) ||
+        !AimScopeRequirementMatches(all, true) ||
+        AimScopeRequirementMatches(scopedOnly, false) ||
+        !AimScopeRequirementMatches(scopedOnly, true)) {
+        return false;
+    }
+
+    if (AimScopePressedSelectionPriority(scopedOnly, false, 3) != -1 ||
+        AimScopePressedSelectionPriority(all, false, 3) != 1 ||
+        AimScopePressedSelectionPriority(scopedOnly, true, 0) != 2 ||
+        AimScopePressedSelectionPriority(scopedOnly, true, 3) != 3 ||
+        AimScopePressedSelectionPriority(scopedOnly, true, 3) <=
+            AimScopePressedSelectionPriority(scopedOnly, true, 0) ||
+        AimScopePressedSelectionPriority(scopedOnly, true, 0) <=
+            AimScopePressedSelectionPriority(all, true, 3)) {
+        return false;
+    }
+
+    if (AimScopeFallbackSelectionPriority(scopedOnly, false) != -1 ||
+        AimScopeFallbackSelectionPriority(all, true) != 0 ||
+        AimScopeFallbackSelectionPriority(scopedOnly, true) != 1) {
+        return false;
+    }
+
+    constexpr uint64_t widow = OW::GameData::MakeHeroId(0x00A);
+    constexpr uint64_t ana = OW::GameData::MakeHeroId(0x13B);
+    constexpr uint64_t ashe = OW::GameData::MakeHeroId(0x200);
+    constexpr uint64_t freja = OW::GameData::MakeHeroId(0x32A);
+    constexpr uint64_t emre = OW::GameData::MakeHeroId(0x4D8);
+    for (const uint64_t heroId : { widow, ana, ashe, freja }) {
+        if (!HeroUsesScopedWeaponActionSplit(heroId) ||
+            DefaultAimScopeRequirementForHeroAction(heroId, 0) != all ||
+            DefaultAimScopeRequirementForHeroAction(heroId, 2) != scopedOnly) {
+            return false;
+        }
+    }
+    if (HeroUsesScopedWeaponActionSplit(emre) ||
+        DefaultAimScopeRequirementForHeroAction(emre, 2) != all) {
+        return false;
+    }
+
+    HeroSlotPreset triggerSlot{};
+    return triggerSlot.scopeRequirement == all;
+}
+
+bool TestTriggerReloadGatePolicy()
+{
+    using namespace OW::Config;
+
+    if (ShouldBlockTriggerForReload(false, false) ||
+        ShouldBlockTriggerForReload(false, true) ||
+        ShouldBlockTriggerForReload(true, false) ||
+        !ShouldBlockTriggerForReload(true, true)) {
+        return false;
+    }
+
+    TriggerPreset preset{};
+    if (preset.disableWhileReloading)
+        return false;
+    preset.disableWhileReloading = true;
+    return ShouldBlockTriggerForReload(
+        preset.disableWhileReloading,
+        true);
+}
+
+bool TestAimStartLimiterPresetResolution()
+{
+    using namespace OW::Config;
+
+    ResetAimPresetState();
+    const OW::AimStartLimiterProfile defaults =
+        ResolveAimStartLimiterProfile(kAimBehaviorTracking);
+    if (defaults.enabled ||
+        !NearlyEqual(defaults.initialCapDegPerSec, 60.0f) ||
+        !NearlyEqual(defaults.capRiseDegPerSec2, 1200.0f) ||
+        !defaults.restartOnTargetChange) {
+        return false;
+    }
+
+    OW::AimStartLimiterProfile& classDefault =
+        aimBehaviorStartLimiterProfiles[static_cast<size_t>(kAimBehaviorTracking)];
+    classDefault.enabled = true;
+    classDefault.initialCapDegPerSec = 90.0f;
+    classDefault.capRiseDegPerSec2 = 800.0f;
+    classDefault.restartOnTargetChange = false;
+    const OW::AimStartLimiterProfile resolvedDefault =
+        ResolveAimStartLimiterProfile(kAimBehaviorTracking);
+    if (!resolvedDefault.enabled ||
+        !NearlyEqual(resolvedDefault.initialCapDegPerSec, 90.0f) ||
+        resolvedDefault.restartOnTargetChange) {
+        return false;
+    }
+
+    AimBehaviorPreset trackingPreset{};
+    trackingPreset.id = 401;
+    trackingPreset.behavior = kAimBehaviorTracking;
+    trackingPreset.startLimiter.enabled = true;
+    trackingPreset.startLimiter.initialCapDegPerSec = 45.0f;
+    trackingPreset.startLimiter.capRiseDegPerSec2 = 600.0f;
+    trackingPreset.startLimiter.restartOnTargetChange = true;
+    aimBehaviorPresets.push_back(trackingPreset);
+    aimBehaviorPresetId = trackingPreset.id;
+
+    const OW::AimStartLimiterProfile resolvedPreset =
+        ResolveAimStartLimiterProfile(kAimBehaviorTracking);
+    if (!resolvedPreset.enabled ||
+        !NearlyEqual(resolvedPreset.initialCapDegPerSec, 45.0f) ||
+        !NearlyEqual(resolvedPreset.capRiseDegPerSec2, 600.0f) ||
+        !resolvedPreset.restartOnTargetChange) {
+        return false;
+    }
+
+    aimBehaviorPresets[0].startLimiter.initialCapDegPerSec =
+        std::numeric_limits<float>::quiet_NaN();
+    aimBehaviorPresets[0].startLimiter.capRiseDegPerSec2 =
+        std::numeric_limits<float>::infinity();
+    const OW::AimStartLimiterProfile validatedPreset =
+        ResolveAimStartLimiterProfile(kAimBehaviorTracking);
+    return NearlyEqual(
+               validatedPreset.initialCapDegPerSec,
+               OW::kAimStartLimiterDefaultInitialCapDegPerSec) &&
+        NearlyEqual(
+            validatedPreset.capRiseDegPerSec2,
+            OW::kAimStartLimiterDefaultCapRiseDegPerSec2);
+}
+
 } // namespace
 
 int main()
 {
     using namespace OW::Config;
 
+    ResetAimPresetState();
+
+    if (!TestAimStartLimiterPresetResolution())
+        return Fail();
     ResetAimPresetState();
 
     AimMethodPreset constant1800{};
@@ -131,6 +269,10 @@ int main()
     if (!AimBehaviorMoveSplitEnabled(kAimBehaviorMagneticTrigger))
         return Fail();
     if (!TestActivationKeySelectionIsExact())
+        return Fail();
+    if (!TestAimScopeRequirementPolicy())
+        return Fail();
+    if (!TestTriggerReloadGatePolicy())
         return Fail();
 
     DynamicFovPreset dynamic{};

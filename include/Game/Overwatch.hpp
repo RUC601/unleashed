@@ -23,6 +23,7 @@
 #include <DirectXMath.h>
 
 #include "Game/AbilityIcons.hpp"
+#include "Game/AimStartLimiter.hpp"
 #include "Game/BoneSlots.hpp"
 #include "Game/HeroPerkRuntime.hpp"
 #include "Game/HeroSkills.hpp"
@@ -7411,13 +7412,14 @@ namespace OverlayRenderDetail {
                 const OW::Config::HeroSlotPreset& slot = item.second;
                 const OW::Config::TriggerPreset& trigger = slot.preset.trigger;
                 const bool active = slot.enabled && trigger.enabled && slotIndex == runtimeTriggerSlot;
-                char line[280]{};
+                char line[320]{};
                 std::snprintf(line, sizeof(line),
-                              "#%d %s | %s | %s | charge:%s | invis:%s | slot:%s trig:%s%s",
+                              "#%d %s | %s | %s | reload-block:%s | charge:%s | invis:%s | slot:%s trig:%s%s",
                               slotIndex + 1,
                               OW::AttackActionCompactNameForHero(heroId, trigger.action),
                               OW::Labels::TriggerbotModeName(trigger.mode),
                               OW::Labels::AimActivationKeyName(trigger.key),
+                              YesNo(trigger.disableWhileReloading),
                               YesNo(trigger.chargeAware),
                               YesNo(trigger.ignoreInvisible),
                               YesNo(slot.enabled),
@@ -7445,11 +7447,12 @@ namespace OverlayRenderDetail {
                 rows.push_back({ line, ImU32WithAlpha(204, 194, 255, 0.96f), 11.0f });
             }
             if (OW::Config::triggerbot2) {
-                char line[224]{};
+                char line[256]{};
                 std::snprintf(line, sizeof(line),
-                              "Triggerbot2 | Primary | %s | %s | charge:%s | invis:%s | enabled:Y",
+                              "Triggerbot2 | Primary | %s | %s | reload-block:%s | charge:%s | invis:%s | enabled:Y",
                               OW::Labels::TriggerbotModeName(OW::Config::triggerbotMode2),
                               OW::Labels::AimActivationKeyName(OW::Config::triggerbotKey2),
+                              YesNo(OW::Config::triggerbotDisableWhileReloading2),
                               YesNo(OW::Config::triggerbotChargeAware2),
                               YesNo(OW::Config::triggerbotIgnoreInvisible2));
                 rows.push_back({ line, ImU32WithAlpha(204, 194, 255, 0.96f), 10.8f });
@@ -8915,11 +8918,14 @@ namespace AimbotDetail {
         uint64_t trackingSessionHeroId = 0;
         int trackingSessionSlotIndex = -1;
         int trackingSessionAimKey = 0;
+        uint64_t trackingSessionGeneration = 0;
+        OW::AimStartLimiterState trackingStartLimiter{};
     };
 
     inline OW::c_entity LocalEntity();
     inline bool IsConfiguredActivationKeyPressedForSelection(int keySetting,
                                                              int* matchedKeySetting = nullptr);
+    inline bool IsInputVkDownQuiet(int vk);
 
     struct TrackingSessionIdentity {
         uint64_t heroId = 0;
@@ -8933,6 +8939,9 @@ namespace AimbotDetail {
         bool matchedInput = false;
         int activationKeyOverride = -1;
         bool usedSideButtonAlias = false;
+        OW::Config::AimScopeRequirement scopeRequirement =
+            OW::Config::AimScopeRequirement::All;
+        bool rmbHeld = false;
     };
 
     inline TrackingSessionIdentity CurrentTrackingSessionIdentity() {
@@ -8963,6 +8972,7 @@ namespace AimbotDetail {
         state.trackingSessionHeroId = 0;
         state.trackingSessionSlotIndex = -1;
         state.trackingSessionAimKey = 0;
+        OW::ResetAimStartLimiter(state.trackingStartLimiter);
     }
 
     inline void EnsureTrackingSession(RuntimeState& state,
@@ -8973,9 +8983,13 @@ namespace AimbotDetail {
         state.trackingSessionActive = true;
         state.trackingSessionTimedOut = false;
         state.trackingSessionStartedTick = GetTickCount();
+        ++state.trackingSessionGeneration;
+        if (state.trackingSessionGeneration == 0)
+            ++state.trackingSessionGeneration;
         state.trackingSessionHeroId = identity.heroId;
         state.trackingSessionSlotIndex = identity.slotIndex;
         state.trackingSessionAimKey = identity.aimKey;
+        OW::ResetAimStartLimiter(state.trackingStartLimiter);
         Diagnostics::Aim("tracking.session start hero=0x%llX slot=%d key=%d",
             static_cast<unsigned long long>(identity.heroId),
             identity.slotIndex + 1,
@@ -9084,6 +9098,9 @@ namespace AimbotDetail {
             int key = -1;
             int activationKeyOverride = -1;
             bool usedSideButtonAlias = false;
+            int scopeRequirement = -1;
+            bool rmbHeld = false;
+            int weaponAction = -1;
             float fov = -1.0f;
             int aimBehavior = -1;
             int triggerMode = -1;
@@ -9104,6 +9121,9 @@ namespace AimbotDetail {
             state.key != preset.key ||
             state.activationKeyOverride != selection.activationKeyOverride ||
             state.usedSideButtonAlias != selection.usedSideButtonAlias ||
+            state.scopeRequirement != static_cast<int>(selection.scopeRequirement) ||
+            state.rmbHeld != selection.rmbHeld ||
+            state.weaponAction != preset.trigger.action ||
             (!isTriggerKind && std::fabs(state.fov - preset.fov) > 0.001f) ||
             state.aimBehavior != preset.aimBehavior ||
             state.triggerMode != preset.trigger.mode ||
@@ -9115,7 +9135,7 @@ namespace AimbotDetail {
 
         const int behaviorMethod = OW::Config::AimBehaviorMethod(preset.aimBehavior);
         if (isTriggerKind) {
-            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d activeKey=%d sideAlias=%d aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d activeKey=%d sideAlias=%d scopeRequirement=%s rmbHeld=%d weaponAction=%d aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
                 kind,
                 static_cast<unsigned long long>(heroId),
                 selection.slotIndex + 1,
@@ -9123,6 +9143,9 @@ namespace AimbotDetail {
                 preset.key,
                 selection.activationKeyOverride,
                 selection.usedSideButtonAlias ? 1 : 0,
+                OW::Config::AimScopeRequirementName(selection.scopeRequirement),
+                selection.rmbHeld ? 1 : 0,
+                preset.trigger.action,
                 preset.aimMode,
                 preset.aimBehavior,
                 behaviorMethod,
@@ -9130,7 +9153,7 @@ namespace AimbotDetail {
                 preset.trigger.mode,
                 preset.trigger.key);
         } else {
-            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d activeKey=%d sideAlias=%d fovDeg=%.2f aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
+            Diagnostics::Aim("hero_preset.runtime kind=%s hero=0x%llX slot=%d matchedInput=%d key=%d activeKey=%d sideAlias=%d scopeRequirement=%s rmbHeld=%d weaponAction=%d fovDeg=%.2f aimMode=%d aimBehavior=%d behaviorMethod=%d triggerEnabled=%d triggerMode=%d triggerKey=%d",
                 kind ? kind : "unknown",
                 static_cast<unsigned long long>(heroId),
                 selection.slotIndex + 1,
@@ -9138,6 +9161,9 @@ namespace AimbotDetail {
                 preset.key,
                 selection.activationKeyOverride,
                 selection.usedSideButtonAlias ? 1 : 0,
+                OW::Config::AimScopeRequirementName(selection.scopeRequirement),
+                selection.rmbHeld ? 1 : 0,
+                preset.trigger.action,
                 preset.fov,
                 preset.aimMode,
                 preset.aimBehavior,
@@ -9154,6 +9180,9 @@ namespace AimbotDetail {
         state.key = preset.key;
         state.activationKeyOverride = selection.activationKeyOverride;
         state.usedSideButtonAlias = selection.usedSideButtonAlias;
+        state.scopeRequirement = static_cast<int>(selection.scopeRequirement);
+        state.rmbHeld = selection.rmbHeld;
+        state.weaponAction = preset.trigger.action;
         state.fov = preset.fov;
         state.aimBehavior = preset.aimBehavior;
         state.triggerMode = preset.trigger.mode;
@@ -9162,43 +9191,79 @@ namespace AimbotDetail {
     }
 
     inline bool TrySelectRuntimeAimPreset(uint64_t heroId, RuntimePresetSelection& selection) {
-        RuntimePresetSelection fallback{};
-        bool hasFallback = false;
+        const bool rmbHeld = IsInputVkDownQuiet(VK_RBUTTON);
+        struct IndexedAimSlot {
+            OW::Config::HeroSlotPreset slot{};
+            int slotIndex = -1;
+        };
+        std::array<IndexedAimSlot, OW::Config::kMaxHeroPresetSlots> enabledSlots{};
+        int enabledSlotCount = 0;
+        for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
+            OW::Config::HeroSlotPreset slot{};
+            if (!OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot) || !slot.enabled)
+                continue;
+            enabledSlots[static_cast<size_t>(enabledSlotCount++)] = { slot, slotIndex };
+        }
 
-        auto tryKeyedSelection = [&](RuntimePresetSelection& outSelection) {
+        RuntimePresetSelection fallback{};
+        int fallbackPriority = -1;
+
+        for (int index = 0; index < enabledSlotCount; ++index) {
+            const IndexedAimSlot& candidate = enabledSlots[static_cast<size_t>(index)];
+            const OW::Config::HeroSlotPreset& slot = candidate.slot;
+
+            const int priority = OW::Config::AimScopeFallbackSelectionPriority(
+                slot.scopeRequirement,
+                rmbHeld);
+            if (priority <= fallbackPriority)
+                continue;
+
+            fallback.preset = slot.preset;
+            fallback.slotIndex = candidate.slotIndex;
+            fallback.matchedInput = false;
+            fallback.activationKeyOverride = slot.preset.key;
+            fallback.scopeRequirement = slot.scopeRequirement;
+            fallback.rmbHeld = rmbHeld;
+            fallbackPriority = priority;
+        }
+
+        auto tryKeyedSelection = [&](int requiredPriority,
+                                     RuntimePresetSelection& outSelection) {
             RuntimePresetSelection inputFallback{};
             RuntimePresetSelection distanceFallback{};
             bool hasInputFallback = false;
             bool hasDistanceFallback = false;
 
-            for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
-                OW::Config::HeroSlotPreset slot{};
-                if (!OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot) || !slot.enabled)
-                    continue;
+            for (int index = 0; index < enabledSlotCount; ++index) {
+                const IndexedAimSlot& candidate = enabledSlots[static_cast<size_t>(index)];
+                const OW::Config::HeroSlotPreset& slot = candidate.slot;
 
-                if (!hasFallback) {
-                    fallback.preset = slot.preset;
-                    fallback.slotIndex = slotIndex;
-                    fallback.matchedInput = false;
-                    fallback.activationKeyOverride = slot.preset.key;
-                    hasFallback = true;
+                if (OW::Config::AimScopePressedSelectionPriority(
+                        slot.scopeRequirement,
+                        rmbHeld,
+                        slot.preset.key) != requiredPriority) {
+                    continue;
                 }
 
                 int matchedKeySetting = slot.preset.key;
-                if (!IsConfiguredActivationKeyPressedForSelection(
+                const bool keyPressed = slot.preset.key == 0
+                    ? rmbHeld
+                    : IsConfiguredActivationKeyPressedForSelection(
                         slot.preset.key,
-                        &matchedKeySetting)) {
+                        &matchedKeySetting);
+                if (!keyPressed)
                     continue;
-                }
 
                 const bool usedAlias = matchedKeySetting != slot.preset.key;
 
                 RuntimePresetSelection keyedSelection{};
                 keyedSelection.preset = slot.preset;
-                keyedSelection.slotIndex = slotIndex;
+                keyedSelection.slotIndex = candidate.slotIndex;
                 keyedSelection.matchedInput = true;
                 keyedSelection.activationKeyOverride = matchedKeySetting;
                 keyedSelection.usedSideButtonAlias = usedAlias;
+                keyedSelection.scopeRequirement = slot.scopeRequirement;
+                keyedSelection.rmbHeld = rmbHeld;
 
                 if (!hasInputFallback) {
                     inputFallback = keyedSelection;
@@ -9229,10 +9294,14 @@ namespace AimbotDetail {
             return false;
         };
 
-        if (tryKeyedSelection(selection))
-            return true;
+        // Scoped explicit hotkeys outrank the RMB tracking baseline, and both
+        // scoped forms outrank All while RMB is held.
+        for (int priority = 3; priority >= 1; --priority) {
+            if (tryKeyedSelection(priority, selection))
+                return true;
+        }
 
-        if (!hasFallback)
+        if (fallbackPriority < 0)
             return false;
 
         selection = fallback;
@@ -10257,7 +10326,8 @@ namespace AimbotDetail {
                                 float smooth,
                                 float acceleration,
                                 int methodOverride = -1,
-                                float bezierSpeedOverride = -1.0f) {
+                                float bezierSpeedOverride = -1.0f,
+                                bool commitSmoothingOutput = true) {
         AimData data{};
         const uint64_t playerControllerBase = SDK->g_player_controller;
         if (!playerControllerBase) {
@@ -10444,7 +10514,8 @@ namespace AimbotDetail {
             smooth,
             dispatchAcceleration,
             dispatchMethod,
-            bezierSpeedOverride
+            bezierSpeedOverride,
+            commitSmoothingOutput
         );
         const Vector3 rawDelta = data.target_angle - data.local_angle;
         const Vector3 smoothDelta = data.smoothed_angle - data.local_angle;
@@ -10799,6 +10870,65 @@ namespace AimbotDetail {
         return true;
     }
 
+    inline bool TryReadTriggerReloadingState(std::uint64_t skillBase,
+                                             bool& reloading) {
+        constexpr uint16_t kReloadStateSkill = 0x4BF;
+        if (!SDK || !skillBase)
+            return false;
+
+        __try {
+            reloading = OW::IsSkillActivate1(
+                skillBase + 0x40,
+                0,
+                kReloadStateSkill);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    inline bool RefreshTriggerReloadingState() {
+        constexpr DWORD kReloadPollIntervalMs = 50;
+        static DWORD lastReadTick = 0;
+        static std::uint64_t lastConnectionEpoch = 0;
+        static std::uint64_t lastSkillBase = 0;
+        static bool cachedReloading = false;
+
+        const c_entity local = LocalEntity();
+        const std::uint64_t connectionEpoch = OW::ProcessConnection::ConnectionEpoch();
+        if (!SDK || !local.SkillBase || connectionEpoch == 0 ||
+            !OW::ProcessConnection::IsConnected()) {
+            cachedReloading = OW::Config::reloading;
+            lastReadTick = 0;
+            lastConnectionEpoch = connectionEpoch;
+            lastSkillBase = local.SkillBase;
+            return cachedReloading;
+        }
+
+        const DWORD now = GetTickCount();
+        const bool identityChanged =
+            lastConnectionEpoch != connectionEpoch || lastSkillBase != local.SkillBase;
+        if (!identityChanged && lastReadTick != 0 &&
+            now - lastReadTick < kReloadPollIntervalMs) {
+            return cachedReloading;
+        }
+
+        bool reloading = OW::Config::reloading;
+        const bool readSucceeded = TryReadTriggerReloadingState(
+            local.SkillBase,
+            reloading);
+        if (!readSucceeded)
+            reloading = OW::Config::reloading;
+
+        lastReadTick = now;
+        lastConnectionEpoch = connectionEpoch;
+        lastSkillBase = local.SkillBase;
+        cachedReloading = reloading;
+        if (readSucceeded)
+            OW::Config::reloading = reloading;
+        return cachedReloading;
+    }
+
     inline void RunTriggerbot(bool secondary, float origin_sens) {
         if (InputSequenceBlocksAim(secondary ? "triggerbot2" : "triggerbot", ExecutionSource::Trigger))
             return;
@@ -10808,6 +10938,9 @@ namespace AimbotDetail {
         const float shotInterval = secondary ? OW::Config::triggerbotShotInterval2 : OW::Config::triggerbotShotInterval;
         const bool chargeAware = secondary ? OW::Config::triggerbotChargeAware2 : OW::Config::triggerbotChargeAware;
         const float minCharge = secondary ? OW::Config::triggerbotMinCharge2 : OW::Config::triggerbotMinCharge;
+        const bool disableWhileReloading = secondary
+            ? OW::Config::triggerbotDisableWhileReloading2
+            : OW::Config::triggerbotDisableWhileReloading;
         const bool ignoreInvisible = secondary ? OW::Config::triggerbotIgnoreInvisible2 : OW::Config::triggerbotIgnoreInvisible;
         const OW::TriggerBoneMask boneMask = secondary
             ? OW::Config::triggerbotBoneMask2
@@ -10841,7 +10974,27 @@ namespace AimbotDetail {
 
         if (!armed) return;
 
-        // 2. Shot interval cooldown
+        // 2. Optional reload gate. Refresh at a bounded rate because the
+        // general local-skill cache rotates this state too slowly for reloads.
+        if (OW::Config::ShouldBlockTriggerForReload(
+                disableWhileReloading,
+                RefreshTriggerReloadingState())) {
+            static DWORD lastReloadBlockLogTickPrimary = 0;
+            static DWORD lastReloadBlockLogTickSecondary = 0;
+            DWORD& lastLogTick = secondary
+                ? lastReloadBlockLogTickSecondary
+                : lastReloadBlockLogTickPrimary;
+            const DWORD now = GetTickCount();
+            if (lastLogTick == 0 || now - lastLogTick >= 500) {
+                Diagnostics::Aim(
+                    "triggerbot blocked reason=reloading lane=%s",
+                    secondary ? "secondary" : "primary");
+                lastLogTick = now;
+            }
+            return;
+        }
+
+        // 3. Shot interval cooldown
         if (shotInterval > 0.0f) {
             const DWORD now = GetTickCount();
             const DWORD intervalMs = static_cast<DWORD>(shotInterval * 5.0f); // 0-100 → 0-500ms
@@ -10849,7 +11002,7 @@ namespace AimbotDetail {
                 return;
         }
 
-        // 3. Find a target whose selected skeleton hitbox is under the crosshair.
+        // 4. Find a target whose selected skeleton hitbox is under the crosshair.
         const bool predit = ResolveCurrentAimSlotPredictionEnabled();
         const TargetCandidate triggerTarget = OW::AcquireTriggerTarget(
             boneMask,
@@ -10860,7 +11013,7 @@ namespace AimbotDetail {
             return;
         const c_entity target = triggerTarget.entitySnapshot;
 
-        // 4. The direct skeleton intersection already passed; Flick2nd keeps
+        // 5. The direct skeleton intersection already passed; Flick2nd keeps
         // its additional stage gate on top of that hit.
         const bool triggerReady = (!secondary && OW::Config::IsFlick2ndBehavior(OW::Config::aimBehavior))
             ? TwoStageTriggerOpenForTarget(target)
@@ -10871,7 +11024,7 @@ namespace AimbotDetail {
         if (InputSequenceBlocksAim(secondary ? "triggerbot2_fire" : "triggerbot_fire", ExecutionSource::Trigger))
             return;
 
-        // 5. Charge awareness
+        // 6. Charge awareness
         if (chargeAware) {
             c_entity local = LocalEntity();
             float charge = 100.0f;
@@ -10887,7 +11040,7 @@ namespace AimbotDetail {
             if (charge < minCharge) return;
         }
 
-        // 6. Fire
+        // 7. Fire
         const c_entity local = LocalEntity();
         if (local.HeroID == OW::eHero::HERO_HANJO) {
             SetSensitivityLocked(true, origin_sens);
@@ -10961,15 +11114,21 @@ namespace AimbotDetail {
         }
         g_trackingAttempts++;
         const int behavior = OW::Config::ClampAimBehaviorIndex(OW::Config::aimBehavior);
+        const OW::AimStartLimiterProfile entryStartLimiter =
+            OW::Config::ResolveAimStartLimiterProfile(behavior);
 
-        Diagnostics::Aim("tracking.enter originSens=%.6f reloading=%d scale=%.6f baseSpeed=%.6f method=%d prediction=%d targetDelay=%d",
+        Diagnostics::Aim("tracking.enter originSens=%.6f reloading=%d scale=%.6f baseSpeed=%.6f method=%d prediction=%d targetDelay=%d startLimiter=%d initialCapDegPerSec=%.3f capRiseDegPerSec2=%.3f restartOnTargetChange=%d",
             origin_sens,
             OW::Config::reloading ? 1 : 0,
             OW::Config::Tracking_smooth,
             OW::Config::AimBehaviorBaseSpeed(behavior),
             OW::Config::AimBehaviorMethod(behavior),
             OW::Config::Prediction ? 1 : 0,
-            OW::Config::targetdelay ? 1 : 0);
+            OW::Config::targetdelay ? 1 : 0,
+            entryStartLimiter.enabled ? 1 : 0,
+            entryStartLimiter.initialCapDegPerSec,
+            entryStartLimiter.capRiseDegPerSec2,
+            entryStartLimiter.restartOnTargetChange ? 1 : 0);
 
         // ---- Dry-run mode: log diagnostic info, don't move cursor ----
         if (OW::Config::aimDryRun) {
@@ -10983,7 +11142,24 @@ namespace AimbotDetail {
                         vec,
                         false,
                         OW::Config::AimBehaviorSmoothInput(behavior, OW::Config::Tracking_smooth),
-                        OW::Config::AimBehaviorAcceleration(behavior));
+                        OW::Config::AimBehaviorAcceleration(behavior),
+                        -1,
+                        -1.0f,
+                        false);
+                    c_entity dryRunTarget{};
+                    const std::uint64_t targetKey = IsPrimaryTargetActionable(dryRunTarget)
+                        ? TwoStageEntityKey(dryRunTarget)
+                        : 0;
+                    OW::AimStartLimiterState previewState = state.trackingStartLimiter;
+                    const OW::AimStartLimiterResult limiterPreview = OW::ApplyAimStartLimiter(
+                        entryStartLimiter,
+                        previewState,
+                        state.trackingSessionGeneration,
+                        connectionEpoch,
+                        targetKey,
+                        aim.local_angle,
+                        aim.smoothed_angle,
+                        OW::kAimStartLimiterDefaultDeltaTimeSeconds);
                     const float yawCountsPerRadian = OW::Config::KmboxYawCountsPerRadian();
                     const float pitchCountsPerRadian = OW::Config::KmboxPitchCountsPerRadian();
                     Diagnostics::Aim("dryrun.tracking local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) "
@@ -10996,6 +11172,14 @@ namespace AimbotDetail {
                         yawCountsPerRadian,
                         pitchCountsPerRadian,
                         1, vec.X, vec.Y, vec.Z);
+                    Diagnostics::Aim("dryrun.tracking start_limiter enabled=%d requestedDegPerSec=%.3f capDegPerSec=%.3f appliedDegPerSec=%.3f limited=%d reset=%s wouldMove=%d",
+                        entryStartLimiter.enabled ? 1 : 0,
+                        limiterPreview.requestedSpeedDegPerSec,
+                        limiterPreview.capDegPerSec,
+                        limiterPreview.appliedSpeedDegPerSec,
+                        limiterPreview.limited ? 1 : 0,
+                        OW::AimStartLimiterResetReasonName(limiterPreview.resetReason),
+                        (limiterPreview.outputAngle - aim.local_angle).Size() > 0.000001f ? 1 : 0);
                 } else {
                     Diagnostics::Aim("dryrun.tracking no_target_vector targetIndex=%d entities=%zu",
                         OW::Config::Targetenemyi,
@@ -11044,6 +11228,19 @@ namespace AimbotDetail {
                !OW::Config::reloading &&
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
             synchronizeHeldFireState();
+            const OW::AimStartLimiterProfile startLimiterProfile =
+                OW::Config::ResolveAimStartLimiterProfile(behavior);
+            if (!startLimiterProfile.enabled && state.trackingStartLimiter.started)
+                OW::ResetAimStartLimiter(state.trackingStartLimiter);
+            if (startLimiterProfile.enabled &&
+                state.trackingStartLimiter.started &&
+                state.trackingStartLimiter.connectionEpoch != 0 &&
+                state.trackingStartLimiter.connectionEpoch != connectionEpoch) {
+                state.trackingStartLimiter.lastLoopAt = {};
+            }
+            const float startLimiterDeltaTime = startLimiterProfile.enabled
+                ? OW::ObserveAimStartLimiterLoop(state.trackingStartLimiter)
+                : OW::kAimStartLimiterDefaultDeltaTimeSeconds;
             if (AimSessionTimedOut(sessionStartedTick, "tracking")) {
                 state.trackingSessionTimedOut = true;
                 break;
@@ -11101,7 +11298,10 @@ namespace AimbotDetail {
                     aimTarget,
                     false,
                     smoothInput,
-                    OW::Config::AimBehaviorAcceleration(behavior));
+                    OW::Config::AimBehaviorAcceleration(behavior),
+                    -1,
+                    -1.0f,
+                    !startLimiterProfile.enabled);
                 ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
                 holdThisTick = ShouldHoldFireWhileTracking();
                 if (holdThisTick && !fireHeld && holdFireButton >= 0) {
@@ -11116,17 +11316,53 @@ namespace AimbotDetail {
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
                     if (!TargetDelayReady(nullptr, false, false)) continue;
-                    MoveAimDelta(aim.local_angle, aim.smoothed_angle);
-                    g_trackingMoves++;
+                    Vector3 outputAngle = aim.smoothed_angle;
+                    OW::AimStartLimiterResult limiterResult{};
+                    if (startLimiterProfile.enabled) {
+                        limiterResult = OW::ApplyAimStartLimiter(
+                            startLimiterProfile,
+                            state.trackingStartLimiter,
+                            state.trackingSessionGeneration,
+                            connectionEpoch,
+                            TwoStageEntityKey(target),
+                            aim.local_angle,
+                            aim.smoothed_angle,
+                            startLimiterDeltaTime);
+                        outputAngle = limiterResult.outputAngle;
+                        OW::CommitAimSmoothingOutput(outputAngle - aim.local_angle);
+                        if (OW::Config::aimVerboseLog) {
+                            Diagnostics::Aim("tracking.start_limiter requestedDegPerSec=%.3f capDegPerSec=%.3f appliedDegPerSec=%.3f limited=%d reset=%s targetKey=0x%llX session=%llu connectionEpoch=%llu dt=%.6f",
+                                limiterResult.requestedSpeedDegPerSec,
+                                limiterResult.capDegPerSec,
+                                limiterResult.appliedSpeedDegPerSec,
+                                limiterResult.limited ? 1 : 0,
+                                OW::AimStartLimiterResetReasonName(limiterResult.resetReason),
+                                static_cast<unsigned long long>(TwoStageEntityKey(target)),
+                                static_cast<unsigned long long>(state.trackingSessionGeneration),
+                                static_cast<unsigned long long>(connectionEpoch),
+                                startLimiterDeltaTime);
+                        }
+                    }
+
+                    const Vector3 outputDelta = outputAngle - aim.local_angle;
+                    const bool moved = !startLimiterProfile.enabled ||
+                        outputDelta.Size() > 0.000001f;
+                    if (moved) {
+                        MoveAimDelta(aim.local_angle, outputAngle);
+                        g_trackingMoves++;
+                    }
                     if (OW::Config::aimVerboseLog) {
-                        Diagnostics::Aim("tracking.tick moved=1 delta_counts_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) target_dist=%.1f",
-                            -(aim.smoothed_angle.Y - aim.local_angle.Y) * OW::Config::KmboxYawCountsPerRadian(),
-                            (aim.smoothed_angle.X - aim.local_angle.X) * OW::Config::KmboxPitchCountsPerRadian(),
+                        Diagnostics::Aim("tracking.tick moved=%d delta_counts_est=(x_from_yaw=%.1f,y_from_pitch=%.1f) target_dist=%.1f",
+                            moved ? 1 : 0,
+                            -outputDelta.Y * OW::Config::KmboxYawCountsPerRadian(),
+                            outputDelta.X * OW::Config::KmboxPitchCountsPerRadian(),
                             CameraPosition().DistTo(aimTarget));
                     }
-                    RunCloseRangeActions(
-                        aimTarget,
-                        OW::OutputOwnerSource::GlobalAim);
+                    if (moved) {
+                        RunCloseRangeActions(
+                            aimTarget,
+                            OW::OutputOwnerSource::GlobalAim);
+                    }
                 } else {
                     Diagnostics::Aim("tracking no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
                         aim.local_angle.X,
@@ -12490,6 +12726,7 @@ inline void configsavenloadthread() {
 
                 saveHero(sec, "secondaim",    OW::Config::secondaim);
                 saveHero(sec, "triggerbot2",  OW::Config::triggerbot2);
+                saveHero(sec, "triggerbotDisableWhileReloading2", OW::Config::triggerbotDisableWhileReloading2);
                 saveHero(sec, "triggerbotIgnoreInvisible2", OW::Config::triggerbotIgnoreInvisible2);
                 saveHero(sec, "Tracking2",    OW::Config::Tracking2);
                 saveHero(sec, "Flick2",       OW::Config::Flick2);
@@ -12644,6 +12881,7 @@ inline void configsavenloadthread() {
 
             OW::Config::secondaim       = loadHero(sec, "secondaim", 0);
             OW::Config::triggerbot2     = loadHero(sec, "triggerbot2", 0);
+            OW::Config::triggerbotDisableWhileReloading2 = loadHero(sec, "triggerbotDisableWhileReloading2", 0);
             OW::Config::triggerbotIgnoreInvisible2 = loadHero(sec, "triggerbotIgnoreInvisible2", 1);
             OW::Config::Tracking2       = loadHero(sec, "Tracking2", 0);
             OW::Config::Flick2          = loadHero(sec, "Flick2", 0);

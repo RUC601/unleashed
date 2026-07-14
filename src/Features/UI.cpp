@@ -799,6 +799,10 @@ enum class UiText : size_t {
     PresetName,
     MethodPreset,
     BaseAngularSpeed,
+    StartSpeedLimit,
+    InitialSpeedCap,
+    CapRise,
+    RestartOnTargetChange,
     MoveSplit,
     SplitChunk,
     SplitDelay,
@@ -954,6 +958,10 @@ static constexpr UiTextPair kUiText[] = {
     { "Preset Name", "预设名称" },
     { "Method Preset", "方法预设" },
     { "Base Angular Speed", "基础角速度" },
+    { "Start Speed Limit", "起步限速" },
+    { "Initial Speed Cap", "初始速度上限" },
+    { "Cap Rise", "速度上限增幅" },
+    { "Restart On Target Change", "换目标重新起步" },
     { "Move Split", "分段移动" },
     { "Split Chunk", "分段大小" },
     { "Split Delay", "分段延迟" },
@@ -2619,6 +2627,7 @@ static OW::Config::AimBehaviorPreset CaptureBehaviorPresetFromCurrent(int behavi
                                                                       int method,
                                                                       int methodPresetId,
                                                                       float baseSpeed,
+                                                                      const OW::AimStartLimiterProfile& startLimiter,
                                                                       bool moveSplitEnabled,
                                                                       int moveSplitMaxPixels,
                                                                       int moveSplitDelayUs,
@@ -2632,6 +2641,7 @@ static OW::Config::AimBehaviorPreset CaptureBehaviorPresetFromCurrent(int behavi
     if (const OW::Config::AimMethodPreset* methodPreset = OW::Config::FindAimMethodPreset(preset.methodPresetId))
         preset.method = OW::Config::ClampAimMethodIndex(methodPreset->method);
     preset.baseSpeed = std::isfinite(baseSpeed) ? std::clamp(baseSpeed, 0.0f, 100.0f) : 100.0f;
+    preset.startLimiter = OW::ValidateAimStartLimiterProfile(startLimiter);
     preset.moveSplitEnabled = moveSplitEnabled;
     preset.moveSplitMaxPixels = OW::Config::ClampMoveSplitMaxPixels(moveSplitMaxPixels);
     preset.moveSplitDelayUs = OW::Config::ClampMoveSplitDelayUs(moveSplitDelayUs);
@@ -3420,7 +3430,10 @@ void UI::AimbotPage() {
 
     bool presetChanged = false;
     bool slotEnabledChanged = false;
+    bool scopeRequirementChanged = false;
     OW::Config::HeroPreset activePreset{};
+    OW::Config::AimScopeRequirement activeScopeRequirement =
+        OW::Config::AimScopeRequirement::All;
 
     auto refreshActivePreset = [&]() {
         state.selectedTypeIndex = ClampHeroSelectionIndex(state.selectedTypeIndex);
@@ -3429,6 +3442,16 @@ void UI::AimbotPage() {
         activePreset = isGlobal
             ? MakeCurrentHeroActionPreset(slotKind)
             : GetHeroActionPresetOrDefault(slotKind, selectedHero->heroId, state.aimHeroSegActive);
+        activeScopeRequirement = OW::Config::AimScopeRequirement::All;
+        if (!isGlobal) {
+            OW::Config::HeroSlotPreset activeSlot{};
+            if (OW::Config::TryGetHeroAimSlot(
+                    selectedHero->heroId,
+                    state.aimHeroSegActive,
+                    activeSlot)) {
+                activeScopeRequirement = activeSlot.scopeRequirement;
+            }
+        }
     };
     refreshActivePreset();
 
@@ -3474,10 +3497,41 @@ void UI::AimbotPage() {
                                       OW::Labels::kAimActivationKeys, OW::Labels::AimActivationKeyCount());
             ImGui::PopItemWidth();
 
+            // Scope Requirement
+            SettingRow("Scope Requirement", kAimbotLeftLabelWidth);
+            PushControlWidth();
+            static const char* const kAimScopeRequirements[] = { "All", "Scoped Only" };
+            int scopeRequirement = static_cast<int>(activeScopeRequirement);
+            const bool scopeCanChange =
+                OW::Config::HeroUsesScopedWeaponActionSplit(selectedHero->heroId);
+            if (!scopeCanChange)
+                ImGui::BeginDisabled();
+            if (UISelect("##aimScopeRequirement",
+                         &scopeRequirement,
+                         kAimScopeRequirements,
+                         IM_ARRAYSIZE(kAimScopeRequirements))) {
+                activeScopeRequirement = OW::Config::NormalizeAimScopeRequirement(scopeRequirement);
+                activePreset.trigger.action =
+                    activeScopeRequirement == OW::Config::AimScopeRequirement::ScopedOnly
+                    ? 2
+                    : 0;
+                scopeRequirementChanged = true;
+                presetChanged = true;
+            }
+            if (!scopeCanChange)
+                ImGui::EndDisabled();
+            ImGui::PopItemWidth();
+
             // Attack
             SettingRow("Attack", kAimbotLeftLabelWidth);
             PushControlWidth();
-            presetChanged |= UIAttackActionSelect("##aimAttack", &activePreset.trigger.action, selectedHero->heroId);
+            if (UIAttackActionSelect("##aimAttack", &activePreset.trigger.action, selectedHero->heroId)) {
+                activeScopeRequirement =
+                    OW::Config::DefaultAimScopeRequirementForHeroAction(
+                        selectedHero->heroId,
+                        activePreset.trigger.action);
+                presetChanged = true;
+            }
             ImGui::PopItemWidth();
 
             // Fire Policy
@@ -3721,6 +3775,12 @@ void UI::AimbotPage() {
     } else {
         if (presetChanged) {
             SetHeroActionPreset(slotKind, selectedHero->heroId, state.aimHeroSegActive, activePreset);
+            if (scopeRequirementChanged) {
+                OW::Config::SetHeroAimSlotScopeRequirement(
+                    selectedHero->heroId,
+                    state.aimHeroSegActive,
+                    activeScopeRequirement);
+            }
             ApplyHeroActionPresetToGlobals(slotKind, activePreset);
         } else if (slotEnabledChanged &&
                    IsHeroActionSlotEnabled(slotKind, selectedHero->heroId, state.aimHeroSegActive)) {
@@ -3799,6 +3859,13 @@ void UI::TriggerPage() {
             presetChanged |= UISlider("##triggerSlotInterval", &activePreset.trigger.shotInterval,
                                       0.0f, 100.0f, "500 ms");
             ImGui::PopItemWidth();
+
+            SettingRow("Disable During Reload", kAimbotRightLabelWidth);
+            presetChanged |= UICheckbox(
+                "##triggerSlotDisableWhileReloading",
+                &activePreset.trigger.disableWhileReloading);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Skip this Trigger Slot while the local hero is reloading.");
 
             SettingRow("Charge Aware", kAimbotRightLabelWidth);
             presetChanged |= UICheckbox("##triggerSlotChargeAware", &activePreset.trigger.chargeAware);
@@ -4932,6 +4999,9 @@ static void DrawMiscBehaviorPage() {
         float& behaviorBaseSpeed = selectedPreset
             ? selectedPreset->baseSpeed
             : OW::Config::aimBehaviorBaseSpeed[static_cast<size_t>(behaviorIndex)];
+        OW::AimStartLimiterProfile& behaviorStartLimiter = selectedPreset
+            ? selectedPreset->startLimiter
+            : OW::Config::aimBehaviorStartLimiterProfiles[static_cast<size_t>(behaviorIndex)];
         bool& behaviorMoveSplitEnabled = selectedPreset
             ? selectedPreset->moveSplitEnabled
             : OW::Config::aimBehaviorMoveSplitEnabled[static_cast<size_t>(behaviorIndex)];
@@ -4949,6 +5019,7 @@ static void DrawMiscBehaviorPage() {
         }
         behaviorMoveSplitMaxPixels = OW::Config::ClampMoveSplitMaxPixels(behaviorMoveSplitMaxPixels);
         behaviorMoveSplitDelayUs = OW::Config::ClampMoveSplitDelayUs(behaviorMoveSplitDelayUs);
+        behaviorStartLimiter = OW::ValidateAimStartLimiterProfile(behaviorStartLimiter);
         OW::Config::aimMethod = behaviorMethod;
 
         SettingRow(T(UiText::SubMethod));
@@ -4981,6 +5052,38 @@ static void DrawMiscBehaviorPage() {
         UISlider("##miscBaseAngularSpeed", &behaviorBaseSpeed, 0.0f, 100.0f, "100");
         ImGui::PopItemWidth();
 
+        if (OW::Config::IsTrackingBehavior(behaviorIndex)) {
+            SettingRow(T(UiText::StartSpeedLimit));
+            UICheckbox("##miscBehaviorStartSpeedLimit", &behaviorStartLimiter.enabled);
+
+            if (behaviorStartLimiter.enabled) {
+                SettingRow(T(UiText::InitialSpeedCap));
+                PushControlWidth();
+                UISlider(
+                    "##miscBehaviorStartInitialCap",
+                    &behaviorStartLimiter.initialCapDegPerSec,
+                    0.0f,
+                    OW::kAimStartLimiterMaxCapDegPerSec,
+                    "60 deg/s");
+                ImGui::PopItemWidth();
+
+                SettingRow(T(UiText::CapRise));
+                PushControlWidth();
+                UISlider(
+                    "##miscBehaviorStartCapRise",
+                    &behaviorStartLimiter.capRiseDegPerSec2,
+                    0.0f,
+                    10000.0f,
+                    "1200 deg/s^2");
+                ImGui::PopItemWidth();
+
+                SettingRow(T(UiText::RestartOnTargetChange));
+                UICheckbox(
+                    "##miscBehaviorStartRestartOnTargetChange",
+                    &behaviorStartLimiter.restartOnTargetChange);
+            }
+        }
+
         SettingRow(T(UiText::MoveSplit));
         UICheckbox("##miscBehaviorMoveSplit", &behaviorMoveSplitEnabled);
 
@@ -5008,6 +5111,7 @@ static void DrawMiscBehaviorPage() {
                 behaviorMethod,
                 behaviorMethodPresetId,
                 behaviorBaseSpeed,
+                behaviorStartLimiter,
                 behaviorMoveSplitEnabled,
                 behaviorMoveSplitMaxPixels,
                 behaviorMoveSplitDelayUs,

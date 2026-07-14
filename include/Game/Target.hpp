@@ -3893,7 +3893,8 @@ namespace OW {
                                             float speed,
                                             float accel,
                                             int methodOverride,
-                                            float bezierSpeedOverride = -1.0f) {
+                                            float bezierSpeedOverride = -1.0f,
+                                            bool commitOvershootStep = true) {
         const float deltaTime = AimSmoothingDetail::ComputeDeltaTime();
         const int method = std::clamp(methodOverride, 0, Config::kAimMethodCount - 1);
         static int previousMethod = -1;
@@ -3978,7 +3979,8 @@ namespace OW {
         }
 
         const Vector3 outputDelta = result - local;
-        AimSmoothingDetail::CommitOvershootStep(outputDelta);
+        if (commitOvershootStep)
+            AimSmoothingDetail::CommitOvershootStep(outputDelta);
         Diagnostics::Aim("smooth.result method=%d result=(%.9f,%.9f,%.9f) output_delta=(%.9f,%.9f,%.9f) output_len=%.9f",
             method,
             result.X,
@@ -3989,6 +3991,10 @@ namespace OW {
             outputDelta.Z,
             outputDelta.Size());
         return result;
+    }
+
+    inline void CommitAimSmoothingOutput(const Vector3& outputDelta) {
+        AimSmoothingDetail::CommitOvershootStep(outputDelta);
     }
 
     inline Vector3 SmoothDispatch(Vector3 local, Vector3 target, float speed, float accel) {

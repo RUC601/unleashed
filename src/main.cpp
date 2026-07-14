@@ -1353,11 +1353,25 @@ static int RunConfigCheckCli()
         static_cast<unsigned int>(OW::Config::triggerbotBoneMask2),
         static_cast<unsigned int>(OW::kDefaultTriggerBoneMask),
         static_cast<unsigned int>(OW::kTriggerBoneAllMask));
+    std::printf("[CONFIG] triggerDisableWhileReloading=%d triggerDisableWhileReloading2=%d\n",
+        OW::Config::triggerbotDisableWhileReloading ? 1 : 0,
+        OW::Config::triggerbotDisableWhileReloading2 ? 1 : 0);
     std::printf("[CONFIG] aimBoneMask=0x%03X aimBoneMask2=0x%03X default=0x%03X all=0x%03X\n",
         static_cast<unsigned int>(OW::Config::aimbotBoneMask),
         static_cast<unsigned int>(OW::Config::aimbotBoneMask2),
         static_cast<unsigned int>(OW::kDefaultAimBoneMask),
         static_cast<unsigned int>(OW::kSkeletonBoneAllMask));
+    const OW::AimStartLimiterProfile trackingStartLimiter =
+        OW::Config::ResolveAimStartLimiterProfile(OW::Config::kAimBehaviorTracking);
+    const OW::Config::AimBehaviorPreset* trackingBehaviorPreset =
+        OW::Config::ActiveAimBehaviorPreset(OW::Config::kAimBehaviorTracking);
+    std::printf("[CONFIG] trackingStartLimiter source=%s presetId=%d enabled=%d initialCapDegPerSec=%.3f capRiseDegPerSec2=%.3f restartOnTargetChange=%d\n",
+        trackingBehaviorPreset ? "behavior-preset" : "class-default",
+        trackingBehaviorPreset ? trackingBehaviorPreset->id : -1,
+        trackingStartLimiter.enabled ? 1 : 0,
+        trackingStartLimiter.initialCapDegPerSec,
+        trackingStartLimiter.capRiseDegPerSec2,
+        trackingStartLimiter.restartOnTargetChange ? 1 : 0);
     return 0;
 }
 

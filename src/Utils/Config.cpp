@@ -50,7 +50,7 @@
 
 namespace OW { namespace Config {
 
-    int config_version = 11;
+    int config_version = 12;
     bool draw_edge = false;
     bool drawbox3d = false;
     bool manualsave = false;
@@ -281,12 +281,12 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 11;
+        constexpr int kCurrentConfigVersion = 12;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
         constexpr int kVisualOverlayCleanupVersion = 8;
-        constexpr int kCurrentHeroConfigVersion = 13;
+        constexpr int kCurrentHeroConfigVersion = 14;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
@@ -294,6 +294,7 @@ namespace OW { namespace Config {
         constexpr int kAnaSleepDartFullHealthDefaultVersion = 8;
         constexpr int kDocumentedHeroSlotDefaultsVersion = 9;
         constexpr int kAsheFirePatternStableTrackingVersion = 13;
+        constexpr int kAimScopeRequirementVersion = 14;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -478,6 +479,7 @@ namespace OW { namespace Config {
             preset.baseSpeed = std::isfinite(preset.baseSpeed)
                 ? std::clamp(preset.baseSpeed, 0.0f, 100.0f)
                 : 100.0f;
+            preset.startLimiter = ValidateAimStartLimiterProfile(preset.startLimiter);
             preset.moveSplitMaxPixels = ClampMoveSplitMaxPixels(preset.moveSplitMaxPixels);
             preset.moveSplitDelayUs = ClampMoveSplitDelayUs(preset.moveSplitDelayUs);
             return preset;
@@ -1417,6 +1419,7 @@ namespace OW { namespace Config {
             int aimBehavior = kAimBehaviorTracking;
             int key = kKeyLeftMouse;
             bool enabled = true;
+            AimScopeRequirement scopeRequirement = AimScopeRequirement::All;
             int firePolicy = kFirePolicyAuto;
             int targetTeam = kTargetEnemies;
             float minDistance = kDocumentedUnsetFloat;
@@ -1454,6 +1457,21 @@ namespace OW { namespace Config {
         {
             DocumentedAimSlotSpec spec = AimSlot(name, kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse, false);
             spec.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
+            return spec;
+        }
+
+        DocumentedAimSlotSpec ScopedAimSlot(const char* name,
+                                            int behavior,
+                                            int key,
+                                            bool enabled = true)
+        {
+            DocumentedAimSlotSpec spec = AimSlot(
+                name,
+                kActionScoped,
+                behavior,
+                key,
+                enabled);
+            spec.scopeRequirement = AimScopeRequirement::ScopedOnly;
             return spec;
         }
 
@@ -1505,15 +1523,15 @@ namespace OW { namespace Config {
             case static_cast<uint64_t>(OW::eHero::HERO_WINSTON):
                 return { AimSlot("Secondary Flick", kActionSecondary, kAimBehaviorFlick, kKeyRightMouse) };
             case static_cast<uint64_t>(OW::eHero::HERO_WIDOWMAKER): {
-                auto scopedTrack = AimSlot("Scoped Tracking", kActionScoped, kAimBehaviorTracking, kKeyRightMouse);
+                auto scopedTrack = ScopedAimSlot("Scoped Tracking", kAimBehaviorTracking, kKeyRightMouse);
                 scopedTrack.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
                 scopedTrack.maxAimTime = 30.0f;
-                auto fastFlick = AimSlot("Scoped Fast Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse4);
+                auto fastFlick = ScopedAimSlot("Scoped Fast Flick", kAimBehaviorFlick, kKeyMouse4);
                 fastFlick.smooth = 100.0f;
                 return {
                     AimSlot("Unscoped Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
                     scopedTrack,
-                    AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
+                    ScopedAimSlot("Scoped Flick", kAimBehaviorFlick, kKeyMouse5),
                     fastFlick,
                 };
             }
@@ -1564,19 +1582,22 @@ namespace OW { namespace Config {
             case static_cast<uint64_t>(OW::eHero::HERO_MEI):
                 return { AimSlot("Secondary Flick", kActionSecondary, kAimBehaviorFlick, kKeyMouse5) };
             case static_cast<uint64_t>(OW::eHero::HERO_ANA): {
-                auto scopedTrack = AimSlot("Scoped Tracking", kActionScoped, kAimBehaviorTracking, kKeyRightMouse);
+                auto scopedTrack = ScopedAimSlot("Scoped Tracking", kAimBehaviorTracking, kKeyRightMouse);
                 scopedTrack.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
                 scopedTrack.maxAimTime = 30.0f;
                 return {
                     AimSlot("Unscoped Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
-                    AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
+                    ScopedAimSlot("Scoped Flick", kAimBehaviorFlick, kKeyMouse5),
                     scopedTrack,
                 };
             }
             case static_cast<uint64_t>(OW::eHero::HERO_BRIGITTE):
                 return { DisabledAimSlot() };
             case static_cast<uint64_t>(OW::eHero::HERO_ASHE):
-                return { AimSlot("Unscoped Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+                return {
+                    AimSlot("Unscoped Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
+                    ScopedAimSlot("Scoped Flick", kAimBehaviorFlick, kKeyMouse5),
+                };
             case static_cast<uint64_t>(OW::eHero::HERO_ECHO):
                 return {
                     AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
@@ -1592,17 +1613,29 @@ namespace OW { namespace Config {
             case static_cast<uint64_t>(OW::eHero::HERO_FREJA):
                 return {
                     AimSlot("Unscoped Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
-                    AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
+                    ScopedAimSlot("Scoped Flick", kAimBehaviorFlick, kKeyMouse5),
                 };
+            case static_cast<uint64_t>(OW::eHero::HERO_EMRE):
+                return { AimSlot("All Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+            case static_cast<uint64_t>(OW::eHero::HERO_SIERRA):
+                return { AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse) };
+            case static_cast<uint64_t>(OW::eHero::HERO_VENTURE):
+                return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+            default:
+                return {};
+            }
+        }
+
+        std::vector<DocumentedAimSlotSpec> LegacyAimScopeLayoutSpecsV13(uint64_t heroId)
+        {
+            switch (heroId) {
+            case static_cast<uint64_t>(OW::eHero::HERO_ASHE):
+                return { AimSlot("Unscoped Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
             case static_cast<uint64_t>(OW::eHero::HERO_EMRE):
                 return {
                     AimSlot("Unscoped Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5),
                     AimSlot("Scoped Flick", kActionScoped, kAimBehaviorFlick, kKeyMouse5),
                 };
-            case static_cast<uint64_t>(OW::eHero::HERO_SIERRA):
-                return { AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse) };
-            case static_cast<uint64_t>(OW::eHero::HERO_VENTURE):
-                return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
             default:
                 return {};
             }
@@ -1934,39 +1967,47 @@ namespace OW { namespace Config {
                 slot.preset.trigger.action = action;
                 slot.preset.trigger.key = DefaultTriggerActivationKeyForAction(action);
                 slot.preset = ValidateHeroPresetValueForHero(heroId, slot.preset);
+                slot.scopeRequirement = kind == HeroPresetSlotKind::Aim
+                    ? DefaultAimScopeRequirementForHeroAction(heroId, slot.preset.trigger.action)
+                    : AimScopeRequirement::All;
             }
         }
 
-        bool InitializeDocumentedHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
-                                                 uint64_t heroId,
-                                                 HeroPresetSlotKind kind)
+        bool InitializeAimPresetSlotsFromSpecs(
+            std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+            uint64_t heroId,
+            const std::vector<DocumentedAimSlotSpec>& specs)
         {
-            const HeroPreset basePreset = kind == HeroPresetSlotKind::Aim
-                ? MakeHeroAimPresetFromCurrentUnlocked()
-                : MakeHeroTriggerPresetFromCurrentUnlocked();
-
             InitializeHeroPresetSlots(slots, 0, false);
+            if (specs.empty())
+                return false;
 
-            if (kind == HeroPresetSlotKind::Aim) {
-                const std::vector<DocumentedAimSlotSpec> specs = DocumentedAimSlotSpecs(heroId);
-                if (specs.empty())
-                    return false;
-
-                const int presentCount = (std::min)(
-                    static_cast<int>(specs.size()),
-                    kHeroPresetSlotCount);
-                for (int slotIndex = 0; slotIndex < presentCount; ++slotIndex) {
-                    const DocumentedAimSlotSpec& spec = specs[static_cast<size_t>(slotIndex)];
-                    HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
-                    ResetHeroPresetSlot(slot, slotIndex);
-                    slot.name = spec.name ? spec.name : BasicHeroSlotName(heroId, spec.action, slotIndex);
-                    slot.present = true;
-                    slot.enabled = spec.enabled;
-                    slot.preset = MakeDocumentedAimPreset(heroId, basePreset, spec);
-                }
-                return true;
+            const HeroPreset basePreset = MakeHeroAimPresetFromCurrentUnlocked();
+            const int presentCount = (std::min)(
+                static_cast<int>(specs.size()),
+                kHeroPresetSlotCount);
+            for (int slotIndex = 0; slotIndex < presentCount; ++slotIndex) {
+                const DocumentedAimSlotSpec& spec = specs[static_cast<size_t>(slotIndex)];
+                HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
+                ResetHeroPresetSlot(slot, slotIndex);
+                slot.name = spec.name ? spec.name : BasicHeroSlotName(heroId, spec.action, slotIndex);
+                slot.present = true;
+                slot.enabled = spec.enabled;
+                slot.scopeRequirement = spec.scopeRequirement;
+                slot.preset = MakeDocumentedAimPreset(heroId, basePreset, spec);
             }
+            return true;
+        }
 
+        bool InitializeDocumentedHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+                                                  uint64_t heroId,
+                                                  HeroPresetSlotKind kind)
+        {
+            if (kind == HeroPresetSlotKind::Aim)
+                return InitializeAimPresetSlotsFromSpecs(slots, heroId, DocumentedAimSlotSpecs(heroId));
+
+            const HeroPreset basePreset = MakeHeroTriggerPresetFromCurrentUnlocked();
+            InitializeHeroPresetSlots(slots, 0, false);
             const std::vector<DocumentedTriggerSlotSpec> specs = DocumentedTriggerSlotSpecs(heroId);
             if (specs.empty())
                 return false;
@@ -2020,6 +2061,7 @@ namespace OW { namespace Config {
                 SameFloatForDefaultMigration(lhs.shotInterval, rhs.shotInterval) &&
                 lhs.chargeAware == rhs.chargeAware &&
                 SameFloatForDefaultMigration(lhs.minCharge, rhs.minCharge) &&
+                lhs.disableWhileReloading == rhs.disableWhileReloading &&
                 lhs.ignoreInvisible == rhs.ignoreInvisible &&
                 lhs.boneMask == rhs.boneMask &&
                 lhs.drawHitbox == rhs.drawHitbox;
@@ -2122,6 +2164,46 @@ namespace OW { namespace Config {
             return true;
         }
 
+        bool MigrateAimScopeLayoutIfV13Default(
+            std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+            uint64_t heroId,
+            HeroPresetSlotKind kind)
+        {
+            if (kind != HeroPresetSlotKind::Aim ||
+                gLoadedHeroConfigVersion >= kAimScopeRequirementVersion) {
+                return false;
+            }
+
+            const std::vector<DocumentedAimSlotSpec> legacySpecs =
+                LegacyAimScopeLayoutSpecsV13(heroId);
+            if (legacySpecs.empty())
+                return false;
+
+            std::array<HeroSlotPreset, kHeroPresetSlotCount> expected{};
+            InitializeAimPresetSlotsFromSpecs(expected, heroId, legacySpecs);
+            for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                if (!SameHeroSlotForDefaultMigration(
+                        slots[static_cast<size_t>(slotIndex)],
+                        expected[static_cast<size_t>(slotIndex)])) {
+                    return false;
+                }
+            }
+
+            InitializeBasicHeroPresetSlots(slots, heroId, kind);
+            gLastHeroConfigNeedsSave = true;
+            return true;
+        }
+
+        bool MigrateHeroSlotsIfLegacyDefault(
+            std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+            uint64_t heroId,
+            HeroPresetSlotKind kind)
+        {
+            if (MigrateDocumentedHeroSlotsIfLegacyDefault(slots, heroId, kind))
+                return true;
+            return MigrateAimScopeLayoutIfV13Default(slots, heroId, kind);
+        }
+
         void NormalizeHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
                                       uint64_t heroId,
                                       HeroPresetSlotKind kind)
@@ -2141,6 +2223,11 @@ namespace OW { namespace Config {
 
                 slot.present = true;
                 slot.preset = ValidateHeroPresetValueForHero(heroId, slot.preset);
+                slot.scopeRequirement = kind == HeroPresetSlotKind::Aim
+                    ? DefaultAimScopeRequirementForHeroAction(
+                        heroId,
+                        slot.preset.trigger.action)
+                    : AimScopeRequirement::All;
                 slot.name = NormalizeHeroSlotName(slot.name, writeIndex);
                 if (slot.name == DefaultHeroSlotName(writeIndex))
                     slot.name = BasicHeroSlotName(heroId, slot.preset.trigger.action, writeIndex);
@@ -2159,7 +2246,7 @@ namespace OW { namespace Config {
         {
             auto validateStore = [](HeroPresetStore& store, HeroPresetSlotKind kind) {
                 for (auto& item : store) {
-                    if (!MigrateDocumentedHeroSlotsIfLegacyDefault(item.second, item.first, kind))
+                    if (!MigrateHeroSlotsIfLegacyDefault(item.second, item.first, kind))
                         NormalizeHeroPresetSlots(item.second, item.first, kind);
                 }
             };
@@ -2171,7 +2258,7 @@ namespace OW { namespace Config {
                     auto [item, inserted] = store.try_emplace(def.heroId);
                     if (inserted)
                         InitializeBasicHeroPresetSlots(item->second, def.heroId, kind);
-                    else if (!MigrateDocumentedHeroSlotsIfLegacyDefault(item->second, def.heroId, kind))
+                    else if (!MigrateHeroSlotsIfLegacyDefault(item->second, def.heroId, kind))
                         NormalizeHeroPresetSlots(item->second, def.heroId, kind);
                 }
             };
@@ -2406,6 +2493,7 @@ namespace OW { namespace Config {
             triggerbotShotInterval = 0.0f;
             triggerbotChargeAware = false;
             triggerbotMinCharge = 30.0f;
+            triggerbotDisableWhileReloading = false;
             triggerbotIgnoreInvisible = true;
             triggerbotBoneMask = kDefaultTriggerBoneMask;
             triggerbotMode2 = 0;
@@ -2413,6 +2501,7 @@ namespace OW { namespace Config {
             triggerbotShotInterval2 = 0.0f;
             triggerbotChargeAware2 = false;
             triggerbotMinCharge2 = 30.0f;
+            triggerbotDisableWhileReloading2 = false;
             triggerbotIgnoreInvisible2 = true;
             triggerbotBoneMask2 = kDefaultTriggerBoneMask;
         }
@@ -2423,6 +2512,7 @@ namespace OW { namespace Config {
             aimBehaviorMethod = { 0, 0, 0, 0, 0 };
             aimBehaviorMethodPreset = { -1, -1, -1, -1, -1 };
             aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+            aimBehaviorStartLimiterProfiles = {};
             aimBehaviorAcceleration = { 0.1f, 0.1f, 0.1f, 0.1f, 0.1f };
             aimBehaviorMoveSplitEnabled = { true, false, false, true, true };
             aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4, 4 };
@@ -2613,6 +2703,7 @@ namespace OW { namespace Config {
             preset.trigger.shotInterval = triggerbotShotInterval;
             preset.trigger.chargeAware = triggerbotChargeAware;
             preset.trigger.minCharge = triggerbotMinCharge;
+            preset.trigger.disableWhileReloading = triggerbotDisableWhileReloading;
             preset.trigger.ignoreInvisible = triggerbotIgnoreInvisible;
             preset.trigger.boneMask = triggerbotBoneMask;
             return ValidateHeroPresetValue(preset);
@@ -2697,6 +2788,7 @@ namespace OW { namespace Config {
             triggerbotShotInterval = preset.trigger.shotInterval;
             triggerbotChargeAware = preset.trigger.chargeAware;
             triggerbotMinCharge = preset.trigger.minCharge;
+            triggerbotDisableWhileReloading = preset.trigger.disableWhileReloading;
             triggerbotIgnoreInvisible = preset.trigger.ignoreInvisible;
             triggerbotBoneMask = preset.trigger.boneMask;
             triggerbot2 = false;
@@ -2727,6 +2819,11 @@ namespace OW { namespace Config {
             slot.present = hasPresentKey
                 ? ReadBool(ini, section, "present", slot.present)
                 : slot.enabled;
+            slot.scopeRequirement = NormalizeAimScopeRequirement(ReadInt(
+                ini,
+                section,
+                "scopeRequirement",
+                static_cast<int>(slot.scopeRequirement)));
             slot.preset.fov = ReadFov2Compat(ini, section, "fov", slot.preset.fov, legacyFovApertureValues);
             slot.preset.fovMode = ReadInt(ini, section, "fovMode", slot.preset.fovMode);
             slot.preset.dynamicFovPresetId = ReadInt(ini, section, "dynamicFovPresetId", slot.preset.dynamicFovPresetId);
@@ -2823,6 +2920,11 @@ namespace OW { namespace Config {
             slot.preset.trigger.shotInterval = ReadFixedFloat(ini, section, "triggerShotInterval", slot.preset.trigger.shotInterval);
             slot.preset.trigger.chargeAware = ReadBool(ini, section, "triggerChargeAware", slot.preset.trigger.chargeAware);
             slot.preset.trigger.minCharge = ReadFixedFloat(ini, section, "triggerMinCharge", slot.preset.trigger.minCharge);
+            slot.preset.trigger.disableWhileReloading = ReadBool(
+                ini,
+                section,
+                "triggerDisableWhileReloading",
+                slot.preset.trigger.disableWhileReloading);
             slot.preset.trigger.ignoreInvisible = ReadBool(ini, section, "triggerIgnoreInvisible", slot.preset.trigger.ignoreInvisible);
             slot.preset.trigger.boneMask = static_cast<TriggerBoneMask>(
                 ReadInt(ini, section, "triggerBoneMask", static_cast<int>(slot.preset.trigger.boneMask)));
@@ -2931,6 +3033,8 @@ namespace OW { namespace Config {
             WriteBoolValue(path, section, "present", rawSlot.present);
             WriteStringValue(path, section, "name", name.c_str());
             WriteBoolValue(path, section, "enabled", rawSlot.enabled);
+            WriteIntValue(path, section, "scopeRequirement", static_cast<int>(
+                NormalizeAimScopeRequirement(static_cast<int>(rawSlot.scopeRequirement))));
             WritePlainFloatValue(path, section, "fov", preset.fov);
             WriteIntValue(path, section, "fovMode", preset.fovMode);
             WriteIntValue(path, section, "dynamicFovPresetId", preset.dynamicFovPresetId);
@@ -2981,6 +3085,7 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "triggerShotInterval", preset.trigger.shotInterval);
             WriteBoolValue(path, section, "triggerChargeAware", preset.trigger.chargeAware);
             WriteFixedFloatValue(path, section, "triggerMinCharge", preset.trigger.minCharge);
+            WriteBoolValue(path, section, "triggerDisableWhileReloading", preset.trigger.disableWhileReloading);
             WriteBoolValue(path, section, "triggerIgnoreInvisible", preset.trigger.ignoreInvisible);
             WriteIntValue(path, section, "triggerBoneMask", static_cast<int>(preset.trigger.boneMask));
             WriteBoolValue(path, section, "triggerDrawHitbox", preset.trigger.drawHitbox);
@@ -3032,6 +3137,7 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "shotInterval", preset.shotInterval, allocator);
             AddJsonBool(value, "chargeAware", preset.chargeAware, allocator);
             AddJsonFloat(value, "minCharge", preset.minCharge, allocator);
+            AddJsonBool(value, "disableWhileReloading", preset.disableWhileReloading, allocator);
             AddJsonBool(value, "ignoreInvisible", preset.ignoreInvisible, allocator);
             AddJsonInt(value, "boneMask", static_cast<int>(preset.boneMask), allocator);
             AddJsonBool(value, "drawHitbox", preset.drawHitbox, allocator);
@@ -3103,6 +3209,8 @@ namespace OW { namespace Config {
             AddJsonString(value, "name", slot.name, allocator);
             AddJsonBool(value, "present", slot.present, allocator);
             AddJsonBool(value, "enabled", slot.enabled, allocator);
+            AddJsonInt(value, "scopeRequirement", static_cast<int>(
+                NormalizeAimScopeRequirement(static_cast<int>(slot.scopeRequirement))), allocator);
             rapidjson::Value preset = HeroPresetToJson(slot.preset, allocator);
             rapidjson::Value presetKey;
             presetKey.SetString("preset", allocator);
@@ -3952,6 +4060,10 @@ namespace OW { namespace Config {
             defaults.shotInterval = ReadJsonFloat(value, "shotInterval", defaults.shotInterval);
             defaults.chargeAware = ReadJsonBool(value, "chargeAware", defaults.chargeAware);
             defaults.minCharge = ReadJsonFloat(value, "minCharge", defaults.minCharge);
+            defaults.disableWhileReloading = ReadJsonBool(
+                value,
+                "disableWhileReloading",
+                defaults.disableWhileReloading);
             defaults.ignoreInvisible = ReadJsonBool(value, "ignoreInvisible", defaults.ignoreInvisible);
             defaults.boneMask = static_cast<TriggerBoneMask>(
                 ReadJsonInt(value, "boneMask", static_cast<int>(defaults.boneMask)));
@@ -4056,6 +4168,10 @@ namespace OW { namespace Config {
                 slotIndex);
             defaults.present = ReadJsonBool(value, "present", defaults.present);
             defaults.enabled = ReadJsonBool(value, "enabled", defaults.enabled);
+            defaults.scopeRequirement = NormalizeAimScopeRequirement(ReadJsonInt(
+                value,
+                "scopeRequirement",
+                static_cast<int>(defaults.scopeRequirement)));
             const auto preset = value.FindMember("preset");
             if (preset != value.MemberEnd())
                 defaults.preset = ReadHeroPresetJson(
@@ -4709,6 +4825,11 @@ namespace OW { namespace Config {
             triggerbotShotInterval = ReadFixedFloat(ini, section, "triggerbotShotInterval", triggerbotShotInterval);
             triggerbotChargeAware = ReadBool(ini, section, "triggerbotChargeAware", triggerbotChargeAware);
             triggerbotMinCharge = ReadFixedFloat(ini, section, "triggerbotMinCharge", triggerbotMinCharge);
+            triggerbotDisableWhileReloading = ReadBool(
+                ini,
+                section,
+                "triggerbotDisableWhileReloading",
+                triggerbotDisableWhileReloading);
             triggerbotIgnoreInvisible = ReadBool(ini, section, "triggerbotIgnoreInvisible", triggerbotIgnoreInvisible);
             triggerbotBoneMask = static_cast<TriggerBoneMask>(
                 ReadInt(ini, section, "triggerbotBoneMask", static_cast<int>(triggerbotBoneMask)));
@@ -4718,6 +4839,11 @@ namespace OW { namespace Config {
             triggerbotShotInterval2 = ReadFixedFloat(ini, section, "triggerbotShotInterval2", triggerbotShotInterval2);
             triggerbotChargeAware2 = ReadBool(ini, section, "triggerbotChargeAware2", triggerbotChargeAware2);
             triggerbotMinCharge2 = ReadFixedFloat(ini, section, "triggerbotMinCharge2", triggerbotMinCharge2);
+            triggerbotDisableWhileReloading2 = ReadBool(
+                ini,
+                section,
+                "triggerbotDisableWhileReloading2",
+                triggerbotDisableWhileReloading2);
             triggerbotIgnoreInvisible2 = ReadBool(ini, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
             triggerbotBoneMask2 = static_cast<TriggerBoneMask>(
                 ReadInt(ini, section, "triggerbotBoneMask2", static_cast<int>(triggerbotBoneMask2)));
@@ -4763,6 +4889,14 @@ namespace OW { namespace Config {
             preset.method = ReadInt(ini, section, "method", preset.method);
             preset.methodPresetId = ReadInt(ini, section, "methodPresetId", preset.methodPresetId);
             preset.baseSpeed = ReadFixedFloat(ini, section, "baseSpeed", preset.baseSpeed);
+            preset.startLimiter.enabled = ReadBool(
+                ini, section, "startLimiterEnabled", preset.startLimiter.enabled);
+            preset.startLimiter.initialCapDegPerSec = ReadFixedFloat(
+                ini, section, "startLimiterInitialCapDegPerSec", preset.startLimiter.initialCapDegPerSec);
+            preset.startLimiter.capRiseDegPerSec2 = ReadFixedFloat(
+                ini, section, "startLimiterCapRiseDegPerSec2", preset.startLimiter.capRiseDegPerSec2);
+            preset.startLimiter.restartOnTargetChange = ReadBool(
+                ini, section, "startLimiterRestartOnTargetChange", preset.startLimiter.restartOnTargetChange);
             preset.moveSplitEnabled = ReadBool(ini, section, "moveSplitEnabled", preset.moveSplitEnabled);
             preset.moveSplitMaxPixels = ReadInt(ini, section, "moveSplitMaxPixels", preset.moveSplitMaxPixels);
             preset.moveSplitDelayUs = ReadInt(ini, section, "moveSplitDelayUs", preset.moveSplitDelayUs);
@@ -4854,6 +4988,34 @@ namespace OW { namespace Config {
                 "flick2ndBaseSpeed",
                 "reacquireBaseSpeed",
                 "magneticTriggerBaseSpeed"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> startLimiterEnabledKeys = {
+                "trackingStartLimiterEnabled",
+                "flickStartLimiterEnabled",
+                "flick2ndStartLimiterEnabled",
+                "reacquireStartLimiterEnabled",
+                "magneticTriggerStartLimiterEnabled"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> startLimiterInitialCapKeys = {
+                "trackingStartLimiterInitialCapDegPerSec",
+                "flickStartLimiterInitialCapDegPerSec",
+                "flick2ndStartLimiterInitialCapDegPerSec",
+                "reacquireStartLimiterInitialCapDegPerSec",
+                "magneticTriggerStartLimiterInitialCapDegPerSec"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> startLimiterCapRiseKeys = {
+                "trackingStartLimiterCapRiseDegPerSec2",
+                "flickStartLimiterCapRiseDegPerSec2",
+                "flick2ndStartLimiterCapRiseDegPerSec2",
+                "reacquireStartLimiterCapRiseDegPerSec2",
+                "magneticTriggerStartLimiterCapRiseDegPerSec2"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> startLimiterRestartKeys = {
+                "trackingStartLimiterRestartOnTargetChange",
+                "flickStartLimiterRestartOnTargetChange",
+                "flick2ndStartLimiterRestartOnTargetChange",
+                "reacquireStartLimiterRestartOnTargetChange",
+                "magneticTriggerStartLimiterRestartOnTargetChange"
             };
             constexpr std::array<const char*, kAimBehaviorCount> methodPresetKeys = {
                 "trackingMethodPresetId",
@@ -4959,6 +5121,17 @@ namespace OW { namespace Config {
                     : aimBehaviorMoveSplitDelayUs[index];
                 aimBehaviorMethod[index] = ReadInt(ini, section, methodKeys[index], methodFallback);
                 aimBehaviorBaseSpeed[index] = ReadFixedFloat(ini, section, speedKeys[index], speedFallback);
+                AimStartLimiterProfile startLimiter = aimBehaviorStartLimiterProfiles[index];
+                startLimiter.enabled = ReadBool(
+                    ini, section, startLimiterEnabledKeys[index], startLimiter.enabled);
+                startLimiter.initialCapDegPerSec = ReadFixedFloat(
+                    ini, section, startLimiterInitialCapKeys[index], startLimiter.initialCapDegPerSec);
+                startLimiter.capRiseDegPerSec2 = ReadFixedFloat(
+                    ini, section, startLimiterCapRiseKeys[index], startLimiter.capRiseDegPerSec2);
+                startLimiter.restartOnTargetChange = ReadBool(
+                    ini, section, startLimiterRestartKeys[index], startLimiter.restartOnTargetChange);
+                aimBehaviorStartLimiterProfiles[index] =
+                    ValidateAimStartLimiterProfile(startLimiter);
                 aimBehaviorAcceleration[index] = ReadFixedFloat(ini, section, accelerationKeys[index], accelerationFallback);
                 aimBehaviorMoveSplitEnabled[index] = ReadBool(
                     ini,
@@ -5058,6 +5231,7 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "triggerbotShotInterval", triggerbotShotInterval);
             WriteBoolValue(path, section, "triggerbotChargeAware", triggerbotChargeAware);
             WriteFixedFloatValue(path, section, "triggerbotMinCharge", triggerbotMinCharge);
+            WriteBoolValue(path, section, "triggerbotDisableWhileReloading", triggerbotDisableWhileReloading);
             WriteBoolValue(path, section, "triggerbotIgnoreInvisible", triggerbotIgnoreInvisible);
             WriteIntValue(path, section, "triggerbotBoneMask", static_cast<int>(triggerbotBoneMask));
 
@@ -5066,6 +5240,7 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "triggerbotShotInterval2", triggerbotShotInterval2);
             WriteBoolValue(path, section, "triggerbotChargeAware2", triggerbotChargeAware2);
             WriteFixedFloatValue(path, section, "triggerbotMinCharge2", triggerbotMinCharge2);
+            WriteBoolValue(path, section, "triggerbotDisableWhileReloading2", triggerbotDisableWhileReloading2);
             WriteBoolValue(path, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
             WriteIntValue(path, section, "triggerbotBoneMask2", static_cast<int>(triggerbotBoneMask2));
         }
@@ -5110,6 +5285,10 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "method", preset.method);
             WriteIntValue(path, section, "methodPresetId", preset.methodPresetId);
             WriteFixedFloatValue(path, section, "baseSpeed", preset.baseSpeed);
+            WriteBoolValue(path, section, "startLimiterEnabled", preset.startLimiter.enabled);
+            WriteFixedFloatValue(path, section, "startLimiterInitialCapDegPerSec", preset.startLimiter.initialCapDegPerSec);
+            WriteFixedFloatValue(path, section, "startLimiterCapRiseDegPerSec2", preset.startLimiter.capRiseDegPerSec2);
+            WriteBoolValue(path, section, "startLimiterRestartOnTargetChange", preset.startLimiter.restartOnTargetChange);
             WriteBoolValue(path, section, "moveSplitEnabled", preset.moveSplitEnabled);
             WriteIntValue(path, section, "moveSplitMaxPixels", preset.moveSplitMaxPixels);
             WriteIntValue(path, section, "moveSplitDelayUs", preset.moveSplitDelayUs);
@@ -5186,6 +5365,34 @@ namespace OW { namespace Config {
                 "reacquireBaseSpeed",
                 "magneticTriggerBaseSpeed"
             };
+            constexpr std::array<const char*, kAimBehaviorCount> startLimiterEnabledKeys = {
+                "trackingStartLimiterEnabled",
+                "flickStartLimiterEnabled",
+                "flick2ndStartLimiterEnabled",
+                "reacquireStartLimiterEnabled",
+                "magneticTriggerStartLimiterEnabled"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> startLimiterInitialCapKeys = {
+                "trackingStartLimiterInitialCapDegPerSec",
+                "flickStartLimiterInitialCapDegPerSec",
+                "flick2ndStartLimiterInitialCapDegPerSec",
+                "reacquireStartLimiterInitialCapDegPerSec",
+                "magneticTriggerStartLimiterInitialCapDegPerSec"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> startLimiterCapRiseKeys = {
+                "trackingStartLimiterCapRiseDegPerSec2",
+                "flickStartLimiterCapRiseDegPerSec2",
+                "flick2ndStartLimiterCapRiseDegPerSec2",
+                "reacquireStartLimiterCapRiseDegPerSec2",
+                "magneticTriggerStartLimiterCapRiseDegPerSec2"
+            };
+            constexpr std::array<const char*, kAimBehaviorCount> startLimiterRestartKeys = {
+                "trackingStartLimiterRestartOnTargetChange",
+                "flickStartLimiterRestartOnTargetChange",
+                "flick2ndStartLimiterRestartOnTargetChange",
+                "reacquireStartLimiterRestartOnTargetChange",
+                "magneticTriggerStartLimiterRestartOnTargetChange"
+            };
             constexpr std::array<const char*, kAimBehaviorCount> methodPresetKeys = {
                 "trackingMethodPresetId",
                 "flickMethodPresetId",
@@ -5256,6 +5463,12 @@ namespace OW { namespace Config {
                     ? std::clamp(aimBehaviorBaseSpeed[index], 0.0f, 100.0f)
                     : 100.0f;
                 WriteFixedFloatValue(path, section, speedKeys[index], baseSpeed);
+                const AimStartLimiterProfile startLimiter =
+                    ValidateAimStartLimiterProfile(aimBehaviorStartLimiterProfiles[index]);
+                WriteBoolValue(path, section, startLimiterEnabledKeys[index], startLimiter.enabled);
+                WriteFixedFloatValue(path, section, startLimiterInitialCapKeys[index], startLimiter.initialCapDegPerSec);
+                WriteFixedFloatValue(path, section, startLimiterCapRiseKeys[index], startLimiter.capRiseDegPerSec2);
+                WriteBoolValue(path, section, startLimiterRestartKeys[index], startLimiter.restartOnTargetChange);
                 const float legacyAcceleration = std::isfinite(aimBehaviorAcceleration[index])
                     ? std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f)
                     : 0.1f;
@@ -5616,6 +5829,8 @@ namespace OW { namespace Config {
                     aimBehaviorAcceleration[index] = 0.1f;
                 aimBehaviorBaseSpeed[index] = std::clamp(aimBehaviorBaseSpeed[index], 0.0f, 100.0f);
                 aimBehaviorAcceleration[index] = std::clamp(aimBehaviorAcceleration[index], 0.0f, 20.0f);
+                aimBehaviorStartLimiterProfiles[index] =
+                    ValidateAimStartLimiterProfile(aimBehaviorStartLimiterProfiles[index]);
                 aimBehaviorMoveSplitMaxPixels[index] = ClampMoveSplitMaxPixels(aimBehaviorMoveSplitMaxPixels[index]);
                 aimBehaviorMoveSplitDelayUs[index] = ClampMoveSplitDelayUs(aimBehaviorMoveSplitDelayUs[index]);
             }
@@ -5738,8 +5953,9 @@ namespace OW { namespace Config {
         void DumpUnlocked(Diagnostics::LogLevel level)
         {
             LogConfig(level, "Dump: config_version=%d", config_version);
-            LogConfig(level, "Dump: aim modes enableAimbot=%s triggerbot=%s triggerbot2=%s triggerIgnoreInvisible=%s triggerIgnoreInvisible2=%s triggerBoneMask=0x%03X triggerBoneMask2=0x%03X Tracking=%s Tracking2=%s Flick=%s Flick2=%s",
+            LogConfig(level, "Dump: aim modes enableAimbot=%s triggerbot=%s triggerbot2=%s triggerDisableWhileReloading=%s triggerDisableWhileReloading2=%s triggerIgnoreInvisible=%s triggerIgnoreInvisible2=%s triggerBoneMask=0x%03X triggerBoneMask2=0x%03X Tracking=%s Tracking2=%s Flick=%s Flick2=%s",
                 ToText(enableAimbot).c_str(), ToText(triggerbot).c_str(), ToText(triggerbot2).c_str(),
+                ToText(triggerbotDisableWhileReloading).c_str(), ToText(triggerbotDisableWhileReloading2).c_str(),
                 ToText(triggerbotIgnoreInvisible).c_str(), ToText(triggerbotIgnoreInvisible2).c_str(),
                 static_cast<unsigned int>(triggerbotBoneMask),
                 static_cast<unsigned int>(triggerbotBoneMask2),
@@ -5799,6 +6015,17 @@ namespace OW { namespace Config {
                 AimBehaviorMoveSplitDelayUs(1),
                 AimBehaviorMoveSplitDelayUs(2),
                 AimBehaviorMoveSplitDelayUs(3));
+            const AimStartLimiterProfile trackingStartLimiter =
+                ResolveAimStartLimiterProfile(kAimBehaviorTracking);
+            const AimBehaviorPreset* trackingBehaviorPreset =
+                ActiveAimBehaviorPreset(kAimBehaviorTracking);
+            LogConfig(level, "Dump: tracking startLimiter source=%s presetId=%d enabled=%s initialCapDegPerSec=%.3f capRiseDegPerSec2=%.3f restartOnTargetChange=%s",
+                trackingBehaviorPreset ? "behavior_preset" : "class_default",
+                trackingBehaviorPreset ? trackingBehaviorPreset->id : -1,
+                ToText(trackingStartLimiter.enabled).c_str(),
+                trackingStartLimiter.initialCapDegPerSec,
+                trackingStartLimiter.capRiseDegPerSec2,
+                ToText(trackingStartLimiter.restartOnTargetChange).c_str());
             LogConfig(level, "Dump: hero GenjiBlade=%s AutoShiftGenji=%s widowautounscope=%s",
                 ToText(GenjiBlade).c_str(), ToText(AutoShiftGenji).c_str(), ToText(widowautounscope).c_str());
             LogConfig(level, "Dump: shoot AutoShoot=%s Shoottime=%d shooted=%s shooted2=%s lasttime=%d lasthealth=%.3f skilled=%s slasttime=%d sskilled=%s reloading=%s",
@@ -6040,6 +6267,29 @@ namespace OW { namespace Config {
         SetHeroPresetInStore(HeroPresetSlotKind::Trigger, heroId, slotIndex, preset);
     }
 
+    void SetHeroAimSlotScopeRequirement(uint64_t heroId,
+                                        int slotIndex,
+                                        AimScopeRequirement requirement)
+    {
+        if (heroId == 0)
+            return;
+
+        std::lock_guard<std::mutex> lock(mutex);
+        const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
+        auto& slots = EnsureHeroPresetSlotsInStore(HeroPresetSlotKind::Aim, heroId);
+        EnsureHeroPresetSlotRange(slots, clampedSlotIndex);
+
+        HeroSlotPreset& slot = slots[static_cast<size_t>(clampedSlotIndex)];
+        requirement = NormalizeAimScopeRequirement(static_cast<int>(requirement));
+        if (HeroUsesScopedWeaponActionSplit(heroId)) {
+            slot.preset.trigger.action = requirement == AimScopeRequirement::ScopedOnly
+                ? 2
+                : 0;
+        }
+        slot.scopeRequirement = requirement;
+        NormalizeHeroPresetSlots(slots, heroId, HeroPresetSlotKind::Aim);
+    }
+
     static std::string GetHeroSlotNameFromStore(HeroPresetSlotKind kind, uint64_t heroId, int slotIndex)
     {
         const int clampedSlotIndex = ClampHeroPresetSlotIndex(slotIndex);
@@ -6070,6 +6320,11 @@ namespace OW { namespace Config {
         outSlot = slot;
         outSlot.name = NormalizeHeroSlotName(outSlot.name, clampedSlotIndex);
         outSlot.preset = ValidateHeroPresetValueForHero(heroId, outSlot.preset);
+        outSlot.scopeRequirement = kind == HeroPresetSlotKind::Aim
+            ? DefaultAimScopeRequirementForHeroAction(
+                heroId,
+                outSlot.preset.trigger.action)
+            : AimScopeRequirement::All;
         outSlot.present = true;
         return true;
     }

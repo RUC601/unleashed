@@ -125,6 +125,10 @@ add_executable(TrackingDeadzoneDampingSelfTest
     src/Tools/TrackingDeadzoneDampingSelfTest.cpp
 )
 
+add_executable(AimStartLimiterSelfTest
+    src/Tools/AimStartLimiterSelfTest.cpp
+)
+
 add_executable(AimPresetConfigSelfTest
     src/Tools/AimPresetConfigSelfTest.cpp
 )
@@ -208,6 +212,7 @@ add_executable(TriggerBoneSelectionSelfTest
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
+add_test(NAME AimStartLimiterSelfTest COMMAND AimStartLimiterSelfTest)
 add_test(NAME AimPresetConfigSelfTest COMMAND AimPresetConfigSelfTest)
 add_test(NAME LeadPredictionSelfTest COMMAND LeadPredictionSelfTest)
 add_test(NAME KeyStateSelfTest COMMAND KeyStateSelfTest)
@@ -246,6 +251,11 @@ target_include_directories(FovConfigSelfTest PRIVATE
 )
 
 target_include_directories(TrackingDeadzoneDampingSelfTest PRIVATE
+    include
+    vendor/imgui
+)
+
+target_include_directories(AimStartLimiterSelfTest PRIVATE
     include
     vendor/imgui
 )
@@ -449,6 +459,8 @@ target_compile_options(FovConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd
 target_compile_definitions(FovConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(TrackingDeadzoneDampingSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(TrackingDeadzoneDampingSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(AimStartLimiterSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(AimStartLimiterSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(AimPresetConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(AimPresetConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(LeadPredictionSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
