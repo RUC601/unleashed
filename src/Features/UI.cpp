@@ -708,13 +708,6 @@ static const char* kHeroSkillTrackingBones[] = {
 static const char* kHeroSkillTargetBones[] = {
     "Chest", "Head", "Neck", "Closest"
 };
-static const char* kBonePreference[] = { "Head", "Neck", "Chest", "Closest" };
-static constexpr int kBonePreferenceAimBones[] = {
-    OW::Config::kAimBoneHead,
-    OW::Config::kAimBoneNeck,
-    OW::Config::kAimBoneChest
-};
-static constexpr int kBonePreferenceClosestIndex = 3;
 static const char* kAimBehavior[]  = { "Tracking", "Flick", "Flick2nd", "Reacquire", "MagneticTrigger" };
 static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
@@ -1550,33 +1543,7 @@ static bool LoadSelectedTypePreset() {
     return true;
 }
 
-static int BonePreferenceIndexFromPreset(const OW::Config::HeroPreset& preset) {
-    if (preset.autoBone)
-        return kBonePreferenceClosestIndex;
-
-    const int normalizedAimBone = OW::Config::NormalizeAimBone(preset.bone);
-    for (int i = 0; i < IM_ARRAYSIZE(kBonePreferenceAimBones); ++i) {
-        if (kBonePreferenceAimBones[i] == normalizedAimBone)
-            return i;
-    }
-    return 0;
-}
-
-static void ApplyBonePreferenceToPreset(int preferenceIndex, OW::Config::HeroPreset& preset) {
-    if (preferenceIndex == kBonePreferenceClosestIndex) {
-        preset.autoBone = true;
-        preset.bone = OW::Config::NormalizeAimBone(preset.bone);
-        return;
-    }
-
-    preferenceIndex = ImClamp(preferenceIndex, 0, IM_ARRAYSIZE(kBonePreferenceAimBones) - 1);
-    preset.autoBone = false;
-    preset.bone = kBonePreferenceAimBones[preferenceIndex];
-}
-
-static const char* PresetBoneName(const OW::Config::HeroPreset& preset) {
-    return preset.autoBone ? "Closest" : OW::Config::AimBoneName(preset.bone);
-}
+static std::string SkeletonBoneMaskPreview(OW::SkeletonBoneMask rawMask);
 
 static const char* PresetAimBehaviorName(int behavior) {
     behavior = ImClamp(behavior, 0, IM_ARRAYSIZE(kAimBehavior) - 1);
@@ -1592,11 +1559,12 @@ static void DrawPresetSummary(const HeroOption& hero,
         ? "Global defaults"
         : (hasStoredPreset ? "Stored preset" : "Using global defaults");
     if (kind == ActionSlotKind::Aim) {
+        const std::string skeleton = SkeletonBoneMaskPreview(preset.aimBoneMask);
         std::snprintf(summary, sizeof(summary),
                       "%s - %s | %s | Speed %.1f%% | FOV %.0f deg | %s | Hitbox %.0f%%",
                       hero.label, scope, PresetAimBehaviorName(preset.aimBehavior),
                       preset.smooth, preset.fov,
-                      PresetBoneName(preset), preset.hitbox);
+                      skeleton.c_str(), preset.hitbox);
     } else {
         std::snprintf(summary, sizeof(summary),
                       "%s - %s | Trigger %s | %s | %s | Hitbox %.0f%% | %s",
@@ -2467,6 +2435,107 @@ static bool UISelect(const char* label, int* current, const char* const items[],
                               kControlRounding, 0, 1.0f);
     ImVec2 caretCenter(bb.Max.x - 11.0f, bb.Min.y + height * 0.5f);
     ImU32 caretCol = MixColor(kColTextDim, kColText, hoverT);
+    window->DrawList->AddLine(ImVec2(caretCenter.x - 4.0f, caretCenter.y - 2.0f),
+                              ImVec2(caretCenter.x, caretCenter.y + 2.5f),
+                              caretCol, 1.35f);
+    window->DrawList->AddLine(ImVec2(caretCenter.x, caretCenter.y + 2.5f),
+                              ImVec2(caretCenter.x + 4.0f, caretCenter.y - 2.0f),
+                              caretCol, 1.35f);
+    return changed;
+}
+
+static std::string SkeletonBoneMaskPreview(OW::SkeletonBoneMask rawMask) {
+    const OW::SkeletonBoneMask mask = OW::NormalizeSkeletonBoneMask(rawMask);
+    if (OW::IsAllSkeletonBonesSelected(mask))
+        return "All";
+
+    std::string preview;
+    int selectedCount = 0;
+    for (const OW::SkeletonBoneGroupDefinition& group : OW::kSkeletonBoneGroups) {
+        if (!OW::SkeletonBoneMaskIncludesGroup(mask, group.mask))
+            continue;
+        if (!preview.empty())
+            preview += " + ";
+        preview += group.label;
+        ++selectedCount;
+    }
+    if (selectedCount == 1)
+        preview += " only";
+    return preview.empty() ? "Head only" : preview;
+}
+
+static bool UISkeletonBoneMultiSelect(const char* label, OW::SkeletonBoneMask* rawMask) {
+    if (!rawMask)
+        return false;
+
+    *rawMask = OW::NormalizeSkeletonBoneMask(*rawMask);
+    const std::string preview = SkeletonBoneMaskPreview(*rawMask);
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    float width = ImGui::CalcItemWidth();
+    if (width <= 0.0f || width > availableWidth)
+        width = availableWidth;
+    width = MaxFloat(1.0f, width);
+    const float height = kControlHeight;
+    const ImRect bb(pos, ImVec2(pos.x + width, pos.y + height));
+
+    const bool preHovered = ImGui::IsMouseHoveringRect(bb.Min, bb.Max);
+    const float hoverT = VisualTransition(window->GetID(label) ^ 0x5B71, preHovered, 18.0f);
+    const ImU32 frameCol = MixColor(kColControl, kColControlHover, hoverT);
+    window->DrawList->AddRectFilled(bb.Min, bb.Max, IM_COL32(0x00, 0x00, 0x00, 0x2E), kControlRounding);
+    window->DrawList->AddRectFilled(ImVec2(bb.Min.x, bb.Min.y + 1.0f), bb.Max,
+                                    frameCol, kControlRounding);
+
+    ImGui::PushStyleColor(ImGuiCol_Header, kColAccentDark);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, kColAccent);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, kColAccent);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, kColPanel);
+    ImGui::PushStyleColor(ImGuiCol_Border, kColStroke);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, frameCol);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, MixColor(kColControlHover, kColControlHot, hoverT));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, kColControlHot);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                        ImVec2(8.0f, MaxFloat(0.0f, (height - ImGui::GetTextLineHeight()) * 0.5f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kControlRounding);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, kControlRounding);
+
+    bool changed = false;
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::BeginCombo(label, preview.c_str(),
+                          ImGuiComboFlags_HeightLargest | ImGuiComboFlags_NoArrowButton)) {
+        const bool allSelected = OW::IsAllSkeletonBonesSelected(*rawMask);
+        if (ImGui::Selectable("All", allSelected, ImGuiSelectableFlags_NoAutoClosePopups) &&
+            !allSelected) {
+            *rawMask = OW::kSkeletonBoneAllMask;
+            changed = true;
+        }
+        if (allSelected)
+            ImGui::SetItemDefaultFocus();
+
+        ImGui::Separator();
+        for (const OW::SkeletonBoneGroupDefinition& group : OW::kSkeletonBoneGroups) {
+            const bool selected = OW::SkeletonBoneMaskIncludesGroup(*rawMask, group.mask);
+            if (ImGui::Selectable(group.label, selected, ImGuiSelectableFlags_NoAutoClosePopups)) {
+                const OW::SkeletonBoneMask next = OW::ToggleSkeletonBoneGroup(*rawMask, group.mask);
+                if (next != *rawMask) {
+                    *rawMask = next;
+                    changed = true;
+                }
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(8);
+
+    window->DrawList->AddRect(bb.Min, bb.Max,
+                              MixColor(kColStrokeDark, kColStroke, hoverT),
+                              kControlRounding, 0, 1.0f);
+    const ImVec2 caretCenter(bb.Max.x - 11.0f, bb.Min.y + height * 0.5f);
+    const ImU32 caretCol = MixColor(kColTextDim, kColText, hoverT);
     window->DrawList->AddLine(ImVec2(caretCenter.x - 4.0f, caretCenter.y - 2.0f),
                               ImVec2(caretCenter.x, caretCenter.y + 2.5f),
                               caretCol, 1.35f);
@@ -3422,16 +3491,12 @@ void UI::AimbotPage() {
             }
             ImGui::PopItemWidth();
 
-            // Bone Preference combines fixed aim bones and the dynamic closest-bone mode.
-            SettingRow("Bone Preference", kAimbotLeftLabelWidth);
+            SettingRow("Skeleton", kAimbotLeftLabelWidth);
             PushControlWidth();
-            activePreset.bone = OW::Config::NormalizeAimBone(activePreset.bone);
-            int bonePreferenceIndex = BonePreferenceIndexFromPreset(activePreset);
-            if (UISelect("##aimBone", &bonePreferenceIndex, kBonePreference, IM_ARRAYSIZE(kBonePreference))) {
-                ApplyBonePreferenceToPreset(bonePreferenceIndex, activePreset);
-                presetChanged = true;
-            }
+            presetChanged |= UISkeletonBoneMultiSelect("##aimSkeleton", &activePreset.aimBoneMask);
             ImGui::PopItemWidth();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Choose All or combine groups, for example Head + Feet.");
 
             // Prediction
             SettingRow("Prediction", kAimbotLeftLabelWidth);
@@ -3745,6 +3810,15 @@ void UI::TriggerPage() {
                                           0.0f, 100.0f, "50.00 %");
                 ImGui::PopItemWidth();
             }
+
+            SettingRow("Skeleton", kAimbotRightLabelWidth);
+            PushControlWidth();
+            presetChanged |= UISkeletonBoneMultiSelect(
+                "##triggerSlotSkeleton",
+                &activePreset.trigger.boneMask);
+            ImGui::PopItemWidth();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Choose All or combine groups, for example Head + Feet.");
 
             SettingRow("Detection Scale", kAimbotRightLabelWidth);
             PushControlWidth();

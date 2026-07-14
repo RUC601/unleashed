@@ -28,6 +28,7 @@
 #include "Game/InputOrchestrator.hpp"
 #include "Game/LeadPrediction.hpp"
 #include "Game/Motion.hpp"
+#include "Game/TriggerBoneSelection.hpp"
 #include "Game/WeaponSpec.hpp"
 #include "Kmbox/KmboxRuntime.hpp"
 #include "Utils/Config.hpp"
@@ -2038,6 +2039,104 @@ namespace OW {
             return ResolveBoneHitboxCenter(entity, boneId, CoreBoneRawPosition(entity, boneId));
         }
 
+        inline bool TryResolveSkeletonBonePoint(const c_entity& entity,
+                                                std::size_t renderSlot,
+                                                int& outBoneId,
+                                                Vector3& outPoint) {
+            if (renderSlot >= entity.skeleton_bones.size() ||
+                renderSlot >= entity.skeleton_bone_valid.size()) {
+                return false;
+            }
+
+            const int boneId = Plexies20260609::HitboxBoneIdForRenderSlot(renderSlot);
+            if (boneId == Plexies20260609::kUnusedRenderSkeletonBone)
+                return false;
+
+            Vector3 rawPoint{};
+            if (renderSlot == 0) {
+                rawPoint = entity.head_pos;
+            } else if (renderSlot == 1) {
+                rawPoint = entity.neck_pos;
+            } else if (renderSlot == 2) {
+                rawPoint = entity.chest_pos;
+            } else {
+                if (!entity.skeleton_bone_valid[renderSlot])
+                    return false;
+                rawPoint = entity.skeleton_bones[renderSlot];
+            }
+
+            if (IsZeroVector(rawPoint) || rawPoint == entity.pos || !IsFiniteVector(rawPoint))
+                return false;
+
+            const Vector3 hitboxCenter = ResolveBoneHitboxCenter(entity, boneId, rawPoint);
+            if (IsZeroVector(hitboxCenter) || !IsFiniteVector(hitboxCenter))
+                return false;
+
+            outBoneId = boneId;
+            outPoint = hitboxCenter;
+            return true;
+        }
+
+        inline SkeletonBoneMask EffectiveAimBoneMaskForDistance(SkeletonBoneMask rawMask,
+                                                                 float distance) {
+            SkeletonBoneMask mask = NormalizeSkeletonBoneMask(rawMask);
+            const float headGate = std::clamp(Config::aimbotMaxHead, 0.0f, 500.0f);
+            if (headGate > 0.0f &&
+                std::isfinite(distance) &&
+                distance > headGate &&
+                SkeletonBoneMaskIncludesGroup(mask, kSkeletonBoneHead)) {
+                mask &= ~kSkeletonBoneHead;
+                // Preserve the legacy Head-only behavior: beyond Max Head
+                // Distance it falls back to Neck instead of losing the target.
+                if (mask == 0)
+                    mask = kSkeletonBoneNeck;
+            }
+            return NormalizeSkeletonBoneMask(mask);
+        }
+
+        inline bool TrySelectClosestSelectedSkeletonPoint(
+            const c_entity& entity,
+            SkeletonBoneMask rawMask,
+            const FovRuntimeContext& fovContext,
+            const Matrix& view,
+            const Vector2& crosshair,
+            int& outBoneId,
+            Vector3& outPoint,
+            float* outScore = nullptr) {
+            const SkeletonBoneMask mask = NormalizeSkeletonBoneMask(rawMask);
+            bool found = false;
+            float bestScore = (std::numeric_limits<float>::max)();
+
+            for (std::size_t renderSlot = 0;
+                 renderSlot < kSkeletonBoneGroupForRenderSlot.size();
+                 ++renderSlot) {
+                if (!SkeletonBoneMaskIncludesRenderSlot(mask, renderSlot))
+                    continue;
+
+                int boneId = Plexies20260609::kUnusedRenderSkeletonBone;
+                Vector3 point{};
+                if (!TryResolveSkeletonBonePoint(entity, renderSlot, boneId, point))
+                    continue;
+
+                const float score = fovContext.valid
+                    ? TargetingDetail::FovScoreDeg(fovContext, point)
+                    : crosshair.Distance(view.WorldToScreen(point));
+                if (!std::isfinite(score))
+                    continue;
+
+                if (!found || score < bestScore) {
+                    found = true;
+                    bestScore = score;
+                    outBoneId = boneId;
+                    outPoint = point;
+                }
+            }
+
+            if (found && outScore)
+                *outScore = bestScore;
+            return found;
+        }
+
         inline Vector3 ConfiguredBonePosition(const c_entity& entity, int boneSetting) {
             const int normalized = Config::NormalizeAimBone(boneSetting);
             const int boneId = AimBoneToSkeletonBoneId(normalized);
@@ -2722,7 +2821,7 @@ namespace OW {
         size_t selectableCandidates = 0;
         float selectedFovScoreDeg = 0.0f;
         bool targetFromBob = false;
-        Diagnostics::Aim("target.primary start prediction=%d predictionMode=%d weapon=%s entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fovDeg=%.6f bone=%d autobone=%d teamMode=%d distance=(%.2f,%.2f) lock=(active=%d key=0x%llX minMs=%.0f maxMs=%.0f hysteresis=%.1f trace=%d unlock=%d) crosshair=(%.3f,%.3f)",
+        Diagnostics::Aim("target.primary start prediction=%d predictionMode=%d weapon=%s entities=%zu dynamic=%zu local_addr=0x%llX local_hero=0x%llX fovDeg=%.6f bone=%d autobone=%d boneMask=0x%03X teamMode=%d distance=(%.2f,%.2f) lock=(active=%d key=0x%llX minMs=%.0f maxMs=%.0f hysteresis=%.1f trace=%d unlock=%d) crosshair=(%.3f,%.3f)",
             resolvedPrediction ? 1 : 0,
             Config::aimbotPredictionMode,
             weaponSpec ? weaponSpec->weaponId.data() : "none",
@@ -2733,6 +2832,7 @@ namespace OW {
             Config::Fov,
             Config::Bone,
             Config::autobone ? 1 : 0,
+            static_cast<unsigned int>(Config::aimbotBoneMask),
             Config::aimbotTeam,
             Config::aimbotMinDist,
             Config::aimbotMaxDist,
@@ -2764,24 +2864,21 @@ namespace OW {
                     if (!TargetingDetail::DistancePassesAimFilter(initialDistance))
                         continue;
 
-                    const int resolvedAimBone = TargetingDetail::ResolveAimBoneForDistance(Config::Bone, initialDistance);
-                    int candidateBoneId = AimBoneToSkeletonBoneId(resolvedAimBone);
-                    Vector3 rootPosition = TargetingDetail::ConfiguredBonePosition(entities[i], resolvedAimBone);
-                    if (Config::autobone &&
-                        entities[i].HeroID != 0x16dd &&
-                        entities[i].HeroID != 0x16ee) {
-                        int closestBoneId = BONE_CHEST;
-                        Vector3 closestRoot{};
-                        if (TargetingDetail::TrySelectClosestCoreAimPoint(
-                                entities[i],
-                                fovContext,
-                                aimViewMatrix,
-                                CrossHair,
-                                closestBoneId,
-                                closestRoot)) {
-                            candidateBoneId = closestBoneId;
-                            rootPosition = closestRoot;
-                        }
+                    const SkeletonBoneMask candidateMask =
+                        TargetingDetail::EffectiveAimBoneMaskForDistance(
+                            Config::aimbotBoneMask,
+                            initialDistance);
+                    int candidateBoneId = BONE_HEAD;
+                    Vector3 rootPosition{};
+                    if (!TargetingDetail::TrySelectClosestSelectedSkeletonPoint(
+                            entities[i],
+                            candidateMask,
+                            fovContext,
+                            aimViewMatrix,
+                            CrossHair,
+                            candidateBoneId,
+                            rootPosition)) {
+                        continue;
                     }
 
                     const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
@@ -2948,6 +3045,150 @@ namespace OW {
                 selected.Team ? 1 : 0);
         }
         TargetingDetail::StoreLastTargetCandidate(best);
+        return best;
+    }
+
+    inline TargetCandidate AcquireTriggerTarget(TriggerBoneMask rawBoneMask,
+                                                bool predit = false,
+                                                bool ignoreInvisible = Config::triggerbotIgnoreInvisible,
+                                                bool secondary = false) {
+        TargetCandidate best{};
+        const TriggerBoneMask boneMask = NormalizeTriggerBoneMask(rawBoneMask);
+        auto entities = TargetingDetail::SnapshotEntities();
+        auto localEntity = TargetingDetail::SnapshotLocalEntity();
+        const Matrix view = OW::SnapshotViewMatrix();
+        const TargetingDetail::FovRuntimeContext fovContext =
+            TargetingDetail::SnapshotFovRuntimeContext();
+        const WeaponSpec* weaponSpec = ResolveWeaponSpec(localEntity.HeroID, Config::aimbotAttack);
+        const bool resolvedPrediction = ResolvePredictionEnabled(
+            ClampPredictionOverride(Config::aimbotPredictionMode),
+            weaponSpec,
+            predit);
+        const ProjectileRuntimeSpec projectileSpec =
+            TargetingDetail::ResolveProjectileRuntimeSpec(weaponSpec, localEntity, secondary);
+        const float hitboxScale = secondary ? Config::hitbox2 : Config::hitbox;
+        float bestNormalizedScore = (std::numeric_limits<float>::max)();
+
+        if (fovContext.valid) {
+            for (std::size_t entityIndex = 0; entityIndex < entities.size(); ++entityIndex) {
+                c_entity& entity = entities[entityIndex];
+                if (!TargetingDetail::IsSelectableCandidate(entity, Config::aimbotTeam, localEntity))
+                    continue;
+                if (ignoreInvisible && !entity.Vis)
+                    continue;
+                if (entity.skill2act &&
+                    entity.HeroID == eHero::HERO_GENJI &&
+                    !entity.SameTeamAs(localEntity)) {
+                    continue;
+                }
+
+                const Vector3 distanceAnchor = !TargetingDetail::IsZeroVector(entity.chest_pos)
+                    ? entity.chest_pos
+                    : entity.pos;
+                const float initialDistance = fovContext.camera.DistTo(distanceAnchor);
+                if (!TargetingDetail::DistancePassesAimFilter(initialDistance))
+                    continue;
+
+                for (std::size_t renderSlot = 0;
+                     renderSlot < kTriggerBoneGroupForRenderSlot.size();
+                     ++renderSlot) {
+                    if (!TriggerBoneMaskIncludesRenderSlot(boneMask, renderSlot))
+                        continue;
+
+                    int boneId = Plexies20260609::kUnusedRenderSkeletonBone;
+                    Vector3 rawAimPoint{};
+                    if (!TargetingDetail::TryResolveSkeletonBonePoint(
+                            entity,
+                            renderSlot,
+                            boneId,
+                            rawAimPoint)) {
+                        continue;
+                    }
+
+                    const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
+                        entity,
+                        rawAimPoint,
+                        projectileSpec,
+                        resolvedPrediction,
+                        secondary);
+                    const Vector3 aimPoint = lead.finalAimPoint;
+                    if (TargetingDetail::IsZeroVector(aimPoint) ||
+                        !TargetingDetail::IsFiniteVector(aimPoint))
+                        continue;
+
+                    const float hitWindow = ResolveEffectiveHitWindow(
+                        entity.HeroID,
+                        boneId,
+                        weaponSpec,
+                        hitboxScale,
+                        Config::kLegacyDefaultHitboxRadius);
+                    const float distance = fovContext.camera.DistTo(aimPoint);
+                    if (!std::isfinite(hitWindow) || hitWindow <= 0.0f ||
+                        !std::isfinite(distance) || distance <= 0.0001f) {
+                        continue;
+                    }
+
+                    const float angularWindowDeg = RAD2DEG(hitWindow / distance);
+                    const float angularScoreDeg = TargetingDetail::FovScoreDeg(fovContext, aimPoint);
+                    if (!std::isfinite(angularWindowDeg) || angularWindowDeg <= 0.0f ||
+                        !std::isfinite(angularScoreDeg) ||
+                        angularScoreDeg > angularWindowDeg + 0.0001f) {
+                        continue;
+                    }
+
+                    const float normalizedScore = angularScoreDeg /
+                        (std::max)(angularWindowDeg, 0.0001f);
+                    if (best.valid && normalizedScore >= bestNormalizedScore)
+                        continue;
+
+                    bestNormalizedScore = normalizedScore;
+                    best.valid = true;
+                    best.entityIndex = static_cast<int>(entityIndex);
+                    best.entityKey = entity.address ? entity.address : entity.LinkBase;
+                    best.entitySnapshot = entity;
+                    best.boneId = boneId;
+                    best.rawAimPoint = rawAimPoint;
+                    best.predictedAimPoint = aimPoint;
+                    best.aimPoint = aimPoint;
+                    best.screenPoint = TargetingDetail::CrosshairCenter();
+                    view.WorldToScreen(
+                        aimPoint,
+                        &best.screenPoint,
+                        Vector2(OW::WX, OW::WY));
+                    best.distance = distance;
+                    best.fovScore = angularScoreDeg;
+                    best.effectiveFovDeg = secondary
+                        ? Config::ResolveDynamicAimFovForDistance(Config::Fov2, distance)
+                        : Config::ResolveDynamicAimFovForDistance(Config::Fov, distance);
+                    best.dynamicFov = Config::IsDynamicAimFovActive();
+                    best.dynamicFovPresetId = best.dynamicFov
+                        ? Config::aimbotDynamicFovPresetId
+                        : -1;
+                    best.effectiveHitWindow = hitWindow;
+                    best.motion = TargetingDetail::EstimateMotionState(entity, best.screenPoint);
+                    best.weaponSpec = weaponSpec;
+                }
+            }
+        }
+
+        Config::Targetenemyi = best.valid ? best.entityIndex : -1;
+        if (best.valid)
+            Config::health = best.entitySnapshot.PlayerHealth;
+        if (secondary)
+            Config::aimbotEffectiveHitWindow2 = best.valid ? best.effectiveHitWindow : 0.0f;
+        else
+            Config::aimbotEffectiveHitWindow = best.valid ? best.effectiveHitWindow : 0.0f;
+
+        TargetingDetail::StoreLastTargetCandidate(best);
+        Diagnostics::Aim(
+            "target.trigger result=%s secondary=%d boneMask=0x%03X entityIndex=%d bone=%d scoreDeg=%.6f hitWindow=%.6f",
+            best.valid ? "hit" : "none",
+            secondary ? 1 : 0,
+            static_cast<unsigned int>(boneMask),
+            best.entityIndex,
+            best.boneId,
+            best.fovScore,
+            best.effectiveHitWindow);
         return best;
     }
 

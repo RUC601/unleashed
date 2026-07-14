@@ -10804,6 +10804,9 @@ namespace AimbotDetail {
         const bool chargeAware = secondary ? OW::Config::triggerbotChargeAware2 : OW::Config::triggerbotChargeAware;
         const float minCharge = secondary ? OW::Config::triggerbotMinCharge2 : OW::Config::triggerbotMinCharge;
         const bool ignoreInvisible = secondary ? OW::Config::triggerbotIgnoreInvisible2 : OW::Config::triggerbotIgnoreInvisible;
+        const OW::TriggerBoneMask boneMask = secondary
+            ? OW::Config::triggerbotBoneMask2
+            : OW::Config::triggerbotBoneMask;
         bool& toggleActive = secondary ? OW::Config::triggerbotToggleActive2 : OW::Config::triggerbotToggleActive;
         DWORD& lastFireTick = secondary ? OW::Config::triggerbotLastFireTick2 : OW::Config::triggerbotLastFireTick;
 
@@ -10841,20 +10844,22 @@ namespace AimbotDetail {
                 return;
         }
 
-        // 3. Find target
+        // 3. Find a target whose selected skeleton hitbox is under the crosshair.
         const bool predit = ResolveCurrentAimSlotPredictionEnabled();
-        const Vector3 vec = secondary ? OW::GetVector3aim2(predit, ignoreInvisible) : OW::GetVector3(predit, ignoreInvisible);
-        c_entity target{};
-        if (IsZeroVector(vec) || !IsTriggerTargetActionable() || !CurrentTarget(target)) return;
+        const TargetCandidate triggerTarget = OW::AcquireTriggerTarget(
+            boneMask,
+            predit,
+            ignoreInvisible,
+            secondary);
+        if (!triggerTarget.valid)
+            return;
+        const c_entity target = triggerTarget.entitySnapshot;
 
-        // 4. Check crosshair proximity
-        AimData aim = BuildAimData(vec, false, 1.0f, 0.0f);
-        const float hitbox = secondary
-            ? OW::Config::aimbotEffectiveHitWindow2
-            : OW::Config::aimbotEffectiveHitWindow;
+        // 4. The direct skeleton intersection already passed; Flick2nd keeps
+        // its additional stage gate on top of that hit.
         const bool triggerReady = (!secondary && OW::Config::IsFlick2ndBehavior(OW::Config::aimBehavior))
             ? TwoStageTriggerOpenForTarget(target)
-            : OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitbox);
+            : true;
         if (!triggerReady)
             return;
 

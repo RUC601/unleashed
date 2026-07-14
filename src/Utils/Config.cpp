@@ -50,7 +50,7 @@
 
 namespace OW { namespace Config {
 
-    int config_version = 9;
+    int config_version = 11;
     bool draw_edge = false;
     bool drawbox3d = false;
     bool manualsave = false;
@@ -281,12 +281,12 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 9;
+        constexpr int kCurrentConfigVersion = 11;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
         constexpr int kVisualOverlayCleanupVersion = 8;
-        constexpr int kCurrentHeroConfigVersion = 10;
+        constexpr int kCurrentHeroConfigVersion = 12;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
@@ -1293,6 +1293,22 @@ namespace OW { namespace Config {
             return kAimBoneChest;
         }
 
+        SkeletonBoneMask AimBoneMaskFromLegacy(int configuredBone, bool autoBone)
+        {
+            if (autoBone) {
+                return kSkeletonBoneHead |
+                    kSkeletonBoneNeck |
+                    kSkeletonBoneChest;
+            }
+
+            switch (NormalizeAimBone(configuredBone)) {
+            case kAimBoneChest: return kSkeletonBoneChest;
+            case kAimBoneNeck: return kSkeletonBoneNeck;
+            case kAimBoneHead:
+            default: return kSkeletonBoneHead;
+            }
+        }
+
         int MaxActivationKeyIndex()
         {
             return (std::max)(0, OW::Labels::AimActivationKeyCount() - 1);
@@ -1691,6 +1707,7 @@ namespace OW { namespace Config {
             preset.key = std::clamp(preset.key, 0, MaxActivationKeyIndex());
             preset.shotInterval = std::clamp(preset.shotInterval, 0.0f, 100.0f);
             preset.minCharge = std::clamp(preset.minCharge, 0.0f, 100.0f);
+            preset.boneMask = NormalizeTriggerBoneMask(preset.boneMask);
             return preset;
         }
 
@@ -1733,6 +1750,7 @@ namespace OW { namespace Config {
                 preset.fovMode = kFovModeFixed;
             preset.smooth = std::clamp(preset.smooth, 0.0f, 100.0f);
             preset.bone = NormalizeAimBone(preset.bone);
+            preset.aimBoneMask = NormalizeSkeletonBoneMask(preset.aimBoneMask);
             preset.hitbox = ClampHitboxScalePercent(preset.hitbox);
             preset.aimMode = std::clamp(preset.aimMode, 0, 1);
             if (preset.aimMode == 1 && preset.aimBehavior == 0)
@@ -1878,6 +1896,7 @@ namespace OW { namespace Config {
                 HeroSlotPreset& slot = slots[static_cast<size_t>(slotIndex)];
                 ResetHeroPresetSlot(slot, slotIndex);
                 slot.preset.autoBone = autoBone;
+                slot.preset.aimBoneMask = AimBoneMaskFromLegacy(slot.preset.bone, autoBone);
                 if (slotIndex < presentCount) {
                     slot.present = true;
                     slot.enabled = enabled;
@@ -2001,6 +2020,7 @@ namespace OW { namespace Config {
                 lhs.chargeAware == rhs.chargeAware &&
                 SameFloatForDefaultMigration(lhs.minCharge, rhs.minCharge) &&
                 lhs.ignoreInvisible == rhs.ignoreInvisible &&
+                lhs.boneMask == rhs.boneMask &&
                 lhs.drawHitbox == rhs.drawHitbox;
         }
 
@@ -2011,6 +2031,7 @@ namespace OW { namespace Config {
                 SameFloatForDefaultMigration(lhs.smooth, rhs.smooth) &&
                 lhs.bone == rhs.bone &&
                 lhs.autoBone == rhs.autoBone &&
+                lhs.aimBoneMask == rhs.aimBoneMask &&
                 SameFloatForDefaultMigration(lhs.hitbox, rhs.hitbox) &&
                 lhs.aimMode == rhs.aimMode &&
                 lhs.aimBehavior == rhs.aimBehavior &&
@@ -2273,6 +2294,8 @@ namespace OW { namespace Config {
             Bone2 = kAimBoneHead;         // default: head
             autobone = false;             // default: false
             autobone2 = false;            // default: false
+            aimbotBoneMask = kDefaultAimBoneMask;
+            aimbotBoneMask2 = kDefaultAimBoneMask;
             switch_team = false;          // default: false
             switch_team2 = false;         // default: false
             BoneName = "Head";            // default: Head
@@ -2383,12 +2406,14 @@ namespace OW { namespace Config {
             triggerbotChargeAware = false;
             triggerbotMinCharge = 30.0f;
             triggerbotIgnoreInvisible = true;
+            triggerbotBoneMask = kDefaultTriggerBoneMask;
             triggerbotMode2 = 0;
             triggerbotKey2 = 1;
             triggerbotShotInterval2 = 0.0f;
             triggerbotChargeAware2 = false;
             triggerbotMinCharge2 = 30.0f;
             triggerbotIgnoreInvisible2 = true;
+            triggerbotBoneMask2 = kDefaultTriggerBoneMask;
         }
 
         void ResetAimMethodDefaultsUnlocked()
@@ -2532,6 +2557,7 @@ namespace OW { namespace Config {
                 preset.smooth = Tracking_smooth > 0.0f ? Tracking_smooth : Flick_smooth;
             preset.bone = NormalizeAimBone(Bone);
             preset.autoBone = autobone;
+            preset.aimBoneMask = aimbotBoneMask;
             preset.hitbox = hitbox;
             preset.aimMode = CurrentAimMode();
             if (preset.aimMode < 0 || preset.aimMode > 1)
@@ -2587,6 +2613,7 @@ namespace OW { namespace Config {
             preset.trigger.chargeAware = triggerbotChargeAware;
             preset.trigger.minCharge = triggerbotMinCharge;
             preset.trigger.ignoreInvisible = triggerbotIgnoreInvisible;
+            preset.trigger.boneMask = triggerbotBoneMask;
             return ValidateHeroPresetValue(preset);
         }
 
@@ -2614,6 +2641,7 @@ namespace OW { namespace Config {
             TargetBone = Bone;
             BoneName = AimBoneName(Bone);
             autobone = preset.autoBone;
+            aimbotBoneMask = preset.aimBoneMask;
             hitbox = preset.hitbox;
             Prediction = preset.prediction;
             aimbotPredictionMode = preset.predictionMode;
@@ -2669,6 +2697,7 @@ namespace OW { namespace Config {
             triggerbotChargeAware = preset.trigger.chargeAware;
             triggerbotMinCharge = preset.trigger.minCharge;
             triggerbotIgnoreInvisible = preset.trigger.ignoreInvisible;
+            triggerbotBoneMask = preset.trigger.boneMask;
             triggerbot2 = false;
             triggerbotToggleActive2 = false;
             hitbox = preset.hitbox;
@@ -2705,6 +2734,10 @@ namespace OW { namespace Config {
             if (storedBoneUsesLegacyPresetIndex)
                 slot.preset.bone = LegacyPresetBoneToAimBone(slot.preset.bone);
             slot.preset.autoBone = ReadBool(ini, section, "autoBone", slot.preset.autoBone);
+            slot.preset.aimBoneMask = KeyExists(ini, section, "aimBoneMask")
+                ? static_cast<SkeletonBoneMask>(ReadInt(
+                    ini, section, "aimBoneMask", static_cast<int>(slot.preset.aimBoneMask)))
+                : AimBoneMaskFromLegacy(slot.preset.bone, slot.preset.autoBone);
             slot.preset.hitbox = ReadHitboxScaleCompat(
                 ini,
                 section,
@@ -2790,6 +2823,8 @@ namespace OW { namespace Config {
             slot.preset.trigger.chargeAware = ReadBool(ini, section, "triggerChargeAware", slot.preset.trigger.chargeAware);
             slot.preset.trigger.minCharge = ReadFixedFloat(ini, section, "triggerMinCharge", slot.preset.trigger.minCharge);
             slot.preset.trigger.ignoreInvisible = ReadBool(ini, section, "triggerIgnoreInvisible", slot.preset.trigger.ignoreInvisible);
+            slot.preset.trigger.boneMask = static_cast<TriggerBoneMask>(
+                ReadInt(ini, section, "triggerBoneMask", static_cast<int>(slot.preset.trigger.boneMask)));
             slot.preset.trigger.drawHitbox = ReadBool(ini, section, "triggerDrawHitbox", slot.preset.trigger.drawHitbox);
             slot.preset = ValidateHeroPresetValue(slot.preset);
             return slot;
@@ -2811,6 +2846,10 @@ namespace OW { namespace Config {
             preset.smooth = aimMode == 1 ? flickSmooth : trackingSmooth;
             preset.bone = NormalizeAimBone(ReadInt(ini, section, "Bone", preset.bone));
             preset.autoBone = ReadBool(ini, section, "autobone", preset.autoBone);
+            preset.aimBoneMask = KeyExists(ini, section, "aimBoneMask")
+                ? static_cast<SkeletonBoneMask>(ReadInt(
+                    ini, section, "aimBoneMask", static_cast<int>(preset.aimBoneMask)))
+                : AimBoneMaskFromLegacy(preset.bone, preset.autoBone);
             preset.hitbox = ReadHitboxScaleCompat(
                 ini,
                 section,
@@ -2878,6 +2917,8 @@ namespace OW { namespace Config {
             preset.trigger.enabled = ReadBool(ini, section, "triggerbot", preset.trigger.enabled);
             preset.trigger.action = ReadInt(ini, section, "aimbotAttack", preset.trigger.action);
             preset.trigger.ignoreInvisible = ReadBool(ini, section, "triggerIgnoreInvisible", preset.trigger.ignoreInvisible);
+            preset.trigger.boneMask = static_cast<TriggerBoneMask>(
+                ReadInt(ini, section, "triggerBoneMask", static_cast<int>(preset.trigger.boneMask)));
             return ValidateHeroPresetValue(preset);
         }
 
@@ -2895,6 +2936,7 @@ namespace OW { namespace Config {
             WritePlainFloatValue(path, section, "smooth", preset.smooth);
             WriteIntValue(path, section, "bone", preset.bone);
             WriteBoolValue(path, section, "autoBone", preset.autoBone);
+            WriteIntValue(path, section, "aimBoneMask", static_cast<int>(preset.aimBoneMask));
             WritePlainFloatValue(path, section, "hitboxScale", preset.hitbox);
             WriteIntValue(path, section, "aimMode", preset.aimMode);
             WriteIntValue(path, section, "aimBehavior", preset.aimBehavior);
@@ -2939,6 +2981,7 @@ namespace OW { namespace Config {
             WriteBoolValue(path, section, "triggerChargeAware", preset.trigger.chargeAware);
             WriteFixedFloatValue(path, section, "triggerMinCharge", preset.trigger.minCharge);
             WriteBoolValue(path, section, "triggerIgnoreInvisible", preset.trigger.ignoreInvisible);
+            WriteIntValue(path, section, "triggerBoneMask", static_cast<int>(preset.trigger.boneMask));
             WriteBoolValue(path, section, "triggerDrawHitbox", preset.trigger.drawHitbox);
         }
 
@@ -2989,6 +3032,7 @@ namespace OW { namespace Config {
             AddJsonBool(value, "chargeAware", preset.chargeAware, allocator);
             AddJsonFloat(value, "minCharge", preset.minCharge, allocator);
             AddJsonBool(value, "ignoreInvisible", preset.ignoreInvisible, allocator);
+            AddJsonInt(value, "boneMask", static_cast<int>(preset.boneMask), allocator);
             AddJsonBool(value, "drawHitbox", preset.drawHitbox, allocator);
             return value;
         }
@@ -3004,6 +3048,7 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "smooth", preset.smooth, allocator);
             AddJsonInt(value, "bone", preset.bone, allocator);
             AddJsonBool(value, "autoBone", preset.autoBone, allocator);
+            AddJsonInt(value, "aimBoneMask", static_cast<int>(preset.aimBoneMask), allocator);
             AddJsonFloat(value, "hitboxScale", preset.hitbox, allocator);
             AddJsonInt(value, "aimMode", preset.aimMode, allocator);
             AddJsonInt(value, "aimBehavior", preset.aimBehavior, allocator);
@@ -3880,6 +3925,8 @@ namespace OW { namespace Config {
             defaults.chargeAware = ReadJsonBool(value, "chargeAware", defaults.chargeAware);
             defaults.minCharge = ReadJsonFloat(value, "minCharge", defaults.minCharge);
             defaults.ignoreInvisible = ReadJsonBool(value, "ignoreInvisible", defaults.ignoreInvisible);
+            defaults.boneMask = static_cast<TriggerBoneMask>(
+                ReadJsonInt(value, "boneMask", static_cast<int>(defaults.boneMask)));
             defaults.drawHitbox = ReadJsonBool(value, "drawHitbox", defaults.drawHitbox);
             return ValidateTriggerPresetValue(defaults);
         }
@@ -3898,6 +3945,10 @@ namespace OW { namespace Config {
             defaults.smooth = ReadJsonFloat(value, "smooth", defaults.smooth);
             defaults.bone = ReadJsonInt(value, "bone", defaults.bone);
             defaults.autoBone = ReadJsonBool(value, "autoBone", defaults.autoBone);
+            const auto aimBoneMask = value.FindMember("aimBoneMask");
+            defaults.aimBoneMask = aimBoneMask != value.MemberEnd() && aimBoneMask->value.IsInt()
+                ? static_cast<SkeletonBoneMask>(aimBoneMask->value.GetInt())
+                : AimBoneMaskFromLegacy(defaults.bone, defaults.autoBone);
             defaults.hitbox = ReadJsonHitboxScaleCompat(
                 value,
                 "hitboxScale",
@@ -4573,6 +4624,10 @@ namespace OW { namespace Config {
             aimbotTeam = ReadInt(ini, section, "aimbotTeam", aimbotTeam);
             aimbotPriority = ReadInt(ini, section, "aimbotPriority", aimbotPriority);
             aimbotTrackingDeadzone = ReadFixedFloat(ini, section, "aimbotTrackingDeadzone", aimbotTrackingDeadzone);
+            aimbotBoneMask = static_cast<SkeletonBoneMask>(
+                ReadInt(ini, section, "aimbotBoneMask", static_cast<int>(aimbotBoneMask)));
+            aimbotBoneMask2 = static_cast<SkeletonBoneMask>(
+                ReadInt(ini, section, "aimbotBoneMask2", static_cast<int>(aimbotBoneMask2)));
             aimbotFlickShotClampMs = ReadFixedFloat(ini, section, "aimbotFlickShotClampMs", aimbotFlickShotClampMs);
             aimbotFlickPostFireDelayMs = ReadFixedFloat(ini, section, "aimbotFlickPostFireDelayMs", aimbotFlickPostFireDelayMs);
             aimbotFlickTrajectoryWait = ReadBool(ini, section, "aimbotFlickTrajectoryWait", aimbotFlickTrajectoryWait);
@@ -4615,6 +4670,8 @@ namespace OW { namespace Config {
             triggerbotChargeAware = ReadBool(ini, section, "triggerbotChargeAware", triggerbotChargeAware);
             triggerbotMinCharge = ReadFixedFloat(ini, section, "triggerbotMinCharge", triggerbotMinCharge);
             triggerbotIgnoreInvisible = ReadBool(ini, section, "triggerbotIgnoreInvisible", triggerbotIgnoreInvisible);
+            triggerbotBoneMask = static_cast<TriggerBoneMask>(
+                ReadInt(ini, section, "triggerbotBoneMask", static_cast<int>(triggerbotBoneMask)));
 
             triggerbotMode2 = ReadInt(ini, section, "triggerbotMode2", triggerbotMode2);
             triggerbotKey2 = ReadInt(ini, section, "triggerbotKey2", triggerbotKey2);
@@ -4622,6 +4679,8 @@ namespace OW { namespace Config {
             triggerbotChargeAware2 = ReadBool(ini, section, "triggerbotChargeAware2", triggerbotChargeAware2);
             triggerbotMinCharge2 = ReadFixedFloat(ini, section, "triggerbotMinCharge2", triggerbotMinCharge2);
             triggerbotIgnoreInvisible2 = ReadBool(ini, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
+            triggerbotBoneMask2 = static_cast<TriggerBoneMask>(
+                ReadInt(ini, section, "triggerbotBoneMask2", static_cast<int>(triggerbotBoneMask2)));
 
             triggerbotToggleActive = false;
             triggerbotToggleActive2 = false;
@@ -4930,6 +4989,8 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "aimbotTeam", aimbotTeam);
             WriteIntValue(path, section, "aimbotPriority", aimbotPriority);
             WriteFixedFloatValue(path, section, "aimbotTrackingDeadzone", aimbotTrackingDeadzone);
+            WriteIntValue(path, section, "aimbotBoneMask", static_cast<int>(aimbotBoneMask));
+            WriteIntValue(path, section, "aimbotBoneMask2", static_cast<int>(aimbotBoneMask2));
             WriteFixedFloatValue(path, section, "aimbotFlickShotClampMs", aimbotFlickShotClampMs);
             WriteFixedFloatValue(path, section, "aimbotFlickPostFireDelayMs", aimbotFlickPostFireDelayMs);
             WriteBoolValue(path, section, "aimbotFlickTrajectoryWait", aimbotFlickTrajectoryWait);
@@ -4958,6 +5019,7 @@ namespace OW { namespace Config {
             WriteBoolValue(path, section, "triggerbotChargeAware", triggerbotChargeAware);
             WriteFixedFloatValue(path, section, "triggerbotMinCharge", triggerbotMinCharge);
             WriteBoolValue(path, section, "triggerbotIgnoreInvisible", triggerbotIgnoreInvisible);
+            WriteIntValue(path, section, "triggerbotBoneMask", static_cast<int>(triggerbotBoneMask));
 
             WriteIntValue(path, section, "triggerbotMode2", triggerbotMode2);
             WriteIntValue(path, section, "triggerbotKey2", triggerbotKey2);
@@ -4965,6 +5027,7 @@ namespace OW { namespace Config {
             WriteBoolValue(path, section, "triggerbotChargeAware2", triggerbotChargeAware2);
             WriteFixedFloatValue(path, section, "triggerbotMinCharge2", triggerbotMinCharge2);
             WriteBoolValue(path, section, "triggerbotIgnoreInvisible2", triggerbotIgnoreInvisible2);
+            WriteIntValue(path, section, "triggerbotBoneMask2", static_cast<int>(triggerbotBoneMask2));
         }
 
         void WriteAimMethodPresetSection(const std::string& path,
@@ -5476,6 +5539,10 @@ namespace OW { namespace Config {
             ClampSetting("triggerbotKey2", triggerbotKey2, 0, MaxActivationKeyIndex(), 1);
             ClampFloatSetting("triggerbotShotInterval2", triggerbotShotInterval2, 0.0f, 100.0f, 0.0f);
             ClampFloatSetting("triggerbotMinCharge2", triggerbotMinCharge2, 0.0f, 100.0f, 30.0f);
+            triggerbotBoneMask = NormalizeTriggerBoneMask(triggerbotBoneMask);
+            triggerbotBoneMask2 = NormalizeTriggerBoneMask(triggerbotBoneMask2);
+            aimbotBoneMask = NormalizeSkeletonBoneMask(aimbotBoneMask);
+            aimbotBoneMask2 = NormalizeSkeletonBoneMask(aimbotBoneMask2);
 
             NormalizeBoneSetting("TargetBone", TargetBone);
             NormalizeBoneSetting("Bone", Bone);
@@ -5631,9 +5698,11 @@ namespace OW { namespace Config {
         void DumpUnlocked(Diagnostics::LogLevel level)
         {
             LogConfig(level, "Dump: config_version=%d", config_version);
-            LogConfig(level, "Dump: aim modes enableAimbot=%s triggerbot=%s triggerbot2=%s triggerIgnoreInvisible=%s triggerIgnoreInvisible2=%s Tracking=%s Tracking2=%s Flick=%s Flick2=%s",
+            LogConfig(level, "Dump: aim modes enableAimbot=%s triggerbot=%s triggerbot2=%s triggerIgnoreInvisible=%s triggerIgnoreInvisible2=%s triggerBoneMask=0x%03X triggerBoneMask2=0x%03X Tracking=%s Tracking2=%s Flick=%s Flick2=%s",
                 ToText(enableAimbot).c_str(), ToText(triggerbot).c_str(), ToText(triggerbot2).c_str(),
                 ToText(triggerbotIgnoreInvisible).c_str(), ToText(triggerbotIgnoreInvisible2).c_str(),
+                static_cast<unsigned int>(triggerbotBoneMask),
+                static_cast<unsigned int>(triggerbotBoneMask2),
                 ToText(Tracking).c_str(), ToText(Tracking2).c_str(), ToText(Flick).c_str(),
                 ToText(Flick2).c_str());
             LogConfig(level, "Dump: prediction projectile_arc=%s Prediction=%s Gravitypredit=%s predit_level=%.3f hanzoautospeed=%s",
@@ -5647,8 +5716,10 @@ namespace OW { namespace Config {
                 hitbox, hitbox2, missbox);
             LogConfig(level, "Dump: smoothing Tracking_smooth=%.3f Tracking_smooth2=%.3f Flick_smooth=%.3f Flick_smooth2=%.3f accvalue=%.3f accvalue2=%.3f bladespeed=%.3f",
                 Tracking_smooth, Tracking_smooth2, Flick_smooth, Flick_smooth2, accvalue, accvalue2, bladespeed);
-            LogConfig(level, "Dump: bones TargetBone=%d Bone=%d Bone2=%d autobone=%s autobone2=%s switch_team=%s switch_team2=%s BoneName=%s BoneName2=%s",
+            LogConfig(level, "Dump: bones TargetBone=%d Bone=%d Bone2=%d autobone=%s autobone2=%s aimBoneMask=0x%03X aimBoneMask2=0x%03X switch_team=%s switch_team2=%s BoneName=%s BoneName2=%s",
                 TargetBone, Bone, Bone2, ToText(autobone).c_str(), ToText(autobone2).c_str(),
+                static_cast<unsigned int>(aimbotBoneMask),
+                static_cast<unsigned int>(aimbotBoneMask2),
                 ToText(switch_team).c_str(), ToText(switch_team2).c_str(), BoneName.c_str(), BoneName2.c_str());
             LogConfig(level, "Dump: targeting lockontarget=%s trackcompensate=%s comarea=%.3f comspeed=%.3f aiaim=%s targetdelay=%s targetdelaytime=%d hitboxdelayshoot=%s hiboxdelaytime=%d dontshot=%s shotcount=%d shotmanydont=%d",
                 ToText(lockontarget).c_str(), ToText(trackcompensate).c_str(), comarea, comspeed, ToText(aiaim).c_str(),
@@ -6247,6 +6318,10 @@ namespace OW { namespace Config {
             LoadAimbotSettingsUnlocked(ini);
             LoadAimMethodSettingsUnlocked(ini);
             LoadGlobalSettingsUnlocked(ini);
+            if (!KeyExists(ini, kAimbotSection, "aimbotBoneMask"))
+                aimbotBoneMask = AimBoneMaskFromLegacy(Bone, autobone);
+            if (!KeyExists(ini, kAimbotSection, "aimbotBoneMask2"))
+                aimbotBoneMask2 = AimBoneMaskFromLegacy(Bone2, autobone2);
             LoadKmboxSettingsUnlocked(ini);
         }
 

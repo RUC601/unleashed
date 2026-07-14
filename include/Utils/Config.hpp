@@ -12,6 +12,8 @@
 #include <vector>
 #include <imgui.h>
 
+#include "Game/TriggerBoneSelection.hpp"
+
 // -----------------------------------------------------------------------
 // OW::Config -- Single source of truth for all cheat configuration.
 // All variables are inline (C++17) globals.
@@ -162,6 +164,7 @@ namespace OW { namespace Config {
     inline bool  triggerbotChargeAware  = false;  // wait for charge before firing
     inline float triggerbotMinCharge    = 30.0f;  // minimum charge % (0-100, for charge-aware)
     inline bool  triggerbotIgnoreInvisible = true;
+    inline TriggerBoneMask triggerbotBoneMask = kDefaultTriggerBoneMask;
 
     // ---- Triggerbot (secondary / triggerbot2) ----
     inline int   triggerbotMode2 = 0;
@@ -170,6 +173,7 @@ namespace OW { namespace Config {
     inline bool  triggerbotChargeAware2  = false;
     inline float triggerbotMinCharge2    = 30.0f;
     inline bool  triggerbotIgnoreInvisible2 = true;
+    inline TriggerBoneMask triggerbotBoneMask2 = kDefaultTriggerBoneMask;
 
     // ---- Triggerbot runtime state (not persisted) ----
     inline bool  triggerbotToggleActive  = false;  // current toggle state (mode=Toggle)
@@ -215,6 +219,8 @@ namespace OW { namespace Config {
     inline int  Bone2       = kAimBoneHead;
     inline bool autobone    = false;
     inline bool autobone2   = false;
+    inline SkeletonBoneMask aimbotBoneMask = kDefaultAimBoneMask;
+    inline SkeletonBoneMask aimbotBoneMask2 = kDefaultAimBoneMask;
     inline bool switch_team  = false;
     inline bool switch_team2 = false;
     inline std::string BoneName  = "Head";
@@ -1142,6 +1148,7 @@ namespace OW { namespace Config {
         bool chargeAware = false;
         float minCharge = 30.0f;
         bool ignoreInvisible = true;
+        TriggerBoneMask boneMask = kDefaultTriggerBoneMask;
         bool drawHitbox = false;
     };
 
@@ -1152,6 +1159,7 @@ namespace OW { namespace Config {
         float smooth = 5.0f;     // aim smoothing, 0-100
         int bone = kAimBoneHead;  // aim-bone choice: 0=chest, 1=head, 2=neck
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
+        SkeletonBoneMask aimBoneMask = kDefaultAimBoneMask;
         float hitbox = kDefaultHitboxScalePercent; // percentage of resolved bone+projectile window
         int aimMode = 0;         // 0=Tracking, 1=Flick
         int aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=MagneticTrigger

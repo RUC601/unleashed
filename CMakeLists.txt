@@ -50,6 +50,7 @@ set(GAME_HEADERS
     include/Game/SDK.hpp
     include/Game/Structs.hpp
     include/Game/Target.hpp
+    include/Game/TriggerBoneSelection.hpp
     include/Game/WeaponSpec.hpp
     include/Kmbox/KmboxB.h
     include/Kmbox/KmboxMoveTest.h
@@ -200,6 +201,10 @@ add_executable(InputOwnershipSelfTest
     src/Game/OutputScheduler.cpp
 )
 
+add_executable(TriggerBoneSelectionSelfTest
+    src/Tools/TriggerBoneSelectionSelfTest.cpp
+)
+
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
@@ -215,6 +220,7 @@ add_test(NAME KmboxQueueSelfTest COMMAND KmboxQueueSelfTest)
 add_test(NAME KmboxLifecycleSelfTest COMMAND KmboxLifecycleSelfTest)
 add_test(NAME KmboxRuntimeSwitchSelfTest COMMAND KmboxRuntimeSwitchSelfTest)
 add_test(NAME InputOwnershipSelfTest COMMAND InputOwnershipSelfTest)
+add_test(NAME TriggerBoneSelectionSelfTest COMMAND TriggerBoneSelectionSelfTest)
 
 # ============================================================================
 # Include directories
@@ -309,6 +315,10 @@ target_include_directories(KmboxRuntimeSwitchSelfTest PRIVATE
 )
 
 target_include_directories(InputOwnershipSelfTest PRIVATE
+    include
+)
+
+target_include_directories(TriggerBoneSelectionSelfTest PRIVATE
     include
 )
 

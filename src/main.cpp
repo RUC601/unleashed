@@ -1348,6 +1348,16 @@ static int RunConfigCheckCli()
         OW::Config::EffectiveKmboxMonitorPort(),
         OW::Config::kmboxMonitorPort,
         OW::Config::kmboxMonitorPortManualOverride ? 1 : 0);
+    std::printf("[CONFIG] triggerBoneMask=0x%03X triggerBoneMask2=0x%03X default=0x%03X all=0x%03X\n",
+        static_cast<unsigned int>(OW::Config::triggerbotBoneMask),
+        static_cast<unsigned int>(OW::Config::triggerbotBoneMask2),
+        static_cast<unsigned int>(OW::kDefaultTriggerBoneMask),
+        static_cast<unsigned int>(OW::kTriggerBoneAllMask));
+    std::printf("[CONFIG] aimBoneMask=0x%03X aimBoneMask2=0x%03X default=0x%03X all=0x%03X\n",
+        static_cast<unsigned int>(OW::Config::aimbotBoneMask),
+        static_cast<unsigned int>(OW::Config::aimbotBoneMask2),
+        static_cast<unsigned int>(OW::kDefaultAimBoneMask),
+        static_cast<unsigned int>(OW::kSkeletonBoneAllMask));
     return 0;
 }
 
