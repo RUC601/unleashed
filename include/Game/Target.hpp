@@ -23,6 +23,7 @@
 
 #include "Game/Decrypt.hpp"
 #include "Game/Entity.hpp"
+#include "Game/FovGeometry.hpp"
 #include "Game/HeroGeometrySpec.hpp"
 #include "Game/InputOrchestrator.hpp"
 #include "Game/LeadPrediction.hpp"
@@ -1799,23 +1800,14 @@ namespace OW {
             return OW::SnapshotCameraPosition();
         }
 
-        struct FovRuntimeContext {
-            Vector3 camera{};
-            Vector3 forward{};
-            bool valid = false;
-        };
+        using FovRuntimeContext = FovGeometry::RuntimeContext;
 
         inline bool IsFiniteVector(const Vector3& value) {
-            return std::isfinite(value.X) &&
-                   std::isfinite(value.Y) &&
-                   std::isfinite(value.Z);
+            return FovGeometry::IsFiniteVector(value);
         }
 
         inline Vector3 NormalizeVector(const Vector3& value) {
-            const float length = value.Size();
-            if (!IsFiniteVector(value) || length <= 0.0001f)
-                return Vector3{};
-            return value / length;
+            return FovGeometry::NormalizeVector(value);
         }
 
         inline FovRuntimeContext SnapshotFovRuntimeContext() {
@@ -1841,35 +1833,39 @@ namespace OW {
         inline float AngularSeparationDegFromCamera(const Vector3& camera,
                                                     const Vector3& a,
                                                     const Vector3& b) {
-            const Vector3 dirA = NormalizeVector(a - camera);
-            const Vector3 dirB = NormalizeVector(b - camera);
-            if (IsZeroVector(dirA) || IsZeroVector(dirB))
-                return (std::numeric_limits<float>::max)();
-
-            const float dot = std::clamp(dirA | dirB, -1.0f, 1.0f);
-            return RAD2DEG(std::acos(dot));
+            return FovGeometry::AngularSeparationDegFromCamera(camera, a, b);
         }
 
         inline float FovScoreDeg(const FovRuntimeContext& context, const Vector3& position) {
-            if (!context.valid)
-                return (std::numeric_limits<float>::max)();
-
-            const Vector3 targetDir = NormalizeVector(position - context.camera);
-            if (IsZeroVector(targetDir))
-                return (std::numeric_limits<float>::max)();
-
-            const float dot = std::clamp(context.forward | targetDir, -1.0f, 1.0f);
-            return RAD2DEG(std::acos(dot));
+            return FovGeometry::FovScoreDeg(context, position);
         }
 
         inline bool IsWithinFovDeg(const FovRuntimeContext& context,
                                    const Vector3& position,
                                    float fovDeg,
                                    float* outScoreDeg = nullptr) {
-            const float scoreDeg = FovScoreDeg(context, position);
-            if (outScoreDeg)
-                *outScoreDeg = scoreDeg;
-            return scoreDeg <= FovAngleLimitDeg(fovDeg) + 0.0001f;
+            return FovGeometry::IsWithinFovDeg(
+                context,
+                position,
+                FovAngleLimitDeg(fovDeg),
+                outScoreDeg);
+        }
+
+        using CandidateFovEvaluation = FovGeometry::CandidateFovEvaluation;
+
+        inline bool EvaluateCandidateFov(const FovRuntimeContext& context,
+                                         const Vector3& rawAimPoint,
+                                         const Vector3& finalAimPoint,
+                                         float fixedFovDeg,
+                                         FovGeometry::ResolveFovForDistanceFn resolveFov,
+                                         CandidateFovEvaluation& outEvaluation) {
+            return FovGeometry::EvaluateCandidateFov(
+                context,
+                rawAimPoint,
+                finalAimPoint,
+                fixedFovDeg,
+                resolveFov,
+                outEvaluation);
         }
 
         inline bool IsTrainingBot(uint64_t heroId) {
@@ -2078,7 +2074,7 @@ namespace OW {
                     continue;
 
                 const float score = fovContext.valid
-                    ? FovScoreDeg(fovContext, point)
+                    ? TargetingDetail::FovScoreDeg(fovContext, point)
                     : crosshair.Distance(view.WorldToScreen(point));
                 if (!std::isfinite(score))
                     continue;
@@ -2120,7 +2116,7 @@ namespace OW {
                     continue;
 
                 const float score = fovContext.valid
-                    ? FovScoreDeg(fovContext, point)
+                    ? TargetingDetail::FovScoreDeg(fovContext, point)
                     : crosshair.Distance(view.WorldToScreen(point));
                 if (!std::isfinite(score))
                     continue;
@@ -2578,7 +2574,7 @@ namespace OW {
         }
 
         inline float CandidateScore(const Vector3& position, const FovRuntimeContext& fovContext) {
-            return FovScoreDeg(fovContext, position);
+            return TargetingDetail::FovScoreDeg(fovContext, position);
         }
 
         inline SelectionResult SelectTargetFromSnapshot(const std::vector<c_entity>& snapshot,
@@ -2752,7 +2748,6 @@ namespace OW {
         const ProjectileRuntimeSpec projectileSpec =
             TargetingDetail::ResolveProjectileRuntimeSpec(weaponSpec, local_entity, false);
         if (entities.size() > 0) {
-            Vector3 PreditPos, RootPos;
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
@@ -2770,27 +2765,47 @@ namespace OW {
                         continue;
 
                     const int resolvedAimBone = TargetingDetail::ResolveAimBoneForDistance(Config::Bone, initialDistance);
-                    PreditPos = TargetingDetail::ConfiguredBonePosition(entities[i], resolvedAimBone);
-                    RootPos = PreditPos;
+                    int candidateBoneId = AimBoneToSkeletonBoneId(resolvedAimBone);
+                    Vector3 rootPosition = TargetingDetail::ConfiguredBonePosition(entities[i], resolvedAimBone);
+                    if (Config::autobone &&
+                        entities[i].HeroID != 0x16dd &&
+                        entities[i].HeroID != 0x16ee) {
+                        int closestBoneId = BONE_CHEST;
+                        Vector3 closestRoot{};
+                        if (TargetingDetail::TrySelectClosestCoreAimPoint(
+                                entities[i],
+                                fovContext,
+                                aimViewMatrix,
+                                CrossHair,
+                                closestBoneId,
+                                closestRoot)) {
+                            candidateBoneId = closestBoneId;
+                            rootPosition = closestRoot;
+                        }
+                    }
 
                     const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
                         entities[i],
-                        RootPos,
+                        rootPosition,
                         projectileSpec,
                         resolvedPrediction,
                         false);
-                    PreditPos = lead.finalAimPoint;
-                    const Vector3 fovPoint = lead.finalAimPoint;
-                    const float distance = TargetingDetail::CameraPosition().DistTo(RootPos);
-                    const float effectiveFovDeg =
-                        Config::ResolveDynamicAimFovForDistance(Config::Fov, distance);
-                    float fovScoreDeg = 0.0f;
-                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, effectiveFovDeg, &fovScoreDeg)) {
+                    TargetingDetail::CandidateFovEvaluation fovEvaluation{};
+                    if (TargetingDetail::EvaluateCandidateFov(
+                            fovContext,
+                            rootPosition,
+                            lead.finalAimPoint,
+                            Config::Fov,
+                            &Config::ResolveDynamicAimFovForDistance,
+                            fovEvaluation)) {
+                        const float distance = fovEvaluation.distance;
+                        const float effectiveFovDeg = fovEvaluation.effectiveFovDeg;
+                        const float fovScoreDeg = fovEvaluation.scoreDeg;
                         if (!TargetingDetail::DistancePassesAimFilter(distance))
                             continue;
 
                         Vector2 Vec2 = CrossHair;
-                        aimViewMatrix.WorldToScreen(fovPoint, &Vec2, Vector2(OW::WX, OW::WY));
+                        aimViewMatrix.WorldToScreen(lead.finalAimPoint, &Vec2, Vector2(OW::WX, OW::WY));
                         float score;
                         if (Config::aimbotPriority == 0) {
                             score = fovScoreDeg;
@@ -2808,8 +2823,8 @@ namespace OW {
                             best.entityIndex = static_cast<int>(i);
                             best.entityKey = candidateKey;
                             best.entitySnapshot = entities[i];
-                            best.boneId = AimBoneToSkeletonBoneId(resolvedAimBone);
-                            best.rawAimPoint = RootPos;
+                            best.boneId = candidateBoneId;
+                            best.rawAimPoint = rootPosition;
                             best.predictedAimPoint = lead.finalAimPoint;
                             best.aimPoint = lead.finalAimPoint;
                             best.screenPoint = Vec2;
@@ -2834,45 +2849,6 @@ namespace OW {
             if (TarGetIndex != -1) {
                 Config::health = entities[TarGetIndex].PlayerHealth;
                 Config::Targetenemyi = TarGetIndex;
-                if (Config::autobone && entities[TarGetIndex].HeroID != 0x16dd && entities[TarGetIndex].HeroID != 0x16ee) {
-                    int closestBoneId = BONE_CHEST;
-                    Vector3 closestRoot{};
-                    if (TargetingDetail::TrySelectClosestCoreAimPoint(
-                            entities[TarGetIndex],
-                            fovContext,
-                            aimViewMatrix,
-                            CrossHair,
-                            closestBoneId,
-                            closestRoot)) {
-                        RootPos = closestRoot;
-                        PreditPos = RootPos;
-                        best.boneId = closestBoneId;
-                        best.rawAimPoint = RootPos;
-                        best.aimPoint = RootPos;
-                        if (resolvedPrediction) {
-                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
-                                entities[TarGetIndex],
-                                RootPos,
-                                projectileSpec,
-                                true,
-                                false);
-                            PreditPos = lead.finalAimPoint;
-                            best.predictedAimPoint = lead.finalAimPoint;
-                            best.aimPoint = lead.finalAimPoint;
-                        }
-                        best.screenPoint = CrossHair;
-                        aimViewMatrix.WorldToScreen(best.aimPoint, &best.screenPoint, Vector2(OW::WX, OW::WY));
-                        best.fovScore = TargetingDetail::FovScoreDeg(fovContext, best.aimPoint);
-                        selectedFovScoreDeg = best.fovScore;
-                        best.distance = TargetingDetail::CameraPosition().DistTo(RootPos);
-                        best.effectiveHitWindow = ResolveEffectiveHitWindow(
-                            entities[TarGetIndex].HeroID,
-                            best.boneId,
-                            weaponSpec,
-                            Config::hitbox,
-                            Config::kLegacyDefaultHitboxRadius);
-                    }
-                }
             }
         }
 
@@ -3151,7 +3127,6 @@ namespace OW {
         const ProjectileRuntimeSpec projectileSpec =
             TargetingDetail::ResolveProjectileRuntimeSpec(weaponSpec, local_entity, true);
         float origin = 100000.f;
-        Vector3 PreditPos, RootPos;
         int selectedBoneId = AimBoneToSkeletonBoneId(Config::Bone2);
         if (entities.size() > 0) {
             for (size_t i = 0; i < entities.size(); i++) {
@@ -3163,28 +3138,52 @@ namespace OW {
                     const float initialDistance = camera.DistTo(entities[i].chest_pos);
                     if (!TargetingDetail::DistancePassesAimFilter(initialDistance))
                         continue;
+                    Vector3 rootPosition{};
                     if (entities[i].Team) {
-                        if (Config::Bone2 == 1)      { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
-                        else if (Config::Bone2 == 2) { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
-                        else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
+                        if (Config::Bone2 == 1)      rootPosition = entities[i].head_pos;
+                        else if (Config::Bone2 == 2) rootPosition = entities[i].neck_pos;
+                        else                         rootPosition = entities[i].chest_pos;
                     } else {
-                        if (Config::Bone == 1)       { PreditPos = entities[i].head_pos; RootPos = entities[i].head_pos; }
-                        else if (Config::Bone == 2)  { PreditPos = entities[i].neck_pos; RootPos = entities[i].neck_pos; }
-                        else                         { PreditPos = entities[i].chest_pos; RootPos = entities[i].chest_pos; }
+                        if (Config::Bone == 1)       rootPosition = entities[i].head_pos;
+                        else if (Config::Bone == 2)  rootPosition = entities[i].neck_pos;
+                        else                         rootPosition = entities[i].chest_pos;
                     }
+
+                    int candidateBoneId = AimBoneToSkeletonBoneId(
+                        entities[i].Team ? Config::Bone2 : Config::Bone);
+                    if (Config::autobone2 &&
+                        entities[i].HeroID != 0x16dd &&
+                        entities[i].HeroID != 0x16ee) {
+                        int closestBoneId = BONE_CHEST;
+                        Vector3 closestRoot{};
+                        if (TargetingDetail::TrySelectClosestCoreAimPoint(
+                                entities[i],
+                                fovContext,
+                                aimViewMatrix,
+                                CrossHair,
+                                closestBoneId,
+                                closestRoot)) {
+                            candidateBoneId = closestBoneId;
+                            rootPosition = closestRoot;
+                        }
+                    }
+
                     const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
                         entities[i],
-                        RootPos,
+                        rootPosition,
                         projectileSpec,
                         resolvedPrediction,
                         true);
-                    PreditPos = lead.finalAimPoint;
-                    const Vector3 fovPoint = lead.finalAimPoint;
-                    const float distance = camera.DistTo(RootPos);
-                    const float effectiveFovDeg =
-                        Config::ResolveDynamicAimFovForDistance(Config::Fov2, distance);
-                    float fovScoreDeg = 0.0f;
-                    if (TargetingDetail::IsWithinFovDeg(fovContext, fovPoint, effectiveFovDeg, &fovScoreDeg)) {
+                    TargetingDetail::CandidateFovEvaluation fovEvaluation{};
+                    if (TargetingDetail::EvaluateCandidateFov(
+                            fovContext,
+                            rootPosition,
+                            lead.finalAimPoint,
+                            Config::Fov2,
+                            &Config::ResolveDynamicAimFovForDistance,
+                            fovEvaluation)) {
+                        const float distance = fovEvaluation.distance;
+                        const float fovScoreDeg = fovEvaluation.scoreDeg;
                         if (!TargetingDetail::DistancePassesAimFilter(distance))
                             continue;
                         float score;
@@ -3199,7 +3198,7 @@ namespace OW {
                             target = lead.finalAimPoint;
                             origin = score;
                             TarGetIndex = i;
-                            selectedBoneId = AimBoneToSkeletonBoneId(entities[i].Team ? Config::Bone2 : Config::Bone);
+                            selectedBoneId = candidateBoneId;
                         }
                     }
                 }
@@ -3207,32 +3206,6 @@ namespace OW {
             if (TarGetIndex != -1) {
                 Config::health = entities[TarGetIndex].PlayerHealth;
                 Config::Targetenemyi = TarGetIndex;
-                if (Config::autobone2 && entities[TarGetIndex].HeroID != 0x16dd && entities[TarGetIndex].HeroID != 0x16ee) {
-                    int closestBoneId = BONE_CHEST;
-                    Vector3 closestRoot{};
-                    if (TargetingDetail::TrySelectClosestCoreAimPoint(
-                            entities[TarGetIndex],
-                            fovContext,
-                            aimViewMatrix,
-                            CrossHair,
-                            closestBoneId,
-                            closestRoot)) {
-                        selectedBoneId = closestBoneId;
-                        RootPos = closestRoot;
-                        PreditPos = RootPos;
-                        target = RootPos;
-                        if (resolvedPrediction) {
-                            const LeadPredictionResult lead = TargetingDetail::ResolveLeadPrediction(
-                                entities[TarGetIndex],
-                                RootPos,
-                                projectileSpec,
-                                true,
-                                true);
-                            PreditPos = lead.finalAimPoint;
-                            target = lead.finalAimPoint;
-                        }
-                    }
-                }
                 Config::aimbotEffectiveHitWindow2 = ResolveEffectiveHitWindow(
                     entities[TarGetIndex].HeroID,
                     selectedBoneId,

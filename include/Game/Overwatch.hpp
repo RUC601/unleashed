@@ -9042,7 +9042,9 @@ namespace AimbotDetail {
             if (!DistancePassesAimPresetRange(aimDistance, preset))
                 continue;
 
-            if (OW::TargetingDetail::IsWithinFovDeg(fovContext, aimPoint, preset.fov))
+            const float effectiveFovDeg =
+                OW::Config::ResolveRuntimeHeroPresetFovForDistance(preset, aimDistance);
+            if (OW::TargetingDetail::IsWithinFovDeg(fovContext, aimPoint, effectiveFovDeg))
                 return true;
         }
 
@@ -9338,7 +9340,7 @@ namespace AimbotDetail {
             if (selection.activationKeyOverride >= 0)
                 OW::Config::aim_key = selection.activationKeyOverride;
             OW::Config::SetRuntimeDrawFov(
-                OW::Config::ResolveHeroPresetFovForDistance(selection.preset, 0.0f),
+                OW::Config::ResolveRuntimeHeroPresetFovForDistance(selection.preset, 0.0f),
                 static_cast<int>(OW::Config::FovRingSlotKind::Aim),
                 selection.slotIndex);
             LogRuntimePresetSelection("aim", local.HeroID, selection);

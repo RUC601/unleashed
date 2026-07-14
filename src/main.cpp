@@ -24,6 +24,7 @@
 #include "Memory/Memory.h"        // ::mem   (global DMA instance)
 #include "Memory/KeyState.hpp"    // host keyboard/mouse state via DMA
 #include "Game/AbilityIcons.hpp"  // ability icon lookup table
+#include "Game/FovGeometry.hpp"   // shared angular FOV and overlay projection rules
 #include "Game/HeroPerkRuntime.hpp" // manual perk variant runtime
 #include "Game/HeroSkills.hpp"    // generic hero skill primitives
 #include "Game/InputOrchestrator.hpp" // shared generated-output ownership
@@ -477,8 +478,25 @@ namespace {
 
     struct FovProjectionContext {
         DirectX::XMMATRIX inverseViewProjection{};
+        float determinant = (std::numeric_limits<float>::quiet_NaN)();
+        bool inverseFinite = false;
         bool valid = false;
     };
+
+    static bool IsFiniteMatrix(const DirectX::XMMATRIX& matrix)
+    {
+        for (size_t rowIndex = 0; rowIndex < 4; ++rowIndex) {
+            DirectX::XMFLOAT4 row{};
+            DirectX::XMStoreFloat4(&row, matrix.r[rowIndex]);
+            if (!std::isfinite(row.x) ||
+                !std::isfinite(row.y) ||
+                !std::isfinite(row.z) ||
+                !std::isfinite(row.w)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     static FovProjectionContext BuildFovProjectionContext(const OW::Matrix& viewProjection)
     {
@@ -490,14 +508,37 @@ namespace {
 
         FovProjectionContext context{};
         context.inverseViewProjection = inverse;
-        context.valid = std::isfinite(det) && std::fabs(det) > 0.000001f;
+        context.determinant = det;
+        context.inverseFinite = IsFiniteMatrix(inverse);
+        context.valid = OW::FovGeometry::IsProjectionInverseUsable(
+            context.determinant,
+            context.inverseFinite);
         return context;
+    }
+
+    static bool ScreenWorldHomogeneousAtClipDepth(
+        const FovProjectionContext& projection,
+        float ndcX,
+        float ndcY,
+        float clipDepth,
+        OW::FovGeometry::HomogeneousPoint& outPoint)
+    {
+        const DirectX::XMVECTOR clip = DirectX::XMVectorSet(ndcX, ndcY, clipDepth, 1.0f);
+        const DirectX::XMVECTOR homogeneousWorld = DirectX::XMVector4Transform(
+            clip,
+            projection.inverseViewProjection);
+        DirectX::XMFLOAT4 world{};
+        DirectX::XMStoreFloat4(&world, homogeneousWorld);
+        outPoint.xyz = OW::Vector3(world.x, world.y, world.z);
+        outPoint.w = world.w;
+        return OW::FovGeometry::IsFiniteHomogeneousPoint(outPoint);
     }
 
     static bool ScreenRayDirection(const FovProjectionContext& projection,
                                    const OW::Vector2& screen,
                                    float width,
                                    float height,
+                                   const OW::Vector3& expectedForward,
                                    OW::Vector3& outDirection)
     {
         if (!projection.valid || width <= 0.0f || height <= 0.0f)
@@ -506,31 +547,20 @@ namespace {
         const float ndcX = (screen.X / width) * 2.0f - 1.0f;
         const float ndcY = 1.0f - (screen.Y / height) * 2.0f;
 
-        const DirectX::XMVECTOR nearClip = DirectX::XMVectorSet(ndcX, ndcY, 0.0f, 1.0f);
-        const DirectX::XMVECTOR farClip = DirectX::XMVectorSet(ndcX, ndcY, 1.0f, 1.0f);
-        const DirectX::XMVECTOR nearWorld = DirectX::XMVector3TransformCoord(
-            nearClip,
-            projection.inverseViewProjection);
-        const DirectX::XMVECTOR farWorld = DirectX::XMVector3TransformCoord(
-            farClip,
-            projection.inverseViewProjection);
-
-        DirectX::XMFLOAT3 nearPoint{};
-        DirectX::XMFLOAT3 farPoint{};
-        DirectX::XMStoreFloat3(&nearPoint, nearWorld);
-        DirectX::XMStoreFloat3(&farPoint, farWorld);
-
-        const OW::Vector3 direction = OW::TargetingDetail::NormalizeVector(
-            OW::Vector3(farPoint.x - nearPoint.x,
-                        farPoint.y - nearPoint.y,
-                        farPoint.z - nearPoint.z));
-        if (OW::TargetingDetail::IsZeroVector(direction) ||
-            !OW::TargetingDetail::IsFiniteVector(direction)) {
+        OW::FovGeometry::HomogeneousPoint depthZero{};
+        OW::FovGeometry::HomogeneousPoint depthOne{};
+        if (!ScreenWorldHomogeneousAtClipDepth(
+                projection, ndcX, ndcY, 0.0f, depthZero) ||
+            !ScreenWorldHomogeneousAtClipDepth(
+                projection, ndcX, ndcY, 1.0f, depthOne)) {
             return false;
         }
 
-        outDirection = direction;
-        return true;
+        return OW::FovGeometry::ResolveProjectionRay(
+            depthZero,
+            depthOne,
+            expectedForward,
+            outDirection);
     }
 
     static bool ScreenRayAngleDeg(const FovProjectionContext& projection,
@@ -544,71 +574,116 @@ namespace {
             return false;
 
         OW::Vector3 direction{};
-        if (!ScreenRayDirection(projection, screen, width, height, direction))
+        if (!ScreenRayDirection(
+                projection, screen, width, height, context.forward, direction)) {
             return false;
+        }
 
         const float dot = std::clamp(context.forward | direction, -1.0f, 1.0f);
         outAngleDeg = RAD2DEG(std::acos(dot));
         return std::isfinite(outAngleDeg);
     }
 
-    static float FovRadiusLinearFallback(float width, float height, float fovDeg)
-    {
-        const float fullViewportRadius = std::sqrt(width * width + height * height) * 0.5f;
-        return fullViewportRadius * (OW::Config::ClampFovDeg(fovDeg) / OW::Config::kMaxFovDeg);
-    }
-
-    static float FovRadiusForViewport(float width,
-                                      float height,
-                                      float fovDeg,
-                                      const FovProjectionContext& projection,
-                                      const OW::TargetingDetail::FovRuntimeContext& fovContext)
+    static OW::FovGeometry::RingProjectionResult FovRadiusForViewport(
+        float width,
+        float height,
+        float fovDeg,
+        const FovProjectionContext& projection,
+        const OW::TargetingDetail::FovRuntimeContext& fovContext)
     {
         const float targetAngleDeg = OW::Config::FovCircleRenderAngleDeg(fovDeg);
-        if (targetAngleDeg <= 0.0f)
-            return 0.0f;
-
         const float maxRadius = std::sqrt(width * width + height * height) * 0.5f;
         const OW::Vector2 center(width * 0.5f, height * 0.5f);
+        return OW::FovGeometry::ResolveRingProjection(
+            targetAngleDeg,
+            maxRadius,
+            [&](float radius, float& outAngleDeg) {
+                return ScreenRayAngleDeg(
+                    projection,
+                    fovContext,
+                    OW::Vector2(center.X + radius, center.Y),
+                    width,
+                    height,
+                    outAngleDeg);
+            });
+    }
 
-        float centerAngleDeg = 0.0f;
-        float maxAngleDeg = 0.0f;
-        if (!ScreenRayAngleDeg(projection, fovContext, center, width, height, centerAngleDeg) ||
-            !ScreenRayAngleDeg(projection,
-                               fovContext,
-                               OW::Vector2(center.X + maxRadius, center.Y),
-                               width,
-                               height,
-                               maxAngleDeg)) {
-            return FovRadiusLinearFallback(width, height, targetAngleDeg);
+    static const char* RingProjectionStatusName(OW::FovGeometry::RingProjectionStatus status)
+    {
+        switch (status) {
+        case OW::FovGeometry::RingProjectionStatus::Drawable:
+            return "drawable";
+        case OW::FovGeometry::RingProjectionStatus::OutsideViewport:
+            return "outside_viewport";
+        case OW::FovGeometry::RingProjectionStatus::Unavailable:
+        default:
+            return "unavailable";
+        }
+    }
+
+    struct FovRingProjectionDiagnosticState {
+        bool observedInitialized = false;
+        OW::FovGeometry::RingProjectionStatus observedStatus =
+            OW::FovGeometry::RingProjectionStatus::Unavailable;
+        bool loggedInitialized = false;
+        OW::FovGeometry::RingProjectionStatus loggedStatus =
+            OW::FovGeometry::RingProjectionStatus::Unavailable;
+        DWORD lastLogTick = 0;
+    };
+
+    static void LogFovRingProjectionTransition(
+        int diagnosticKey,
+        float fovDeg,
+        const FovProjectionContext& projection,
+        const OW::FovGeometry::RingProjectionResult& result)
+    {
+        constexpr int kDiagnosticStateCount = OW::Config::kMaxHeroPresetSlots + 1;
+        if (diagnosticKey < 0 || diagnosticKey >= kDiagnosticStateCount)
+            return;
+
+        static FovRingProjectionDiagnosticState states[kDiagnosticStateCount]{};
+        FovRingProjectionDiagnosticState& state = states[diagnosticKey];
+        if (!state.observedInitialized || state.observedStatus != result.status) {
+            state.observedInitialized = true;
+            state.observedStatus = result.status;
+        }
+        if (state.loggedInitialized && state.loggedStatus == state.observedStatus)
+            return;
+
+        constexpr DWORD kMinimumLogIntervalMs = 1000;
+        const DWORD now = GetTickCount();
+        if (state.loggedInitialized && now - state.lastLogTick < kMinimumLogIntervalMs)
+            return;
+
+        state.loggedInitialized = true;
+        state.loggedStatus = state.observedStatus;
+        state.lastLogTick = now;
+        const float targetAngleDeg = OW::Config::FovCircleRenderAngleDeg(fovDeg);
+        const char* statusName = RingProjectionStatusName(result.status);
+        if (result.status == OW::FovGeometry::RingProjectionStatus::Unavailable) {
+            Diagnostics::Warn(
+                "FOV overlay projection key=%d status=%s targetDeg=%.3f radiusPx=%.2f centerDeg=%.3f edgeDeg=%.3f determinant=%.9g inverseFinite=%d.",
+                diagnosticKey,
+                statusName,
+                targetAngleDeg,
+                result.radius,
+                result.centerAngleDeg,
+                result.edgeAngleDeg,
+                projection.determinant,
+                projection.inverseFinite ? 1 : 0);
+            return;
         }
 
-        if (targetAngleDeg <= centerAngleDeg)
-            return FovRadiusLinearFallback(width, height, targetAngleDeg);
-        if (targetAngleDeg >= maxAngleDeg)
-            return maxRadius;
-
-        float low = 0.0f;
-        float high = maxRadius;
-        for (int iteration = 0; iteration < 24; ++iteration) {
-            const float mid = (low + high) * 0.5f;
-            float angleDeg = 0.0f;
-            if (!ScreenRayAngleDeg(projection,
-                                   fovContext,
-                                   OW::Vector2(center.X + mid, center.Y),
-                                   width,
-                                   height,
-                                   angleDeg)) {
-                return FovRadiusLinearFallback(width, height, targetAngleDeg);
-            }
-
-            if (angleDeg < targetAngleDeg)
-                low = mid;
-            else
-                high = mid;
-        }
-
-        return high;
+        Diagnostics::Info(
+            "FOV overlay projection key=%d status=%s targetDeg=%.3f radiusPx=%.2f centerDeg=%.3f edgeDeg=%.3f determinant=%.9g inverseFinite=%d.",
+            diagnosticKey,
+            statusName,
+            targetAngleDeg,
+            result.radius,
+            result.centerAngleDeg,
+            result.edgeAngleDeg,
+            projection.determinant,
+            projection.inverseFinite ? 1 : 0);
     }
 
     static void DrawDashedCircle(const OW::Vector2& center,
@@ -643,15 +718,19 @@ namespace {
                                   const OW::TargetingDetail::FovRuntimeContext& fovContext,
                                   const OW::Config::FovRingSlotStyle& rawStyle,
                                   bool active,
+                                  int diagnosticKey,
                                   const char* label)
     {
         OW::Config::FovRingSlotStyle style = rawStyle;
         if (!style.visible)
             return false;
 
-        const float radius = FovRadiusForViewport(width, height, fovDeg, projection, fovContext);
-        if (radius <= 0.0f)
+        const OW::FovGeometry::RingProjectionResult ringProjection =
+            FovRadiusForViewport(width, height, fovDeg, projection, fovContext);
+        LogFovRingProjectionTransition(diagnosticKey, fovDeg, projection, ringProjection);
+        if (!ringProjection.IsDrawable())
             return false;
+        const float radius = ringProjection.radius;
 
         const float thickness = active
             ? (std::max)(style.thickness + 0.8f, 2.0f)
@@ -701,7 +780,7 @@ namespace {
                 activeState.slotIndex == slotIndex;
             const float ringFovDeg = active
                 ? activeState.fovDeg
-                : OW::Config::ResolveHeroPresetFovForDistance(slot.preset, 0.0f);
+                : OW::Config::ResolveRuntimeHeroPresetFovForDistance(slot.preset, 0.0f);
 
             char label[32] = {};
             std::snprintf(label,
@@ -717,6 +796,7 @@ namespace {
                                          fovContext,
                                          style,
                                          active,
+                                         slotIndex,
                                          label);
         }
         return drewAny;
@@ -796,6 +876,7 @@ namespace {
                           fovContext,
                           fallbackStyle,
                           false,
+                          OW::Config::kMaxHeroPresetSlots,
                           nullptr);
     }
 

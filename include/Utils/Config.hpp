@@ -1211,6 +1211,14 @@ namespace OW { namespace Config {
         return EvaluateDynamicFovPreset(*dynamicPreset, distanceM, fallback);
     }
 
+    inline float ResolveRuntimeHeroPresetFovForDistance(const HeroPreset& preset, float distanceM)
+    {
+        const float fallback = ClampFovDeg(preset.fov);
+        if (autoscalefov)
+            return fallback;
+        return ResolveHeroPresetFovForDistance(preset, distanceM);
+    }
+
     struct HeroSlotPreset {
         std::string name = "Preset";
         bool present = false;

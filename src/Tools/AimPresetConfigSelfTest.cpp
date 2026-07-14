@@ -26,6 +26,7 @@ void ResetAimPresetState()
     aimBehavior = kAimBehaviorTracking;
     aimbotFovMode = kFovModeFixed;
     aimbotDynamicFovPresetId = -1;
+    autoscalefov = false;
     aimBehaviorMethod = { 0, 0, 0, 0, 0 };
     aimBehaviorMethodPreset = { -1, -1, -1, -1, -1 };
     aimBehaviorBaseSpeed = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
@@ -149,8 +150,23 @@ int main()
         return Fail();
     if (!NearlyEqual(ResolveHeroPresetFovForDistance(heroPreset, 30.0f), 5.0f))
         return Fail();
+    if (!NearlyEqual(ResolveRuntimeHeroPresetFovForDistance(heroPreset, 30.0f), 5.0f))
+        return Fail();
+    constexpr float kCandidateAngleDeg = 45.0f;
+    if (kCandidateAngleDeg > ClampFovDeg(heroPreset.fov) ||
+        kCandidateAngleDeg <= ResolveRuntimeHeroPresetFovForDistance(heroPreset, 30.0f)) {
+        return Fail();
+    }
+    autoscalefov = true;
+    if (!NearlyEqual(ResolveRuntimeHeroPresetFovForDistance(heroPreset, 30.0f), 60.0f) ||
+        kCandidateAngleDeg > ResolveRuntimeHeroPresetFovForDistance(heroPreset, 30.0f)) {
+        return Fail();
+    }
+    autoscalefov = false;
     heroPreset.dynamicFovPresetId = 9999;
     if (!NearlyEqual(ResolveHeroPresetFovForDistance(heroPreset, 30.0f), 60.0f))
+        return Fail();
+    if (!NearlyEqual(ResolveRuntimeHeroPresetFovForDistance(heroPreset, 30.0f), 60.0f))
         return Fail();
 
     return EXIT_SUCCESS;
