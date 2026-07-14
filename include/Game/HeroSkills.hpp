@@ -49,6 +49,40 @@ constexpr bool SequenceWorkerRuntimeMatches(std::uint64_t startGeneration,
         startGeneration == currentGeneration;
 }
 
+// A running sequence owns all lower-priority aim/fire producers. Merely
+// holding an enabled sequence hotkey also reserves Trigger so an Always slot
+// cannot inject shots while the sequence is waiting on an ammo/cooldown gate.
+constexpr bool SequenceClaimsExecution(bool sequenceActive,
+                                       bool activationHeld,
+                                       ExecutionSource requester)
+{
+    return sequenceActive ||
+        (activationHeld && requester == ExecutionSource::Trigger);
+}
+
+// Hero-skill tracking still exposes the legacy single-bone selector. Convert
+// it explicitly so a temporary tracking overlay cannot inherit a multi-bone
+// mask from the currently selected Aim Slot.
+constexpr SkeletonBoneMask TrackingBoneMaskForSelection(int aimBone)
+{
+    switch (aimBone) {
+    case Config::kAimBoneChest:
+        return kSkeletonBoneChest;
+    case Config::kAimBoneNeck:
+        return kSkeletonBoneNeck;
+    case Config::kAimBoneClosest:
+        return kSkeletonBoneHead | kSkeletonBoneNeck | kSkeletonBoneChest;
+    case Config::kAimBoneHead:
+    default:
+        return kSkeletonBoneHead;
+    }
+}
+
+// At 100% the linear controller applies the complete angular error on every
+// hero-skill tick. Ashe's alternating scoped/unscoped output can therefore
+// cross the target on every sample. Keep the shipped feedback gain damped.
+inline constexpr float kAsheFirePatternTrackingSpeedScale = 40.0f;
+
 } // namespace HeroSkillDetail
 
 enum class HeroSkillCategory {
@@ -170,6 +204,7 @@ void RunInputSequence(const std::string& skillId,
 HeroSkillRunState RunViewpointController(const std::string& skillId,
                                          const Config::HeroSkillSettings& params);
 bool AnyInputSequenceActive();
+bool AnyInputSequenceActivationHeld();
 ExecutionToken ActiveInputSequenceToken();
 bool ShouldBlockForActiveSequence(ExecutionSource requester);
 void CancelActiveSkill();
@@ -194,7 +229,7 @@ inline Config::HeroSkillSettings MakeAsheComboSequenceDefaults()
         Config::kAimBehaviorTracking,
         0,
         0.0f,
-        100.0f,
+        HeroSkillDetail::kAsheFirePatternTrackingSpeedScale,
         Config::kDefaultFovDeg,
         Config::kAimBoneHead,
         Config::kDefaultHitboxScalePercent

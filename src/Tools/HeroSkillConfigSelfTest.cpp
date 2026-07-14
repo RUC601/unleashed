@@ -56,6 +56,26 @@ int main()
         OW::HeroSkillDetail::SequenceWorkerRuntimeMatches(0, 0, true)) {
         return Fail();
     }
+    if (!OW::HeroSkillDetail::SequenceClaimsExecution(
+            true, false, OW::ExecutionSource::GlobalAim) ||
+        !OW::HeroSkillDetail::SequenceClaimsExecution(
+            false, true, OW::ExecutionSource::Trigger) ||
+        OW::HeroSkillDetail::SequenceClaimsExecution(
+            false, true, OW::ExecutionSource::GlobalAim) ||
+        OW::HeroSkillDetail::SequenceClaimsExecution(
+            false, false, OW::ExecutionSource::Trigger)) {
+        return Fail();
+    }
+    if (OW::HeroSkillDetail::TrackingBoneMaskForSelection(OW::Config::kAimBoneHead) !=
+            OW::kSkeletonBoneHead ||
+        OW::HeroSkillDetail::TrackingBoneMaskForSelection(OW::Config::kAimBoneNeck) !=
+            OW::kSkeletonBoneNeck ||
+        OW::HeroSkillDetail::TrackingBoneMaskForSelection(OW::Config::kAimBoneChest) !=
+            OW::kSkeletonBoneChest ||
+        OW::HeroSkillDetail::TrackingBoneMaskForSelection(OW::Config::kAimBoneClosest) !=
+            (OW::kSkeletonBoneHead | OW::kSkeletonBoneNeck | OW::kSkeletonBoneChest)) {
+        return Fail();
+    }
 
     const OW::HeroSkillDefinition* asheFirePattern = nullptr;
     const OW::HeroSkillDefinition* anaSleepDart = nullptr;
@@ -171,7 +191,9 @@ int main()
     const OW::Config::HeroSkillSettings settings = asheFirePattern->defaultSettings;
     if (settings.tracking.aimBehavior != OW::Config::kAimBehaviorTracking)
         return Fail();
-    if (!NearlyEqual(settings.tracking.speedScale, 100.0f))
+    if (!NearlyEqual(
+            settings.tracking.speedScale,
+            OW::HeroSkillDetail::kAsheFirePatternTrackingSpeedScale))
         return Fail();
     if (!NearlyEqual(settings.tracking.fov, OW::Config::kDefaultFovDeg))
         return Fail();

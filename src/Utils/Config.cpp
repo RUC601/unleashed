@@ -286,13 +286,14 @@ namespace OW { namespace Config {
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
         constexpr int kVisualOverlayCleanupVersion = 8;
-        constexpr int kCurrentHeroConfigVersion = 12;
+        constexpr int kCurrentHeroConfigVersion = 13;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
         constexpr int kBadAnaAbilityKeyLayoutVersion = 7;
         constexpr int kAnaSleepDartFullHealthDefaultVersion = 8;
         constexpr int kDocumentedHeroSlotDefaultsVersion = 9;
+        constexpr int kAsheFirePatternStableTrackingVersion = 13;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -3814,6 +3815,33 @@ namespace OW { namespace Config {
             return !hasNewAimAssistKeys && settings.tracking.fov <= 0.001f;
         }
 
+        bool ShouldMigrateAsheFirePatternTrackingStability(
+            int heroConfigVersion,
+            uint64_t heroId,
+            const std::string& skillId,
+            const HeroSkillSettings& settings)
+        {
+            if (heroConfigVersion >= kAsheFirePatternStableTrackingVersion ||
+                heroId != static_cast<uint64_t>(OW::eHero::HERO_ASHE) ||
+                skillId != "fire-pattern" ||
+                !MatchesMeasuredAsheFirePattern(settings.sequenceSteps)) {
+                return false;
+            }
+
+            // Only rewrite the exact legacy aim-assist default. Customized
+            // behavior, method, FOV, bone, hitbox, or speed remains untouched.
+            return settings.tracking.aimBehavior == kAimBehaviorTracking &&
+                settings.tracking.aimBehaviorPresetId < 0 &&
+                settings.tracking.method == 0 &&
+                SameFloatForDefaultMigration(settings.tracking.smooth, 0.0f) &&
+                SameFloatForDefaultMigration(settings.tracking.speedScale, 100.0f) &&
+                SameFloatForDefaultMigration(settings.tracking.fov, kDefaultFovDeg) &&
+                settings.tracking.bone == kAimBoneHead &&
+                SameFloatForDefaultMigration(
+                    settings.tracking.hitbox,
+                    kDefaultHitboxScalePercent);
+        }
+
         bool IsProjectileAimSkill(uint64_t heroId, const std::string& skillId)
         {
             return (heroId == static_cast<uint64_t>(OW::eHero::HERO_ANA) && skillId == "sleep-dart") ||
@@ -4159,13 +4187,25 @@ namespace OW { namespace Config {
                     }
                     if (ShouldRestoreAsheFirePatternAimAssistDefault(heroId, skillId, skill->value, settings)) {
                         settings.tracking.aimBehavior = kAimBehaviorTracking;
-                        settings.tracking.speedScale = 100.0f;
+                        settings.tracking.speedScale =
+                            HeroSkillDetail::kAsheFirePatternTrackingSpeedScale;
                         settings.tracking.fov = kDefaultFovDeg;
                         settings.tracking.bone = kAimBoneHead;
                         settings.tracking.hitbox = kDefaultHitboxScalePercent;
                         settings = ValidateHeroSkillSettingsValue(settings);
                         LogConfig(Diagnostics::LogLevel::Info,
                             "Restored Ashe fire-pattern aim assist defaults.");
+                    }
+                    if (ShouldMigrateAsheFirePatternTrackingStability(
+                            heroConfigVersion,
+                            heroId,
+                            skillId,
+                            settings)) {
+                        settings.tracking.speedScale =
+                            HeroSkillDetail::kAsheFirePatternTrackingSpeedScale;
+                        settings = ValidateHeroSkillSettingsValue(settings);
+                        LogConfig(Diagnostics::LogLevel::Info,
+                            "Migrated Ashe fire-pattern tracking speed to stable default.");
                     }
                     skills[skillId] = settings;
                 }

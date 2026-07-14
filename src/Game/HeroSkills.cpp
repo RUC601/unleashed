@@ -292,6 +292,7 @@ namespace {
     std::mt19937 g_random{ std::random_device{}() };
     std::mutex g_randomMutex;
     std::atomic<bool> g_anyInputSequenceActive{ false };
+    std::atomic<bool> g_anyInputSequenceActivationHeld{ false };
     std::uint64_t g_lastTimedOutputGeneration = 0;
     bool g_lastTimedOutputGateOpen = false;
     uint64_t g_lastHeroId = 0;
@@ -1406,6 +1407,8 @@ namespace {
             overlay.fov = params.fov;
             overlay.smooth = params.speedScale;
             overlay.bone = params.bone;
+            overlay.autoBone = params.bone == Config::kAimBoneClosest;
+            overlay.aimBoneMask = HeroSkillDetail::TrackingBoneMaskForSelection(params.bone);
             overlay.hitbox = params.hitbox;
             Config::ApplyHeroPresetToGlobals(overlay);
             active = true;
@@ -3899,6 +3902,11 @@ bool AnyInputSequenceActive()
     return g_anyInputSequenceActive.load(std::memory_order_acquire);
 }
 
+bool AnyInputSequenceActivationHeld()
+{
+    return g_anyInputSequenceActivationHeld.load(std::memory_order_acquire);
+}
+
 ExecutionToken ActiveInputSequenceToken()
 {
     return MakeExecutionToken(ExecutionSource::SequenceInternal, AnyInputSequenceActive());
@@ -3909,7 +3917,13 @@ bool ShouldBlockForActiveSequence(ExecutionSource requester)
     if (requester == ExecutionSource::SequenceInternal)
         return false;
 
-    return ShouldYieldToExecution(MakeExecutionToken(requester), ActiveInputSequenceToken());
+    const bool sequenceClaimsExecution = HeroSkillDetail::SequenceClaimsExecution(
+        AnyInputSequenceActive(),
+        AnyInputSequenceActivationHeld(),
+        requester);
+    return ShouldYieldToExecution(
+        MakeExecutionToken(requester),
+        MakeExecutionToken(ExecutionSource::SequenceInternal, sequenceClaimsExecution));
 }
 
 void RunInputSequence(const std::string& skillId,
@@ -4202,6 +4216,8 @@ namespace {
 
 void CancelActiveSkillStateLocked()
 {
+    g_anyInputSequenceActivationHeld.store(false, std::memory_order_release);
+
     for (auto& item : g_sequences)
         CancelSequence(item.first, item.second, "cancel_all");
 
@@ -4265,6 +4281,7 @@ void ProcessHeroSkills()
     g_lastTimedOutputGateOpen = outputRuntime.outputGateOpen;
 
     if (!outputReady) {
+        g_anyInputSequenceActivationHeld.store(false, std::memory_order_release);
         // A failed unmask can outlive cancellation. Retry safety cleanup even
         // while normal output is gated; positive remasks remain gate-blocked.
         (void)RetryPendingPhysicalMouseMaskLeases();
@@ -4297,10 +4314,13 @@ void ProcessHeroSkills()
     // generation changes clear stale leases without touching the new backend.
     (void)RetryPendingPhysicalMouseMaskLeases();
 
-    if (heroId == 0)
+    if (heroId == 0) {
+        g_anyInputSequenceActivationHeld.store(false, std::memory_order_release);
         return;
+    }
 
     bool processedAnyForHero = false;
+    bool anySequenceActivationHeld = false;
     for (const HeroSkillDefinition& definition : AllHeroSkillDefinitions()) {
         if (!IsHeroSkillDefinitionActiveForRuntime(definition, heroId))
             continue;
@@ -4330,6 +4350,14 @@ void ProcessHeroSkills()
         const bool genjiComboSkill = IsGenjiDashComboDefinition(definition);
         const bool sequenceActive = sequenceSkill && IsSequenceActive(skillKey);
         const bool genjiComboActive = genjiComboSkill && IsGenjiComboActive(skillKey);
+        const bool sequenceActivationHeld = sequenceSkill &&
+            (IsSequenceSelfTestHeld(settings.key) || IsActivationKeyHeld(settings.key));
+        if (sequenceActivationHeld) {
+            anySequenceActivationHeld = true;
+            // Publish immediately on the press edge; defer clearing until the
+            // whole hero pass confirms that no enabled sequence hotkey is held.
+            g_anyInputSequenceActivationHeld.store(true, std::memory_order_release);
+        }
         if (sequenceSkill)
             UpdateSequenceAmmoBudgetReloadState(skillKey, localSnapshot, settings.ammoGuardReserve);
         if (sequenceSkill && !sequenceActive && AimbotDetail::IsInputVkDown('R'))
@@ -4411,6 +4439,10 @@ void ProcessHeroSkills()
 
     if (!processedAnyForHero)
         CancelActiveSkillStateLocked();
+
+    g_anyInputSequenceActivationHeld.store(
+        processedAnyForHero && anySequenceActivationHeld,
+        std::memory_order_release);
 }
 
 } // namespace OW

@@ -10787,7 +10787,12 @@ namespace AimbotDetail {
         static DWORD lastLogTick = 0;
         const DWORD now = GetTickCount();
         if (lastLogTick == 0 || now - lastLogTick >= 500) {
-            Diagnostics::Aim("aim_trigger blocked reason=input_sequence_active caller=%s",
+            const bool heldTriggerReservation =
+                requester == ExecutionSource::Trigger &&
+                OW::AnyInputSequenceActivationHeld() &&
+                !OW::AnyInputSequenceActive();
+            Diagnostics::Aim("aim_trigger blocked reason=%s caller=%s",
+                heldTriggerReservation ? "sequence_hotkey_held" : "input_sequence_active",
                 caller ? caller : "unknown");
             lastLogTick = now;
         }
