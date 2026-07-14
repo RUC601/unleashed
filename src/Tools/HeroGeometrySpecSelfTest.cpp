@@ -1,4 +1,5 @@
 #include "Game/BoneSlots.hpp"
+#include "Game/Entity.hpp"
 #include "Game/HeroGeometrySpec.hpp"
 #include "Game/Structs.hpp"
 #include "Utils/Config.hpp"
@@ -104,6 +105,36 @@ int main()
             OW::Plexies20260609::kUnusedRenderSkeletonBone) {
         return Fail();
     }
+
+    OW::c_entity partialSkeleton{};
+    partialSkeleton.Alive = true;
+    partialSkeleton.pos = OW::Vector3(10.0f, 20.0f, 30.0f);
+    partialSkeleton.head_pos = OW::Vector3(10.0f, 21.8f, 30.0f);
+    if (!partialSkeleton.FillMissingCoreAnchorsFromPosition())
+        return Fail();
+    if (!NearlyEqual(partialSkeleton.head_pos.Y, 21.8f) ||
+        !NearlyEqual(partialSkeleton.neck_pos.Y, 21.35f) ||
+        !NearlyEqual(partialSkeleton.chest_pos.Y, 21.05f)) {
+        return Fail();
+    }
+
+    OW::c_entity completeSkeleton = partialSkeleton;
+    if (completeSkeleton.FillMissingCoreAnchorsFromPosition())
+        return Fail();
+
+    OW::c_entity deadEntity{};
+    deadEntity.Alive = false;
+    deadEntity.pos = OW::Vector3(10.0f, 20.0f, 30.0f);
+    if (deadEntity.FillMissingCoreAnchorsFromPosition() ||
+        deadEntity.head_pos != OW::Vector3(0, 0, 0)) {
+        return Fail();
+    }
+
+    OW::c_entity invalidPosition{};
+    invalidPosition.Alive = true;
+    invalidPosition.pos = OW::Vector3(0.0f, -1.0f, 0.0f);
+    if (invalidPosition.FillMissingCoreAnchorsFromPosition())
+        return Fail();
 
     return EXIT_SUCCESS;
 }

@@ -257,6 +257,35 @@ namespace OW {
             return std::isfinite(value.X) && std::isfinite(value.Y) && std::isfinite(value.Z);
         }
 
+        static bool IsPlausibleSpatialAnchor(const Vector3& value) {
+            return IsFiniteVectorValue(value) &&
+                   std::fabs(value.X) < 5000.0f &&
+                   std::fabs(value.Y) < 5000.0f &&
+                   std::fabs(value.Z) < 5000.0f &&
+                   value.DistTo(Vector3(0, 0, 0)) > 1.0f;
+        }
+
+        // A valid actor position is still useful when a partial skeleton read
+        // misses one or more core bones. Keep real bone-derived anchors and
+        // synthesize only the missing aliases used by ESP and target selection.
+        bool FillMissingCoreAnchorsFromPosition() {
+            if (!Alive || !IsPlausibleSpatialAnchor(pos))
+                return false;
+
+            bool filled = false;
+            auto fillMissing = [&](Vector3& anchor, float height) {
+                if (IsPlausibleSpatialAnchor(anchor))
+                    return;
+                anchor = pos + Vector3(0.0f, height, 0.0f);
+                filled = true;
+            };
+
+            fillMissing(head_pos, 1.65f);
+            fillMissing(neck_pos, 1.35f);
+            fillMissing(chest_pos, 1.05f);
+            return filled;
+        }
+
         int get_bone_id(uint64_t bonedata, int bone_id) {
             const bool debugHead = bone_id == OW::BONE_HEAD;
             if (debugHead) {

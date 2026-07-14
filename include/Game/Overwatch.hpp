@@ -2519,6 +2519,7 @@ inline void entity_thread() {
         size_t boneCandidates = 0;
         size_t skeletonAnyValid = 0;
         size_t skeletonHeadValid = 0;
+        size_t coreAnchorFallback = 0;
     };
     EntityDmaFieldWindow dmaFieldWindow{};
     auto resetDmaFieldWindow = [&](DWORD now) {
@@ -2578,14 +2579,15 @@ inline void entity_thread() {
             dmaFieldWindow.visibilityReadFail,
             dmaFieldWindow.visibilityBaseMissing,
             dmaFieldWindow.visibilityAnomaly);
-        Diagnostics::Info("[DMA-FIELD] entity_fail link_base=%zu name_unknown=%zu team_refresh=%zu skill_refresh=%zu bones candidates=%zu any=%zu head=%zu.",
+        Diagnostics::Info("[DMA-FIELD] entity_fail link_base=%zu name_unknown=%zu team_refresh=%zu skill_refresh=%zu bones candidates=%zu any=%zu head=%zu core_fallback=%zu.",
             dmaFieldWindow.linkBaseFail,
             dmaFieldWindow.nameUnknown,
             dmaFieldWindow.teamRefresh,
             dmaFieldWindow.skillRefresh,
             dmaFieldWindow.boneCandidates,
             dmaFieldWindow.skeletonAnyValid,
-            dmaFieldWindow.skeletonHeadValid);
+            dmaFieldWindow.skeletonHeadValid,
+            dmaFieldWindow.coreAnchorFallback);
         resetDmaFieldWindow(now);
     };
 
@@ -4183,15 +4185,6 @@ inline void entity_thread() {
                 continue;
             }
             }
-            auto isPlausibleBzPosition = [](const OW::Vector3& position) {
-                return std::isfinite(position.X) &&
-                       std::isfinite(position.Y) &&
-                       std::isfinite(position.Z) &&
-                       std::fabs(position.X) < 5000.0f &&
-                       std::fabs(position.Y) < 5000.0f &&
-                       std::fabs(position.Z) < 5000.0f &&
-                       position.DistTo(OW::Vector3(0, 0, 0)) > 1.0f;
-            };
             {
             ScopedPipelinePhaseTimer phaseTimer(pipelineStats.phase.entityRotationPositionMs);
             Diagnostics::ScopedDmaCallsite dmaTag(
@@ -4252,10 +4245,10 @@ inline void entity_thread() {
                         transformPosition.x,
                         transformPosition.y,
                         transformPosition.z);
-                    if (isPlausibleBzPosition(candidate))
+                    if (OW::c_entity::IsPlausibleSpatialAnchor(candidate))
                         entity.pos = candidate;
                 }
-                if (!isPlausibleBzPosition(entity.pos)) {
+                if (!OW::c_entity::IsPlausibleSpatialAnchor(entity.pos)) {
                     Diagnostics::RecordInvalidEntity();
                     continue;
                 }
@@ -4667,13 +4660,8 @@ inline void entity_thread() {
                 if (entity.skeleton_bone_valid[0])
                     processStats.skeletonHeadValid++;
             }
-            if (!offset::IsCnNeProfile() &&
-                entity.head_pos == OW::Vector3(0, 0, 0) &&
-                isPlausibleBzPosition(entity.pos)) {
-                entity.head_pos = entity.pos + OW::Vector3(0.0f, 1.65f, 0.0f);
-                entity.neck_pos = entity.pos + OW::Vector3(0.0f, 1.35f, 0.0f);
-                entity.chest_pos = entity.pos + OW::Vector3(0.0f, 1.05f, 0.0f);
-            }
+            if (entity.FillMissingCoreAnchorsFromPosition())
+                dmaFieldWindow.coreAnchorFallback++;
 
             if (entity.HeroID == OW::eHero::HERO_WRECKINGBALL) {
                 entity.head_pos.Y += 0.02f;
