@@ -2452,6 +2452,37 @@ static bool UISelect(const char* label, int* current, const char* const items[],
     return changed;
 }
 
+template <std::size_t Count>
+static bool UISelectMapped(const char* label,
+                           int* currentValue,
+                           const char* const (&items)[Count],
+                           const int (&mappedValues)[Count],
+                           int fallbackValue) {
+    int selection = -1;
+    int fallbackSelection = 0;
+    for (std::size_t index = 0; index < Count; ++index) {
+        if (mappedValues[index] == *currentValue)
+            selection = static_cast<int>(index);
+        if (mappedValues[index] == fallbackValue)
+            fallbackSelection = static_cast<int>(index);
+    }
+
+    const bool repairedUnsupportedValue = selection < 0;
+    if (repairedUnsupportedValue)
+        selection = fallbackSelection;
+
+    const bool selected = UISelect(
+        label,
+        &selection,
+        items,
+        static_cast<int>(Count));
+    if (selected || repairedUnsupportedValue) {
+        *currentValue = mappedValues[static_cast<std::size_t>(selection)];
+        return true;
+    }
+    return false;
+}
+
 static std::string SkeletonBoneMaskPreview(OW::SkeletonBoneMask rawMask) {
     const OW::SkeletonBoneMask mask = OW::NormalizeSkeletonBoneMask(rawMask);
     if (OW::IsAllSkeletonBonesSelected(mask))
@@ -4048,9 +4079,12 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
     if (hasSkillOutputKey) {
         SettingRow("Skill Key", kAimbotRightLabelWidth);
         PushControlWidth();
-        changed |= UISelect("##skillOutputKey", &settings.skillKey,
-                            OW::Labels::kAimActivationKeys,
-                            OW::Labels::AimActivationKeyCount());
+        changed |= UISelectMapped(
+            "##skillOutputKey",
+            &settings.skillKey,
+            OW::Labels::kHeroSkillOutputKeys,
+            OW::Labels::kHeroSkillOutputHotkeys,
+            OW::DefaultHeroSkillOutputHotkey(definition.inputAction));
         ImGui::PopItemWidth();
     }
 

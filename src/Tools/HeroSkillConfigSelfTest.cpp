@@ -1,8 +1,11 @@
 #include "Game/HeroSkills.hpp"
+#include "Game/AbilityIcons.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <unordered_set>
 
 Memory::~Memory() = default;
 
@@ -22,6 +25,60 @@ int Fail()
 
 int main()
 {
+    std::unordered_set<std::string> heroSlugs;
+    size_t catalogSkillSlots = 0;
+    for (const OW::HeroAbilityIcons& icons : OW::AllHeroAbilityIcons()) {
+        if (!icons.heroSlug || !*icons.heroSlug ||
+            !icons.ability1Icon || !*icons.ability1Icon ||
+            !icons.ability2Icon || !*icons.ability2Icon ||
+            !icons.ultimateIcon || !*icons.ultimateIcon ||
+            !heroSlugs.emplace(icons.heroSlug).second) {
+            return Fail();
+        }
+        catalogSkillSlots += 3;
+    }
+    if (OW::HeroAbilityIconCount() != 52 || catalogSkillSlots != 156)
+        return Fail();
+
+    int matchedHotkey = -1;
+    int observedVk = 0;
+    if (OW::Labels::AimActivationKeyVk(OW::HeroSkillHotkey::Mouse4) != VK_XBUTTON1 ||
+        OW::Labels::AimActivationKeyVk(OW::HeroSkillHotkey::Mouse5) != VK_XBUTTON2 ||
+        !OW::Labels::TryMatchAimActivationKey(
+            OW::HeroSkillHotkey::Mouse4,
+            [&](int vk) {
+                observedVk = vk;
+                return vk == VK_XBUTTON1;
+            },
+            &matchedHotkey) ||
+        observedVk != VK_XBUTTON1 ||
+        matchedHotkey != OW::HeroSkillHotkey::Mouse4) {
+        return Fail();
+    }
+
+    if (OW::Labels::HeroSkillOutputKeyCount() != 12 ||
+        !OW::Labels::IsHeroSkillOutputHotkey(OW::HeroSkillHotkey::RightMouse) ||
+        !OW::Labels::IsHeroSkillOutputHotkey(OW::HeroSkillHotkey::LeftMouse) ||
+        !OW::Labels::IsHeroSkillOutputHotkey(OW::HeroSkillHotkey::EKey) ||
+        OW::Labels::IsHeroSkillOutputHotkey(OW::HeroSkillHotkey::Mouse4) ||
+        OW::Labels::IsHeroSkillOutputHotkey(OW::HeroSkillHotkey::Mouse5) ||
+        OW::Labels::IsHeroSkillOutputHotkey(OW::HeroSkillHotkey::None) ||
+        OW::ResolveHeroSkillOutputHotkey(
+            OW::HeroSkillHotkey::Mouse4,
+            OW::HeroSkillInputAction::Ability1) != OW::HeroSkillHotkey::LeftShift ||
+        OW::ResolveHeroSkillOutputHotkey(
+            OW::HeroSkillHotkey::Mouse5,
+            OW::HeroSkillInputAction::SecondaryFire) != OW::HeroSkillHotkey::RightMouse) {
+        return Fail();
+    }
+    for (int index = 0; index < OW::Labels::HeroSkillOutputKeyCount(); ++index) {
+        const int storedHotkey = OW::Labels::kHeroSkillOutputHotkeys[index];
+        if (std::string(OW::Labels::kHeroSkillOutputKeys[index]) !=
+            OW::Labels::AimActivationKeyName(storedHotkey)) {
+            return Fail();
+        }
+    }
+
     using OW::HeroSkillDetail::SequenceWorkerExitReason;
     if (OW::HeroSkillDetail::SequenceWorkerExitRequiresRelease(
             SequenceWorkerExitReason::Running) ||

@@ -22,6 +22,21 @@ namespace OW::Labels {
     static_assert(std::size(kAimActivationKeys) == std::size(kAimActivationKeyVks),
                   "Activation key labels and VK bindings must stay aligned.");
 
+    // Skill activation may listen to side buttons, but the persisted skill-key
+    // catalog can safely emit only left/right mouse plus keyboard HID usages.
+    // Keep a mapped list so the Skill Key UI cannot offer a value that no-ops.
+    inline constexpr const char* kHeroSkillOutputKeys[] = {
+        "Right Mouse", "Left Mouse", "Left Shift", "Left Alt", "V Key",
+        "Left Ctrl", "Tab", "E Key", "Q Key", "F Key", "CapsLock", "Space"
+    };
+
+    inline constexpr int kHeroSkillOutputHotkeys[] = {
+        0, 1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13
+    };
+
+    static_assert(std::size(kHeroSkillOutputKeys) == std::size(kHeroSkillOutputHotkeys),
+                  "Hero skill output labels and stored hotkey values must stay aligned.");
+
     inline constexpr const char* kAimModes[] = {
         "Tracking", "Flick"
     };
@@ -58,6 +73,18 @@ namespace OW::Labels {
 
     inline int AimModeCount() {
         return LabelCount(kAimModes);
+    }
+
+    inline int HeroSkillOutputKeyCount() {
+        return static_cast<int>(std::size(kHeroSkillOutputKeys));
+    }
+
+    inline constexpr bool IsHeroSkillOutputHotkey(int hotkey) {
+        for (const int candidate : kHeroSkillOutputHotkeys) {
+            if (candidate == hotkey)
+                return true;
+        }
+        return false;
     }
 
     inline int TriggerbotModeCount() {

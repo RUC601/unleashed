@@ -4344,6 +4344,28 @@ void ProcessHeroSkills()
             continue;
         }
 
+        const bool ownsCompositeOutput =
+            SkillControls(definition, HeroSkillControls::SequenceSteps) ||
+            SkillControls(definition, HeroSkillControls::ComboAction);
+        if (!ownsCompositeOutput) {
+            const int configuredOutputHotkey = settings.skillKey >= 0
+                ? settings.skillKey
+                : settings.key;
+            const int resolvedOutputHotkey = ResolveHeroSkillOutputHotkey(
+                configuredOutputHotkey,
+                definition.inputAction);
+            if (resolvedOutputHotkey != configuredOutputHotkey) {
+                if (ShouldLogSkillGuard(skillKey + ":unsupported_output_key")) {
+                    Diagnostics::Warn(
+                        "Hero skill output hotkey is unsupported by the active output layer; using the action default. skill=%s configured=%d fallback=%d",
+                        skillKey.c_str(),
+                        configuredOutputHotkey,
+                        resolvedOutputHotkey);
+                }
+                settings.skillKey = resolvedOutputHotkey;
+            }
+        }
+
         if (IsZaryaReloadAmmoProbeDefinition(definition)) {
             UpdateZaryaAmmoProbe(skillKey, settings, localSnapshot);
             continue;

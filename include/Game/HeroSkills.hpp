@@ -3,6 +3,7 @@
 #include "Game/AimArchitecture.hpp"
 #include "Game/HeroPerkRuntime.hpp"
 #include "Utils/Config.hpp"
+#include "Utils/InputLabels.hpp"
 #include "Game/InputOrchestrator.hpp"
 #include "Game/Structs.hpp"
 
@@ -144,6 +145,7 @@ namespace HeroSkillHotkey {
     inline constexpr int FKey = 11;
     inline constexpr int CapsLock = 12;
     inline constexpr int Space = 13;
+    inline constexpr int None = 14;
 }
 
 struct HeroSkillDefinition {
@@ -170,6 +172,30 @@ inline constexpr bool HasHeroSkillControl(const HeroSkillDefinition& definition,
 inline constexpr const char* HeroSkillCategoryName(HeroSkillCategory category)
 {
     return category == HeroSkillCategory::Ultimate ? "Ultimate" : "Skill";
+}
+
+inline constexpr int DefaultHeroSkillOutputHotkey(HeroSkillInputAction action)
+{
+    switch (action) {
+    case HeroSkillInputAction::PrimaryFire: return HeroSkillHotkey::LeftMouse;
+    case HeroSkillInputAction::SecondaryFire: return HeroSkillHotkey::RightMouse;
+    case HeroSkillInputAction::Ability1: return HeroSkillHotkey::LeftShift;
+    case HeroSkillInputAction::Ability2: return HeroSkillHotkey::EKey;
+    case HeroSkillInputAction::Ability3: return HeroSkillHotkey::FKey;
+    case HeroSkillInputAction::Ultimate: return HeroSkillHotkey::QKey;
+    case HeroSkillInputAction::Jump: return HeroSkillHotkey::Space;
+    case HeroSkillInputAction::Crouch: return HeroSkillHotkey::LeftCtrl;
+    case HeroSkillInputAction::QuickMelee: return HeroSkillHotkey::VKey;
+    default: return -1;
+    }
+}
+
+inline constexpr int ResolveHeroSkillOutputHotkey(int configuredHotkey,
+                                                  HeroSkillInputAction action)
+{
+    return Labels::IsHeroSkillOutputHotkey(configuredHotkey)
+        ? configuredHotkey
+        : DefaultHeroSkillOutputHotkey(action);
 }
 
 inline constexpr const char* HeroSkillInputActionName(HeroSkillInputAction action)
