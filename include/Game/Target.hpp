@@ -679,7 +679,12 @@ namespace OW {
 
             // ---- Micro-split mouse movement ----
             const int splitBehavior = Config::ClampAimBehaviorIndex(Config::aimBehavior);
-            const bool splitEnabled = Config::AimBehaviorMoveSplitEnabled(splitBehavior);
+            const bool splitConfigured = Config::AimBehaviorMoveSplitEnabled(splitBehavior);
+            // NET commands are already paced and coalesced by the transport queue. Splitting
+            // here only blocks the aim thread and the queue then joins the chunks again.
+            // Serial keeps caller-side micro steps because they are emitted independently.
+            const bool splitEnabled = splitConfigured &&
+                applied.descriptor.backend != kmbox::KmboxRuntimeBackend::Network;
             const int maxPixels = Config::AimBehaviorMoveSplitMaxPixels(splitBehavior);
             const int delayUs = Config::AimBehaviorMoveSplitDelayUs(splitBehavior);
             const int absX = std::abs(pixelX);
@@ -698,13 +703,14 @@ namespace OW {
                     connectionEpoch);
                 result.status = status;
                 result.dispatched = status == success;
-                Diagnostics::Aim("mouse.enqueue transport=%s command=%s pixel=(%d,%d) runtimeMs=%d behavior=%d splitEnabled=%d status=%d",
+                Diagnostics::Aim("mouse.enqueue transport=%s command=%s pixel=(%d,%d) runtimeMs=%d behavior=%d splitConfigured=%d splitApplied=%d status=%d",
                     KmboxTransportName(),
                     automoveRuntimeMs > 0 ? "automove" : "move",
                     pixelX,
                     pixelY,
                     automoveRuntimeMs,
                     splitBehavior,
+                    splitConfigured ? 1 : 0,
                     splitEnabled ? 1 : 0,
                     status);
                 OutputMotionTelemetry::RecordMouseMove(

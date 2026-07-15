@@ -33,6 +33,7 @@ namespace KmBoxRuntimeConfig
     inline constexpr int CommandTimeoutMs = 100;
     inline constexpr int CommandQueueMaxSize = 256;
     inline constexpr int CommandFlushIntervalMs = 4;
+    inline constexpr int MouseMoveFlushIntervalMs = 1;
     inline constexpr int MouseButtonFlushIntervalMs = 1;
     inline constexpr int HeartbeatIntervalMs = 1000;
     inline constexpr int ReconnectBackoffMs = 750;

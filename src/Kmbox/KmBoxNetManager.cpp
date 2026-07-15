@@ -346,6 +346,11 @@ namespace
 
     int FlushIntervalForCommand(KmBoxCommandType type)
     {
+        if (type == KmBoxCommandType::MouseMove ||
+            type == KmBoxCommandType::MouseAutoMove) {
+            return KmBoxRuntimeConfig::MouseMoveFlushIntervalMs;
+        }
+
         const bool latencySensitive =
             type == KmBoxCommandType::MouseButton ||
             type == KmBoxCommandType::MouseMask ||

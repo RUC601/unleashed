@@ -2058,7 +2058,10 @@ namespace {
                 candidate.aimPoint.Z);
         }
 
-        return hitBeforeMove || hitAfterMove;
+        // Keyboard/button skill commands are intentionally prioritized ahead
+        // of queued motion. Fire only from the observed pre-move state so the
+        // output queue cannot execute the skill before its aiming correction.
+        return hitBeforeMove;
     }
 
     int MapHotkeyToVK(int hotkey)

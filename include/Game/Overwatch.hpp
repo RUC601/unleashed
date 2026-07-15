@@ -11773,7 +11773,10 @@ namespace AimbotDetail {
                     hitBeforeMove ? 1 : 0);
             }
 
-            if (hitBeforeMove || hitAfterMove) {
+            // Mouse-button state is latency-prioritized ahead of queued movement. Firing on a
+            // predicted post-move hit can therefore put the shot on the wire first. Require
+            // an observed hit at the start of a later sample; hitAfterMove remains telemetry.
+            if (hitBeforeMove) {
                 Diagnostics::Aim("hanzo.custom fire hitbox_check=passed before=%d after=%d charge=%.1f elapsedMs=%lu",
                     hitBeforeMove ? 1 : 0,
                     hitAfterMove ? 1 : 0,
@@ -12351,7 +12354,7 @@ namespace AimbotDetail {
                             OW::Config::Targetenemyi,
                             hitWindow);
                     }
-                    if ((hitBeforeMove || hitAfterMove) &&
+                    if (hitBeforeMove &&
                         (!twoStagePlan.active || twoStagePlan.triggerOpen)) {
                         if (OW::Config::aimVerboseLog) {
                             Diagnostics::Aim("flick.fire hitbox_check=passed before=%d after=%d",
