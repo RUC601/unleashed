@@ -3084,22 +3084,31 @@ namespace OW {
                         projectileSpec,
                         resolvedPrediction,
                         false);
-                    TargetingDetail::CandidateFovEvaluation fovEvaluation{};
-                    if (TargetingDetail::EvaluateCandidateFov(
+                    const float fovEntryHorizonMs =
+                        Config::ClampFovEntryPredictionMs(Config::aimbotFovEntryPredictionMs);
+                    const Vector3 fovEntryAimPoint = lead.finalAimPoint +
+                        lead.targetVelocity * (fovEntryHorizonMs / 1000.0f);
+                    FovGeometry::PredictedEntryEvaluation fovEvaluation{};
+                    if (FovGeometry::EvaluateCandidateFovWithPredictedEntry(
                             fovContext,
                             rootPosition,
                             lead.finalAimPoint,
+                            fovEntryAimPoint,
                             Config::Fov,
                             &Config::ResolveDynamicAimFovForDistance,
+                            Config::aimbotPredictFovEntry,
+                            Config::ClampFovEntryMaxOutsideDeg(Config::aimbotFovEntryMaxOutsideDeg),
                             fovEvaluation)) {
                         const float distance = fovEvaluation.distance;
                         const float effectiveFovDeg = fovEvaluation.effectiveFovDeg;
-                        const float fovScoreDeg = fovEvaluation.scoreDeg;
+                        const float fovScoreDeg = fovEvaluation.acceptedByPrediction
+                            ? fovEvaluation.projectedScoreDeg
+                            : fovEvaluation.currentScoreDeg;
                         if (!TargetingDetail::DistancePassesAimFilter(distance))
                             continue;
 
                         Vector2 Vec2 = CrossHair;
-                        aimViewMatrix.WorldToScreen(lead.finalAimPoint, &Vec2, Vector2(OW::WX, OW::WY));
+                        aimViewMatrix.WorldToScreen(fovEvaluation.acceptedAimPoint, &Vec2, Vector2(OW::WX, OW::WY));
                         float score;
                         if (Config::aimbotPriority == 0) {
                             score = fovScoreDeg;
@@ -3109,7 +3118,14 @@ namespace OW {
                             score = distance;
                         }
                         score = TargetingDetail::ApplyRetargetHysteresis(score, lockPolicy, activeLock, candidateKey);
-                        if (score < origin) {
+                        const bool preferCurrentInside = best.valid &&
+                            best.predictedFovEntry &&
+                            !fovEvaluation.acceptedByPrediction;
+                        const bool predictedEntryLosesToCurrentInside = best.valid &&
+                            !best.predictedFovEntry &&
+                            fovEvaluation.acceptedByPrediction;
+                        if (!predictedEntryLosesToCurrentInside &&
+                            (preferCurrentInside || score < origin)) {
                             origin = score;
                             selectedFovScoreDeg = fovScoreDeg;
                             TarGetIndex = i;
@@ -3120,13 +3136,17 @@ namespace OW {
                             best.boneId = candidateBoneId;
                             best.rawAimPoint = rootPosition;
                             best.predictedAimPoint = lead.finalAimPoint;
-                            best.aimPoint = lead.finalAimPoint;
+                            best.aimPoint = fovEvaluation.acceptedAimPoint;
                             best.screenPoint = Vec2;
                             best.distance = distance;
                             best.fovScore = fovScoreDeg;
                             best.effectiveFovDeg = effectiveFovDeg;
                             best.dynamicFov = Config::IsDynamicAimFovActive();
                             best.dynamicFovPresetId = best.dynamicFov ? Config::aimbotDynamicFovPresetId : -1;
+                            best.predictedFovEntry = fovEvaluation.acceptedByPrediction;
+                            best.fovEntryHorizonMs = fovEvaluation.acceptedByPrediction ? fovEntryHorizonMs : 0.0f;
+                            best.currentFovScore = fovEvaluation.currentScoreDeg;
+                            best.projectedFovScore = fovEvaluation.projectedScoreDeg;
                             best.motion = TargetingDetail::EstimateMotionState(entities[i], Vec2);
                             best.lockPolicy = lockPolicy;
                             best.weaponSpec = weaponSpec;
@@ -3225,7 +3245,7 @@ namespace OW {
                 selectedFovScoreDeg);
         } else if (TarGetIndex >= 0 && static_cast<size_t>(TarGetIndex) < entities.size()) {
             const c_entity& selected = entities[static_cast<size_t>(TarGetIndex)];
-            Diagnostics::Aim("target.primary result index=%d target=(%.9f,%.9f,%.9f) score=%.9f fovScoreDeg=%.9f distance=%.3f bone=%d hitWindow=%.4f health=%.3f hero=0x%llX address=0x%llX vis=%d team=%d",
+            Diagnostics::Aim("target.primary result index=%d target=(%.9f,%.9f,%.9f) score=%.9f fovScoreDeg=%.9f distance=%.3f bone=%d hitWindow=%.4f predictedEntry=%d entryHorizonMs=%.3f currentFov=%.3f projectedFov=%.3f health=%.3f hero=0x%llX address=0x%llX vis=%d team=%d",
                 TarGetIndex,
                 best.aimPoint.X,
                 best.aimPoint.Y,
@@ -3235,6 +3255,10 @@ namespace OW {
                 best.distance,
                 best.boneId,
                 best.effectiveHitWindow,
+                best.predictedFovEntry ? 1 : 0,
+                best.fovEntryHorizonMs,
+                best.currentFovScore,
+                best.projectedFovScore,
                 selected.PlayerHealth,
                 static_cast<unsigned long long>(selected.HeroID),
                 static_cast<unsigned long long>(selected.address),
@@ -3566,6 +3590,7 @@ namespace OW {
             TargetingDetail::ResolveProjectileRuntimeSpec(weaponSpec, local_entity, true);
         float origin = 100000.f;
         int selectedBoneId = AimBoneToSkeletonBoneId(Config::Bone2);
+        bool selectedPredictedEntry = false;
         if (entities.size() > 0) {
             for (size_t i = 0; i < entities.size(); i++) {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
@@ -3612,16 +3637,25 @@ namespace OW {
                         projectileSpec,
                         resolvedPrediction,
                         true);
-                    TargetingDetail::CandidateFovEvaluation fovEvaluation{};
-                    if (TargetingDetail::EvaluateCandidateFov(
-                            fovContext,
-                            rootPosition,
-                            lead.finalAimPoint,
-                            Config::Fov2,
-                            &Config::ResolveDynamicAimFovForDistance,
-                            fovEvaluation)) {
+                    const float fovEntryHorizonMs =
+                        Config::ClampFovEntryPredictionMs(Config::aimbotFovEntryPredictionMs);
+                    const Vector3 fovEntryAimPoint = lead.finalAimPoint +
+                        lead.targetVelocity * (fovEntryHorizonMs / 1000.0f);
+                    FovGeometry::PredictedEntryEvaluation fovEvaluation{};
+                    if (FovGeometry::EvaluateCandidateFovWithPredictedEntry(
+                             fovContext,
+                             rootPosition,
+                             lead.finalAimPoint,
+                             fovEntryAimPoint,
+                             Config::Fov2,
+                             &Config::ResolveDynamicAimFovForDistance,
+                             Config::aimbotPredictFovEntry,
+                             Config::ClampFovEntryMaxOutsideDeg(Config::aimbotFovEntryMaxOutsideDeg),
+                             fovEvaluation)) {
                         const float distance = fovEvaluation.distance;
-                        const float fovScoreDeg = fovEvaluation.scoreDeg;
+                        const float fovScoreDeg = fovEvaluation.acceptedByPrediction
+                            ? fovEvaluation.projectedScoreDeg
+                            : fovEvaluation.currentScoreDeg;
                         if (!TargetingDetail::DistancePassesAimFilter(distance))
                             continue;
                         float score;
@@ -3632,11 +3666,19 @@ namespace OW {
                         } else {
                             score = distance;
                         }
-                        if (score < origin) {
-                            target = lead.finalAimPoint;
+                        const bool preferCurrentInside = TarGetIndex != -1 &&
+                            selectedPredictedEntry &&
+                            !fovEvaluation.acceptedByPrediction;
+                        const bool predictedEntryLosesToCurrentInside = TarGetIndex != -1 &&
+                            !selectedPredictedEntry &&
+                            fovEvaluation.acceptedByPrediction;
+                        if (!predictedEntryLosesToCurrentInside &&
+                            (preferCurrentInside || score < origin)) {
+                            target = fovEvaluation.acceptedAimPoint;
                             origin = score;
                             TarGetIndex = i;
                             selectedBoneId = candidateBoneId;
+                            selectedPredictedEntry = fovEvaluation.acceptedByPrediction;
                         }
                     }
                 }

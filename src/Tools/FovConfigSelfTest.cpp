@@ -275,6 +275,48 @@ int main()
         }
         if (selectedCandidate != 1 || !NearlyEqual(bestScoreDeg, 20.0f))
             return Fail();
+
+        OW::FovGeometry::PredictedEntryEvaluation entry{};
+        const OW::Vector3 justOutside = PointAtAngleDeg(context.camera, 31.0f, 10.0f);
+        const OW::Vector3 entering = PointAtAngleDeg(context.camera, 29.0f, 10.0f);
+        if (!OW::FovGeometry::EvaluateCandidateFovWithPredictedEntry(
+                context,
+                rawAimPoint,
+                justOutside,
+                entering,
+                100.0f,
+                &ResolveThirtyDegreeFovAtRange,
+                true,
+                2.0f,
+                entry) ||
+            !entry.acceptedByPrediction ||
+            entry.currentlyInside ||
+            !NearlyEqual(entry.currentScoreDeg, 31.0f) ||
+            !NearlyEqual(entry.projectedScoreDeg, 29.0f)) {
+            return Fail();
+        }
+        if (OW::FovGeometry::EvaluateCandidateFovWithPredictedEntry(
+                context,
+                rawAimPoint,
+                justOutside,
+                entering,
+                100.0f,
+                &ResolveThirtyDegreeFovAtRange,
+                false,
+                2.0f,
+                entry) ||
+            OW::FovGeometry::EvaluateCandidateFovWithPredictedEntry(
+                context,
+                rawAimPoint,
+                PointAtAngleDeg(context.camera, 34.0f, 10.0f),
+                entering,
+                100.0f,
+                &ResolveThirtyDegreeFovAtRange,
+                true,
+                2.0f,
+                entry)) {
+            return Fail();
+        }
     }
 
     DynamicFovPreset dynamic{};

@@ -1839,6 +1839,8 @@ namespace OW { namespace Config {
             preset.bezierSpeed = std::clamp(preset.bezierSpeed, 1.0f, 200.0f);
             preset.key = std::clamp(preset.key, 0, MaxActivationKeyIndex());
             preset.predictionMode = std::clamp(preset.predictionMode, 0, 2);
+            preset.fovEntryPredictionMs = ClampFovEntryPredictionMs(preset.fovEntryPredictionMs);
+            preset.fovEntryMaxOutsideDeg = ClampFovEntryMaxOutsideDeg(preset.fovEntryMaxOutsideDeg);
             if (preset.firePolicy == 0 && preset.keepFiring)
                 preset.firePolicy = 1;
             else if (preset.firePolicy == 0 && preset.autoshot)
@@ -2118,6 +2120,9 @@ namespace OW { namespace Config {
                 lhs.keepFiring == rhs.keepFiring &&
                 lhs.prediction == rhs.prediction &&
                 lhs.predictionMode == rhs.predictionMode &&
+                lhs.predictFovEntry == rhs.predictFovEntry &&
+                SameFloatForDefaultMigration(lhs.fovEntryPredictionMs, rhs.fovEntryPredictionMs) &&
+                SameFloatForDefaultMigration(lhs.fovEntryMaxOutsideDeg, rhs.fovEntryMaxOutsideDeg) &&
                 lhs.firePolicy == rhs.firePolicy &&
                 SameFloatForDefaultMigration(lhs.maxHeadDistance, rhs.maxHeadDistance) &&
                 SameFloatForDefaultMigration(lhs.stickiness, rhs.stickiness) &&
@@ -2479,6 +2484,9 @@ namespace OW { namespace Config {
             aimbotAutoshot = false;
             aimbotKeepFiring = true;
             aimbotPredictionMode = 0;
+            aimbotPredictFovEntry = false;
+            aimbotFovEntryPredictionMs = 60.0f;
+            aimbotFovEntryMaxOutsideDeg = 1.5f;
             aimBehavior = 0;
             aimbotFirePolicy = 1;
             aimbotTriggerDelay = 0.0f;
@@ -2711,6 +2719,9 @@ namespace OW { namespace Config {
             preset.keepFiring = aimbotKeepFiring;
             preset.prediction = Prediction;
             preset.predictionMode = aimbotPredictionMode;
+            preset.predictFovEntry = aimbotPredictFovEntry;
+            preset.fovEntryPredictionMs = aimbotFovEntryPredictionMs;
+            preset.fovEntryMaxOutsideDeg = aimbotFovEntryMaxOutsideDeg;
             preset.firePolicy = aimbotFirePolicy;
             preset.maxHeadDistance = aimbotMaxHead;
             preset.stickiness = aimbotStickiness;
@@ -2778,6 +2789,9 @@ namespace OW { namespace Config {
             hitbox = preset.hitbox;
             Prediction = preset.prediction;
             aimbotPredictionMode = preset.predictionMode;
+            aimbotPredictFovEntry = preset.predictFovEntry;
+            aimbotFovEntryPredictionMs = preset.fovEntryPredictionMs;
+            aimbotFovEntryMaxOutsideDeg = preset.fovEntryMaxOutsideDeg;
             aimbotPriority = preset.priority;
             aimbotTeam = preset.targetTeam;
             aimbotAttack = preset.trigger.action;
@@ -2919,6 +2933,9 @@ namespace OW { namespace Config {
                 section,
                 "aimbotPredictionMode",
                 hasPredictionMode ? slot.preset.predictionMode : (slot.preset.prediction ? 1 : 2));
+            slot.preset.predictFovEntry = ReadBool(ini, section, "predictFovEntry", slot.preset.predictFovEntry);
+            slot.preset.fovEntryPredictionMs = ReadFixedFloat(ini, section, "fovEntryPredictionMs", slot.preset.fovEntryPredictionMs);
+            slot.preset.fovEntryMaxOutsideDeg = ReadFixedFloat(ini, section, "fovEntryMaxOutsideDeg", slot.preset.fovEntryMaxOutsideDeg);
             slot.preset.firePolicy = ReadInt(ini, section, "aimbotFirePolicy", slot.preset.firePolicy);
             slot.preset.maxHeadDistance = ReadFixedFloat(ini, section, "aimbotMaxHead", slot.preset.maxHeadDistance);
             slot.preset.stickiness = ReadFixedFloat(ini, section, "aimbotStickiness", slot.preset.stickiness);
@@ -3093,6 +3110,9 @@ namespace OW { namespace Config {
             const std::string prediction = ToText(preset.prediction);
             WriteStringValue(path, section, "prediction", prediction.c_str());
             WriteIntValue(path, section, "aimbotPredictionMode", preset.predictionMode);
+            WriteBoolValue(path, section, "predictFovEntry", preset.predictFovEntry);
+            WriteFixedFloatValue(path, section, "fovEntryPredictionMs", preset.fovEntryPredictionMs);
+            WriteFixedFloatValue(path, section, "fovEntryMaxOutsideDeg", preset.fovEntryMaxOutsideDeg);
             WriteIntValue(path, section, "aimbotFirePolicy", preset.firePolicy);
             WriteFixedFloatValue(path, section, "aimbotMaxHead", preset.maxHeadDistance);
             WriteFixedFloatValue(path, section, "aimbotStickiness", preset.stickiness);
@@ -3206,6 +3226,9 @@ namespace OW { namespace Config {
             AddJsonBool(value, "keepFiring", preset.keepFiring, allocator);
             AddJsonBool(value, "prediction", preset.prediction, allocator);
             AddJsonInt(value, "predictionMode", preset.predictionMode, allocator);
+            AddJsonBool(value, "predictFovEntry", preset.predictFovEntry, allocator);
+            AddJsonFloat(value, "fovEntryPredictionMs", preset.fovEntryPredictionMs, allocator);
+            AddJsonFloat(value, "fovEntryMaxOutsideDeg", preset.fovEntryMaxOutsideDeg, allocator);
             AddJsonInt(value, "firePolicy", preset.firePolicy, allocator);
             AddJsonFloat(value, "maxHeadDistance", preset.maxHeadDistance, allocator);
             AddJsonFloat(value, "stickiness", preset.stickiness, allocator);
@@ -4163,6 +4186,9 @@ namespace OW { namespace Config {
                 value,
                 "predictionMode",
                 hasPredictionMode ? defaults.predictionMode : (defaults.prediction ? 1 : 2));
+            defaults.predictFovEntry = ReadJsonBool(value, "predictFovEntry", defaults.predictFovEntry);
+            defaults.fovEntryPredictionMs = ReadJsonFloat(value, "fovEntryPredictionMs", defaults.fovEntryPredictionMs);
+            defaults.fovEntryMaxOutsideDeg = ReadJsonFloat(value, "fovEntryMaxOutsideDeg", defaults.fovEntryMaxOutsideDeg);
             defaults.firePolicy = ReadJsonInt(value, "firePolicy", defaults.firePolicy);
             defaults.maxHeadDistance = ReadJsonFloat(value, "maxHeadDistance", defaults.maxHeadDistance);
             defaults.stickiness = ReadJsonFloat(value, "stickiness", defaults.stickiness);
@@ -4800,6 +4826,9 @@ namespace OW { namespace Config {
             aimbotAutoshot = ReadBool(ini, section, "aimbotAutoshot", aimbotAutoshot);
             aimbotKeepFiring = ReadBool(ini, section, "aimbotKeepFiring", aimbotKeepFiring);
             aimbotPredictionMode = ReadInt(ini, section, "aimbotPredictionMode", aimbotPredictionMode);
+            aimbotPredictFovEntry = ReadBool(ini, section, "aimbotPredictFovEntry", aimbotPredictFovEntry);
+            aimbotFovEntryPredictionMs = ReadFixedFloat(ini, section, "aimbotFovEntryPredictionMs", aimbotFovEntryPredictionMs);
+            aimbotFovEntryMaxOutsideDeg = ReadFixedFloat(ini, section, "aimbotFovEntryMaxOutsideDeg", aimbotFovEntryMaxOutsideDeg);
             aimBehavior = ReadInt(ini, section, "aimBehavior", aimBehavior);
             aimbotFirePolicy = ReadInt(ini, section, "aimbotFirePolicy", aimbotFirePolicy);
             aimbotTriggerDelay = ReadFixedFloat(ini, section, "aimbotTriggerDelay", aimbotTriggerDelay);
@@ -5239,6 +5268,9 @@ namespace OW { namespace Config {
             WriteBoolValue(path, section, "aimbotAutoshot", aimbotAutoshot);
             WriteBoolValue(path, section, "aimbotKeepFiring", aimbotKeepFiring);
             WriteIntValue(path, section, "aimbotPredictionMode", aimbotPredictionMode);
+            WriteBoolValue(path, section, "aimbotPredictFovEntry", aimbotPredictFovEntry);
+            WriteFixedFloatValue(path, section, "aimbotFovEntryPredictionMs", ClampFovEntryPredictionMs(aimbotFovEntryPredictionMs));
+            WriteFixedFloatValue(path, section, "aimbotFovEntryMaxOutsideDeg", ClampFovEntryMaxOutsideDeg(aimbotFovEntryMaxOutsideDeg));
             WriteIntValue(path, section, "aimBehavior", aimBehavior);
             WriteIntValue(path, section, "aimbotFirePolicy", aimbotFirePolicy);
             WriteFixedFloatValue(path, section, "aimbotTriggerDelay", aimbotTriggerDelay);
@@ -5919,6 +5951,8 @@ namespace OW { namespace Config {
             ValidateAimCustomPresetsUnlocked();
             ClampSetting("aimbotSmoothType", aimbotSmoothType, 0, 2, 0);
             ClampSetting("aimbotPredictionMode", aimbotPredictionMode, 0, 2, 0);
+            aimbotFovEntryPredictionMs = ClampFovEntryPredictionMs(aimbotFovEntryPredictionMs);
+            aimbotFovEntryMaxOutsideDeg = ClampFovEntryMaxOutsideDeg(aimbotFovEntryMaxOutsideDeg);
             aimBehavior = ClampAimBehaviorIndex(aimBehavior);
             aimBehaviorPresetId = ClampAimBehaviorPresetId(aimBehaviorPresetId);
             if (const AimBehaviorPreset* behaviorPreset = FindAimBehaviorPreset(aimBehaviorPresetId))
@@ -6064,8 +6098,9 @@ namespace OW { namespace Config {
                 ToText(lockontarget).c_str(), ToText(trackcompensate).c_str(), comarea, comspeed, ToText(aiaim).c_str(),
                 ToText(targetdelay).c_str(), targetdelaytime, ToText(hitboxdelayshoot).c_str(), hiboxdelaytime,
                 ToText(dontshot).c_str(), shotcount, shotmanydont);
-            LogConfig(level, "Dump: aimbot ui autoshot=%s keepFiring=%s predictionMode=%d behavior=%d firePolicy=%d triggerDelay=%.3f maxHead=%.3f smoothType=%d stickiness=%.3f smoothY=%.3f pitchScale=%.3f maxAim=%.3f minCharge=%.3f maxCharge=%.3f ignoreInvisible=%s trace=%d unlock=%d lockTime=%.3f maxDist=%.3f minDist=%.3f attack=%d team=%d priority=%d",
+            LogConfig(level, "Dump: aimbot ui autoshot=%s keepFiring=%s predictionMode=%d fovEntry=(enabled=%s horizonMs=%.3f marginDeg=%.3f) behavior=%d firePolicy=%d triggerDelay=%.3f maxHead=%.3f smoothType=%d stickiness=%.3f smoothY=%.3f pitchScale=%.3f maxAim=%.3f minCharge=%.3f maxCharge=%.3f ignoreInvisible=%s trace=%d unlock=%d lockTime=%.3f maxDist=%.3f minDist=%.3f attack=%d team=%d priority=%d",
                 ToText(aimbotAutoshot).c_str(), ToText(aimbotKeepFiring).c_str(), aimbotPredictionMode,
+                ToText(aimbotPredictFovEntry).c_str(), aimbotFovEntryPredictionMs, aimbotFovEntryMaxOutsideDeg,
                 aimBehavior, aimbotFirePolicy, aimbotTriggerDelay,
                 aimbotMaxHead, aimbotSmoothType, aimbotStickiness, aimbotSmoothY, aimbotPitchScale, aimbotMaxAim,
                 aimbotMinCharge, aimbotMaxCharge, ToText(aimbotIgnoreInvisible).c_str(), aimbotTrace,

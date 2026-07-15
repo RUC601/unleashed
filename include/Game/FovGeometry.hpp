@@ -198,6 +198,16 @@ struct CandidateFovEvaluation {
     float scoreDeg = (std::numeric_limits<float>::max)();
 };
 
+struct PredictedEntryEvaluation {
+    float distance = 0.0f;
+    float effectiveFovDeg = 0.0f;
+    float currentScoreDeg = (std::numeric_limits<float>::max)();
+    float projectedScoreDeg = (std::numeric_limits<float>::max)();
+    Vector3 acceptedAimPoint{};
+    bool currentlyInside = false;
+    bool acceptedByPrediction = false;
+};
+
 using ResolveFovForDistanceFn = float (*)(float fixedFovDeg, float distance);
 
 inline bool EvaluateCandidateFov(const RuntimeContext& context,
@@ -226,6 +236,70 @@ inline bool EvaluateCandidateFov(const RuntimeContext& context,
         finalAimPoint,
         outEvaluation.effectiveFovDeg,
         &outEvaluation.scoreDeg);
+}
+
+inline bool EvaluateCandidateFovWithPredictedEntry(
+    const RuntimeContext& context,
+    const Vector3& rawAimPoint,
+    const Vector3& currentAimPoint,
+    const Vector3& projectedAimPoint,
+    float fixedFovDeg,
+    ResolveFovForDistanceFn resolveFov,
+    bool predictionEnabled,
+    float maxOutsideDeg,
+    PredictedEntryEvaluation& outEvaluation)
+{
+    outEvaluation = PredictedEntryEvaluation{};
+    if (!context.valid ||
+        !IsFiniteVector(rawAimPoint) ||
+        !IsFiniteVector(currentAimPoint) ||
+        !IsFiniteVector(projectedAimPoint)) {
+        return false;
+    }
+
+    outEvaluation.distance = context.camera.DistTo(rawAimPoint);
+    if (!std::isfinite(outEvaluation.distance) || outEvaluation.distance <= 0.0001f)
+        return false;
+
+    outEvaluation.effectiveFovDeg = resolveFov
+        ? resolveFov(fixedFovDeg, outEvaluation.distance)
+        : std::clamp(fixedFovDeg, 0.0f, kMaxFovAngleDeg);
+    outEvaluation.currentlyInside = IsWithinFovDeg(
+        context,
+        currentAimPoint,
+        outEvaluation.effectiveFovDeg,
+        &outEvaluation.currentScoreDeg);
+    if (outEvaluation.currentlyInside) {
+        outEvaluation.projectedScoreDeg = outEvaluation.currentScoreDeg;
+        outEvaluation.acceptedAimPoint = currentAimPoint;
+        return true;
+    }
+
+    if (!predictionEnabled)
+        return false;
+
+    const float outsideMargin = std::clamp(
+        std::isfinite(maxOutsideDeg) ? maxOutsideDeg : 0.0f,
+        0.0f,
+        30.0f);
+    if (outEvaluation.currentScoreDeg >
+        outEvaluation.effectiveFovDeg + outsideMargin + kFovComparisonEpsilon) {
+        return false;
+    }
+
+    const bool projectedInside = IsWithinFovDeg(
+        context,
+        projectedAimPoint,
+        outEvaluation.effectiveFovDeg,
+        &outEvaluation.projectedScoreDeg);
+    if (!projectedInside ||
+        outEvaluation.projectedScoreDeg >= outEvaluation.currentScoreDeg - kFovComparisonEpsilon) {
+        return false;
+    }
+
+    outEvaluation.acceptedAimPoint = projectedAimPoint;
+    outEvaluation.acceptedByPrediction = true;
+    return true;
 }
 
 enum class RingProjectionStatus {

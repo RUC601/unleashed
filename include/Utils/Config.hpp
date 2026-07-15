@@ -255,6 +255,9 @@ namespace OW { namespace Config {
     inline bool  aimbotAutoshot = false;
     inline bool  aimbotKeepFiring = true;
     inline int   aimbotPredictionMode = 0; // 0=Auto, 1=Force On, 2=Force Off
+    inline bool  aimbotPredictFovEntry = false;
+    inline float aimbotFovEntryPredictionMs = 60.0f;
+    inline float aimbotFovEntryMaxOutsideDeg = 1.5f;
     inline int   aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=MagneticTrigger
     inline int   aimbotFirePolicy = 1;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
     inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
@@ -484,6 +487,36 @@ namespace OW { namespace Config {
     inline float ClampFlickPostFireDelayMs(float value)
     {
         return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 500.0f);
+    }
+
+    inline float ClampFovEntryPredictionMs(float value)
+    {
+        return std::clamp(std::isfinite(value) ? value : 60.0f, 0.0f, 250.0f);
+    }
+
+    inline float ClampFovEntryMaxOutsideDeg(float value)
+    {
+        return std::clamp(std::isfinite(value) ? value : 1.5f, 0.0f, 15.0f);
+    }
+
+    inline float ClampMagneticTimingMs(float value, float fallback = 0.0f)
+    {
+        return std::clamp(std::isfinite(value) ? value : fallback, 0.0f, 2000.0f);
+    }
+
+    inline float ClampMagneticShotIntervalMs(float value, float fallback = 0.0f)
+    {
+        return std::clamp(std::isfinite(value) ? value : fallback, 0.0f, 5000.0f);
+    }
+
+    inline float ClampMagneticAxisScale(float value, float fallback)
+    {
+        return std::clamp(std::isfinite(value) ? value : fallback, 0.0f, 1.0f);
+    }
+
+    inline float ClampMagneticBoostScale(float value)
+    {
+        return std::clamp(std::isfinite(value) ? value : 1.35f, 1.0f, 3.0f);
     }
 
     inline float ClampTrajectoryWaitMs(float value)
@@ -1217,6 +1250,9 @@ namespace OW { namespace Config {
         bool keepFiring = true;
         bool prediction = false; // movement prediction
         int predictionMode = 0;   // 0=Auto, 1=Force On, 2=Force Off
+        bool predictFovEntry = false;
+        float fovEntryPredictionMs = 60.0f;
+        float fovEntryMaxOutsideDeg = 1.5f;
         int firePolicy = 1;       // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
         float maxHeadDistance = 100.0f;
         float stickiness = 100.0f;

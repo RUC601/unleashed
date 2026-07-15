@@ -3601,6 +3601,20 @@ void UI::AimbotPage() {
             }
             ImGui::PopItemWidth();
 
+            SettingRow("Predict FOV Entry", kAimbotLeftLabelWidth);
+            presetChanged |= UICheckbox("##aimPredictFovEntry", &activePreset.predictFovEntry);
+            if (activePreset.predictFovEntry) {
+                SettingRow("Entry Horizon", kAimbotLeftLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimFovEntryHorizon", &activePreset.fovEntryPredictionMs, 0.0f, 250.0f, "60 ms");
+                ImGui::PopItemWidth();
+
+                SettingRow("Outside Margin", kAimbotLeftLabelWidth);
+                PushControlWidth();
+                presetChanged |= UISlider("##aimFovEntryMargin", &activePreset.fovEntryMaxOutsideDeg, 0.0f, 15.0f, "1.5 deg");
+                ImGui::PopItemWidth();
+            }
+
             // Max Head Distance
             SettingRow("Max Head Distance", kAimbotLeftLabelWidth);
             PushControlWidth();

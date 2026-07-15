@@ -209,6 +209,10 @@ struct TargetCandidate {
     float effectiveFovDeg = 0.0f;
     int dynamicFovPresetId = -1;
     bool dynamicFov = false;
+    bool predictedFovEntry = false;
+    float fovEntryHorizonMs = 0.0f;
+    float currentFovScore = (std::numeric_limits<float>::max)();
+    float projectedFovScore = (std::numeric_limits<float>::max)();
     float effectiveHitWindow = 0.0f;
     EntityMotionState motion{};
     TargetLockPolicy lockPolicy{};
