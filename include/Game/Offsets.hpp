@@ -17,6 +17,8 @@
 //   - ViewMatrix returned to the three-key sub/xor/sub inverse and +0x6C8 parent.
 //   - Rotation/link/health/hero payload ids shifted back by one in both
 //     151293 profiles; runtime keeps them profile-specific.
+//   - Visibility uses component 0x34 and +0x98 raw qword in both 151293
+//     profiles; raw == 1 means visible (NE verified, BZ accepted directly).
 // =============================================================================
 
 namespace OW {
@@ -148,12 +150,14 @@ namespace OW {
         static constexpr auto ComponentWrapper_Ror2         = 19;
 
         // Visibility/data flag resolver (forum p331 full disassembly, IDA RVA 0x58C880).
+        // Legacy BZ 150818 encrypted-visibility formula. Active BZ/NE 151293
+        // profiles use the raw bool at +0x98 instead.
         // OLD (0521): static constexpr auto VisibilityGlobalKeyPtr_RVA = 0x3B76970;
         static constexpr auto VisibilityGlobalKeyPtr_RVA = ComponentXorQword_RVA; // live BZ 150818 shared key source
         // OLD (0521): static constexpr auto VisibilityQwordOffset = 0x1B1;
         static constexpr auto VisibilityQwordOffset      = 0x6A;      // live BZ 150818 sujung formula
         // OLD (0521): static constexpr auto VisibilityValueOffset = 0x98;
-        static constexpr auto VisibilityValueOffset      = 0x98;     // reverted from 0x2D8 — IDA 0527 chain produced garbage
+        static constexpr auto VisibilityValueOffset      = 0x98;     // active BZ/NE 151293 raw qword; raw == 1 means visible
         static constexpr auto VisibilityMagicByte_RVA    = 0x3746659; // live BZ 150818 sujung formula
         static constexpr auto Visibility_Add1            = 0x5CE60F50EA1D337F;
         static constexpr auto Visibility_Ror1            = 3;
@@ -340,7 +344,7 @@ namespace OW {
             0x40EE524, // Diaphora owner 0x5E83A0: input.MouseScaleY registration
             0,         // unresolved: CN viewport width
             0,         // unresolved: CN viewport height
-            0x98,      // live-verified 2026-06-01: CN visibility raw bool, raw == 1 means visible
+            0x98,      // NE 151293 static+live reverified 2026-07-15: raw == 1 means visible
             // Direct ViewMatrix root. The render VP slot can be zero on NE;
             // runtime publishes camera_view * projection when both matrices
             // are valid, using render VP only as fallback.
