@@ -23,6 +23,7 @@
 #include <DirectXMath.h>
 
 #include "Game/AbilityIcons.hpp"
+#include "Game/AimFirePhase.hpp"
 #include "Game/AimStartLimiter.hpp"
 #include "Game/BoneSlots.hpp"
 #include "Game/HeroPerkRuntime.hpp"
@@ -10778,7 +10779,43 @@ namespace AimbotDetail {
             OW::Config::aimbotFlickShotClampMs));
         const DWORD postFireDelayMs = static_cast<DWORD>(OW::Config::ClampFlickPostFireDelayMs(
             OW::Config::aimbotFlickPostFireDelayMs));
-        return (std::max)(shotClampMs, postFireDelayMs);
+        DWORD restartDelayMs = (std::max)(shotClampMs, postFireDelayMs);
+        if (OW::Config::IsMagneticTriggerBehavior(OW::Config::aimBehavior)) {
+            const float configured = OW::Config::ClampMagneticShotIntervalMs(
+                OW::Config::aimbotMagneticShotIntervalMs);
+            const DWORD magneticIntervalMs = configured > 0.0f
+                ? static_cast<DWORD>(configured)
+                : DefaultMagneticShotIntervalMs();
+            restartDelayMs = (std::max)(restartDelayMs, magneticIntervalMs);
+        }
+        return restartDelayMs;
+    }
+
+    inline AimFirePhase::Tuning MagneticFirePhaseTuning() {
+        AimFirePhase::Tuning tuning{};
+        tuning.shotIntervalMs = static_cast<float>(ResolveFlickRestartDelayMs());
+        tuning.pauseMs = (std::max)(
+            OW::Config::ClampMagneticTimingMs(OW::Config::aimbotMagneticPostFirePauseMs, 35.0f),
+            OW::Config::ClampFlickPostFireDelayMs(OW::Config::aimbotFlickPostFireDelayMs));
+        tuning.recoveryMs = OW::Config::ClampMagneticTimingMs(
+            OW::Config::aimbotMagneticRecoveryMs, 90.0f);
+        tuning.pauseYawScale = OW::Config::ClampMagneticAxisScale(
+            OW::Config::aimbotMagneticPostFireYawScale, 0.35f);
+        tuning.pausePitchScale = OW::Config::ClampMagneticAxisScale(
+            OW::Config::aimbotMagneticPostFirePitchScale, 0.0f);
+        tuning.preFireBoostWindowMs = OW::Config::ClampMagneticTimingMs(
+            OW::Config::aimbotMagneticPreFireBoostWindowMs, 45.0f);
+        tuning.preFireBoostScale = OW::Config::ClampMagneticBoostScale(
+            OW::Config::aimbotMagneticPreFireBoostScale);
+        return tuning;
+    }
+
+    inline AimFirePhase::Phase ResolveMagneticFirePhase(const RuntimeState& state) {
+        const bool shotLatched = OW::Config::shooted && state.lastFlickFireTick != 0;
+        const float elapsedMs = shotLatched
+            ? static_cast<float>(GetTickCount() - state.lastFlickFireTick)
+            : 0.0f;
+        return AimFirePhase::Resolve(elapsedMs, shotLatched, MagneticFirePhaseTuning());
     }
 
     inline void StampFlickFire(RuntimeState& state) {
@@ -11895,18 +11932,12 @@ namespace AimbotDetail {
         }
         MaintainHanzoCustomFlickState(state);
         UpdateFlickShotCooldown(state);
-        if (FlickPostFireLockoutActive(state)) {
-            ResetMagneticTriggerQuantization(state, "post_fire_lockout");
-            return;
-        }
         if (!IsAimKeyPressed()) {
             ResetTrackingSession(state);
             return;
         }
-        if (OW::Config::shooted || OW::Config::reloading) {
-            ResetMagneticTriggerQuantization(
-                state,
-                OW::Config::reloading ? "reloading" : "fire_finished");
+        if (OW::Config::reloading) {
+            ResetMagneticTriggerQuantization(state, "reloading");
             return;
         }
 
@@ -11990,18 +12021,19 @@ namespace AimbotDetail {
                             rawDelta.X * OW::Config::KmboxPitchCountsPerRadian() * pitchScale,
                             previewState,
                             !hitBeforeMove);
-                    Diagnostics::Aim("dryrun.magnetic_trigger local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) hitbox=%.4f would_fire=%d inside_hit_window=%d would_enqueue=%d preview_counts=(%d,%d) forced_min_step=%d deadzoneDistance=%.3f deadzoneScale=%.3f target_pos=(%.1f,%.1f,%.1f)",
+                    Diagnostics::Aim("dryrun.magnetic_trigger local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) hitbox=%.4f would_fire=%d inside_hit_window=%d would_enqueue=%d preview_counts=(%d,%d) forced_min_step=%d post_move_hit=%d deadzoneDistance=%.3f deadzoneScale=%.3f target_pos=(%.1f,%.1f,%.1f)",
                         RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
                         RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
                         RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
                         hitWindow,
-                        (hitBeforeMove || hitAfterMove) ? 1 : 0,
+                        hitBeforeMove ? 1 : 0,
                         hitBeforeMove ? 1 : 0,
                         (!hitBeforeMove &&
                             (preview.pixelX != 0 || preview.pixelY != 0)) ? 1 : 0,
                         preview.pixelX,
                         preview.pixelY,
                         preview.forcedMinimumStep ? 1 : 0,
+                        hitAfterMove ? 1 : 0,
                         deadzoneDistance,
                         deadzoneDampingScale,
                         vec.X, vec.Y, vec.Z);
@@ -12015,7 +12047,8 @@ namespace AimbotDetail {
             return;
         }
 
-        ArmDelayedShot(state);
+        if (!OW::Config::shooted)
+            ArmDelayedShot(state);
         const DWORD sessionStartedTick = state.trackingSessionStartedTick != 0
             ? state.trackingSessionStartedTick
             : GetTickCount();
@@ -12024,9 +12057,10 @@ namespace AimbotDetail {
                OW::ProcessConnection::IsConnected() &&
                OW::ProcessConnection::ConnectionEpoch() == connectionEpoch &&
                OW::RuntimeOutputTransitionMatches(outputTransitionEpoch) &&
-               !OW::Config::shooted &&
                !OW::Config::reloading &&
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
+            UpdateFlickShotCooldown(state);
+            const AimFirePhase::Phase firePhase = ResolveMagneticFirePhase(state);
             if (AimSessionTimedOut(sessionStartedTick, "magnetic_trigger")) {
                 state.trackingSessionTimedOut = true;
                 ResetMagneticTriggerQuantization(state, "session_timeout");
@@ -12071,14 +12105,15 @@ namespace AimbotDetail {
                 Sleep(1);
                 continue;
             }
-            PrimeDelayedShot(state);
+            if (!OW::Config::shooted)
+                PrimeDelayedShot(state);
 
             const Vector3 aimTarget = vec;
             float deadzoneDistance = 0.0f;
             const float deadzoneDampingScale = TrackingDeadzoneDampingScale(aimTarget, &deadzoneDistance);
             const float smoothInput = OW::Config::AimBehaviorSmoothInput(
                 behavior,
-                OW::Config::Tracking_smooth,
+                OW::Config::Tracking_smooth * firePhase.trackingScale,
                 deadzoneDampingScale);
             AimData aim = BuildAimData(
                 aimTarget,
@@ -12086,12 +12121,18 @@ namespace AimbotDetail {
                 smoothInput,
                 OW::Config::AimBehaviorAcceleration(behavior));
             ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
+            if (!IsZeroVector(aim.smoothed_angle)) {
+                Vector3 phasedDelta = aim.smoothed_angle - aim.local_angle;
+                phasedDelta.X *= firePhase.pitchScale; // pitch drives screen Y
+                phasedDelta.Y *= firePhase.yawScale;   // yaw drives screen X
+                aim.smoothed_angle = aim.local_angle + phasedDelta;
+            }
             const float hitWindow = OW::Config::aimbotEffectiveHitWindow;
             const bool hitBeforeMove = OW::in_range(
                 aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow);
             bool hitAfterMove = hitBeforeMove;
 
-            if (DelayedShotTimedOut(state)) {
+            if (!OW::Config::shooted && DelayedShotTimedOut(state)) {
                 const c_entity local = LocalEntity();
                 ResetMagneticTriggerQuantization(state, "delayed_shot_timeout");
                 Diagnostics::Aim("magnetic_trigger delayed_shot timeout target=%d localHero=0x%llX",
@@ -12138,6 +12179,16 @@ namespace AimbotDetail {
                     (std::fabs(rawDelta.X) > 0.0000001f ||
                         std::fabs(rawDelta.Y) > 0.0000001f);
                 if (rawDeltaValid) {
+                    Vector3 phaseFallbackDelta = rawDelta;
+                    phaseFallbackDelta.X *= firePhase.pitchScale;
+                    phaseFallbackDelta.Y *= firePhase.yawScale;
+                    const bool phaseFallbackValid =
+                        std::isfinite(phaseFallbackDelta.X) &&
+                        std::isfinite(phaseFallbackDelta.Y) &&
+                        (std::fabs(phaseFallbackDelta.X) > 0.0000001f ||
+                            std::fabs(phaseFallbackDelta.Y) > 0.0000001f);
+                    const Vector3 phaseFallbackTarget =
+                        aim.local_angle + phaseFallbackDelta;
                     const Vector3 outputDelta = outputAngle - aim.local_angle;
                     const bool hasSmoothedDelta =
                         std::isfinite(outputDelta.X) &&
@@ -12150,7 +12201,7 @@ namespace AimbotDetail {
                             state,
                             aim.local_angle,
                             outputAngle,
-                            aim.target_angle);
+                            phaseFallbackTarget);
                     if (moveResult.dispatched)
                         g_trackingMoves++;
                     if (hasSmoothedDelta) {
@@ -12166,7 +12217,7 @@ namespace AimbotDetail {
                     if (OW::Config::aimVerboseLog ||
                         lastQuantizationTickLog == 0 ||
                         quantizationLogNow - lastQuantizationTickLog >= 250) {
-                        Diagnostics::Aim("magnetic_trigger.tick inside_hit_window=0 forced_min_step=%d mouse_enqueue=%d counts=(%d,%d) hitbox=%.4f deadzoneDistance=%.3f deadzoneScale=%.3f hitAfter=%d",
+                        Diagnostics::Aim("magnetic_trigger.tick inside_hit_window=0 forced_min_step=%d mouse_enqueue=%d counts=(%d,%d) hitbox=%.4f deadzoneDistance=%.3f deadzoneScale=%.3f phaseScale=(track=%.3f yaw=%.3f pitch=%.3f) phase=(pause=%d recovery=%d prefire=%d ready=%d) hitAfter=%d",
                             moveResult.forcedMinimumStep ? 1 : 0,
                             moveResult.dispatched ? 1 : 0,
                             moveResult.pixelX,
@@ -12174,10 +12225,19 @@ namespace AimbotDetail {
                             hitWindow,
                             deadzoneDistance,
                             deadzoneDampingScale,
+                            firePhase.trackingScale,
+                            firePhase.yawScale,
+                            firePhase.pitchScale,
+                            firePhase.paused ? 1 : 0,
+                            firePhase.recovering ? 1 : 0,
+                            firePhase.preFireBoost ? 1 : 0,
+                            firePhase.readyToFire ? 1 : 0,
                             hitAfterMove ? 1 : 0);
                         lastQuantizationTickLog = quantizationLogNow;
                     }
-                    if (moveResult.pixelX == 0 && moveResult.pixelY == 0) {
+                    if (phaseFallbackValid &&
+                        moveResult.pixelX == 0 &&
+                        moveResult.pixelY == 0) {
                         Diagnostics::Aim("magnetic_trigger invariant_warning outside_hit_window_zero_counts=1 raw_delta=(%.9f,%.9f,%.9f)",
                             rawDelta.X,
                             rawDelta.Y,
@@ -12197,10 +12257,8 @@ namespace AimbotDetail {
                 }
             }
 
-            if (hitBeforeMove || hitAfterMove) {
-                ResetMagneticTriggerQuantization(
-                    state,
-                    hitBeforeMove ? "inside_hit_window_fire" : "hit_after_move_fire");
+            if (!OW::Config::shooted && firePhase.readyToFire && hitBeforeMove) {
+                ResetMagneticTriggerQuantization(state, "inside_hit_window_fire");
                 if (OW::Config::aimVerboseLog) {
                     Diagnostics::Aim("magnetic_trigger.fire hitbox_check=passed before=%d after=%d",
                         hitBeforeMove ? 1 : 0,
@@ -12217,7 +12275,7 @@ namespace AimbotDetail {
                 break;
             }
 
-            if (OW::Config::dontshot &&
+            if (!OW::Config::shooted && OW::Config::dontshot &&
                 OW::Config::shotcount >= OW::Config::shotmanydont &&
                 OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, OW::Config::missbox)) {
                 const int previousShotCount = OW::Config::shotcount;

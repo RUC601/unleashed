@@ -1802,6 +1802,15 @@ namespace OW { namespace Config {
             if (!std::isfinite(preset.trackingDeadzone)) preset.trackingDeadzone = 0.0f;
             if (!std::isfinite(preset.flickShotClampMs)) preset.flickShotClampMs = 0.0f;
             if (!std::isfinite(preset.flickPostFireDelayMs)) preset.flickPostFireDelayMs = 0.0f;
+            if (!std::isfinite(preset.magneticShotIntervalMs)) preset.magneticShotIntervalMs = 0.0f;
+            if (!std::isfinite(preset.magneticPostFirePauseMs)) preset.magneticPostFirePauseMs = 35.0f;
+            if (!std::isfinite(preset.magneticRecoveryMs)) preset.magneticRecoveryMs = 90.0f;
+            if (!std::isfinite(preset.magneticPostFireYawScale)) preset.magneticPostFireYawScale = 0.35f;
+            if (!std::isfinite(preset.magneticPostFirePitchScale)) preset.magneticPostFirePitchScale = 0.0f;
+            if (!std::isfinite(preset.magneticPreFireBoostWindowMs)) preset.magneticPreFireBoostWindowMs = 45.0f;
+            if (!std::isfinite(preset.magneticPreFireBoostScale)) preset.magneticPreFireBoostScale = 1.35f;
+            if (!std::isfinite(preset.fovEntryPredictionMs)) preset.fovEntryPredictionMs = 60.0f;
+            if (!std::isfinite(preset.fovEntryMaxOutsideDeg)) preset.fovEntryMaxOutsideDeg = 1.5f;
             if (!std::isfinite(preset.flickTrajectoryWaitMs)) preset.flickTrajectoryWaitMs = 120.0f;
             if (!std::isfinite(preset.flickTrajectoryApexWindowMs)) preset.flickTrajectoryApexWindowMs = 60.0f;
             if (!std::isfinite(preset.flick2ndBoxPadding)) preset.flick2ndBoxPadding = 8.0f;
@@ -1862,6 +1871,13 @@ namespace OW { namespace Config {
             preset.trackingDeadzone = ClampTrackingDeadzonePixels(preset.trackingDeadzone);
             preset.flickShotClampMs = ClampFlickShotClampMs(preset.flickShotClampMs);
             preset.flickPostFireDelayMs = ClampFlickPostFireDelayMs(preset.flickPostFireDelayMs);
+            preset.magneticShotIntervalMs = ClampMagneticShotIntervalMs(preset.magneticShotIntervalMs);
+            preset.magneticPostFirePauseMs = ClampMagneticTimingMs(preset.magneticPostFirePauseMs, 35.0f);
+            preset.magneticRecoveryMs = ClampMagneticTimingMs(preset.magneticRecoveryMs, 90.0f);
+            preset.magneticPostFireYawScale = ClampMagneticAxisScale(preset.magneticPostFireYawScale, 0.35f);
+            preset.magneticPostFirePitchScale = ClampMagneticAxisScale(preset.magneticPostFirePitchScale, 0.0f);
+            preset.magneticPreFireBoostWindowMs = ClampMagneticTimingMs(preset.magneticPreFireBoostWindowMs, 45.0f);
+            preset.magneticPreFireBoostScale = ClampMagneticBoostScale(preset.magneticPreFireBoostScale);
             preset.flickTrajectoryWaitMs = ClampTrajectoryWaitMs(preset.flickTrajectoryWaitMs);
             preset.flickTrajectoryApexWindowMs = ClampTrajectoryApexWindowMs(preset.flickTrajectoryApexWindowMs);
             preset.flick2ndBoxPadding = std::clamp(preset.flick2ndBoxPadding, 0.0f, 80.0f);
@@ -2141,6 +2157,13 @@ namespace OW { namespace Config {
                 SameFloatForDefaultMigration(lhs.trackingDeadzone, rhs.trackingDeadzone) &&
                 SameFloatForDefaultMigration(lhs.flickShotClampMs, rhs.flickShotClampMs) &&
                 SameFloatForDefaultMigration(lhs.flickPostFireDelayMs, rhs.flickPostFireDelayMs) &&
+                SameFloatForDefaultMigration(lhs.magneticShotIntervalMs, rhs.magneticShotIntervalMs) &&
+                SameFloatForDefaultMigration(lhs.magneticPostFirePauseMs, rhs.magneticPostFirePauseMs) &&
+                SameFloatForDefaultMigration(lhs.magneticRecoveryMs, rhs.magneticRecoveryMs) &&
+                SameFloatForDefaultMigration(lhs.magneticPostFireYawScale, rhs.magneticPostFireYawScale) &&
+                SameFloatForDefaultMigration(lhs.magneticPostFirePitchScale, rhs.magneticPostFirePitchScale) &&
+                SameFloatForDefaultMigration(lhs.magneticPreFireBoostWindowMs, rhs.magneticPreFireBoostWindowMs) &&
+                SameFloatForDefaultMigration(lhs.magneticPreFireBoostScale, rhs.magneticPreFireBoostScale) &&
                 lhs.flickTrajectoryWait == rhs.flickTrajectoryWait &&
                 SameFloatForDefaultMigration(lhs.flickTrajectoryWaitMs, rhs.flickTrajectoryWaitMs) &&
                 SameFloatForDefaultMigration(lhs.flickTrajectoryApexWindowMs, rhs.flickTrajectoryApexWindowMs) &&
@@ -2510,6 +2533,13 @@ namespace OW { namespace Config {
             aimbotTrackingDeadzone = 0.0f;
             aimbotFlickShotClampMs = 0.0f;
             aimbotFlickPostFireDelayMs = 0.0f;
+            aimbotMagneticShotIntervalMs = 0.0f;
+            aimbotMagneticPostFirePauseMs = 35.0f;
+            aimbotMagneticRecoveryMs = 90.0f;
+            aimbotMagneticPostFireYawScale = 0.35f;
+            aimbotMagneticPostFirePitchScale = 0.0f;
+            aimbotMagneticPreFireBoostWindowMs = 45.0f;
+            aimbotMagneticPreFireBoostScale = 1.35f;
             aimbotFlickTrajectoryWait = false;
             aimbotFlickTrajectoryWaitMs = 120.0f;
             aimbotFlickTrajectoryApexWindowMs = 60.0f;
@@ -2740,6 +2770,13 @@ namespace OW { namespace Config {
             preset.trackingDeadzone = aimbotTrackingDeadzone;
             preset.flickShotClampMs = aimbotFlickShotClampMs;
             preset.flickPostFireDelayMs = aimbotFlickPostFireDelayMs;
+            preset.magneticShotIntervalMs = aimbotMagneticShotIntervalMs;
+            preset.magneticPostFirePauseMs = aimbotMagneticPostFirePauseMs;
+            preset.magneticRecoveryMs = aimbotMagneticRecoveryMs;
+            preset.magneticPostFireYawScale = aimbotMagneticPostFireYawScale;
+            preset.magneticPostFirePitchScale = aimbotMagneticPostFirePitchScale;
+            preset.magneticPreFireBoostWindowMs = aimbotMagneticPreFireBoostWindowMs;
+            preset.magneticPreFireBoostScale = aimbotMagneticPreFireBoostScale;
             preset.flickTrajectoryWait = aimbotFlickTrajectoryWait;
             preset.flickTrajectoryWaitMs = aimbotFlickTrajectoryWaitMs;
             preset.flickTrajectoryApexWindowMs = aimbotFlickTrajectoryApexWindowMs;
@@ -2817,6 +2854,13 @@ namespace OW { namespace Config {
             aimbotTrackingDeadzone = preset.trackingDeadzone;
             aimbotFlickShotClampMs = preset.flickShotClampMs;
             aimbotFlickPostFireDelayMs = preset.flickPostFireDelayMs;
+            aimbotMagneticShotIntervalMs = preset.magneticShotIntervalMs;
+            aimbotMagneticPostFirePauseMs = preset.magneticPostFirePauseMs;
+            aimbotMagneticRecoveryMs = preset.magneticRecoveryMs;
+            aimbotMagneticPostFireYawScale = preset.magneticPostFireYawScale;
+            aimbotMagneticPostFirePitchScale = preset.magneticPostFirePitchScale;
+            aimbotMagneticPreFireBoostWindowMs = preset.magneticPreFireBoostWindowMs;
+            aimbotMagneticPreFireBoostScale = preset.magneticPreFireBoostScale;
             aimbotFlickTrajectoryWait = preset.flickTrajectoryWait;
             aimbotFlickTrajectoryWaitMs = preset.flickTrajectoryWaitMs;
             aimbotFlickTrajectoryApexWindowMs = preset.flickTrajectoryApexWindowMs;
@@ -2954,6 +2998,13 @@ namespace OW { namespace Config {
             slot.preset.trackingDeadzone = ReadFixedFloat(ini, section, "trackingDeadzone", slot.preset.trackingDeadzone);
             slot.preset.flickShotClampMs = ReadFixedFloat(ini, section, "flickShotClampMs", slot.preset.flickShotClampMs);
             slot.preset.flickPostFireDelayMs = ReadFixedFloat(ini, section, "flickPostFireDelayMs", slot.preset.flickPostFireDelayMs);
+            slot.preset.magneticShotIntervalMs = ReadFixedFloat(ini, section, "magneticShotIntervalMs", slot.preset.magneticShotIntervalMs);
+            slot.preset.magneticPostFirePauseMs = ReadFixedFloat(ini, section, "magneticPostFirePauseMs", slot.preset.magneticPostFirePauseMs);
+            slot.preset.magneticRecoveryMs = ReadFixedFloat(ini, section, "magneticRecoveryMs", slot.preset.magneticRecoveryMs);
+            slot.preset.magneticPostFireYawScale = ReadFixedFloat(ini, section, "magneticPostFireYawScale", slot.preset.magneticPostFireYawScale);
+            slot.preset.magneticPostFirePitchScale = ReadFixedFloat(ini, section, "magneticPostFirePitchScale", slot.preset.magneticPostFirePitchScale);
+            slot.preset.magneticPreFireBoostWindowMs = ReadFixedFloat(ini, section, "magneticPreFireBoostWindowMs", slot.preset.magneticPreFireBoostWindowMs);
+            slot.preset.magneticPreFireBoostScale = ReadFixedFloat(ini, section, "magneticPreFireBoostScale", slot.preset.magneticPreFireBoostScale);
             slot.preset.flickTrajectoryWait = ReadBool(ini, section, "flickTrajectoryWait", slot.preset.flickTrajectoryWait);
             slot.preset.flickTrajectoryWaitMs = ReadFixedFloat(ini, section, "flickTrajectoryWaitMs", slot.preset.flickTrajectoryWaitMs);
             slot.preset.flickTrajectoryApexWindowMs = ReadFixedFloat(ini, section, "flickTrajectoryApexWindowMs", slot.preset.flickTrajectoryApexWindowMs);
@@ -3131,6 +3182,13 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "trackingDeadzone", preset.trackingDeadzone);
             WriteFixedFloatValue(path, section, "flickShotClampMs", preset.flickShotClampMs);
             WriteFixedFloatValue(path, section, "flickPostFireDelayMs", preset.flickPostFireDelayMs);
+            WriteFixedFloatValue(path, section, "magneticShotIntervalMs", preset.magneticShotIntervalMs);
+            WriteFixedFloatValue(path, section, "magneticPostFirePauseMs", preset.magneticPostFirePauseMs);
+            WriteFixedFloatValue(path, section, "magneticRecoveryMs", preset.magneticRecoveryMs);
+            WriteFixedFloatValue(path, section, "magneticPostFireYawScale", preset.magneticPostFireYawScale);
+            WriteFixedFloatValue(path, section, "magneticPostFirePitchScale", preset.magneticPostFirePitchScale);
+            WriteFixedFloatValue(path, section, "magneticPreFireBoostWindowMs", preset.magneticPreFireBoostWindowMs);
+            WriteFixedFloatValue(path, section, "magneticPreFireBoostScale", preset.magneticPreFireBoostScale);
             WriteBoolValue(path, section, "flickTrajectoryWait", preset.flickTrajectoryWait);
             WriteFixedFloatValue(path, section, "flickTrajectoryWaitMs", preset.flickTrajectoryWaitMs);
             WriteFixedFloatValue(path, section, "flickTrajectoryApexWindowMs", preset.flickTrajectoryApexWindowMs);
@@ -3247,6 +3305,13 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "trackingDeadzone", preset.trackingDeadzone, allocator);
             AddJsonFloat(value, "flickShotClampMs", preset.flickShotClampMs, allocator);
             AddJsonFloat(value, "flickPostFireDelayMs", preset.flickPostFireDelayMs, allocator);
+            AddJsonFloat(value, "magneticShotIntervalMs", preset.magneticShotIntervalMs, allocator);
+            AddJsonFloat(value, "magneticPostFirePauseMs", preset.magneticPostFirePauseMs, allocator);
+            AddJsonFloat(value, "magneticRecoveryMs", preset.magneticRecoveryMs, allocator);
+            AddJsonFloat(value, "magneticPostFireYawScale", preset.magneticPostFireYawScale, allocator);
+            AddJsonFloat(value, "magneticPostFirePitchScale", preset.magneticPostFirePitchScale, allocator);
+            AddJsonFloat(value, "magneticPreFireBoostWindowMs", preset.magneticPreFireBoostWindowMs, allocator);
+            AddJsonFloat(value, "magneticPreFireBoostScale", preset.magneticPreFireBoostScale, allocator);
             AddJsonBool(value, "flickTrajectoryWait", preset.flickTrajectoryWait, allocator);
             AddJsonFloat(value, "flickTrajectoryWaitMs", preset.flickTrajectoryWaitMs, allocator);
             AddJsonFloat(value, "flickTrajectoryApexWindowMs", preset.flickTrajectoryApexWindowMs, allocator);
@@ -4207,6 +4272,13 @@ namespace OW { namespace Config {
             defaults.trackingDeadzone = ReadJsonFloat(value, "trackingDeadzone", defaults.trackingDeadzone);
             defaults.flickShotClampMs = ReadJsonFloat(value, "flickShotClampMs", defaults.flickShotClampMs);
             defaults.flickPostFireDelayMs = ReadJsonFloat(value, "flickPostFireDelayMs", defaults.flickPostFireDelayMs);
+            defaults.magneticShotIntervalMs = ReadJsonFloat(value, "magneticShotIntervalMs", defaults.magneticShotIntervalMs);
+            defaults.magneticPostFirePauseMs = ReadJsonFloat(value, "magneticPostFirePauseMs", defaults.magneticPostFirePauseMs);
+            defaults.magneticRecoveryMs = ReadJsonFloat(value, "magneticRecoveryMs", defaults.magneticRecoveryMs);
+            defaults.magneticPostFireYawScale = ReadJsonFloat(value, "magneticPostFireYawScale", defaults.magneticPostFireYawScale);
+            defaults.magneticPostFirePitchScale = ReadJsonFloat(value, "magneticPostFirePitchScale", defaults.magneticPostFirePitchScale);
+            defaults.magneticPreFireBoostWindowMs = ReadJsonFloat(value, "magneticPreFireBoostWindowMs", defaults.magneticPreFireBoostWindowMs);
+            defaults.magneticPreFireBoostScale = ReadJsonFloat(value, "magneticPreFireBoostScale", defaults.magneticPreFireBoostScale);
             defaults.flickTrajectoryWait = ReadJsonBool(value, "flickTrajectoryWait", defaults.flickTrajectoryWait);
             defaults.flickTrajectoryWaitMs = ReadJsonFloat(value, "flickTrajectoryWaitMs", defaults.flickTrajectoryWaitMs);
             defaults.flickTrajectoryApexWindowMs = ReadJsonFloat(value, "flickTrajectoryApexWindowMs", defaults.flickTrajectoryApexWindowMs);
@@ -4856,6 +4928,13 @@ namespace OW { namespace Config {
                 ReadInt(ini, section, "aimbotBoneMask2", static_cast<int>(aimbotBoneMask2)));
             aimbotFlickShotClampMs = ReadFixedFloat(ini, section, "aimbotFlickShotClampMs", aimbotFlickShotClampMs);
             aimbotFlickPostFireDelayMs = ReadFixedFloat(ini, section, "aimbotFlickPostFireDelayMs", aimbotFlickPostFireDelayMs);
+            aimbotMagneticShotIntervalMs = ReadFixedFloat(ini, section, "aimbotMagneticShotIntervalMs", aimbotMagneticShotIntervalMs);
+            aimbotMagneticPostFirePauseMs = ReadFixedFloat(ini, section, "aimbotMagneticPostFirePauseMs", aimbotMagneticPostFirePauseMs);
+            aimbotMagneticRecoveryMs = ReadFixedFloat(ini, section, "aimbotMagneticRecoveryMs", aimbotMagneticRecoveryMs);
+            aimbotMagneticPostFireYawScale = ReadFixedFloat(ini, section, "aimbotMagneticPostFireYawScale", aimbotMagneticPostFireYawScale);
+            aimbotMagneticPostFirePitchScale = ReadFixedFloat(ini, section, "aimbotMagneticPostFirePitchScale", aimbotMagneticPostFirePitchScale);
+            aimbotMagneticPreFireBoostWindowMs = ReadFixedFloat(ini, section, "aimbotMagneticPreFireBoostWindowMs", aimbotMagneticPreFireBoostWindowMs);
+            aimbotMagneticPreFireBoostScale = ReadFixedFloat(ini, section, "aimbotMagneticPreFireBoostScale", aimbotMagneticPreFireBoostScale);
             aimbotFlickTrajectoryWait = ReadBool(ini, section, "aimbotFlickTrajectoryWait", aimbotFlickTrajectoryWait);
             aimbotFlickTrajectoryWaitMs = ReadFixedFloat(ini, section, "aimbotFlickTrajectoryWaitMs", aimbotFlickTrajectoryWaitMs);
             aimbotFlickTrajectoryApexWindowMs = ReadFixedFloat(ini, section, "aimbotFlickTrajectoryApexWindowMs", aimbotFlickTrajectoryApexWindowMs);
@@ -5296,6 +5375,13 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "aimbotBoneMask2", static_cast<int>(aimbotBoneMask2));
             WriteFixedFloatValue(path, section, "aimbotFlickShotClampMs", aimbotFlickShotClampMs);
             WriteFixedFloatValue(path, section, "aimbotFlickPostFireDelayMs", aimbotFlickPostFireDelayMs);
+            WriteFixedFloatValue(path, section, "aimbotMagneticShotIntervalMs", aimbotMagneticShotIntervalMs);
+            WriteFixedFloatValue(path, section, "aimbotMagneticPostFirePauseMs", aimbotMagneticPostFirePauseMs);
+            WriteFixedFloatValue(path, section, "aimbotMagneticRecoveryMs", aimbotMagneticRecoveryMs);
+            WriteFixedFloatValue(path, section, "aimbotMagneticPostFireYawScale", aimbotMagneticPostFireYawScale);
+            WriteFixedFloatValue(path, section, "aimbotMagneticPostFirePitchScale", aimbotMagneticPostFirePitchScale);
+            WriteFixedFloatValue(path, section, "aimbotMagneticPreFireBoostWindowMs", aimbotMagneticPreFireBoostWindowMs);
+            WriteFixedFloatValue(path, section, "aimbotMagneticPreFireBoostScale", aimbotMagneticPreFireBoostScale);
             WriteBoolValue(path, section, "aimbotFlickTrajectoryWait", aimbotFlickTrajectoryWait);
             WriteFixedFloatValue(path, section, "aimbotFlickTrajectoryWaitMs", aimbotFlickTrajectoryWaitMs);
             WriteFixedFloatValue(path, section, "aimbotFlickTrajectoryApexWindowMs", aimbotFlickTrajectoryApexWindowMs);
@@ -5870,6 +5956,13 @@ namespace OW { namespace Config {
             aimbotTrackingDeadzone = ClampTrackingDeadzonePixels(aimbotTrackingDeadzone);
             aimbotFlickShotClampMs = ClampFlickShotClampMs(aimbotFlickShotClampMs);
             aimbotFlickPostFireDelayMs = ClampFlickPostFireDelayMs(aimbotFlickPostFireDelayMs);
+            aimbotMagneticShotIntervalMs = ClampMagneticShotIntervalMs(aimbotMagneticShotIntervalMs);
+            aimbotMagneticPostFirePauseMs = ClampMagneticTimingMs(aimbotMagneticPostFirePauseMs, 35.0f);
+            aimbotMagneticRecoveryMs = ClampMagneticTimingMs(aimbotMagneticRecoveryMs, 90.0f);
+            aimbotMagneticPostFireYawScale = ClampMagneticAxisScale(aimbotMagneticPostFireYawScale, 0.35f);
+            aimbotMagneticPostFirePitchScale = ClampMagneticAxisScale(aimbotMagneticPostFirePitchScale, 0.0f);
+            aimbotMagneticPreFireBoostWindowMs = ClampMagneticTimingMs(aimbotMagneticPreFireBoostWindowMs, 45.0f);
+            aimbotMagneticPreFireBoostScale = ClampMagneticBoostScale(aimbotMagneticPreFireBoostScale);
             aimbotFlickTrajectoryWaitMs = ClampTrajectoryWaitMs(aimbotFlickTrajectoryWaitMs);
             aimbotFlickTrajectoryApexWindowMs = ClampTrajectoryApexWindowMs(aimbotFlickTrajectoryApexWindowMs);
             ClampFloatSetting("aimbotFlick2ndBoxPadding", aimbotFlick2ndBoxPadding, 0.0f, 80.0f, 8.0f);
@@ -6109,17 +6202,31 @@ namespace OW { namespace Config {
             LogConfig(level, "Dump: aim two_stage=%s triggerGate=%s boxPadding=%.3f innerRadius=%.3f innerSmoothScale=%.3f overshoot=%s overshootGain=%.3f overshootResetPx=%.3f",
                 ToText(aimbotTwoStage).c_str(), ToText(aimbotTwoStageTriggerGate).c_str(),
                 aimbotTwoStageBoxPadding, aimbotTwoStageInnerRadius, aimbotTwoStageInnerSmoothScale,
-                ToText(aimOvershootCurve).c_str(), aimOvershootGain, aimOvershootResetPixels);
-            LogConfig(level, "Dump: aim method method=%d pidP=%.3f pidI=%.3f pidD=%.3f pidMaxIntegral=%.3f pidDeadzone=%.3f bezierControlPoints=%d bezierCurvature=%.3f bezierSpeed=%.3f piecewiseDeg=(%.3f,%.3f,%.3f) piecewiseScale=(%.3f,%.3f,%.3f) accelLimited=%.3f constantDegPerSec=%.3f speedScale=(%.3f,%.3f,%.3f,%.3f,%.3f,%.3f)",
+                 ToText(aimOvershootCurve).c_str(), aimOvershootGain, aimOvershootResetPixels);
+            LogConfig(level, "Dump: magnetic phase intervalMs=%.3f postPauseMs=%.3f recoveryMs=%.3f pauseScale=(yaw=%.3f,pitch=%.3f) preFire=(windowMs=%.3f,scale=%.3f)",
+                aimbotMagneticShotIntervalMs,
+                aimbotMagneticPostFirePauseMs,
+                aimbotMagneticRecoveryMs,
+                aimbotMagneticPostFireYawScale,
+                aimbotMagneticPostFirePitchScale,
+                aimbotMagneticPreFireBoostWindowMs,
+                aimbotMagneticPreFireBoostScale);
+            LogConfig(level, "Dump: aim method method=%d pidP=%.3f pidI=%.3f pidD=%.3f pidMaxIntegral=%.3f pidDeadzone=%.3f bezierControlPoints=%d bezierCurvature=%.3f bezierSpeed=%.3f piecewiseDeg=(%.3f,%.3f,%.3f) piecewiseScale=(%.3f,%.3f,%.3f) accelLimited=%.3f constantDegPerSec=%.3f hybrid=(constant=%.3f max=%.3f accel=%.3f decel=%.3f near=%.3f motion=%.3f boost=%.3f deadzone=%.3f) speedScale=(%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f)",
                 aimMethod, aimPidP, aimPidI, aimPidD, aimPidMaxIntegral, aimPidDeadzone,
                 aimBezierControlPoints, aimBezierCurvature, aimBezierSpeed,
                 AimPiecewiseNearDegrees(), AimPiecewiseMidDegrees(), AimPiecewiseFarDegrees(),
                 AimPiecewiseNearScale(), AimPiecewiseMidScale(), AimPiecewiseFarScale(),
                 AimMethodAcceleration(4),
                 AimConstantAngularSpeedDeg(),
+                aimHybridConstantSpeedDeg, aimHybridMaxSpeedDeg,
+                aimHybridAccelerationDeg, aimHybridDecelerationDeg,
+                aimHybridNearRadiusDeg, aimHybridTargetMotionGain,
+                aimHybridSuddenMotionBoost,
+                aimHybridDeadzoneDeg,
                 aimMethodAngularSpeedScale[0], aimMethodAngularSpeedScale[1],
                 aimMethodAngularSpeedScale[2], aimMethodAngularSpeedScale[3],
-                aimMethodAngularSpeedScale[4], aimMethodAngularSpeedScale[5]);
+                aimMethodAngularSpeedScale[4], aimMethodAngularSpeedScale[5],
+                aimMethodAngularSpeedScale[6]);
             LogConfig(level, "Dump: aim behavior moveSplit enabled=(%s,%s,%s,%s) maxPixels=(%d,%d,%d,%d) delayUs=(%d,%d,%d,%d)",
                 ToText(AimBehaviorMoveSplitEnabled(0)).c_str(),
                 ToText(AimBehaviorMoveSplitEnabled(1)).c_str(),

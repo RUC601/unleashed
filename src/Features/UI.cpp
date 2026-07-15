@@ -3651,6 +3651,45 @@ void UI::AimbotPage() {
                 presetChanged |= UISlider("##aimFlickPostFireDelay", &activePreset.flickPostFireDelayMs, 0.0f, 500.0f, "0 ms");
                 ImGui::PopItemWidth();
 
+                if (OW::Config::IsMagneticTriggerBehavior(activePreset.aimBehavior)) {
+                    SettingRow("Repeat Interval", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimMagneticInterval", &activePreset.magneticShotIntervalMs, 0.0f, 5000.0f, "Auto / weapon TSV");
+                    ImGui::PopItemWidth();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("0 uses trigger_cycle_interval_ms for the current WeaponSpec. A non-zero value overrides the table.");
+
+                    SettingRow("Aim Pause", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimMagneticPause", &activePreset.magneticPostFirePauseMs, 0.0f, 500.0f, "35 ms");
+                    ImGui::PopItemWidth();
+
+                    SettingRow("Aim Recovery", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimMagneticRecovery", &activePreset.magneticRecoveryMs, 0.0f, 1000.0f, "90 ms");
+                    ImGui::PopItemWidth();
+
+                    SettingRow("Pause X Scale", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimMagneticYawScale", &activePreset.magneticPostFireYawScale, 0.0f, 1.0f, "0.35x");
+                    ImGui::PopItemWidth();
+
+                    SettingRow("Pause Y Scale", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimMagneticPitchScale", &activePreset.magneticPostFirePitchScale, 0.0f, 1.0f, "0.00x");
+                    ImGui::PopItemWidth();
+
+                    SettingRow("Pre-fire Window", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimMagneticBoostWindow", &activePreset.magneticPreFireBoostWindowMs, 0.0f, 250.0f, "45 ms");
+                    ImGui::PopItemWidth();
+
+                    SettingRow("Pre-fire Boost", kAimbotLeftLabelWidth);
+                    PushControlWidth();
+                    presetChanged |= UISlider("##aimMagneticBoostScale", &activePreset.magneticPreFireBoostScale, 1.0f, 3.0f, "1.35x");
+                    ImGui::PopItemWidth();
+                }
+
                 SettingRow("Trajectory Wait", kAimbotLeftLabelWidth);
                 presetChanged |= UICheckbox("##aimFlickTrajectoryWait", &activePreset.flickTrajectoryWait);
 

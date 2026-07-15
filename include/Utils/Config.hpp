@@ -394,6 +394,13 @@ namespace OW { namespace Config {
     inline float aimbotTrackingDeadzone = 0.0f;
     inline float aimbotFlickShotClampMs = 0.0f;
     inline float aimbotFlickPostFireDelayMs = 0.0f;
+    inline float aimbotMagneticShotIntervalMs = 0.0f; // 0 = conservative weapon-class fallback
+    inline float aimbotMagneticPostFirePauseMs = 35.0f;
+    inline float aimbotMagneticRecoveryMs = 90.0f;
+    inline float aimbotMagneticPostFireYawScale = 0.35f;
+    inline float aimbotMagneticPostFirePitchScale = 0.0f;
+    inline float aimbotMagneticPreFireBoostWindowMs = 45.0f;
+    inline float aimbotMagneticPreFireBoostScale = 1.35f;
     inline bool  aimbotFlickTrajectoryWait = false;
     inline float aimbotFlickTrajectoryWaitMs = 120.0f;
     inline float aimbotFlickTrajectoryApexWindowMs = 60.0f;
@@ -1271,6 +1278,13 @@ namespace OW { namespace Config {
         float trackingDeadzone = 0.0f;
         float flickShotClampMs = 0.0f;
         float flickPostFireDelayMs = 0.0f;
+        float magneticShotIntervalMs = 0.0f;
+        float magneticPostFirePauseMs = 35.0f;
+        float magneticRecoveryMs = 90.0f;
+        float magneticPostFireYawScale = 0.35f;
+        float magneticPostFirePitchScale = 0.0f;
+        float magneticPreFireBoostWindowMs = 45.0f;
+        float magneticPreFireBoostScale = 1.35f;
         bool flickTrajectoryWait = false;
         float flickTrajectoryWaitMs = 120.0f;
         float flickTrajectoryApexWindowMs = 60.0f;
