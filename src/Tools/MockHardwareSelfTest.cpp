@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
@@ -20,6 +21,201 @@ namespace
     {
         std::printf("MockHardwareSelfTest failed: %s\n", message);
         return EXIT_FAILURE;
+    }
+
+    bool NearlyEqual(float left, float right, float epsilon = 0.00001f)
+    {
+        return std::fabs(left - right) <= epsilon;
+    }
+
+    int VerifyMagneticTriggerQuantizationRules()
+    {
+        {
+            OW::MouseMoveQuantizationState state{};
+            const OW::MouseMoveQuantizationResult result =
+                OW::QuantizeMouseMoveCounts(
+                    1.25f,
+                    -2.5f,
+                    1.25f,
+                    -2.5f,
+                    state,
+                    true);
+            if (result.pixelX != 1 || result.pixelY != -2 ||
+                result.forcedMinimumStep ||
+                !NearlyEqual(state.residualX, 0.25f) ||
+                !NearlyEqual(state.residualY, -0.5f)) {
+                return Fail("magnetic quantizer changed normal integer-count conversion");
+            }
+        }
+
+        {
+            OW::MouseMoveQuantizationState state{};
+            const OW::MouseMoveQuantizationResult result =
+                OW::QuantizeMouseMoveCounts(
+                    0.4f,
+                    -0.2f,
+                    0.4f,
+                    -0.2f,
+                    state,
+                    true);
+            if (!result.forcedMinimumStep ||
+                result.pixelX != 1 || result.pixelY != 0 ||
+                !NearlyEqual(state.residualX, 0.0f) ||
+                !NearlyEqual(state.residualY, -0.2f)) {
+                return Fail("magnetic sub-count error did not force the dominant signed axis");
+            }
+        }
+
+        {
+            OW::MouseMoveQuantizationState state{};
+            const OW::MouseMoveQuantizationResult first =
+                OW::QuantizeMouseMoveCounts(
+                    0.25f,
+                    0.25f,
+                    0.25f,
+                    0.25f,
+                    state,
+                    true);
+            const OW::MouseMoveQuantizationResult second =
+                OW::QuantizeMouseMoveCounts(
+                    0.25f,
+                    0.25f,
+                    0.25f,
+                    0.25f,
+                    state,
+                    true);
+            if (!first.forcedMinimumStep || !second.forcedMinimumStep ||
+                first.pixelX != 1 || first.pixelY != 0 ||
+                second.pixelX != 0 || second.pixelY != 1) {
+                return Fail("magnetic equal-axis sub-count errors did not alternate axes");
+            }
+        }
+
+        {
+            OW::MouseMoveQuantizationState state{};
+            state.residualX = 0.9f;
+            state.residualY = -0.1f;
+            const OW::MouseMoveQuantizationResult result =
+                OW::QuantizeMouseMoveCounts(
+                    0.0f,
+                    0.0f,
+                    0.2f,
+                    -0.8f,
+                    state,
+                    true);
+            if (!result.forcedMinimumStep ||
+                result.pixelX != 0 || result.pixelY != -1 ||
+                !NearlyEqual(state.residualX, 0.9f) ||
+                !NearlyEqual(state.residualY, 0.0f)) {
+                return Fail("magnetic deadzone fallback did not use raw target direction");
+            }
+        }
+
+        {
+            OW::MouseMoveQuantizationState state{};
+            (void)OW::QuantizeMouseMoveCounts(
+                0.6f,
+                0.0f,
+                0.6f,
+                0.0f,
+                state,
+                false);
+            const OW::MouseMoveQuantizationResult reversed =
+                OW::QuantizeMouseMoveCounts(
+                    -0.2f,
+                    0.0f,
+                    -0.2f,
+                    0.0f,
+                    state,
+                    true);
+            if (reversed.pixelX != -1 || reversed.pixelY != 0 ||
+                !reversed.forcedMinimumStep ||
+                !NearlyEqual(state.residualX, 0.0f)) {
+                return Fail("magnetic direction reversal inherited old residual movement");
+            }
+        }
+
+        {
+            OW::MouseMoveQuantizationState state{};
+            if (!OW::PrepareMouseMoveQuantizationState(state, 1, 10, 100))
+                return Fail("magnetic quantizer did not initialize its identity");
+            state.residualX = 0.4f;
+            state.residualY = -0.3f;
+            if (OW::PrepareMouseMoveQuantizationState(state, 1, 10, 100) ||
+                !NearlyEqual(state.residualX, 0.4f) ||
+                !NearlyEqual(state.residualY, -0.3f)) {
+                return Fail("magnetic quantizer reset an unchanged identity");
+            }
+            if (!OW::PrepareMouseMoveQuantizationState(state, 1, 10, 101) ||
+                !NearlyEqual(state.residualX, 0.0f) ||
+                !NearlyEqual(state.residualY, 0.0f)) {
+                return Fail("magnetic target change did not clear residual movement");
+            }
+            state.residualX = 0.4f;
+            if (!OW::PrepareMouseMoveQuantizationState(state, 2, 10, 101) ||
+                !NearlyEqual(state.residualX, 0.0f)) {
+                return Fail("magnetic session change did not clear residual movement");
+            }
+            state.residualY = -0.3f;
+            if (!OW::PrepareMouseMoveQuantizationState(state, 2, 11, 101) ||
+                !NearlyEqual(state.residualY, 0.0f)) {
+                return Fail("magnetic connection generation change did not clear residual movement");
+            }
+            OW::ResetMouseMoveQuantizationState(state);
+            if (OW::HasMouseMoveQuantizationState(state))
+                return Fail("magnetic inside-hit reset left quantization state behind");
+        }
+
+        {
+            OW::MouseMoveQuantizationState state{};
+            const OW::MouseMoveQuantizationResult first =
+                OW::QuantizeMouseMoveCounts(
+                    0.4f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    state,
+                    false);
+            const OW::MouseMoveQuantizationResult second =
+                OW::QuantizeMouseMoveCounts(
+                    0.4f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    state,
+                    false);
+            const OW::MouseMoveQuantizationResult third =
+                OW::QuantizeMouseMoveCounts(
+                    0.4f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    state,
+                    false);
+            if (first.pixelX != 0 || second.pixelX != 0 || third.pixelX != 1 ||
+                first.forcedMinimumStep || second.forcedMinimumStep ||
+                third.forcedMinimumStep ||
+                !NearlyEqual(state.residualX, 0.2f)) {
+                return Fail("default quantization no longer accumulates fractional counts");
+            }
+        }
+
+        AimbotDetail::RuntimeState runtimeState{};
+        if (!OW::PrepareMouseMoveQuantizationState(
+                runtimeState.magneticMoveQuantization,
+                1,
+                10,
+                100)) {
+            return Fail("magnetic runtime state did not initialize");
+        }
+        runtimeState.magneticMoveQuantization.residualX = 0.5f;
+        AimbotDetail::ResetTrackingSession(runtimeState);
+        if (OW::HasMouseMoveQuantizationState(
+                runtimeState.magneticMoveQuantization)) {
+            return Fail("magnetic key/session release retained quantization state");
+        }
+
+        return EXIT_SUCCESS;
     }
 
     void ConfigureMockRuntime()
@@ -1712,6 +1908,8 @@ int main()
 
     if (VerifyKmboxMonitorPortNormalization() != EXIT_SUCCESS)
         return EXIT_FAILURE;
+    if (VerifyMagneticTriggerQuantizationRules() != EXIT_SUCCESS)
+        return EXIT_FAILURE;
 
     ConfigureMockRuntime();
     if (kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(50)) != success)
@@ -1744,6 +1942,42 @@ int main()
         return EXIT_FAILURE;
     if (VerifySafetyCleanupWhileMenuOpen() != EXIT_SUCCESS)
         return EXIT_FAILURE;
+
+    {
+        OW::ResetMouseMoveQuantizationState(
+            OW::DefaultMouseMoveQuantizationState());
+        const float yawCountsPerRadian =
+            OW::Config::KmboxYawCountsPerRadian();
+        if (!std::isfinite(yawCountsPerRadian) ||
+            yawCountsPerRadian <= 0.0f) {
+            return Fail("default mouse quantization test has invalid sensitivity");
+        }
+        const OW::Vector3 fractionalYaw(
+            0.0f,
+            -0.4f / yawCountsPerRadian,
+            0.0f);
+        const kmbox::MockHardwareSnapshot before =
+            kmbox::MockHardwareMgr.Snapshot();
+        OW::SendMouseMove(fractionalYaw, 0);
+        OW::SendMouseMove(fractionalYaw, 0);
+        const kmbox::MockHardwareSnapshot afterTwo =
+            kmbox::MockHardwareMgr.Snapshot();
+        OW::SendMouseMove(fractionalYaw, 0);
+        const kmbox::MockHardwareSnapshot afterThree =
+            kmbox::MockHardwareMgr.Snapshot();
+        if (afterTwo.moveEvents != before.moveEvents ||
+            afterThree.moveEvents != before.moveEvents + 1) {
+            return Fail("default SendMouseMove fractional accumulation changed");
+        }
+        const auto events = kmbox::MockHardwareMgr.RecentEvents();
+        if (events.empty() ||
+            events.back().type != kmbox::MockEventType::Move ||
+            events.back().x != 1 || events.back().y != 0) {
+            return Fail("default SendMouseMove emitted the wrong accumulated count");
+        }
+        OW::ResetMouseMoveQuantizationState(
+            OW::DefaultMouseMoveQuantizationState());
+    }
 
     {
         const kmbox::MockHardwareSnapshot before = kmbox::MockHardwareMgr.Snapshot();

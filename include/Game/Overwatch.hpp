@@ -8920,6 +8920,7 @@ namespace AimbotDetail {
         int trackingSessionAimKey = 0;
         uint64_t trackingSessionGeneration = 0;
         OW::AimStartLimiterState trackingStartLimiter{};
+        OW::MouseMoveQuantizationState magneticMoveQuantization{};
     };
 
     inline OW::c_entity LocalEntity();
@@ -8965,7 +8966,66 @@ namespace AimbotDetail {
             state.trackingSessionAimKey == identity.aimKey;
     }
 
+    inline void LogMagneticTriggerQuantizationReset(
+        const char* reason,
+        bool hadState) {
+        static DWORD lastLogTick = 0;
+        const DWORD now = GetTickCount();
+        if (!OW::Config::aimVerboseLog &&
+            lastLogTick != 0 &&
+            now - lastLogTick < 250) {
+            return;
+        }
+        Diagnostics::Aim("magnetic_trigger.quantization state_reset=1 state_reset_reason=%s had_state=%d",
+            reason ? reason : "unknown",
+            hadState ? 1 : 0);
+        lastLogTick = now;
+    }
+
+    inline void ResetMagneticTriggerQuantization(
+        RuntimeState& state,
+        const char* reason) {
+        const bool hadState = OW::HasMouseMoveQuantizationState(
+            state.magneticMoveQuantization);
+        OW::ResetMouseMoveQuantizationState(state.magneticMoveQuantization);
+        if (hadState)
+            LogMagneticTriggerQuantizationReset(reason, true);
+    }
+
+    inline void PrepareMagneticTriggerQuantization(
+        RuntimeState& state,
+        std::uint64_t sessionGeneration,
+        std::uint64_t connectionEpoch,
+        std::uint64_t targetKey) {
+        const OW::MouseMoveQuantizationState previous =
+            state.magneticMoveQuantization;
+        if (!OW::PrepareMouseMoveQuantizationState(
+                state.magneticMoveQuantization,
+                sessionGeneration,
+                connectionEpoch,
+                targetKey)) {
+            return;
+        }
+
+        const char* reason = "state_start";
+        if (previous.initialized) {
+            if (previous.sessionGeneration != sessionGeneration)
+                reason = "session_generation_changed";
+            else if (previous.connectionEpoch != connectionEpoch)
+                reason = "connection_generation_changed";
+            else if (previous.targetKey != targetKey)
+                reason = "target_changed";
+        }
+        if (OW::HasMouseMoveQuantizationState(previous) ||
+            OW::Config::aimVerboseLog) {
+            LogMagneticTriggerQuantizationReset(
+                reason,
+                OW::HasMouseMoveQuantizationState(previous));
+        }
+    }
+
     inline void ResetTrackingSession(RuntimeState& state) {
+        ResetMagneticTriggerQuantization(state, "tracking_session_reset");
         state.trackingSessionActive = false;
         state.trackingSessionTimedOut = false;
         state.trackingSessionStartedTick = 0;
@@ -9667,6 +9727,35 @@ namespace AimbotDetail {
             delta.Size(),
             effective_move_time_ms);
         OW::SendMouseMove(delta, effective_move_time_ms);
+    }
+
+    inline OW::MouseMoveQuantizationResult MoveMagneticTriggerAimDelta(
+        RuntimeState& state,
+        const Vector3& currentAngle,
+        const Vector3& outputAngle,
+        const Vector3& rawTargetAngle,
+        int moveTimeMs = -1) {
+        const Vector3 delta = outputAngle - currentAngle;
+        const Vector3 rawDelta = rawTargetAngle - currentAngle;
+        const int effectiveMoveTimeMs = moveTimeMs < 0
+            ? OW::Config::kmboxInputDelayMs
+            : moveTimeMs;
+        if (OW::Config::aimVerboseLog) {
+            Diagnostics::Aim("magnetic_trigger.move delta=(%.9f,%.9f,%.9f) raw_delta=(%.9f,%.9f,%.9f) moveTimeMs=%d",
+                delta.X,
+                delta.Y,
+                delta.Z,
+                rawDelta.X,
+                rawDelta.Y,
+                rawDelta.Z,
+                effectiveMoveTimeMs);
+        }
+
+        OW::MouseMoveQuantizationOptions quantization{};
+        quantization.state = &state.magneticMoveQuantization;
+        quantization.fallbackDirectionDelta = rawDelta;
+        quantization.forceNonZero = true;
+        return OW::SendMouseMove(delta, effectiveMoveTimeMs, quantization);
     }
 
     inline constexpr const char* kGlobalAimClickOwnerKey =
@@ -11726,24 +11815,35 @@ namespace AimbotDetail {
             OW::ProcessConnection::ConnectionEpoch();
         const std::uint64_t outputTransitionEpoch =
             OW::RuntimeOutputTransitionEpoch();
-        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected()) {
+            ResetMagneticTriggerQuantization(state, "connection_unavailable");
             return;
-        if (InputSequenceBlocksAim("magnetic_trigger"))
+        }
+        if (InputSequenceBlocksAim("magnetic_trigger")) {
+            ResetMagneticTriggerQuantization(state, "sequence_preempted");
             return;
+        }
         MaintainHanzoCustomFlickState(state);
         UpdateFlickShotCooldown(state);
-        if (FlickPostFireLockoutActive(state))
+        if (FlickPostFireLockoutActive(state)) {
+            ResetMagneticTriggerQuantization(state, "post_fire_lockout");
             return;
+        }
         if (!IsAimKeyPressed()) {
             ResetTrackingSession(state);
             return;
         }
-        if (OW::Config::shooted || OW::Config::reloading)
+        if (OW::Config::shooted || OW::Config::reloading) {
+            ResetMagneticTriggerQuantization(
+                state,
+                OW::Config::reloading ? "reloading" : "fire_finished");
             return;
+        }
 
         const TrackingSessionIdentity sessionIdentity = CurrentTrackingSessionIdentity();
         EnsureTrackingSession(state, sessionIdentity);
         if (state.trackingSessionTimedOut) {
+            ResetMagneticTriggerQuantization(state, "session_timeout_held");
             static DWORD lastAssistTimeoutLogTick = 0;
             const DWORD now = GetTickCount();
             if (lastAssistTimeoutLogTick == 0 || now - lastAssistTimeoutLogTick >= 250) {
@@ -11774,12 +11874,14 @@ namespace AimbotDetail {
         if (!OW::Config::aimDryRun &&
             localAtEntry.HeroID == OW::eHero::HERO_HANJO &&
             !localAtEntry.skill2act) {
+            ResetMagneticTriggerQuantization(state, "hanzo_custom_route");
             Diagnostics::Aim("hanzo.custom route=magnetic_trigger");
             RunHanzoCustomFlick(state, origin_sens);
             return;
         }
 
         if (OW::Config::aimDryRun) {
+            ResetMagneticTriggerQuantization(state, "dry_run");
             static DWORD lastDryRunLog = 0;
             const DWORD now = GetTickCount();
             if (now - lastDryRunLog >= static_cast<DWORD>(OW::Config::aimDryRunLogIntervalMs)) {
@@ -11795,14 +11897,41 @@ namespace AimbotDetail {
                         OW::Config::AimBehaviorAcceleration(behavior));
                     const float hitWindow = OW::Config::aimbotEffectiveHitWindow;
                     const bool hitBeforeMove = OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
-                    const bool hitAfterMove = deadzoneDampingScale > 0.0f &&
+                    const bool hitAfterMove = !hitBeforeMove &&
+                        deadzoneDampingScale > 0.0f &&
                         OW::in_range(aim.smoothed_angle, aim.target_angle, aim.local_pos, vec, hitWindow);
-                    Diagnostics::Aim("dryrun.magnetic_trigger local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) hitbox=%.4f would_fire=%d deadzoneDistance=%.3f deadzoneScale=%.3f target_pos=(%.1f,%.1f,%.1f)",
+                    const Vector3 rawDelta = aim.target_angle - aim.local_angle;
+                    Vector3 previewDelta{};
+                    if (!hitBeforeMove &&
+                        deadzoneDampingScale > 0.0f &&
+                        !IsZeroVector(aim.smoothed_angle)) {
+                        previewDelta = aim.smoothed_angle - aim.local_angle;
+                    }
+                    const float pitchScale = std::clamp(
+                        OW::Config::aimbotPitchScale,
+                        0.1f,
+                        3.0f);
+                    OW::MouseMoveQuantizationState previewState{};
+                    const OW::MouseMoveQuantizationResult preview =
+                        OW::QuantizeMouseMoveCounts(
+                            -previewDelta.Y * OW::Config::KmboxYawCountsPerRadian(),
+                            previewDelta.X * OW::Config::KmboxPitchCountsPerRadian() * pitchScale,
+                            -rawDelta.Y * OW::Config::KmboxYawCountsPerRadian(),
+                            rawDelta.X * OW::Config::KmboxPitchCountsPerRadian() * pitchScale,
+                            previewState,
+                            !hitBeforeMove);
+                    Diagnostics::Aim("dryrun.magnetic_trigger local_angle_deg=(%.4f,%.4f) target_angle_deg=(%.4f,%.4f) delta_deg=(%.4f,%.4f) hitbox=%.4f would_fire=%d inside_hit_window=%d would_enqueue=%d preview_counts=(%d,%d) forced_min_step=%d deadzoneDistance=%.3f deadzoneScale=%.3f target_pos=(%.1f,%.1f,%.1f)",
                         RAD2DEG(aim.local_angle.X), RAD2DEG(aim.local_angle.Y),
                         RAD2DEG(aim.target_angle.X), RAD2DEG(aim.target_angle.Y),
                         RAD2DEG(aim.target_angle.X - aim.local_angle.X), RAD2DEG(aim.target_angle.Y - aim.local_angle.Y),
                         hitWindow,
                         (hitBeforeMove || hitAfterMove) ? 1 : 0,
+                        hitBeforeMove ? 1 : 0,
+                        (!hitBeforeMove &&
+                            (preview.pixelX != 0 || preview.pixelY != 0)) ? 1 : 0,
+                        preview.pixelX,
+                        preview.pixelY,
+                        preview.forcedMinimumStep ? 1 : 0,
                         deadzoneDistance,
                         deadzoneDampingScale,
                         vec.X, vec.Y, vec.Z);
@@ -11830,11 +11959,13 @@ namespace AimbotDetail {
                !OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
             if (AimSessionTimedOut(sessionStartedTick, "magnetic_trigger")) {
                 state.trackingSessionTimedOut = true;
+                ResetMagneticTriggerQuantization(state, "session_timeout");
                 break;
             }
 
             const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
             if (IsZeroVector(vec)) {
+                ResetMagneticTriggerQuantization(state, "no_target");
                 Diagnostics::Aim("magnetic_trigger no_move reason=no_target_vector targetIndex=%d entities=%zu",
                     OW::Config::Targetenemyi,
                     OW::TargetingDetail::SnapshotEntities().size());
@@ -11846,6 +11977,7 @@ namespace AimbotDetail {
 
             c_entity target{};
             if (!IsPrimaryTargetActionable(target)) {
+                ResetMagneticTriggerQuantization(state, "target_not_actionable");
                 Diagnostics::Aim("magnetic_trigger no_move reason=target_not_actionable targetIndex=%d vec=(%.9f,%.9f,%.9f)",
                     OW::Config::Targetenemyi,
                     vec.X,
@@ -11856,6 +11988,12 @@ namespace AimbotDetail {
                 if (ShouldYieldToSecondaryAim()) break;
                 continue;
             }
+
+            PrepareMagneticTriggerQuantization(
+                state,
+                state.trackingSessionGeneration,
+                connectionEpoch,
+                TwoStageEntityKey(target));
 
             if (!TargetDelayReady(&state, true, true))
                 continue;
@@ -11885,6 +12023,7 @@ namespace AimbotDetail {
 
             if (DelayedShotTimedOut(state)) {
                 const c_entity local = LocalEntity();
+                ResetMagneticTriggerQuantization(state, "delayed_shot_timeout");
                 Diagnostics::Aim("magnetic_trigger delayed_shot timeout target=%d localHero=0x%llX",
                     OW::Config::Targetenemyi,
                     static_cast<unsigned long long>(local.HeroID));
@@ -11898,45 +12037,100 @@ namespace AimbotDetail {
                 continue;
             }
 
-            if (deadzoneDampingScale <= 0.0f) {
-                OW::ResetAimSmoothingState();
-                if (OW::Config::aimVerboseLog) {
-                    Diagnostics::Aim("magnetic_trigger.deadzone_hold distancePx=%.3f radiusPx=%.3f hitBefore=%d",
-                        deadzoneDistance,
-                        OW::Config::ClampTrackingDeadzonePixels(OW::Config::aimbotTrackingDeadzone),
-                        hitBeforeMove ? 1 : 0);
-                }
-            } else if (!IsZeroVector(aim.smoothed_angle)) {
-                MoveAimDelta(aim.local_angle, aim.smoothed_angle);
-                g_trackingMoves++;
-                hitAfterMove = OW::in_range(
-                    aim.smoothed_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow);
-                if (OW::Config::aimVerboseLog) {
-                    const float deltaDegX = RAD2DEG(aim.target_angle.X - aim.local_angle.X);
-                    const float deltaDegY = RAD2DEG(aim.target_angle.Y - aim.local_angle.Y);
-                    Diagnostics::Aim("magnetic_trigger.tick delta_deg=(%.4f,%.4f) hitbox=%.4f deadzoneDistance=%.3f deadzoneScale=%.3f hitBefore=%d hitAfter=%d",
-                        deltaDegX,
-                        deltaDegY,
-                        hitWindow,
-                        deadzoneDistance,
-                        deadzoneDampingScale,
-                        hitBeforeMove ? 1 : 0,
-                        hitAfterMove ? 1 : 0);
-                }
-                RunCloseRangeActions(
-                    aimTarget,
-                    OW::OutputOwnerSource::GlobalAim);
+            if (hitBeforeMove) {
+                ResetMagneticTriggerQuantization(state, "inside_hit_window");
+                Diagnostics::Aim("magnetic_trigger.tick inside_hit_window=1 forced_min_step=0 mouse_enqueue=0 hitbox=%.4f",
+                    hitWindow);
             } else {
-                Diagnostics::Aim("magnetic_trigger no_move reason=smoothed_angle_zero local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f)",
-                    aim.local_angle.X,
-                    aim.local_angle.Y,
-                    aim.local_angle.Z,
-                    aim.target_angle.X,
-                    aim.target_angle.Y,
-                    aim.target_angle.Z);
+                Vector3 outputAngle = aim.smoothed_angle;
+                if (deadzoneDampingScale <= 0.0f ||
+                    IsZeroVector(outputAngle) ||
+                    !std::isfinite(outputAngle.X) ||
+                    !std::isfinite(outputAngle.Y) ||
+                    !std::isfinite(outputAngle.Z)) {
+                    outputAngle = aim.local_angle;
+                }
+                if (deadzoneDampingScale <= 0.0f) {
+                    OW::ResetAimSmoothingState();
+                    if (OW::Config::aimVerboseLog) {
+                        Diagnostics::Aim("magnetic_trigger.deadzone_fallback distancePx=%.3f radiusPx=%.3f inside_hit_window=0 fallback=raw_target_delta",
+                            deadzoneDistance,
+                            OW::Config::ClampTrackingDeadzonePixels(
+                                OW::Config::aimbotTrackingDeadzone));
+                    }
+                }
+
+                const Vector3 rawDelta = aim.target_angle - aim.local_angle;
+                const bool rawDeltaValid =
+                    std::isfinite(rawDelta.X) &&
+                    std::isfinite(rawDelta.Y) &&
+                    std::isfinite(rawDelta.Z) &&
+                    (std::fabs(rawDelta.X) > 0.0000001f ||
+                        std::fabs(rawDelta.Y) > 0.0000001f);
+                if (rawDeltaValid) {
+                    const Vector3 outputDelta = outputAngle - aim.local_angle;
+                    const bool hasSmoothedDelta =
+                        std::isfinite(outputDelta.X) &&
+                        std::isfinite(outputDelta.Y) &&
+                        std::isfinite(outputDelta.Z) &&
+                        (std::fabs(outputDelta.X) > 0.0000001f ||
+                            std::fabs(outputDelta.Y) > 0.0000001f);
+                    const OW::MouseMoveQuantizationResult moveResult =
+                        MoveMagneticTriggerAimDelta(
+                            state,
+                            aim.local_angle,
+                            outputAngle,
+                            aim.target_angle);
+                    if (moveResult.dispatched)
+                        g_trackingMoves++;
+                    if (hasSmoothedDelta) {
+                        hitAfterMove = OW::in_range(
+                            outputAngle,
+                            aim.target_angle,
+                            aim.local_pos,
+                            aimTarget,
+                            hitWindow);
+                    }
+                    static DWORD lastQuantizationTickLog = 0;
+                    const DWORD quantizationLogNow = GetTickCount();
+                    if (OW::Config::aimVerboseLog ||
+                        lastQuantizationTickLog == 0 ||
+                        quantizationLogNow - lastQuantizationTickLog >= 250) {
+                        Diagnostics::Aim("magnetic_trigger.tick inside_hit_window=0 forced_min_step=%d mouse_enqueue=%d counts=(%d,%d) hitbox=%.4f deadzoneDistance=%.3f deadzoneScale=%.3f hitAfter=%d",
+                            moveResult.forcedMinimumStep ? 1 : 0,
+                            moveResult.dispatched ? 1 : 0,
+                            moveResult.pixelX,
+                            moveResult.pixelY,
+                            hitWindow,
+                            deadzoneDistance,
+                            deadzoneDampingScale,
+                            hitAfterMove ? 1 : 0);
+                        lastQuantizationTickLog = quantizationLogNow;
+                    }
+                    if (moveResult.pixelX == 0 && moveResult.pixelY == 0) {
+                        Diagnostics::Aim("magnetic_trigger invariant_warning outside_hit_window_zero_counts=1 raw_delta=(%.9f,%.9f,%.9f)",
+                            rawDelta.X,
+                            rawDelta.Y,
+                            rawDelta.Z);
+                    }
+                    if (moveResult.dispatched) {
+                        RunCloseRangeActions(
+                            aimTarget,
+                            OW::OutputOwnerSource::GlobalAim);
+                    }
+                } else {
+                    ResetMagneticTriggerQuantization(state, "invalid_raw_target_delta");
+                    Diagnostics::Aim("magnetic_trigger no_move reason=invalid_raw_target_delta inside_hit_window=0 raw_delta=(%.9f,%.9f,%.9f)",
+                        rawDelta.X,
+                        rawDelta.Y,
+                        rawDelta.Z);
+                }
             }
 
             if (hitBeforeMove || hitAfterMove) {
+                ResetMagneticTriggerQuantization(
+                    state,
+                    hitBeforeMove ? "inside_hit_window_fire" : "hit_after_move_fire");
                 if (OW::Config::aimVerboseLog) {
                     Diagnostics::Aim("magnetic_trigger.fire hitbox_check=passed before=%d after=%d",
                         hitBeforeMove ? 1 : 0,
@@ -11959,6 +12153,7 @@ namespace AimbotDetail {
                 const int previousShotCount = OW::Config::shotcount;
                 OW::Config::shotcount = 0;
                 const c_entity local = LocalEntity();
+                ResetMagneticTriggerQuantization(state, "dontshot_forced_fire");
                 Diagnostics::Aim("magnetic_trigger dontshot forced_fire target=%d previousShotCount=%d missbox=%.6f",
                     OW::Config::Targetenemyi,
                     previousShotCount,
@@ -11978,6 +12173,29 @@ namespace AimbotDetail {
             Sleep(1);
             RunAutoScaleFov();
             if (ShouldYieldToSecondaryAim()) break;
+        }
+
+        if (!IsAimKeyPressed()) {
+            ResetTrackingSession(state);
+        } else {
+            const char* exitReason = "loop_exit";
+            if (!OW::ProcessConnection::IsConnected() ||
+                OW::ProcessConnection::ConnectionEpoch() != connectionEpoch) {
+                exitReason = "connection_generation_changed";
+            } else if (!OW::RuntimeOutputTransitionMatches(outputTransitionEpoch)) {
+                exitReason = "output_transition_changed";
+            } else if (OW::Config::reloading) {
+                exitReason = "reloading";
+            } else if (OW::Config::shooted) {
+                exitReason = "fire_finished";
+            } else if (OW::ShouldBlockForActiveSequence(ExecutionSource::GlobalAim)) {
+                exitReason = "sequence_preempted";
+            } else if (ShouldYieldToSecondaryAim()) {
+                exitReason = "secondary_aim_preempted";
+            } else if (state.trackingSessionTimedOut) {
+                exitReason = "session_timeout";
+            }
+            ResetMagneticTriggerQuantization(state, exitReason);
         }
     }
 

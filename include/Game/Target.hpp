@@ -286,6 +286,148 @@ namespace OW {
             runtime.backendGeneration);
     }
 
+    struct MouseMoveQuantizationState {
+        float residualX = 0.0f;
+        float residualY = 0.0f;
+        std::uint64_t sessionGeneration = 0;
+        std::uint64_t connectionEpoch = 0;
+        std::uint64_t targetKey = 0;
+        int lastForcedAxis = -1;
+        bool initialized = false;
+    };
+
+    struct MouseMoveQuantizationOptions {
+        MouseMoveQuantizationState* state = nullptr;
+        Vector3 fallbackDirectionDelta{};
+        bool forceNonZero = false;
+    };
+
+    struct MouseMoveQuantizationResult {
+        int pixelX = 0;
+        int pixelY = 0;
+        int status = 0;
+        bool forcedMinimumStep = false;
+        bool dispatched = false;
+    };
+
+    inline void ResetMouseMoveQuantizationState(MouseMoveQuantizationState& state) {
+        state = MouseMoveQuantizationState{};
+    }
+
+    inline bool HasMouseMoveQuantizationState(const MouseMoveQuantizationState& state) {
+        return state.initialized ||
+            state.residualX != 0.0f ||
+            state.residualY != 0.0f;
+    }
+
+    inline bool PrepareMouseMoveQuantizationState(
+        MouseMoveQuantizationState& state,
+        std::uint64_t sessionGeneration,
+        std::uint64_t connectionEpoch,
+        std::uint64_t targetKey) {
+        const bool changed =
+            !state.initialized ||
+            state.sessionGeneration != sessionGeneration ||
+            state.connectionEpoch != connectionEpoch ||
+            state.targetKey != targetKey;
+        if (!changed)
+            return false;
+
+        ResetMouseMoveQuantizationState(state);
+        state.sessionGeneration = sessionGeneration;
+        state.connectionEpoch = connectionEpoch;
+        state.targetKey = targetKey;
+        state.initialized = true;
+        return true;
+    }
+
+    inline MouseMoveQuantizationResult QuantizeMouseMoveCounts(
+        float scaledX,
+        float scaledY,
+        float fallbackScaledX,
+        float fallbackScaledY,
+        MouseMoveQuantizationState& state,
+        bool forceNonZero) {
+        MouseMoveQuantizationResult result{};
+        constexpr float kDirectionEpsilon = 0.0000001f;
+
+        if (!std::isfinite(scaledX))
+            scaledX = 0.0f;
+        if (!std::isfinite(scaledY))
+            scaledY = 0.0f;
+        if (!std::isfinite(fallbackScaledX))
+            fallbackScaledX = 0.0f;
+        if (!std::isfinite(fallbackScaledY))
+            fallbackScaledY = 0.0f;
+        if (!std::isfinite(state.residualX))
+            state.residualX = 0.0f;
+        if (!std::isfinite(state.residualY))
+            state.residualY = 0.0f;
+
+        const float directionX = std::fabs(scaledX) > kDirectionEpsilon
+            ? scaledX
+            : fallbackScaledX;
+        const float directionY = std::fabs(scaledY) > kDirectionEpsilon
+            ? scaledY
+            : fallbackScaledY;
+
+        if (forceNonZero) {
+            if (std::fabs(directionX) <= kDirectionEpsilon ||
+                state.residualX * directionX < 0.0f) {
+                state.residualX = 0.0f;
+            }
+            if (std::fabs(directionY) <= kDirectionEpsilon ||
+                state.residualY * directionY < 0.0f) {
+                state.residualY = 0.0f;
+            }
+        }
+
+        state.residualX += scaledX;
+        state.residualY += scaledY;
+        result.pixelX = static_cast<int>(state.residualX);
+        result.pixelY = static_cast<int>(state.residualY);
+        state.residualX -= static_cast<float>(result.pixelX);
+        state.residualY -= static_cast<float>(result.pixelY);
+
+        if (!forceNonZero || result.pixelX != 0 || result.pixelY != 0)
+            return result;
+
+        // Pick the minimum-step axis from the current error, not from an older
+        // residual.  The residual on the other axis is still retained below.
+        const float candidateX = directionX;
+        const float candidateY = directionY;
+
+        const float absX = std::fabs(candidateX);
+        const float absY = std::fabs(candidateY);
+        if (absX <= kDirectionEpsilon && absY <= kDirectionEpsilon)
+            return result;
+
+        bool forceX = absX > absY;
+        if (std::fabs(absX - absY) <= kDirectionEpsilon)
+            forceX = state.lastForcedAxis != 0;
+        if (forceX && absX <= kDirectionEpsilon)
+            forceX = false;
+        else if (!forceX && absY <= kDirectionEpsilon)
+            forceX = true;
+
+        if (forceX) {
+            result.pixelX = candidateX > 0.0f ? 1 : -1;
+            state.residualX = 0.0f;
+            state.lastForcedAxis = 0;
+        } else {
+            result.pixelY = candidateY > 0.0f ? 1 : -1;
+            state.residualY = 0.0f;
+            state.lastForcedAxis = 1;
+        }
+        result.forcedMinimumStep = true;
+        return result;
+    }
+
+    inline MouseMoveQuantizationState& DefaultMouseMoveQuantizationState() {
+        static MouseMoveQuantizationState state{};
+        return state;
+    }
+
     namespace OutputMotionTelemetry {
 
         struct Sample {
@@ -384,7 +526,11 @@ namespace OW {
 
     } // namespace OutputMotionTelemetry
 
-    inline void SendMouseMove(const Vector3& delta, int moveTimeMs = -1) {
+    inline MouseMoveQuantizationResult SendMouseMove(
+        const Vector3& delta,
+        int moveTimeMs,
+        const MouseMoveQuantizationOptions& quantization) {
+        MouseMoveQuantizationResult result{};
         const std::uint64_t connectionEpoch =
             ProcessConnection::ConnectionEpoch();
         const OutputRuntimeState outputRuntime =
@@ -397,7 +543,7 @@ namespace OW {
                 static_cast<unsigned long long>(connectionEpoch),
                 static_cast<unsigned long long>(outputRuntime.backendGeneration),
                 outputRuntime.outputGateOpen ? 1 : 0);
-            return;
+            return result;
         }
         if (moveTimeMs < 0) moveTimeMs = Config::kmboxInputDelayMs;
         const int automoveRuntimeMs = ClampKmboxAutomoveRuntimeMs(moveTimeMs);
@@ -419,11 +565,11 @@ namespace OW {
             }
             Diagnostics::Aim("mouse.move early_return reason=no_active_runtime lastError=%d",
                 kmbox::RuntimeController().LastError());
-            return;
+            return result;
         }
         if (ShouldSuppressKmboxOutput("mouse_move")) {
             Diagnostics::Aim("mouse.move early_return reason=menu_open_suppressed");
-            return;
+            return result;
         }
 
         {
@@ -445,26 +591,34 @@ namespace OW {
                 pitchSensitivity = sensitivity;
             }
 
-            static float accumX = 0.0f;
-            static float accumY = 0.0f;
             static int callCount = 0;
+            MouseMoveQuantizationState& quantizationState = quantization.state
+                ? *quantization.state
+                : DefaultMouseMoveQuantizationState();
 
             // delta.X = pitch (vertical), delta.Y = yaw (horizontal).
             // Positive KMBox X drives the measured yaw negative, so yaw correction is inverted here.
             const float scaledYaw   = -delta.Y * sensitivity;         // yaw -> horizontal X
             const float pitchScale = std::clamp(Config::aimbotPitchScale, 0.1f, 3.0f);
             const float scaledPitch = delta.X * pitchSensitivity * pitchScale; // pitch -> vertical Y
-            const float accumBeforeX = accumX;
-            const float accumBeforeY = accumY;
-            accumX += scaledYaw;
-            accumY += scaledPitch;
-            int pixelX = static_cast<int>(accumX);
-            int pixelY = static_cast<int>(accumY);
-            accumX -= static_cast<float>(pixelX);
-            accumY -= static_cast<float>(pixelY);
+            const float fallbackScaledYaw =
+                -quantization.fallbackDirectionDelta.Y * sensitivity;
+            const float fallbackScaledPitch =
+                quantization.fallbackDirectionDelta.X * pitchSensitivity * pitchScale;
+            const float accumBeforeX = quantizationState.residualX;
+            const float accumBeforeY = quantizationState.residualY;
+            result = QuantizeMouseMoveCounts(
+                scaledYaw,
+                scaledPitch,
+                fallbackScaledYaw,
+                fallbackScaledPitch,
+                quantizationState,
+                quantization.forceNonZero);
+            const int pixelX = result.pixelX;
+            const int pixelY = result.pixelY;
 
             ++callCount;
-            Diagnostics::Aim("mouse.convert call=%d delta_rad_pitch=%.9f delta_rad_yaw=%.9f baseCountsPerRad=%.6f yawCountsPerRad=%.6f pitchCountsPerRad=%.6f autoScale=%d syncScale=%.6f pitchScale=%.6f scaled_counts=(yaw=%.9f,pitch=%.9f) accum_before=(%.9f,%.9f) counts=(%d,%d) accum_after=(%.9f,%.9f)",
+            Diagnostics::Aim("mouse.convert call=%d delta_rad_pitch=%.9f delta_rad_yaw=%.9f baseCountsPerRad=%.6f yawCountsPerRad=%.6f pitchCountsPerRad=%.6f autoScale=%d syncScale=%.6f pitchScale=%.6f scaled_counts=(yaw=%.9f,pitch=%.9f) fallback_counts=(yaw=%.9f,pitch=%.9f) accum_before=(%.9f,%.9f) counts=(%d,%d) accum_after=(%.9f,%.9f) forced_min_step=%d",
                 callCount,
                 delta.X,
                 delta.Y,
@@ -476,25 +630,51 @@ namespace OW {
                 pitchScale,
                 scaledYaw,
                 scaledPitch,
+                fallbackScaledYaw,
+                fallbackScaledPitch,
                 accumBeforeX,
                 accumBeforeY,
                 pixelX,
                 pixelY,
-                accumX,
-                accumY);
+                quantizationState.residualX,
+                quantizationState.residualY,
+                result.forcedMinimumStep ? 1 : 0);
             if (callCount <= 50 || pixelX != 0 || pixelY != 0) {
                 std::printf("[KMBOX] #%d pitch=%.6f yaw=%.6f yawCountsPerRad=%.1f pitchCountsPerRad=%.1f counts=(%d,%d) accum=(%.3f,%.3f)\n",
                     callCount, delta.X, delta.Y, sensitivity, pitchSensitivity,
-                    pixelX, pixelY, accumX, accumY);
+                    pixelX, pixelY,
+                    quantizationState.residualX,
+                    quantizationState.residualY);
             }
 
             if (pixelX == 0 && pixelY == 0) {
-                Diagnostics::Aim("mouse.move early_return reason=zero_counts scaled=(yaw_%.9f,pitch_%.9f) accum_after=(%.9f,%.9f) note=integer_truncation_waiting_for_accumulator",
+                Diagnostics::Aim("mouse.move early_return reason=zero_counts scaled=(yaw_%.9f,pitch_%.9f) accum_after=(%.9f,%.9f) forced_min_step=%d note=%s",
                     scaledYaw,
                     scaledPitch,
-                    accumX,
-                    accumY);
-                return;
+                    quantizationState.residualX,
+                    quantizationState.residualY,
+                    result.forcedMinimumStep ? 1 : 0,
+                    quantization.forceNonZero
+                        ? "magnetic_no_valid_direction"
+                        : "integer_truncation_waiting_for_accumulator");
+                return result;
+            }
+
+            if (result.forcedMinimumStep) {
+                static DWORD lastForcedMinimumStepLogTick = 0;
+                const DWORD now = GetTickCount();
+                if (Config::aimVerboseLog ||
+                    lastForcedMinimumStepLogTick == 0 ||
+                    now - lastForcedMinimumStepLogTick >= 250) {
+                    Diagnostics::Aim("mouse.move magnetic_quantize forced_min_step=1 counts=(%d,%d) raw_delta=(%.9f,%.9f) residual=(%.9f,%.9f)",
+                        pixelX,
+                        pixelY,
+                        quantization.fallbackDirectionDelta.X,
+                        quantization.fallbackDirectionDelta.Y,
+                        quantizationState.residualX,
+                        quantizationState.residualY);
+                    lastForcedMinimumStepLogTick = now;
+                }
             }
 
             // ---- Micro-split mouse movement ----
@@ -516,6 +696,8 @@ namespace OW {
                     automoveRuntimeMs,
                     outputRuntime.backendGeneration,
                     connectionEpoch);
+                result.status = status;
+                result.dispatched = status == success;
                 Diagnostics::Aim("mouse.enqueue transport=%s command=%s pixel=(%d,%d) runtimeMs=%d behavior=%d splitEnabled=%d status=%d",
                     KmboxTransportName(),
                     automoveRuntimeMs > 0 ? "automove" : "move",
@@ -598,9 +780,17 @@ namespace OW {
                     lastStatus,
                     true,
                     completedSteps);
+                result.status = lastStatus;
+                result.dispatched = completedSteps > 0;
             }
-            return;
+            return result;
         }
+    }
+
+    inline void SendMouseMove(const Vector3& delta, int moveTimeMs = -1) {
+        MouseMoveQuantizationOptions quantization{};
+        quantization.state = &DefaultMouseMoveQuantizationState();
+        (void)SendMouseMove(delta, moveTimeMs, quantization);
     }
 
     inline void SendMouseMove(float deltaX, float deltaY, int moveTimeMs = -1) {
