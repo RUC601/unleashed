@@ -259,9 +259,9 @@ namespace OW { namespace Config {
     inline int   aimbotFirePolicy = 1;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
     inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
     inline float aimbotMaxHead = 100.0f;
-    inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited, 5=Constant
+    inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited, 5=Constant, 6=HybridPID
     inline int   aimbotSmoothType = 0; // 0=Constant Speed, 1=Linear, 2=Bezier
-    inline constexpr int kAimMethodCount = 6;
+    inline constexpr int kAimMethodCount = 7;
     inline constexpr float kAimConstantAngularSpeedMaxDeg = 3600.0f;
     inline std::array<int, kAimBehaviorCount> aimBehaviorMethod = { 0, 0, 0, 0, 0 };
     inline std::array<int, kAimBehaviorCount> aimBehaviorMethodPreset = { -1, -1, -1, -1, -1 };
@@ -274,9 +274,9 @@ namespace OW { namespace Config {
     inline std::array<int, kAimBehaviorCount> aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4, 4 };
     inline std::array<int, kAimBehaviorCount> aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800, 800 };
     inline std::array<float, kAimMethodCount> aimMethodAngularSpeedScale = {
-        100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f
+        100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f
     };
-    inline std::array<int, 2> secondaryAimMethodOverride = { -1, -1 }; // -1=inherit, 0-5=kAimMethod
+    inline std::array<int, 2> secondaryAimMethodOverride = { -1, -1 }; // -1=inherit, 0-6=kAimMethod
     inline float aimPidP = 0.5f;
     inline float aimPidI = 0.01f;
     inline float aimPidD = 0.1f;
@@ -293,6 +293,14 @@ namespace OW { namespace Config {
     inline float aimPiecewiseFarScale = 0.75f;
     inline float aimAccelLimitedAcceleration = 0.1f;
     inline float aimConstantAngularSpeedDeg = 30.0f;
+    inline float aimHybridConstantSpeedDeg = 45.0f;
+    inline float aimHybridMaxSpeedDeg = 720.0f;
+    inline float aimHybridAccelerationDeg = 1800.0f;
+    inline float aimHybridDecelerationDeg = 2600.0f;
+    inline float aimHybridNearRadiusDeg = 3.0f;
+    inline float aimHybridTargetMotionGain = 0.35f;
+    inline float aimHybridSuddenMotionBoost = 2.5f;
+    inline float aimHybridDeadzoneDeg = 0.10f;
     inline int aimBehaviorPresetId = -1;
 
     struct AimMethodPreset {
@@ -316,6 +324,14 @@ namespace OW { namespace Config {
         float piecewiseFarScale = 0.75f;
         float accelLimitedAcceleration = 0.1f;
         float constantAngularSpeedDeg = 30.0f;
+        float hybridConstantSpeedDeg = 45.0f;
+        float hybridMaxSpeedDeg = 720.0f;
+        float hybridAccelerationDeg = 1800.0f;
+        float hybridDecelerationDeg = 2600.0f;
+        float hybridNearRadiusDeg = 3.0f;
+        float hybridTargetMotionGain = 0.35f;
+        float hybridSuddenMotionBoost = 2.5f;
+        float hybridDeadzoneDeg = 0.10f;
     };
 
     struct AimBehaviorPreset {

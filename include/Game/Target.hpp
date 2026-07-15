@@ -22,6 +22,7 @@
 #include <utility>
 
 #include "Game/Decrypt.hpp"
+#include "Game/AimHybridController.hpp"
 #include "Game/Entity.hpp"
 #include "Game/FovGeometry.hpp"
 #include "Game/HeroGeometrySpec.hpp"
@@ -3731,6 +3732,11 @@ namespace OW {
             bool initialized = false;
         };
 
+        inline AimHybrid::State& GetHybridState() {
+            static AimHybrid::State state;
+            return state;
+        }
+
         inline PIDState& GetPIDState() {
             static PIDState state;
             return state;
@@ -3756,6 +3762,10 @@ namespace OW {
 
         inline void ResetOvershootState() {
             GetOvershootState() = OvershootState{};
+        }
+
+        inline void ResetHybridState() {
+            GetHybridState() = AimHybrid::State{};
         }
 
         inline float ClampDeltaTime(float deltaTime) {
@@ -3945,6 +3955,7 @@ namespace OW {
         AimSmoothingDetail::ResetPIDState();
         AimSmoothingDetail::ResetBezierState();
         AimSmoothingDetail::ResetOvershootState();
+        AimSmoothingDetail::ResetHybridState();
     }
 
     inline Vector3 SmoothPID(Vector3 current,
@@ -4099,10 +4110,14 @@ namespace OW {
             AimSmoothingDetail::ResetPIDState();
             AimSmoothingDetail::ResetBezierState();
             AimSmoothingDetail::ResetOvershootState();
+            AimSmoothingDetail::ResetHybridState();
             previousMethod = method;
         }
 
-        const Vector3 adjustedTarget = AimSmoothingDetail::ApplyOvershootCurveTarget(local, target);
+        // Hybrid PID owns its braking curve and must converge on the real target.
+        const Vector3 adjustedTarget = method == 6
+            ? target
+            : AimSmoothingDetail::ApplyOvershootCurveTarget(local, target);
         const Vector3 error = adjustedTarget - local;
         const Config::AimMethodPreset* methodPreset = Config::ActiveAimMethodPreset(method);
         const float methodSpeedScale = Config::RuntimeAimMethodAngularSpeedScale(method);
@@ -4169,13 +4184,60 @@ namespace OW {
         case 5:
             result = SmoothConstantAngularVelocity(local, adjustedTarget, deltaTime, effectiveConstantAngularSpeedDeg);
             break;
+        case 6: {
+            AimHybrid::Tuning tuning{};
+            tuning.p = methodPreset ? methodPreset->pidP : Config::aimPidP;
+            tuning.i = methodPreset ? methodPreset->pidI : Config::aimPidI;
+            tuning.d = methodPreset ? methodPreset->pidD : Config::aimPidD;
+            tuning.maxIntegral = methodPreset ? methodPreset->pidMaxIntegral : Config::aimPidMaxIntegral;
+            tuning.deadzoneDeg = methodPreset
+                ? methodPreset->hybridDeadzoneDeg
+                : Config::aimHybridDeadzoneDeg;
+            const float hybridScale = std::clamp(slotSpeedScale * methodSpeedScale, 0.0f, 2.0f);
+            tuning.constantSpeedDegPerSec = (methodPreset
+                ? methodPreset->hybridConstantSpeedDeg
+                : Config::aimHybridConstantSpeedDeg) * hybridScale;
+            tuning.maxSpeedDegPerSec = (methodPreset
+                ? methodPreset->hybridMaxSpeedDeg
+                : Config::aimHybridMaxSpeedDeg) * hybridScale;
+            tuning.accelerationDegPerSec2 = (methodPreset
+                ? methodPreset->hybridAccelerationDeg
+                : Config::aimHybridAccelerationDeg) * (std::max)(0.05f, hybridScale);
+            tuning.decelerationDegPerSec2 = (methodPreset
+                ? methodPreset->hybridDecelerationDeg
+                : Config::aimHybridDecelerationDeg) * (std::max)(0.05f, hybridScale);
+            tuning.nearRadiusDeg = methodPreset
+                ? methodPreset->hybridNearRadiusDeg
+                : Config::aimHybridNearRadiusDeg;
+            tuning.targetMotionGain = methodPreset
+                ? methodPreset->hybridTargetMotionGain
+                : Config::aimHybridTargetMotionGain;
+            tuning.suddenMotionBoost = methodPreset
+                ? methodPreset->hybridSuddenMotionBoost
+                : Config::aimHybridSuddenMotionBoost;
+            const AimHybrid::StepResult hybrid = AimHybrid::Advance(
+                local,
+                adjustedTarget,
+                deltaTime,
+                tuning,
+                AimSmoothingDetail::GetHybridState());
+            Diagnostics::Aim(
+                "smooth.hybrid speedDegS=%.3f targetSpeedDegS=%.3f targetAccelDegS2=%.3f accelLimitDegS2=%.3f reset=%d",
+                hybrid.outputSpeedDegPerSec,
+                hybrid.targetSpeedDegPerSec,
+                hybrid.targetAccelerationDegPerSec2,
+                hybrid.accelerationLimitDegPerSec2,
+                hybrid.reset ? 1 : 0);
+            result = hybrid.value;
+            break;
+        }
         default:
             result = SmoothLinear(local, adjustedTarget, effectiveSpeed);
             break;
         }
 
         const Vector3 outputDelta = result - local;
-        if (commitOvershootStep)
+        if (commitOvershootStep && method != 6)
             AimSmoothingDetail::CommitOvershootStep(outputDelta);
         Diagnostics::Aim("smooth.result method=%d result=(%.9f,%.9f,%.9f) output_delta=(%.9f,%.9f,%.9f) output_len=%.9f",
             method,

@@ -129,6 +129,14 @@ add_executable(AimStartLimiterSelfTest
     src/Tools/AimStartLimiterSelfTest.cpp
 )
 
+add_executable(AimHybridControllerSelfTest
+    src/Tools/AimHybridControllerSelfTest.cpp
+)
+
+add_executable(AimFirePhaseSelfTest
+    src/Tools/AimFirePhaseSelfTest.cpp
+)
+
 add_executable(AimPresetConfigSelfTest
     src/Tools/AimPresetConfigSelfTest.cpp
 )
@@ -213,6 +221,8 @@ add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
 add_test(NAME AimStartLimiterSelfTest COMMAND AimStartLimiterSelfTest)
+add_test(NAME AimHybridControllerSelfTest COMMAND AimHybridControllerSelfTest)
+add_test(NAME AimFirePhaseSelfTest COMMAND AimFirePhaseSelfTest)
 add_test(NAME AimPresetConfigSelfTest COMMAND AimPresetConfigSelfTest)
 add_test(NAME LeadPredictionSelfTest COMMAND LeadPredictionSelfTest)
 add_test(NAME KeyStateSelfTest COMMAND KeyStateSelfTest)
@@ -256,6 +266,16 @@ target_include_directories(TrackingDeadzoneDampingSelfTest PRIVATE
 )
 
 target_include_directories(AimStartLimiterSelfTest PRIVATE
+    include
+    vendor/imgui
+)
+
+target_include_directories(AimHybridControllerSelfTest PRIVATE
+    include
+    vendor/imgui
+)
+
+target_include_directories(AimFirePhaseSelfTest PRIVATE
     include
     vendor/imgui
 )
@@ -461,6 +481,10 @@ target_compile_options(TrackingDeadzoneDampingSelfTest PRIVATE /W3 /wd4244 /wd42
 target_compile_definitions(TrackingDeadzoneDampingSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(AimStartLimiterSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(AimStartLimiterSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(AimHybridControllerSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(AimHybridControllerSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(AimFirePhaseSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(AimFirePhaseSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(AimPresetConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(AimPresetConfigSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(LeadPredictionSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)

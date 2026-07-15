@@ -281,7 +281,7 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 12;
+        constexpr int kCurrentConfigVersion = 13;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
@@ -463,6 +463,30 @@ namespace OW { namespace Config {
                 ? std::clamp(preset.accelLimitedAcceleration, 0.0f, 20.0f)
                 : 0.1f;
             preset.constantAngularSpeedDeg = ClampAimConstantAngularSpeedDeg(preset.constantAngularSpeedDeg);
+            preset.hybridConstantSpeedDeg = std::clamp(
+                std::isfinite(preset.hybridConstantSpeedDeg) ? preset.hybridConstantSpeedDeg : 45.0f,
+                0.0f, kAimConstantAngularSpeedMaxDeg);
+            preset.hybridMaxSpeedDeg = std::clamp(
+                std::isfinite(preset.hybridMaxSpeedDeg) ? preset.hybridMaxSpeedDeg : 720.0f,
+                1.0f, kAimConstantAngularSpeedMaxDeg);
+            preset.hybridAccelerationDeg = std::clamp(
+                std::isfinite(preset.hybridAccelerationDeg) ? preset.hybridAccelerationDeg : 1800.0f,
+                1.0f, 100000.0f);
+            preset.hybridDecelerationDeg = std::clamp(
+                std::isfinite(preset.hybridDecelerationDeg) ? preset.hybridDecelerationDeg : 2600.0f,
+                1.0f, 100000.0f);
+            preset.hybridNearRadiusDeg = std::clamp(
+                std::isfinite(preset.hybridNearRadiusDeg) ? preset.hybridNearRadiusDeg : 3.0f,
+                0.05f, 30.0f);
+            preset.hybridTargetMotionGain = std::clamp(
+                std::isfinite(preset.hybridTargetMotionGain) ? preset.hybridTargetMotionGain : 0.35f,
+                0.0f, 2.0f);
+            preset.hybridSuddenMotionBoost = std::clamp(
+                std::isfinite(preset.hybridSuddenMotionBoost) ? preset.hybridSuddenMotionBoost : 2.5f,
+                1.0f, 8.0f);
+            preset.hybridDeadzoneDeg = std::clamp(
+                std::isfinite(preset.hybridDeadzoneDeg) ? preset.hybridDeadzoneDeg : 0.10f,
+                0.0f, 2.0f);
             return preset;
         }
 
@@ -868,12 +892,21 @@ namespace OW { namespace Config {
                    setting == "aimPiecewiseFarDegrees" ||
                    setting == "aimAccelLimitedAcceleration" ||
                    setting == "aimConstantAngularSpeedDeg" ||
+                   setting == "aimHybridConstantSpeedDeg" ||
+                   setting == "aimHybridMaxSpeedDeg" ||
+                   setting == "aimHybridAccelerationDeg" ||
+                   setting == "aimHybridDecelerationDeg" ||
+                   setting == "aimHybridNearRadiusDeg" ||
+                   setting == "aimHybridTargetMotionGain" ||
+                   setting == "aimHybridSuddenMotionBoost" ||
+                   setting == "aimHybridDeadzoneDeg" ||
                    setting == "linearAngularSpeedScale" ||
                    setting == "pidAngularSpeedScale" ||
                    setting == "bezierAngularSpeedScale" ||
                    setting == "piecewiseAngularSpeedScale" ||
                    setting == "accelLimitedAngularSpeedScale" ||
                    setting == "constantAngularSpeedScale" ||
+                   setting == "hybridPidAngularSpeedScale" ||
                    setting == "aim_key" ||
                    setting == "aim_key2" ||
                    setting == "kmboxDeviceType" ||
@@ -2517,7 +2550,7 @@ namespace OW { namespace Config {
             aimBehaviorMoveSplitEnabled = { true, false, false, true, true };
             aimBehaviorMoveSplitMaxPixels = { 4, 50, 50, 4, 4 };
             aimBehaviorMoveSplitDelayUs = { 800, 0, 0, 800, 800 };
-            aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
+            aimMethodAngularSpeedScale = { 100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f, 100.0f };
             secondaryAimMethodOverride = { -1, -1 };
             aimPidP = 0.5f;
             aimPidI = 0.01f;
@@ -2535,6 +2568,14 @@ namespace OW { namespace Config {
             aimPiecewiseFarScale = 0.75f;
             aimAccelLimitedAcceleration = 0.1f;
             aimConstantAngularSpeedDeg = 30.0f;
+            aimHybridConstantSpeedDeg = 45.0f;
+            aimHybridMaxSpeedDeg = 720.0f;
+            aimHybridAccelerationDeg = 1800.0f;
+            aimHybridDecelerationDeg = 2600.0f;
+            aimHybridNearRadiusDeg = 3.0f;
+            aimHybridTargetMotionGain = 0.35f;
+            aimHybridSuddenMotionBoost = 2.5f;
+            aimHybridDeadzoneDeg = 0.10f;
             aimBehaviorPresetId = -1;
             aimMethodPresets.clear();
             aimBehaviorPresets.clear();
@@ -4877,6 +4918,14 @@ namespace OW { namespace Config {
             preset.piecewiseFarScale = ReadFixedFloat(ini, section, "piecewiseFarScale", preset.piecewiseFarScale);
             preset.accelLimitedAcceleration = ReadFixedFloat(ini, section, "accelLimitedAcceleration", preset.accelLimitedAcceleration);
             preset.constantAngularSpeedDeg = ReadFixedFloat(ini, section, "constantAngularSpeedDeg", preset.constantAngularSpeedDeg);
+            preset.hybridConstantSpeedDeg = ReadFixedFloat(ini, section, "hybridConstantSpeedDeg", preset.hybridConstantSpeedDeg);
+            preset.hybridMaxSpeedDeg = ReadFixedFloat(ini, section, "hybridMaxSpeedDeg", preset.hybridMaxSpeedDeg);
+            preset.hybridAccelerationDeg = ReadFixedFloat(ini, section, "hybridAccelerationDeg", preset.hybridAccelerationDeg);
+            preset.hybridDecelerationDeg = ReadFixedFloat(ini, section, "hybridDecelerationDeg", preset.hybridDecelerationDeg);
+            preset.hybridNearRadiusDeg = ReadFixedFloat(ini, section, "hybridNearRadiusDeg", preset.hybridNearRadiusDeg);
+            preset.hybridTargetMotionGain = ReadFixedFloat(ini, section, "hybridTargetMotionGain", preset.hybridTargetMotionGain);
+            preset.hybridSuddenMotionBoost = ReadFixedFloat(ini, section, "hybridSuddenMotionBoost", preset.hybridSuddenMotionBoost);
+            preset.hybridDeadzoneDeg = ReadFixedFloat(ini, section, "hybridDeadzoneDeg", preset.hybridDeadzoneDeg);
             return ValidateAimMethodPresetValue(preset, fallbackIndex);
         }
 
@@ -5079,7 +5128,8 @@ namespace OW { namespace Config {
                 "bezierAngularSpeedScale",
                 "piecewiseAngularSpeedScale",
                 "accelLimitedAngularSpeedScale",
-                "constantAngularSpeedScale"
+                "constantAngularSpeedScale",
+                "hybridPidAngularSpeedScale"
             };
 
             aimMethod = ReadInt(ini, section, "aimMethod", aimMethod);
@@ -5099,6 +5149,14 @@ namespace OW { namespace Config {
             aimPiecewiseFarScale = ReadFixedFloat(ini, section, "aimPiecewiseFarScale", aimPiecewiseFarScale);
             aimAccelLimitedAcceleration = ReadFixedFloat(ini, section, "aimAccelLimitedAcceleration", aimAccelLimitedAcceleration);
             aimConstantAngularSpeedDeg = ReadFixedFloat(ini, section, "aimConstantAngularSpeedDeg", aimConstantAngularSpeedDeg);
+            aimHybridConstantSpeedDeg = ReadFixedFloat(ini, section, "aimHybridConstantSpeedDeg", aimHybridConstantSpeedDeg);
+            aimHybridMaxSpeedDeg = ReadFixedFloat(ini, section, "aimHybridMaxSpeedDeg", aimHybridMaxSpeedDeg);
+            aimHybridAccelerationDeg = ReadFixedFloat(ini, section, "aimHybridAccelerationDeg", aimHybridAccelerationDeg);
+            aimHybridDecelerationDeg = ReadFixedFloat(ini, section, "aimHybridDecelerationDeg", aimHybridDecelerationDeg);
+            aimHybridNearRadiusDeg = ReadFixedFloat(ini, section, "aimHybridNearRadiusDeg", aimHybridNearRadiusDeg);
+            aimHybridTargetMotionGain = ReadFixedFloat(ini, section, "aimHybridTargetMotionGain", aimHybridTargetMotionGain);
+            aimHybridSuddenMotionBoost = ReadFixedFloat(ini, section, "aimHybridSuddenMotionBoost", aimHybridSuddenMotionBoost);
+            aimHybridDeadzoneDeg = ReadFixedFloat(ini, section, "aimHybridDeadzoneDeg", aimHybridDeadzoneDeg);
 
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
                 const int methodFallback = legacyMethodKeys[index] && KeyExists(ini, section, legacyMethodKeys[index])
@@ -5271,6 +5329,14 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "piecewiseFarScale", preset.piecewiseFarScale);
             WriteFixedFloatValue(path, section, "accelLimitedAcceleration", preset.accelLimitedAcceleration);
             WriteFixedFloatValue(path, section, "constantAngularSpeedDeg", preset.constantAngularSpeedDeg);
+            WriteFixedFloatValue(path, section, "hybridConstantSpeedDeg", preset.hybridConstantSpeedDeg);
+            WriteFixedFloatValue(path, section, "hybridMaxSpeedDeg", preset.hybridMaxSpeedDeg);
+            WriteFixedFloatValue(path, section, "hybridAccelerationDeg", preset.hybridAccelerationDeg);
+            WriteFixedFloatValue(path, section, "hybridDecelerationDeg", preset.hybridDecelerationDeg);
+            WriteFixedFloatValue(path, section, "hybridNearRadiusDeg", preset.hybridNearRadiusDeg);
+            WriteFixedFloatValue(path, section, "hybridTargetMotionGain", preset.hybridTargetMotionGain);
+            WriteFixedFloatValue(path, section, "hybridSuddenMotionBoost", preset.hybridSuddenMotionBoost);
+            WriteFixedFloatValue(path, section, "hybridDeadzoneDeg", preset.hybridDeadzoneDeg);
         }
 
         void WriteAimBehaviorPresetSection(const std::string& path,
@@ -5434,7 +5500,8 @@ namespace OW { namespace Config {
                 "bezierAngularSpeedScale",
                 "piecewiseAngularSpeedScale",
                 "accelLimitedAngularSpeedScale",
-                "constantAngularSpeedScale"
+                "constantAngularSpeedScale",
+                "hybridPidAngularSpeedScale"
             };
 
             WriteIntValue(path, section, "aimMethod", aimMethod);
@@ -5454,6 +5521,14 @@ namespace OW { namespace Config {
             WriteFixedFloatValue(path, section, "aimPiecewiseFarScale", AimPiecewiseFarScale());
             WriteFixedFloatValue(path, section, "aimAccelLimitedAcceleration", AimMethodAcceleration(4));
             WriteFixedFloatValue(path, section, "aimConstantAngularSpeedDeg", AimConstantAngularSpeedDeg());
+            WriteFixedFloatValue(path, section, "aimHybridConstantSpeedDeg", aimHybridConstantSpeedDeg);
+            WriteFixedFloatValue(path, section, "aimHybridMaxSpeedDeg", aimHybridMaxSpeedDeg);
+            WriteFixedFloatValue(path, section, "aimHybridAccelerationDeg", aimHybridAccelerationDeg);
+            WriteFixedFloatValue(path, section, "aimHybridDecelerationDeg", aimHybridDecelerationDeg);
+            WriteFixedFloatValue(path, section, "aimHybridNearRadiusDeg", aimHybridNearRadiusDeg);
+            WriteFixedFloatValue(path, section, "aimHybridTargetMotionGain", aimHybridTargetMotionGain);
+            WriteFixedFloatValue(path, section, "aimHybridSuddenMotionBoost", aimHybridSuddenMotionBoost);
+            WriteFixedFloatValue(path, section, "aimHybridDeadzoneDeg", aimHybridDeadzoneDeg);
             WriteIntValue(path, section, "aimBehaviorPresetId", ClampAimBehaviorPresetId(aimBehaviorPresetId));
 
             for (size_t index = 0; index < aimBehaviorMethod.size(); ++index) {
@@ -5856,6 +5931,14 @@ namespace OW { namespace Config {
             aimbotTwoStageInnerSmoothScale = aimbotFlick2ndInnerSmoothScale;
             ApplyAimMode(IsTrackingBehavior(aimBehavior) ? 0 : 1);
             ClampSetting("aimBezierControlPoints", aimBezierControlPoints, 2, 6, 2);
+            ClampFloatSetting("aimHybridConstantSpeedDeg", aimHybridConstantSpeedDeg, 0.0f, kAimConstantAngularSpeedMaxDeg, 45.0f);
+            ClampFloatSetting("aimHybridMaxSpeedDeg", aimHybridMaxSpeedDeg, 1.0f, kAimConstantAngularSpeedMaxDeg, 720.0f);
+            ClampFloatSetting("aimHybridAccelerationDeg", aimHybridAccelerationDeg, 1.0f, 100000.0f, 1800.0f);
+            ClampFloatSetting("aimHybridDecelerationDeg", aimHybridDecelerationDeg, 1.0f, 100000.0f, 2600.0f);
+            ClampFloatSetting("aimHybridNearRadiusDeg", aimHybridNearRadiusDeg, 0.05f, 30.0f, 3.0f);
+            ClampFloatSetting("aimHybridTargetMotionGain", aimHybridTargetMotionGain, 0.0f, 2.0f, 0.35f);
+            ClampFloatSetting("aimHybridSuddenMotionBoost", aimHybridSuddenMotionBoost, 1.0f, 8.0f, 2.5f);
+            ClampFloatSetting("aimHybridDeadzoneDeg", aimHybridDeadzoneDeg, 0.0f, 2.0f, 0.10f);
             ClampSetting("aimbotTrace", aimbotTrace, 0, 2, 0);
             ClampSetting("aimbotUnlock", aimbotUnlock, 0, 2, 0);
             ClampSetting("aimbotAttack", aimbotAttack, 0, 7, 0);

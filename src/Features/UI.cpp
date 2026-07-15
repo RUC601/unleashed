@@ -709,7 +709,7 @@ static const char* kHeroSkillTargetBones[] = {
     "Chest", "Head", "Neck", "Closest"
 };
 static const char* kAimBehavior[]  = { "Tracking", "Flick", "Flick2nd", "Reacquire", "MagneticTrigger" };
-static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant" };
+static const char* kAimMethod[]    = { "Linear", "PID", "Bezier", "Piecewise", "Accel Limited", "Constant", "Hybrid PID" };
 static const char* kAimSmoothType[] = { "Constant Speed", "Linear", "Bezier" };
 static const char* kPredictionMode[] = { "Auto", "Force On", "Force Off" };
 static const char* kFirePolicy[] = {
@@ -2651,6 +2651,14 @@ static OW::Config::AimMethodPreset CaptureMethodPresetFromCurrent(int method, co
     preset.piecewiseFarScale = OW::Config::AimPiecewiseFarScale();
     preset.accelLimitedAcceleration = OW::Config::AimMethodAcceleration(4);
     preset.constantAngularSpeedDeg = OW::Config::AimConstantAngularSpeedDeg();
+    preset.hybridConstantSpeedDeg = OW::Config::aimHybridConstantSpeedDeg;
+    preset.hybridMaxSpeedDeg = OW::Config::aimHybridMaxSpeedDeg;
+    preset.hybridAccelerationDeg = OW::Config::aimHybridAccelerationDeg;
+    preset.hybridDecelerationDeg = OW::Config::aimHybridDecelerationDeg;
+    preset.hybridNearRadiusDeg = OW::Config::aimHybridNearRadiusDeg;
+    preset.hybridTargetMotionGain = OW::Config::aimHybridTargetMotionGain;
+    preset.hybridSuddenMotionBoost = OW::Config::aimHybridSuddenMotionBoost;
+    preset.hybridDeadzoneDeg = OW::Config::aimHybridDeadzoneDeg;
     return preset;
 }
 
@@ -5290,6 +5298,64 @@ static void DrawMiscMethodPage() {
             SettingRow(T(UiText::Deadzone));
             PushControlWidth();
             UISlider("##methodPidDeadzone", selectedPreset ? &selectedPreset->pidDeadzone : &OW::Config::aimPidDeadzone, 0.0f, 10.0f, "1.0 deg");
+            ImGui::PopItemWidth();
+            break;
+        case 6:
+            drawAngularSpeed("##methodHybridAngularSpeedScale");
+
+            SettingRow(T(UiText::PGain));
+            PushControlWidth();
+            UISlider("##methodHybridP", selectedPreset ? &selectedPreset->pidP : &OW::Config::aimPidP, 0.0f, 2.0f, "0.45");
+            ImGui::PopItemWidth();
+
+            SettingRow(T(UiText::IGain));
+            PushControlWidth();
+            UISlider("##methodHybridI", selectedPreset ? &selectedPreset->pidI : &OW::Config::aimPidI, 0.0f, 0.5f, "0.010");
+            ImGui::PopItemWidth();
+
+            SettingRow(T(UiText::DGain));
+            PushControlWidth();
+            UISlider("##methodHybridD", selectedPreset ? &selectedPreset->pidD : &OW::Config::aimPidD, 0.0f, 1.0f, "0.04");
+            ImGui::PopItemWidth();
+
+            SettingRow("Deadzone");
+            PushControlWidth();
+            UISlider("##methodHybridDeadzone", selectedPreset ? &selectedPreset->hybridDeadzoneDeg : &OW::Config::aimHybridDeadzoneDeg, 0.0f, 2.0f, "0.10 deg");
+            ImGui::PopItemWidth();
+
+            SettingRow("Constant Feed");
+            PushControlWidth();
+            UISlider("##methodHybridConstant", selectedPreset ? &selectedPreset->hybridConstantSpeedDeg : &OW::Config::aimHybridConstantSpeedDeg, 0.0f, 720.0f, "45 deg/s");
+            ImGui::PopItemWidth();
+
+            SettingRow("Maximum Speed");
+            PushControlWidth();
+            UISlider("##methodHybridMax", selectedPreset ? &selectedPreset->hybridMaxSpeedDeg : &OW::Config::aimHybridMaxSpeedDeg, 1.0f, OW::Config::kAimConstantAngularSpeedMaxDeg, "720 deg/s");
+            ImGui::PopItemWidth();
+
+            SettingRow("Acceleration");
+            PushControlWidth();
+            UISlider("##methodHybridAccel", selectedPreset ? &selectedPreset->hybridAccelerationDeg : &OW::Config::aimHybridAccelerationDeg, 1.0f, 10000.0f, "1800 deg/s2");
+            ImGui::PopItemWidth();
+
+            SettingRow("Braking");
+            PushControlWidth();
+            UISlider("##methodHybridDecel", selectedPreset ? &selectedPreset->hybridDecelerationDeg : &OW::Config::aimHybridDecelerationDeg, 1.0f, 10000.0f, "2600 deg/s2");
+            ImGui::PopItemWidth();
+
+            SettingRow("Near Radius");
+            PushControlWidth();
+            UISlider("##methodHybridNear", selectedPreset ? &selectedPreset->hybridNearRadiusDeg : &OW::Config::aimHybridNearRadiusDeg, 0.05f, 15.0f, "3.0 deg");
+            ImGui::PopItemWidth();
+
+            SettingRow("Target Motion Feed");
+            PushControlWidth();
+            UISlider("##methodHybridMotion", selectedPreset ? &selectedPreset->hybridTargetMotionGain : &OW::Config::aimHybridTargetMotionGain, 0.0f, 2.0f, "0.35x");
+            ImGui::PopItemWidth();
+
+            SettingRow("Sudden Motion Boost");
+            PushControlWidth();
+            UISlider("##methodHybridBoost", selectedPreset ? &selectedPreset->hybridSuddenMotionBoost : &OW::Config::aimHybridSuddenMotionBoost, 1.0f, 8.0f, "2.5x");
             ImGui::PopItemWidth();
             break;
         case 2:
