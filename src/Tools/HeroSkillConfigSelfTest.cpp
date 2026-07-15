@@ -155,8 +155,55 @@ int main()
     const OW::HeroSkillDefinition* mizukiAutoMelee = nullptr;
     const OW::HeroSkillDefinition* shionAutoMelee = nullptr;
     size_t autoMeleeDefinitions = 0;
+    size_t aimableSkillDefinitions = 0;
     for (const OW::HeroSkillDefinition& definition : OW::AllHeroSkillDefinitions()) {
         const std::string skillId(definition.skillId ? definition.skillId : "");
+        const OW::Config::HeroSkillSettings defaults = definition.defaultSettings;
+        const bool ownsCompositeOutput =
+            OW::HasHeroSkillControl(definition, OW::HeroSkillControls::SequenceSteps) ||
+            OW::HasHeroSkillControl(definition, OW::HeroSkillControls::ComboAction);
+        if (OW::HasHeroSkillControl(definition, OW::HeroSkillControls::Key) &&
+            OW::Labels::AimActivationKeyVk(defaults.key) == 0) {
+            std::fprintf(
+                stderr,
+                "HeroSkillConfigSelfTest invalid activation key: %s key=%d\n",
+                skillId.c_str(),
+                defaults.key);
+            return Fail();
+        }
+        if (!ownsCompositeOutput) {
+            const int expectedOutput = OW::DefaultHeroSkillOutputHotkey(definition.inputAction);
+            const int effectiveOutput = defaults.skillKey >= 0 ? defaults.skillKey : defaults.key;
+            if (expectedOutput < 0 || effectiveOutput != expectedOutput ||
+                !OW::Labels::IsHeroSkillOutputHotkey(effectiveOutput)) {
+                std::fprintf(
+                    stderr,
+                    "HeroSkillConfigSelfTest key mismatch: %s expected=%d actual=%d\n",
+                    skillId.c_str(),
+                    expectedOutput,
+                    effectiveOutput);
+                return Fail();
+            }
+        }
+
+        const bool aimable =
+            OW::HasHeroSkillControl(definition, OW::HeroSkillControls::TrackingOverlay) &&
+            OW::HasHeroSkillControl(definition, OW::HeroSkillControls::Prediction) &&
+            !ownsCompositeOutput;
+        if (aimable) {
+            ++aimableSkillDefinitions;
+            if (!std::isfinite(defaults.projectileSpeed) || defaults.projectileSpeed <= 0.0f ||
+                !std::isfinite(defaults.projectileRadius) || defaults.projectileRadius < 0.0f ||
+                !std::isfinite(defaults.preFireDelayMs) || defaults.preFireDelayMs < 0.0f ||
+                !std::isfinite(defaults.maxAimTimeMs) || defaults.maxAimTimeMs <= 0.0f ||
+                defaults.tracking.hitbox <= 0.0f || defaults.distance <= 0.0f) {
+                std::fprintf(
+                    stderr,
+                    "HeroSkillConfigSelfTest incomplete aim contract: %s\n",
+                    skillId.c_str());
+                return Fail();
+            }
+        }
         if (definition.heroId == static_cast<uint64_t>(OW::eHero::HERO_ASHE) &&
             skillId == "fire-pattern") {
             asheFirePattern = &definition;
@@ -239,6 +286,8 @@ int main()
     if (std::string(OW::GameData::HeroName(static_cast<uint64_t>(OW::eHero::HERO_SHION))) != "Shion")
         return Fail();
     if (autoMeleeDefinitions != OW::AutoMeleeHeroDefinitionCount())
+        return Fail();
+    if (aimableSkillDefinitions != 7)
         return Fail();
     if (!OW::HasHeroSkillControl(*asheFirePattern, OW::HeroSkillControls::SequenceSteps))
         return Fail();

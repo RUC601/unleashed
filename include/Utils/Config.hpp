@@ -1413,6 +1413,13 @@ namespace OW { namespace Config {
         float radius = 0.0f;
         std::vector<HeroSkillSequenceStep> sequenceSteps{};
         HeroSkillTrackingParams tracking{};
+        bool sequencePhaseAwareTracking = false;
+        float sequencePostFirePauseMs = 35.0f;
+        float sequenceRecoveryMs = 90.0f;
+        float sequencePostFireYawScale = 0.35f;
+        float sequencePostFirePitchScale = 0.0f;
+        float sequencePreFireBoostWindowMs = 45.0f;
+        float sequencePreFireBoostScale = 1.35f;
         int pitchDownDurationMs = 45;
         float pitchDownDurationJitter = 10.0f;
         float pitchDownTargetAngle = 90.0f;
@@ -1425,7 +1432,8 @@ namespace OW { namespace Config {
         float projectileSpeed = 0.0f;
         float projectileRadius = 0.0f;
         bool projectileGravity = false;
-        float preFireDelayMs = 0.0f;
+        float preFireDelayMs = 0.0f; // skill wind-up added to lead prediction
+        float maxAimTimeMs = 650.0f; // 0 disables the acquisition-session timeout
     };
 
     using HeroSkillPresetStore = std::unordered_map<uint64_t, std::unordered_map<std::string, HeroSkillSettings>>;

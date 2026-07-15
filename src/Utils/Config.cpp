@@ -1909,12 +1909,19 @@ namespace OW { namespace Config {
             if (!std::isfinite(settings.tracking.speedScale)) settings.tracking.speedScale = 100.0f;
             if (!std::isfinite(settings.tracking.fov)) settings.tracking.fov = 0.0f;
             if (!std::isfinite(settings.tracking.hitbox)) settings.tracking.hitbox = 0.0f;
+            if (!std::isfinite(settings.sequencePostFirePauseMs)) settings.sequencePostFirePauseMs = 35.0f;
+            if (!std::isfinite(settings.sequenceRecoveryMs)) settings.sequenceRecoveryMs = 90.0f;
+            if (!std::isfinite(settings.sequencePostFireYawScale)) settings.sequencePostFireYawScale = 0.35f;
+            if (!std::isfinite(settings.sequencePostFirePitchScale)) settings.sequencePostFirePitchScale = 0.0f;
+            if (!std::isfinite(settings.sequencePreFireBoostWindowMs)) settings.sequencePreFireBoostWindowMs = 45.0f;
+            if (!std::isfinite(settings.sequencePreFireBoostScale)) settings.sequencePreFireBoostScale = 1.35f;
             if (!std::isfinite(settings.pitchDownDurationJitter)) settings.pitchDownDurationJitter = 10.0f;
             if (!std::isfinite(settings.pitchDownTargetAngle)) settings.pitchDownTargetAngle = 90.0f;
             if (!std::isfinite(settings.pitchUpOffsetJitter)) settings.pitchUpOffsetJitter = 1.5f;
             if (!std::isfinite(settings.projectileSpeed)) settings.projectileSpeed = 0.0f;
             if (!std::isfinite(settings.projectileRadius)) settings.projectileRadius = 0.0f;
             if (!std::isfinite(settings.preFireDelayMs)) settings.preFireDelayMs = 0.0f;
+            if (!std::isfinite(settings.maxAimTimeMs)) settings.maxAimTimeMs = 650.0f;
 
             settings.key = std::clamp(settings.key, 0, MaxActivationKeyIndex());
             settings.skillKey = settings.skillKey < 0
@@ -1949,6 +1956,12 @@ namespace OW { namespace Config {
                 ? kAimBoneClosest
                 : NormalizeAimBone(settings.tracking.bone);
             settings.tracking.hitbox = ClampHitboxScalePercent(settings.tracking.hitbox);
+            settings.sequencePostFirePauseMs = std::clamp(settings.sequencePostFirePauseMs, 0.0f, 500.0f);
+            settings.sequenceRecoveryMs = std::clamp(settings.sequenceRecoveryMs, 0.0f, 1000.0f);
+            settings.sequencePostFireYawScale = std::clamp(settings.sequencePostFireYawScale, 0.0f, 1.0f);
+            settings.sequencePostFirePitchScale = std::clamp(settings.sequencePostFirePitchScale, 0.0f, 1.0f);
+            settings.sequencePreFireBoostWindowMs = std::clamp(settings.sequencePreFireBoostWindowMs, 0.0f, 500.0f);
+            settings.sequencePreFireBoostScale = std::clamp(settings.sequencePreFireBoostScale, 1.0f, 3.0f);
             settings.pitchDownDurationMs = std::clamp(settings.pitchDownDurationMs, 20, 100);
             settings.pitchDownDurationJitter = std::clamp(settings.pitchDownDurationJitter, 0.0f, 50.0f);
             settings.pitchDownTargetAngle = std::clamp(settings.pitchDownTargetAngle, 0.0f, 180.0f);
@@ -1959,6 +1972,7 @@ namespace OW { namespace Config {
             settings.projectileSpeed = std::clamp(settings.projectileSpeed, 0.0f, 300.0f);
             settings.projectileRadius = std::clamp(settings.projectileRadius, 0.0f, 2.0f);
             settings.preFireDelayMs = std::clamp(settings.preFireDelayMs, 0.0f, 1000.0f);
+            settings.maxAimTimeMs = std::clamp(settings.maxAimTimeMs, 0.0f, 5000.0f);
             return settings;
         }
 
@@ -3440,6 +3454,7 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "projectileRadius", settings.projectileRadius, allocator);
             AddJsonBool(value, "projectileGravity", settings.projectileGravity, allocator);
             AddJsonFloat(value, "preFireDelayMs", settings.preFireDelayMs, allocator);
+            AddJsonFloat(value, "maxAimTimeMs", settings.maxAimTimeMs, allocator);
             return value;
         }
 
@@ -3863,6 +3878,7 @@ namespace OW { namespace Config {
             defaults.projectileRadius = ReadJsonFloat(value, "projectileRadius", defaults.projectileRadius);
             defaults.projectileGravity = ReadJsonBool(value, "projectileGravity", defaults.projectileGravity);
             defaults.preFireDelayMs = ReadJsonFloat(value, "preFireDelayMs", defaults.preFireDelayMs);
+            defaults.maxAimTimeMs = ReadJsonFloat(value, "maxAimTimeMs", defaults.maxAimTimeMs);
             return ValidateHeroSkillSettingsValue(defaults);
         }
 

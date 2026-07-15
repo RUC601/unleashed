@@ -4339,9 +4339,14 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
             SettingRow("Projectile Gravity", kAimbotRightLabelWidth);
             changed |= UICheckbox("##skillProjectileGravity", &settings.projectileGravity);
 
-            SettingRow("Pre-fire Delay", kAimbotRightLabelWidth);
+            SettingRow("Aim Wind-up", kAimbotRightLabelWidth);
             PushControlWidth();
             changed |= UISlider("##skillPreFireDelay", &settings.preFireDelayMs, 0.0f, 1000.0f, "320 ms");
+            ImGui::PopItemWidth();
+
+            SettingRow("Max Aim Time", kAimbotRightLabelWidth);
+            PushControlWidth();
+            changed |= UISlider("##skillMaxAimTime", &settings.maxAimTimeMs, 0.0f, 5000.0f, "650 ms");
             ImGui::PopItemWidth();
         }
     }

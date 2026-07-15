@@ -222,6 +222,12 @@ namespace {
         Vector3 aimPoint{};
     };
 
+    struct SkillAimSessionRuntime {
+        bool active = false;
+        bool blockedUntilRelease = false;
+        Clock::time_point started{};
+    };
+
     struct AmmoGuardSample {
         int ammo = -1;
         int stateAmmo = -1;
@@ -288,6 +294,7 @@ namespace {
     std::unordered_map<std::string, AmmoGuardLogState> g_lastAmmoGuardSamples;
     std::unordered_map<std::string, ZaryaAmmoProbeRuntime> g_zaryaAmmoProbes;
     std::unordered_map<std::string, SequenceAmmoBudgetState> g_sequenceAmmoBudgets;
+    std::unordered_map<std::string, SkillAimSessionRuntime> g_skillAimSessions;
     std::mutex g_sequenceAmmoBudgetMutex;
     std::mt19937 g_random{ std::random_device{}() };
     std::mutex g_randomMutex;
@@ -3520,13 +3527,59 @@ namespace {
         return true;
     }
 
-    bool EvaluateTrajectoryAction(const std::string& runtimeKey,
-                                  const HeroSkillDefinition& definition,
-                                  const Config::HeroSkillSettings& settings,
-                                  const TrajectoryParams& params)
+    bool AdvanceSkillAimSession(const std::string& runtimeKey,
+                                bool held,
+                                float maxAimTimeMs)
     {
-        if (!IsActivationKeyHeld(settings.key))
+        SkillAimSessionRuntime& runtime = g_skillAimSessions[runtimeKey];
+        if (!held) {
+            runtime = {};
             return false;
+        }
+        if (runtime.blockedUntilRelease)
+            return false;
+
+        const Clock::time_point now = Clock::now();
+        if (!runtime.active) {
+            runtime.active = true;
+            runtime.started = now;
+        }
+
+        const float limitMs = std::clamp(
+            std::isfinite(maxAimTimeMs) ? maxAimTimeMs : 650.0f,
+            0.0f,
+            5000.0f);
+        if (limitMs <= 0.0f)
+            return true;
+
+        const float elapsedMs = static_cast<float>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - runtime.started).count()) /
+            1000.0f;
+        if (elapsedMs <= limitMs)
+            return true;
+
+        runtime.active = false;
+        runtime.blockedUntilRelease = true;
+        Diagnostics::Aim(
+            "skill.aim_timeout skill=%s elapsedMs=%.3f limitMs=%.3f blockedUntilRelease=1",
+            runtimeKey.c_str(),
+            elapsedMs,
+            limitMs);
+        return false;
+    }
+
+    bool EvaluateTrajectoryAction(const std::string& runtimeKey,
+                                   const HeroSkillDefinition& definition,
+                                   const Config::HeroSkillSettings& settings,
+                                   const TrajectoryParams& params)
+    {
+        const bool held = IsActivationKeyHeld(settings.key);
+        if (SkillControls(definition, HeroSkillControls::TrackingOverlay)) {
+            if (!AdvanceSkillAimSession(runtimeKey, held, settings.maxAimTimeMs))
+                return false;
+        } else if (!held) {
+            return false;
+        }
 
         if (SkillControls(definition, HeroSkillControls::TrackingOverlay)) {
             const SkillProjectileRuntime projectile =
@@ -3547,6 +3600,7 @@ namespace {
                 return false;
 
             MarkActionExecuted(runtimeKey);
+            g_skillAimSessions.erase(runtimeKey);
             Diagnostics::Info("Hero skill aimed trajectory fired. skill=%s targetIndex=%d distance=%.2f hp=%.1f fovScore=%.2f hitWindow=%.3f projectileSpeed=%.1f preFireMs=%.1f vk=%d",
                 definition.skillId ? definition.skillId : "",
                 candidate.entityIndex,
@@ -3891,6 +3945,7 @@ namespace {
         g_lastSkillGuardLogs.erase(skillId);
         g_lastAmmoGuardSamples.erase(skillId);
         g_zaryaAmmoProbes.erase(skillId);
+        g_skillAimSessions.erase(skillId);
     }
 
     std::string RuntimeSkillKey(uint64_t heroId, const char* skillId)
@@ -4243,6 +4298,7 @@ void CancelActiveSkillStateLocked()
     TimedOutputScheduler().CancelSource(OutputOwnerSource::GenjiCombo);
     g_lastActionExecutions.clear();
     g_zaryaAmmoProbes.clear();
+    g_skillAimSessions.clear();
     RefreshAnyInputSequenceActive();
 }
 
