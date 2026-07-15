@@ -390,44 +390,22 @@ namespace OW {
         if (!activeOffsets.VisibilityValueOffset)
             return 0;
 
-        const bool cnNeProfile = offset::ActiveProfile() == offset::RuntimeProfile::CnNe;
-        if (cnNeProfile) {
-            static bool loggedCnVisibility = false;
-            if (!loggedCnVisibility) {
-                Diagnostics::Info("[VISIBILITY] CN/NE +0x%llX uses live-verified raw bool state; visible when raw == 1.",
-                    static_cast<unsigned long long>(activeOffsets.VisibilityValueOffset));
-                loggedCnVisibility = true;
-            }
+        static bool loggedVisibility = false;
+        if (!loggedVisibility) {
+            Diagnostics::Info("[VISIBILITY] BZ/NE 151293 component 0x34 +0x%llX uses raw bool state; visible when raw == 1.",
+                static_cast<unsigned long long>(activeOffsets.VisibilityValueOffset));
+            loggedVisibility = true;
         }
 
-        const uint64_t enc = SDK->RPM<uint64_t>(visBase + activeOffsets.VisibilityValueOffset);
-        bool visible = false;
-        if (cnNeProfile) {
-            visible = enc == 1;
-        } else {
-            const uint64_t keySource = SDK->RPM<uint64_t>(
-                SDK->dwGameBase + offset::VisibilityGlobalKeyPtr_RVA);
-            const uint64_t xorQword = keySource
-                ? SDK->RPM<uint64_t>(keySource + offset::VisibilityQwordOffset)
-                : 0;
-            const uint8_t xorByte = SDK->RPM<uint8_t>(
-                SDK->dwGameBase + offset::VisibilityMagicByte_RVA);
-            uint64_t value =
-                (static_cast<uint64_t>(xorByte) ^
-                    ((ROR64(enc, offset::Visibility_Ror1) ^
-                        offset::Visibility_Xor1) -
-                        offset::Visibility_Sub1)) +
-                offset::Visibility_Add1;
-            value = ROR64(value + offset::Visibility_Add2, offset::Visibility_Ror2);
-            visible = (xorQword ^ ROL64(value, 1)) == 1;
-        }
+        const uint64_t raw = SDK->RPM<uint64_t>(visBase + activeOffsets.VisibilityValueOffset);
+        const bool visible = raw == 1;
         const uint64_t result = visible ? 1 : 0;
         {
             static uint32_t sampleCount = 0;
             if (sampleCount < 50) {
-                Diagnostics::Aim("visibility.decrypt sample=%u raw=0x%llX visible=%d visbase=0x%llX",
+                Diagnostics::Aim("visibility.raw sample=%u raw=0x%llX visible=%d visbase=0x%llX",
                     sampleCount,
-                    static_cast<unsigned long long>(enc),
+                    static_cast<unsigned long long>(raw),
                     visible ? 1 : 0,
                     static_cast<unsigned long long>(visBase));
                 ++sampleCount;

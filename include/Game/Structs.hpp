@@ -130,8 +130,8 @@ namespace OW {
         TYPE_BONE             = 0x24,  // updated per UC p330 (was 0x27)
         TYPE_TRANSFORM_ALT    = 0x25,
         TYPE_ROTATION         = 0x2F,
-        TYPE_LINK             = 0x34,
-        TYPE_P_VISIBILITY     = 0x35,
+        TYPE_LINK             = 0x34,  // legacy 151177 id; active 151293 profiles use 0x33
+        TYPE_P_VISIBILITY     = 0x34,  // active BZ/NE 151293 id; NE static+live verified
         TYPE_SKILL            = 0x37,
         TYPE_ANGLE            = 0x39,
         TYPE_HEALTH           = 0x3B,
