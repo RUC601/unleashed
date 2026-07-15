@@ -325,6 +325,13 @@ int main()
         return Fail();
 
     OW::offset::SetActiveProfile(OW::offset::RuntimeProfile::CnNe);
+    if (OW::offset::Active().typeTeam != 0x20 ||
+        OW::offset::Active().typePlayerController != 0x42 ||
+        OW::offset::Active().typeRotation != 0x2E ||
+        OW::offset::Active().typeLink != 0x33 ||
+        OW::offset::Active().typeHealth != 0x3A ||
+        OW::offset::Active().typeHeroId != 0x53)
+        return Fail();
     if (OW::offset::TeamComparisonKeyFromFlags(0x208D4041) != 0x00800000)
         return Fail();
     if (OW::offset::TeamComparisonKeyFromFlags(0x208D4043) != 0x00800000)
@@ -351,9 +358,16 @@ int main()
         return Fail();
 
     OW::offset::SetActiveProfile(OW::offset::RuntimeProfile::WorldBz);
+    if (OW::offset::Active().typeTeam != 0x20 ||
+        OW::offset::Active().typePlayerController != 0x42 ||
+        OW::offset::Active().typeRotation != 0x2E ||
+        OW::offset::Active().typeLink != 0x33 ||
+        OW::offset::Active().typeHealth != 0x3A ||
+        OW::offset::Active().typeHeroId != 0x53)
+        return Fail();
     if (OW::offset::TeamComparisonKeyFromFlags(0x208D4041) != 0x00800000)
         return Fail();
-    if (OW::offset::TeamComparisonKeyFromFlags(0x210D4043) != 0x01000000)
+    if (OW::offset::TeamComparisonKeyFromFlags(0x210D4045) != 0x01000000)
         return Fail();
     if (OW::GameData::UnknownHeroFallbackName(0x1234) != "BzHero_1234")
         return Fail();

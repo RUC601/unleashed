@@ -333,6 +333,21 @@ namespace OW {
             return decoded;
         }
 
+        if (activeOffsets.componentTransform == offset::ComponentTransformMode::World151293) {
+            component = static_cast<uint64_t>(component_key_byte) ^
+                ((component_key_material_1 ^
+                    (component + offset::Component151293_Add1)) +
+                    offset::Component151293_Add2) ^
+                offset::Component151293_Xor1;
+            component ^= offset::Component151293_Xor2;
+            component = ROR64(component, offset::Component151293_Ror);
+
+            const uintptr_t decoded = static_cast<uintptr_t>(present_mask & component);
+            if (!decoded)
+                Diagnostics::RecordDecryptFailure();
+            return decoded;
+        }
+
         if (activeOffsets.componentTransform == offset::ComponentTransformMode::World150818) {
             component = static_cast<uint64_t>(component_key_byte) ^
                 ((component_key_material_1 ^
@@ -653,6 +668,8 @@ namespace OW {
             return raw;
         case offset::SingletonListMode::LiveGameAdminWorldBz:
             return raw;
+        case offset::SingletonListMode::EncryptedWorldBz151293:
+            return DecryptLiveGameAdmin(raw);
         case offset::SingletonListMode::EncryptedWorldBz:
         default:
             return DecryptSingletonList(raw);
@@ -2043,7 +2060,7 @@ namespace OW {
             if (!component_parent)
                 return false;
             const uint64_t health =
-                DecryptComponent(component_parent, TYPE_HEALTH);
+                DecryptComponent(component_parent, offset::Active().typeHealth);
             if (!health)
                 return false;
             const uint64_t velocity =
@@ -2096,7 +2113,7 @@ namespace OW {
             };
 
             const uint64_t health =
-                DecryptComponent(current.entity, TYPE_HEALTH, snapshot);
+                DecryptComponent(current.entity, offset::Active().typeHealth, snapshot);
             if (IsPlausibleUserPointer(health))
                 ++scanDetail.selfHealthBase;
             if (!IsPlausibleUserPointer(health)) {
@@ -2131,7 +2148,7 @@ namespace OW {
             ++scanDetail.selfHealthPlausible;
 
             const uint64_t hero =
-                DecryptComponent(current.entity, TYPE_P_HEROID, snapshot);
+                DecryptComponent(current.entity, offset::Active().typeHeroId, snapshot);
             if (IsPlausibleUserPointer(hero))
                 ++scanDetail.selfHeroBase;
             if (!IsPlausibleUserPointer(hero)) {
@@ -2310,7 +2327,7 @@ namespace OW {
             };
 
             const uint64_t health =
-                DecryptComponent(component_parent, TYPE_HEALTH, snapshot);
+                DecryptComponent(component_parent, offset::Active().typeHealth, snapshot);
             if (IsPlausibleUserPointer(health))
                 ++scanDetail.selfHealthBase;
             if (!IsPlausibleUserPointer(health)) {
@@ -2354,7 +2371,7 @@ namespace OW {
             const uint64_t velocity =
                 DecryptComponent(component_parent, TYPE_VELOCITY, snapshot);
             const uint64_t team =
-                DecryptComponent(component_parent, TYPE_TEAM, snapshot);
+                DecryptComponent(component_parent, offset::Active().typeTeam, snapshot);
             const uint64_t bone =
                 DecryptComponent(component_parent, TYPE_BONE, snapshot);
             if (IsPlausibleUserPointer(velocity))
@@ -2414,7 +2431,7 @@ namespace OW {
             const EntityHeaderSnapshot* snapshot =
                 componentHeader.Read(component_parent) ? &componentHeader : nullptr;
             const uint64_t health =
-                DecryptComponent(component_parent, TYPE_HEALTH, snapshot);
+                DecryptComponent(component_parent, offset::Active().typeHealth, snapshot);
             if (!IsPlausibleUserPointer(health))
                 return false;
 
@@ -2443,7 +2460,7 @@ namespace OW {
             const EntityHeaderSnapshot* snapshot =
                 linkHeader.Read(link_parent) ? &linkHeader : nullptr;
             const uint64_t hero =
-                DecryptComponent(link_parent, TYPE_P_HEROID, snapshot);
+                DecryptComponent(link_parent, offset::Active().typeHeroId, snapshot);
             if (!IsPlausibleUserPointer(hero))
                 return false;
 
@@ -2698,7 +2715,7 @@ namespace OW {
             if (linkDecryptNegativeCacheHit(parent))
                 return static_cast<uint64_t>(0);
             ++scanDetail.linkDecryptAttemptCount;
-            const uint64_t link = DecryptComponent(parent, TYPE_LINK, snapshot);
+            const uint64_t link = DecryptComponent(parent, offset::Active().typeLink, snapshot);
             if (!link)
                 storeLinkDecryptNegativeCache(parent);
             return link;

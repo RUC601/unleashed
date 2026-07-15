@@ -124,6 +124,8 @@ namespace OW {
         TYPE_ERROR            = -1,
         TYPE_TRANSFORM        = 0x01,
         TYPE_VELOCITY         = 0x4,
+        // Legacy 151177 values kept for source compatibility. Runtime code
+        // must use offset::Active().type* so BZ and CN/NE can diverge.
         TYPE_TEAM             = 0x21,
         TYPE_BONE             = 0x24,  // updated per UC p330 (was 0x27)
         TYPE_TRANSFORM_ALT    = 0x25,
