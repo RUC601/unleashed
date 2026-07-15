@@ -297,6 +297,8 @@ int main()
     const OW::Config::HeroSkillSettings settings = asheFirePattern->defaultSettings;
     if (settings.tracking.aimBehavior != OW::Config::kAimBehaviorTracking)
         return Fail();
+    if (settings.tracking.method != 6)
+        return Fail();
     if (!NearlyEqual(
             settings.tracking.speedScale,
             OW::HeroSkillDetail::kAsheFirePatternTrackingSpeedScale))
@@ -307,6 +309,15 @@ int main()
         return Fail();
     if (!NearlyEqual(settings.tracking.hitbox, OW::Config::kDefaultHitboxScalePercent))
         return Fail();
+    if (!settings.sequencePhaseAwareTracking ||
+        !NearlyEqual(settings.sequencePostFirePauseMs, 35.0f) ||
+        !NearlyEqual(settings.sequenceRecoveryMs, 90.0f) ||
+        !NearlyEqual(settings.sequencePostFireYawScale, 0.35f) ||
+        !NearlyEqual(settings.sequencePostFirePitchScale, 0.0f) ||
+        !NearlyEqual(settings.sequencePreFireBoostWindowMs, 45.0f) ||
+        !NearlyEqual(settings.sequencePreFireBoostScale, 1.35f)) {
+        return Fail();
+    }
 
     const auto verifyProjectileAimSkill =
         [](const OW::HeroSkillDefinition& definition,

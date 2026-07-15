@@ -225,6 +225,7 @@ void RunInputSequence(const std::string& skillId,
                       int key,
                       const Config::HeroSkillTrackingParams& trackingParams,
                       bool prediction,
+                      const Config::HeroSkillSettings& phaseSettings,
                       bool ammoGuardEnabled,
                       int ammoGuardReserve);
 HeroSkillRunState RunViewpointController(const std::string& skillId,
@@ -253,13 +254,20 @@ inline Config::HeroSkillSettings MakeAsheComboSequenceDefaults()
     settings.radius = 0.0f;
     settings.tracking = {
         Config::kAimBehaviorTracking,
-        0,
+        6,
         0.0f,
         HeroSkillDetail::kAsheFirePatternTrackingSpeedScale,
         Config::kDefaultFovDeg,
         Config::kAimBoneHead,
         Config::kDefaultHitboxScalePercent
     };
+    settings.sequencePhaseAwareTracking = true;
+    settings.sequencePostFirePauseMs = 35.0f;
+    settings.sequenceRecoveryMs = 90.0f;
+    settings.sequencePostFireYawScale = 0.35f;
+    settings.sequencePostFirePitchScale = 0.0f;
+    settings.sequencePreFireBoostWindowMs = 45.0f;
+    settings.sequencePreFireBoostScale = 1.35f;
     settings.ammoGuard = true;
     settings.ammoGuardReserve = 1;
 

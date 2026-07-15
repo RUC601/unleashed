@@ -286,7 +286,7 @@ namespace OW { namespace Config {
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
         constexpr int kVisualOverlayCleanupVersion = 8;
-        constexpr int kCurrentHeroConfigVersion = 14;
+        constexpr int kCurrentHeroConfigVersion = 15;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
@@ -295,6 +295,7 @@ namespace OW { namespace Config {
         constexpr int kDocumentedHeroSlotDefaultsVersion = 9;
         constexpr int kAsheFirePatternStableTrackingVersion = 13;
         constexpr int kAimScopeRequirementVersion = 14;
+        constexpr int kAsheFirePatternAimPhaseVersion = 15;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -3442,6 +3443,13 @@ namespace OW { namespace Config {
             AddJsonFloat(value, "trackingFov", settings.tracking.fov, allocator);
             AddJsonInt(value, "trackingBone", settings.tracking.bone, allocator);
             AddJsonFloat(value, "trackingHitboxScale", settings.tracking.hitbox, allocator);
+            AddJsonBool(value, "sequencePhaseAwareTracking", settings.sequencePhaseAwareTracking, allocator);
+            AddJsonFloat(value, "sequencePostFirePauseMs", settings.sequencePostFirePauseMs, allocator);
+            AddJsonFloat(value, "sequenceRecoveryMs", settings.sequenceRecoveryMs, allocator);
+            AddJsonFloat(value, "sequencePostFireYawScale", settings.sequencePostFireYawScale, allocator);
+            AddJsonFloat(value, "sequencePostFirePitchScale", settings.sequencePostFirePitchScale, allocator);
+            AddJsonFloat(value, "sequencePreFireBoostWindowMs", settings.sequencePreFireBoostWindowMs, allocator);
+            AddJsonFloat(value, "sequencePreFireBoostScale", settings.sequencePreFireBoostScale, allocator);
             AddJsonInt(value, "pitchDownDurationMs", settings.pitchDownDurationMs, allocator);
             AddJsonFloat(value, "pitchDownDurationJitter", settings.pitchDownDurationJitter, allocator);
             AddJsonFloat(value, "pitchDownTargetAngle", settings.pitchDownTargetAngle, allocator);
@@ -3866,6 +3874,20 @@ namespace OW { namespace Config {
                 "trackingHitboxScale",
                 "trackingHitbox",
                 defaults.tracking.hitbox);
+            defaults.sequencePhaseAwareTracking = ReadJsonBool(
+                value, "sequencePhaseAwareTracking", defaults.sequencePhaseAwareTracking);
+            defaults.sequencePostFirePauseMs = ReadJsonFloat(
+                value, "sequencePostFirePauseMs", defaults.sequencePostFirePauseMs);
+            defaults.sequenceRecoveryMs = ReadJsonFloat(
+                value, "sequenceRecoveryMs", defaults.sequenceRecoveryMs);
+            defaults.sequencePostFireYawScale = ReadJsonFloat(
+                value, "sequencePostFireYawScale", defaults.sequencePostFireYawScale);
+            defaults.sequencePostFirePitchScale = ReadJsonFloat(
+                value, "sequencePostFirePitchScale", defaults.sequencePostFirePitchScale);
+            defaults.sequencePreFireBoostWindowMs = ReadJsonFloat(
+                value, "sequencePreFireBoostWindowMs", defaults.sequencePreFireBoostWindowMs);
+            defaults.sequencePreFireBoostScale = ReadJsonFloat(
+                value, "sequencePreFireBoostScale", defaults.sequencePreFireBoostScale);
             defaults.pitchDownDurationMs = ReadJsonInt(value, "pitchDownDurationMs", defaults.pitchDownDurationMs);
             defaults.pitchDownDurationJitter = ReadJsonFloat(value, "pitchDownDurationJitter", defaults.pitchDownDurationJitter);
             defaults.pitchDownTargetAngle = ReadJsonFloat(value, "pitchDownTargetAngle", defaults.pitchDownTargetAngle);
@@ -4093,6 +4115,26 @@ namespace OW { namespace Config {
                 SameFloatForDefaultMigration(
                     settings.tracking.hitbox,
                     kDefaultHitboxScalePercent);
+        }
+
+        bool ShouldMigrateAsheFirePatternAimPhase(
+            int heroConfigVersion,
+            uint64_t heroId,
+            const std::string& skillId,
+            const rapidjson::Value& value,
+            const HeroSkillSettings& settings)
+        {
+            if (heroConfigVersion >= kAsheFirePatternAimPhaseVersion ||
+                heroId != static_cast<uint64_t>(OW::eHero::HERO_ASHE) ||
+                skillId != "fire-pattern" ||
+                !MatchesMeasuredAsheFirePattern(settings.sequenceSteps) ||
+                !value.IsObject()) {
+                return false;
+            }
+
+            // Preserve an explicitly authored experimental phase policy even
+            // when the surrounding JSON still carries an older version.
+            return value.FindMember("sequencePhaseAwareTracking") == value.MemberEnd();
         }
 
         bool IsProjectileAimSkill(uint64_t heroId, const std::string& skillId)
@@ -4477,6 +4519,24 @@ namespace OW { namespace Config {
                         settings = ValidateHeroSkillSettingsValue(settings);
                         LogConfig(Diagnostics::LogLevel::Info,
                             "Migrated Ashe fire-pattern tracking speed to stable default.");
+                    }
+                    if (ShouldMigrateAsheFirePatternAimPhase(
+                            heroConfigVersion,
+                            heroId,
+                            skillId,
+                            skill->value,
+                            settings)) {
+                        const HeroSkillSettings defaults = MakeAsheComboSequenceDefaults();
+                        settings.sequencePhaseAwareTracking = defaults.sequencePhaseAwareTracking;
+                        settings.sequencePostFirePauseMs = defaults.sequencePostFirePauseMs;
+                        settings.sequenceRecoveryMs = defaults.sequenceRecoveryMs;
+                        settings.sequencePostFireYawScale = defaults.sequencePostFireYawScale;
+                        settings.sequencePostFirePitchScale = defaults.sequencePostFirePitchScale;
+                        settings.sequencePreFireBoostWindowMs = defaults.sequencePreFireBoostWindowMs;
+                        settings.sequencePreFireBoostScale = defaults.sequencePreFireBoostScale;
+                        settings = ValidateHeroSkillSettingsValue(settings);
+                        LogConfig(Diagnostics::LogLevel::Info,
+                            "Migrated Ashe fire-pattern to phase-aware tracking defaults.");
                     }
                     skills[skillId] = settings;
                 }

@@ -4325,6 +4325,80 @@ static bool DrawHeroSkillDefinition(const OW::HeroSkillDefinition& definition, u
                             "100 %");
         ImGui::PopItemWidth();
 
+        if (hasSequenceControls) {
+            ImGui::Spacing();
+            ImGui::TextColored(
+                ImGui::ColorConvertU32ToFloat4(kColTextMuted),
+                "Shot Phase Tracking");
+
+            SettingRow("Phase Aware", kAimbotRightLabelWidth);
+            changed |= UICheckbox(
+                "##sequencePhaseAwareTracking",
+                &settings.sequencePhaseAwareTracking);
+
+            if (settings.sequencePhaseAwareTracking) {
+                SettingRow("Post-fire Pause", kAimbotRightLabelWidth);
+                PushControlWidth();
+                changed |= UISlider(
+                    "##sequencePostFirePause",
+                    &settings.sequencePostFirePauseMs,
+                    0.0f,
+                    500.0f,
+                    "35 ms");
+                ImGui::PopItemWidth();
+
+                SettingRow("Recovery", kAimbotRightLabelWidth);
+                PushControlWidth();
+                changed |= UISlider(
+                    "##sequenceRecovery",
+                    &settings.sequenceRecoveryMs,
+                    0.0f,
+                    1000.0f,
+                    "90 ms");
+                ImGui::PopItemWidth();
+
+                SettingRow("Pause X Scale", kAimbotRightLabelWidth);
+                PushControlWidth();
+                changed |= UISlider(
+                    "##sequencePostFireYawScale",
+                    &settings.sequencePostFireYawScale,
+                    0.0f,
+                    1.0f,
+                    "0.35x");
+                ImGui::PopItemWidth();
+
+                SettingRow("Pause Y Scale", kAimbotRightLabelWidth);
+                PushControlWidth();
+                changed |= UISlider(
+                    "##sequencePostFirePitchScale",
+                    &settings.sequencePostFirePitchScale,
+                    0.0f,
+                    1.0f,
+                    "0.00x");
+                ImGui::PopItemWidth();
+
+                SettingRow("Pre-shot Window", kAimbotRightLabelWidth);
+                PushControlWidth();
+                changed |= UISlider(
+                    "##sequencePreFireBoostWindow",
+                    &settings.sequencePreFireBoostWindowMs,
+                    0.0f,
+                    500.0f,
+                    "45 ms");
+                ImGui::PopItemWidth();
+
+                SettingRow("Pre-shot Boost", kAimbotRightLabelWidth);
+                PushControlWidth();
+                changed |= UISlider(
+                    "##sequencePreFireBoostScale",
+                    &settings.sequencePreFireBoostScale,
+                    1.0f,
+                    3.0f,
+                    "1.35x");
+                ImGui::PopItemWidth();
+            }
+        }
+
         if (hasControl(OW::HeroSkillControls::Prediction)) {
             SettingRow("Projectile Speed", kAimbotRightLabelWidth);
             PushControlWidth();

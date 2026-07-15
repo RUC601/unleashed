@@ -2,6 +2,7 @@
 
 #include "Game/HeroSkills.hpp"
 
+#include "Game/AimFirePhase.hpp"
 #include "Game/Overwatch.hpp"
 #include "Game/Target.hpp"
 #include "Kmbox/KmboxRuntime.hpp"
@@ -14,6 +15,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iterator>
 #include <limits>
@@ -81,6 +83,10 @@ namespace {
     struct SequenceWorkerCompletion {
         std::atomic<SequenceWorkerExitReason> reason{
             SequenceWorkerExitReason::Running };
+        std::atomic<size_t> stepIndex{ 0 };
+        std::atomic<std::int64_t> stepStartedMs{ 0 };
+        std::atomic<int> stepDurationMs{ 0 };
+        std::atomic<std::int64_t> lastShotStartedMs{ 0 };
     };
 
     struct SequenceRuntime {
@@ -90,6 +96,7 @@ namespace {
         int currentMask = 0;
         Clock::time_point stepStarted{};
         int effectiveDurationMs = 0;
+        Clock::time_point lastShotStarted{};
         std::jthread worker{};
         std::shared_ptr<SequenceWorkerCompletion> workerCompletion{};
         Clock::time_point hitMonitorStarted{};
@@ -1156,6 +1163,105 @@ namespace {
         return std::clamp(static_cast<int>(std::lround(duration)), 5, 1000);
     }
 
+    int NominalSequenceDurationMs(const Config::HeroSkillSequenceStep& step)
+    {
+        float speedScale = std::isfinite(step.speedScale) ? step.speedScale : 1.0f;
+        speedScale = std::clamp(speedScale, 0.5f, 2.0f);
+        const float duration =
+            static_cast<float>(std::clamp(step.durationMs, 0, 1000)) * speedScale;
+        return std::clamp(static_cast<int>(std::lround(duration)), 5, 1000);
+    }
+
+    std::int64_t SequenceClockMilliseconds(Clock::time_point value)
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            value.time_since_epoch()).count();
+    }
+
+    Clock::time_point SequenceClockFromMilliseconds(std::int64_t value)
+    {
+        return Clock::time_point(std::chrono::milliseconds((std::max)(std::int64_t{ 0 }, value)));
+    }
+
+    bool SequenceShotEdge(int previousMask, int nextMask)
+    {
+        return (nextMask & 0x01) != 0 && (previousMask & 0x01) == 0;
+    }
+
+    AimFirePhase::Tuning SequenceFirePhaseTuning(const Config::HeroSkillSettings& settings)
+    {
+        AimFirePhase::Tuning tuning{};
+        tuning.pauseMs = settings.sequencePostFirePauseMs;
+        tuning.recoveryMs = settings.sequenceRecoveryMs;
+        tuning.pauseYawScale = settings.sequencePostFireYawScale;
+        tuning.pausePitchScale = settings.sequencePostFirePitchScale;
+        tuning.preFireBoostWindowMs = settings.sequencePreFireBoostWindowMs;
+        tuning.preFireBoostScale = settings.sequencePreFireBoostScale;
+        return tuning;
+    }
+
+    float TimeUntilNextSequenceShotMs(
+        const std::vector<Config::HeroSkillSequenceStep>& steps,
+        size_t stepIndex,
+        float elapsedInStepMs,
+        int effectiveDurationMs)
+    {
+        if (steps.empty())
+            return 0.0f;
+
+        stepIndex %= steps.size();
+        float remaining = (std::max)(
+            0.0f,
+            static_cast<float>(effectiveDurationMs) - (std::max)(0.0f, elapsedInStepMs));
+        int previousMask = steps[stepIndex].buttonMask;
+        for (size_t offset = 1; offset <= steps.size(); ++offset) {
+            const size_t nextIndex = (stepIndex + offset) % steps.size();
+            const int nextMask = steps[nextIndex].buttonMask;
+            if (SequenceShotEdge(previousMask, nextMask))
+                return remaining;
+
+            remaining += static_cast<float>(NominalSequenceDurationMs(steps[nextIndex]));
+            previousMask = nextMask;
+        }
+
+        return 2000.0f;
+    }
+
+    AimFirePhase::Phase ResolveSequenceTrackingPhase(
+        const std::vector<Config::HeroSkillSequenceStep>& steps,
+        const Config::HeroSkillSettings& settings,
+        size_t stepIndex,
+        Clock::time_point stepStarted,
+        int effectiveDurationMs,
+        Clock::time_point lastShotStarted)
+    {
+        if (!settings.sequencePhaseAwareTracking || steps.empty() ||
+            stepStarted.time_since_epoch().count() <= 0) {
+            return {};
+        }
+
+        const Clock::time_point now = Clock::now();
+        const float elapsedInStepMs = static_cast<float>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - stepStarted).count()) /
+            1000.0f;
+        const bool shotObserved = lastShotStarted.time_since_epoch().count() > 0;
+        const float elapsedSinceShotMs = shotObserved
+            ? static_cast<float>(
+                std::chrono::duration_cast<std::chrono::microseconds>(now - lastShotStarted).count()) /
+                1000.0f
+            : 0.0f;
+        const float untilNextShotMs = TimeUntilNextSequenceShotMs(
+            steps,
+            stepIndex,
+            elapsedInStepMs,
+            effectiveDurationMs);
+        return AimFirePhase::ResolveTimeline(
+            elapsedSinceShotMs,
+            untilNextShotMs,
+            shotObserved,
+            SequenceFirePhaseTuning(settings));
+    }
+
     bool EnterSequenceStep(const std::string& skillId,
                            int& currentMask,
                            const Config::HeroSkillSequenceStep& step,
@@ -1247,6 +1353,7 @@ namespace {
                 exitReason = SequenceWorkerExitReason::RuntimeChanged;
                 break;
             }
+            const int previousMask = currentMask;
             if (!EnterSequenceStep(
                     skillId,
                     currentMask,
@@ -1256,6 +1363,20 @@ namespace {
                     ? SequenceWorkerExitReason::OutputFailure
                     : SequenceWorkerExitReason::RuntimeChanged;
                 break;
+            }
+
+            const Clock::time_point stepStarted = Clock::now();
+            if (completion) {
+                completion->stepIndex.store(stepIndex, std::memory_order_release);
+                completion->stepDurationMs.store(durationMs, std::memory_order_release);
+                completion->stepStartedMs.store(
+                    SequenceClockMilliseconds(stepStarted),
+                    std::memory_order_release);
+                if (SequenceShotEdge(previousMask, step.buttonMask)) {
+                    completion->lastShotStartedMs.store(
+                        SequenceClockMilliseconds(stepStarted),
+                        std::memory_order_release);
+                }
             }
 
             if (SequenceDiagnosticsEnabled()) {
@@ -1269,7 +1390,9 @@ namespace {
                     step.jitterMs);
             }
 
-            SleepUntilSequenceDeadline(stopToken, Clock::now() + std::chrono::milliseconds(durationMs));
+            SleepUntilSequenceDeadline(
+                stopToken,
+                stepStarted + std::chrono::milliseconds(durationMs));
             ++stepIndex;
         }
 
@@ -1432,13 +1555,19 @@ namespace {
 
     void RunTrackingOverlayTick(const std::string& skillId,
                                 const Config::HeroSkillTrackingParams& params,
-                                bool prediction)
+                                bool prediction,
+                                const AimFirePhase::Phase& phase = {})
     {
         const int behavior = Config::ClampAimBehaviorIndex(params.aimBehavior);
-        if (params.fov <= 0.0f || params.speedScale <= 0.0f)
+        const float trackingScale = std::clamp(phase.trackingScale, 0.0f, 3.0f);
+        const float yawScale = std::clamp(phase.yawScale, 0.0f, 1.0f);
+        const float pitchScale = std::clamp(phase.pitchScale, 0.0f, 1.0f);
+        if (params.fov <= 0.0f || params.speedScale <= 0.0f || trackingScale <= 0.0f)
             return;
 
-        ScopedTrackingConfig trackingOverride(params);
+        Config::HeroSkillTrackingParams effectiveParams = params;
+        effectiveParams.speedScale = std::clamp(params.speedScale * trackingScale, 0.0f, 300.0f);
+        ScopedTrackingConfig trackingOverride(effectiveParams);
         const int method = Config::ActiveAimBehaviorPreset(behavior)
             ? Config::AimBehaviorMethod(behavior)
             : Config::ClampAimMethodIndex(params.method);
@@ -1449,7 +1578,7 @@ namespace {
             return;
         }
 
-        const float smoothInput = Config::AimBehaviorSmoothInput(behavior, params.speedScale);
+        const float smoothInput = Config::AimBehaviorSmoothInput(behavior, effectiveParams.speedScale);
         AimbotDetail::AimData aim = AimbotDetail::BuildAimData(
             targetVector,
             Config::IsFlickBehavior(behavior),
@@ -1457,13 +1586,24 @@ namespace {
             Config::AimBehaviorAcceleration(behavior),
             method);
         if (!AimbotDetail::IsZeroVector(aim.smoothed_angle)) {
-            AimbotDetail::MoveAimDelta(aim.local_angle, aim.smoothed_angle);
+            Vector3 outputAngle = aim.local_angle;
+            const Vector3 delta = aim.smoothed_angle - aim.local_angle;
+            outputAngle.X += delta.X * pitchScale;
+            outputAngle.Y += delta.Y * yawScale;
+            outputAngle.Z += delta.Z;
+            AimbotDetail::MoveAimDelta(aim.local_angle, outputAngle);
             if (Config::aimVerboseLog) {
-                Diagnostics::Aim("sequence.aim_tick skill=%s behavior=%d method=%d speedScale=%.3f fov=%.3f prediction=%d targetIndex=%d",
+                Diagnostics::Aim("sequence.aim_tick skill=%s behavior=%d method=%d speedScale=%.3f phaseScale=%.3f yawScale=%.3f pitchScale=%.3f paused=%d recovery=%d prefire=%d fov=%.3f prediction=%d targetIndex=%d",
                     skillId.c_str(),
                     behavior,
                     method,
-                    params.speedScale,
+                    effectiveParams.speedScale,
+                    trackingScale,
+                    yawScale,
+                    pitchScale,
+                    phase.paused ? 1 : 0,
+                    phase.recovering ? 1 : 0,
+                    phase.preFireBoost ? 1 : 0,
                     params.fov,
                     prediction ? 1 : 0,
                     Config::Targetenemyi);
@@ -3989,6 +4129,7 @@ void RunInputSequence(const std::string& skillId,
                       int key,
                       const Config::HeroSkillTrackingParams& trackingParams,
                       bool prediction,
+                      const Config::HeroSkillSettings& phaseSettings,
                       bool ammoGuardEnabled,
                       int ammoGuardReserve)
 {
@@ -4062,11 +4203,14 @@ void RunInputSequence(const std::string& skillId,
                     skillId, runtime, "ammo_guard_budget");
                 return;
             }
+            const int previousMask = runtime.currentMask;
             if (!EnterSequenceStep(skillId, runtime.currentMask, steps.front())) {
                 CancelSequenceAndBlockUntilRelease(
                     skillId, runtime, "output_failed");
                 return;
             }
+            if (SequenceShotEdge(previousMask, steps.front().buttonMask))
+                runtime.lastShotStarted = runtime.stepStarted;
         }
 
         Diagnostics::Info("Hero skill sequence started. skill=%s steps=%zu activationKey=%d",
@@ -4094,11 +4238,14 @@ void RunInputSequence(const std::string& skillId,
                     skillId, runtime, "ammo_guard_budget");
                 return;
             }
+            const int previousMask = runtime.currentMask;
             if (!EnterSequenceStep(skillId, runtime.currentMask, steps.front())) {
                 CancelSequenceAndBlockUntilRelease(
                     skillId, runtime, "output_failed");
                 return;
             }
+            if (SequenceShotEdge(previousMask, steps.front().buttonMask))
+                runtime.lastShotStarted = runtime.stepStarted;
         }
 
         const Clock::time_point now = Clock::now();
@@ -4114,11 +4261,14 @@ void RunInputSequence(const std::string& skillId,
                     skillId, runtime, "ammo_guard_budget");
                 return;
             }
+            const int previousMask = runtime.currentMask;
             if (!EnterSequenceStep(skillId, runtime.currentMask, nextStep)) {
                 CancelSequenceAndBlockUntilRelease(
                     skillId, runtime, "output_failed");
                 return;
             }
+            if (SequenceShotEdge(previousMask, nextStep.buttonMask))
+                runtime.lastShotStarted = runtime.stepStarted;
 
             if (SequenceDiagnosticsEnabled()) {
                 Diagnostics::Aim("sequence.step skill=%s step=%zu mask=0x%02X durationMs=%d baseMs=%d scale=%.3f jitterMs=%d",
@@ -4133,7 +4283,29 @@ void RunInputSequence(const std::string& skillId,
         }
     }
 
-    RunTrackingOverlayTick(skillId, trackingParams, prediction);
+    size_t phaseStepIndex = runtime.stepIndex;
+    Clock::time_point phaseStepStarted = runtime.stepStarted;
+    int phaseStepDurationMs = runtime.effectiveDurationMs;
+    Clock::time_point phaseLastShotStarted = runtime.lastShotStarted;
+    if (useWorker && runtime.workerCompletion) {
+        phaseStepIndex = runtime.workerCompletion->stepIndex.load(std::memory_order_acquire);
+        phaseStepStarted = SequenceClockFromMilliseconds(
+            runtime.workerCompletion->stepStartedMs.load(std::memory_order_acquire));
+        phaseStepDurationMs = runtime.workerCompletion->stepDurationMs.load(std::memory_order_acquire);
+        phaseLastShotStarted = SequenceClockFromMilliseconds(
+            runtime.workerCompletion->lastShotStartedMs.load(std::memory_order_acquire));
+    }
+    if (phaseStepDurationMs <= 0 && !steps.empty())
+        phaseStepDurationMs = NominalSequenceDurationMs(steps[phaseStepIndex % steps.size()]);
+
+    const AimFirePhase::Phase trackingPhase = ResolveSequenceTrackingPhase(
+        steps,
+        phaseSettings,
+        phaseStepIndex,
+        phaseStepStarted,
+        phaseStepDurationMs,
+        phaseLastShotStarted);
+    RunTrackingOverlayTick(skillId, trackingParams, prediction, trackingPhase);
     UpdateSequenceHitTiming(skillId, runtime);
 }
 
@@ -4490,6 +4662,7 @@ void ProcessHeroSkills()
                              settings.key,
                              settings.tracking,
                              settings.prediction,
+                             settings,
                              settings.ammoGuard,
                              settings.ammoGuardReserve);
         }
