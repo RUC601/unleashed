@@ -1337,6 +1337,19 @@ static int RunConfigCheckCli()
     std::printf("[CONFIG] profile=%s\n", OW::Config::configFileName.c_str());
     std::printf("[CONFIG] path=%s\n", AbsolutePathForLog(configPath).c_str());
     std::printf("[CONFIG] heroPath=%s\n", AbsolutePathForLog(OW::Config::HeroConfigPath(configPath)).c_str());
+    const auto printOffsetProfile = [](const OW::offset::RuntimeOffsetProfile& profile) {
+        std::printf("[OFFSETS] profile=%s team=0x%02X playerController=0x%02X rotation=0x%02X link=0x%02X health=0x%02X hero=0x%02X entityRoot=0x%llX\n",
+            profile.name,
+            static_cast<unsigned int>(profile.typeTeam),
+            static_cast<unsigned int>(profile.typePlayerController),
+            static_cast<unsigned int>(profile.typeRotation),
+            static_cast<unsigned int>(profile.typeLink),
+            static_cast<unsigned int>(profile.typeHealth),
+            static_cast<unsigned int>(profile.typeHeroId),
+            static_cast<unsigned long long>(profile.Address_entity_base));
+    };
+    printOffsetProfile(OW::offset::kWorldBzRuntimeProfile);
+    printOffsetProfile(OW::offset::kCnNeRuntimeProfile);
     std::printf("[CONFIG] countsPerRadian=%.6f calibratedCountsPerRadian=%.6f gameMouseSensitivity=%.6f referenceGameSensitivity=%.6f autoScaleByGameSensitivity=%d\n",
         OW::Config::kmboxCountsPerRadian,
         OW::Config::calibratedCountsPerRadian,

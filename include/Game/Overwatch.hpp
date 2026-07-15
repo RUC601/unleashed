@@ -3236,7 +3236,7 @@ inline void entity_thread() {
             int linkHeroCandidateOffset = -1;
             scanHeroIdCandidate(unknownEntity.HeroBase, linkHeroCandidate, linkHeroCandidateOffset);
             const uint64_t componentHeroBase =
-                OW::DecryptComponent(componentParent, OW::TYPE_P_HEROID);
+                OW::DecryptComponent(componentParent, OW::offset::Active().typeHeroId);
             const uint64_t componentHeroId = readHeroId(componentHeroBase);
             uint64_t componentHeroCandidate = 0;
             int componentHeroCandidateOffset = -1;
@@ -3616,13 +3616,13 @@ inline void entity_thread() {
                                 ScopedPipelinePhaseTimer retainDecryptTimer(pipelineStats.phase.baseDecryptMs);
                                 const uint64_t refreshedLink =
                                     refreshLinkBase(
-                                        OW::TYPE_LINK,
+                                        OW::offset::Active().typeLink,
                                         lifecycleStats.componentCacheLinkRetainRefreshLinkAttemptCount,
                                         lifecycleStats.componentCacheLinkRetainRefreshLinkSuccessCount,
                                         lifecycleStats.componentCacheLinkRetainRefreshLinkFailCount);
                                 const uint64_t refreshedHero =
                                     refreshLinkBase(
-                                        OW::TYPE_P_HEROID,
+                                        OW::offset::Active().typeHeroId,
                                         lifecycleStats.componentCacheLinkRetainRefreshHeroAttemptCount,
                                         lifecycleStats.componentCacheLinkRetainRefreshHeroSuccessCount,
                                         lifecycleStats.componentCacheLinkRetainRefreshHeroFailCount);
@@ -3640,7 +3640,7 @@ inline void entity_thread() {
                                     ++lifecycleStats.componentCacheLinkRetainRefreshAnglePriorCount;
                                     refreshedAngle =
                                         refreshLinkBase(
-                                            OW::TYPE_PLAYERCONTROLLER,
+                                            OW::offset::Active().typePlayerController,
                                             lifecycleStats.componentCacheLinkRetainRefreshAngleAttemptCount,
                                             lifecycleStats.componentCacheLinkRetainRefreshAngleSuccessCount,
                                             lifecycleStats.componentCacheLinkRetainRefreshAngleFailCount);
@@ -3919,23 +3919,23 @@ inline void entity_thread() {
                 ComponentBaseCache cache{};
                 cache.linkParent = LinkParent;
                 cache.baseUpdateTick = processLoopTick;
-                cache.health     = decryptBase(ComponentParent, OW::TYPE_HEALTH, componentSnapshot);
-                cache.link       = decryptBase(LinkParent, OW::TYPE_LINK, linkSnapshot);
-                cache.team       = decryptBase(ComponentParent, OW::TYPE_TEAM, componentSnapshot);
+                cache.health     = decryptBase(ComponentParent, OW::offset::Active().typeHealth, componentSnapshot);
+                cache.link       = decryptBase(LinkParent, OW::offset::Active().typeLink, linkSnapshot);
+                cache.team       = decryptBase(ComponentParent, OW::offset::Active().typeTeam, componentSnapshot);
                 cache.transform  = decryptBase(ComponentParent, OW::TYPE_TRANSFORM, componentSnapshot);
                 cache.velocity   = decryptBase(ComponentParent, OW::TYPE_VELOCITY, componentSnapshot);
-                cache.hero       = decryptBase(LinkParent, OW::TYPE_P_HEROID, linkSnapshot);
+                cache.hero       = decryptBase(LinkParent, OW::offset::Active().typeHeroId, linkSnapshot);
                 cache.bone       = decryptBase(ComponentParent, OW::TYPE_BONE, componentSnapshot);
-                cache.rotation   = decryptBase(ComponentParent, OW::TYPE_ROTATION, componentSnapshot);
+                cache.rotation   = decryptBase(ComponentParent, OW::offset::Active().typeRotation, componentSnapshot);
                 cache.skill      = decryptBase(ComponentParent, OW::TYPE_SKILL, componentSnapshot);
                 cache.visibility = decryptBase(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
-                cache.angle      = decryptBase(LinkParent, OW::TYPE_PLAYERCONTROLLER, linkSnapshot);
+                cache.angle      = decryptBase(LinkParent, OW::offset::Active().typePlayerController, linkSnapshot);
                 cache.enemyAngle = decryptBase(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
                 if (LinkParent != ComponentParent) {
                     if (!cache.health)
-                        cache.health = decryptBase(LinkParent, OW::TYPE_HEALTH, linkSnapshot, true);
+                        cache.health = decryptBase(LinkParent, OW::offset::Active().typeHealth, linkSnapshot, true);
                     if (!cache.team)
-                        cache.team = decryptBase(LinkParent, OW::TYPE_TEAM, linkSnapshot, true);
+                        cache.team = decryptBase(LinkParent, OW::offset::Active().typeTeam, linkSnapshot, true);
                     if (!cache.transform)
                         cache.transform = decryptBase(LinkParent, OW::TYPE_TRANSFORM, linkSnapshot, true);
                     if (!cache.velocity)
@@ -3943,7 +3943,7 @@ inline void entity_thread() {
                     if (!cache.bone)
                         cache.bone = decryptBase(LinkParent, OW::TYPE_BONE, linkSnapshot, true);
                     if (!cache.rotation)
-                        cache.rotation = decryptBase(LinkParent, OW::TYPE_ROTATION, linkSnapshot, true);
+                        cache.rotation = decryptBase(LinkParent, OW::offset::Active().typeRotation, linkSnapshot, true);
                     if (!cache.skill)
                         cache.skill = decryptBase(LinkParent, OW::TYPE_SKILL, linkSnapshot, true);
                     if (!cache.enemyAngle)

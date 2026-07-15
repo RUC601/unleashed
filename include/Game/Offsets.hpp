@@ -4,19 +4,19 @@
 #include <cstdint>
 
 // =============================================================================
-// Overwatch Offsets - BZ 2.23.0.3.151177 / NE 2.23.0.3.151177 refresh
+// Overwatch Offsets - BZ / NE 2.23.1.0.151293 refresh
 //
-// BZ dump: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.0.3.151177\bz\_dump.exe
-// Diaphora export: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.0.3.151177\bz\_dump.exe.sqlite
-// NE dump: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.0.3.151177\ne\_dump.exe
-// Diaphora export: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.0.3.151177\ne\_dump.exe.sqlite
+// BZ dump: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.1.0.151293\bz\_dump.exe
+// Diaphora export: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.1.0.151293\bz\_dump.exe.sqlite
+// NE dump: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.1.0.151293\ne\_dump.exe
+// Diaphora export: D:\Desktop\SenseZen\ECS_O\03_DOWNP\2.23.1.0.151293\ne\_dump.exe.sqlite
 //
-// Changes from 0521/0525:
-//   - Component key source RVAs changed; key qword offset moved 0x10C -> 0x1D4.
-//   - Component tail changed from add/xor/add/xor/xor/xor/ROR3 to xor/ROR/add/sub/ROR60/ROR57.
-//   - Visibility uses profile-specific runtime polarity; CN/NE uses +0x98 as
-//     a live-verified raw bool state.
-//   - ViewMatrix root moved and lost the third key: new formula is (enc + key1) ^ key2.
+// BZ changes from 151177:
+//   - Entity, component key, GlobalAdmin, ViewMatrix and input RVAs moved.
+//   - Component transform returned to add/xor/add/xor/xor/ROR3.
+//   - ViewMatrix returned to the three-key sub/xor/sub inverse and +0x6C8 parent.
+//   - Rotation/link/health/hero payload ids shifted back by one in both
+//     151293 profiles; runtime keeps them profile-specific.
 // =============================================================================
 
 namespace OW {
@@ -31,11 +31,13 @@ namespace OW {
             World0527,
             World150818,
             World151177,
+            World151293,
             Identity,
         };
 
         enum class SingletonListMode {
             EncryptedWorldBz,
+            EncryptedWorldBz151293,
             LiveGameAdminWorldBz,
             Plain,
         };
@@ -50,6 +52,12 @@ namespace OW {
         struct RuntimeOffsetProfile {
             const char* name = "world/bz";
             ComponentTransformMode componentTransform = ComponentTransformMode::World0527;
+            uint32_t typeTeam = 0;
+            uint32_t typePlayerController = 0;
+            uint32_t typeRotation = 0;
+            uint32_t typeLink = 0;
+            uint32_t typeHealth = 0;
+            uint32_t typeHeroId = 0;
 
             uint64_t Address_entity_base = 0;
             uint64_t InputMouseScaleX_RVA = 0;
@@ -85,18 +93,18 @@ namespace OW {
         static constexpr auto KeyGlobal_XOR    = 0xF5;        // diagnostic only
         static constexpr auto GetGlobalKey_RVA = 0x581D20;    // diagnostic legacy helper
 
-        // DecryptComponent: function start at RVA 0x5632B0; transform tail near 0x5637D2.
+        // BZ 151293 component builder and transform owner.
         // OLD (0521): static constexpr auto DecryptComponent_RVA = 0x563700;
-        static constexpr auto DecryptComponent_RVA = 0x56CA40; // verified 2026-06-30: BZ 151177 Diaphora/IDA sub_7FF6444DCA40
+        static constexpr auto DecryptComponent_RVA = 0x56C380; // verified 2026-07-15: BZ 151293 IDA component builder
         static constexpr auto DecryptTable_Mask    = 0x7FF;    // 2048 entries
 
         // Component pointer resolver (forum p331 NormPlayer, IDA tail at RVA 0x5637D2).
         // OLD (0521): static constexpr auto ComponentXorQword_RVA = 0x3A86E30;
-        static constexpr auto ComponentXorQword_RVA = 0x3B19B70; // live-verified 2026-06-30: BZ 151177 key source root
+        static constexpr auto ComponentXorQword_RVA = 0x3A5B338; // static+live verified 2026-07-15: BZ 151293 key source root
         // OLD (0521): static constexpr auto ComponentXorQword_Off = 0x10C;
-        static constexpr auto ComponentXorQword_Off = 0x147;     // live-verified 2026-06-30: [keySource+0x147]
+        static constexpr auto ComponentXorQword_Off = 0x10C;     // static+live verified 2026-07-15: [keySource+0x10C]
         // OLD (0521): static constexpr auto ComponentXorByte_RVA = 0x3772769;
-        static constexpr auto ComponentXorByte_RVA  = 0x38002A2; // live-verified 2026-06-30: BZ 151177 component tail byte
+        static constexpr auto ComponentXorByte_RVA  = 0x3741859; // static+live verified 2026-07-15: BZ 151293 component tail byte
         static constexpr auto ComponentPreXorByte_RVA = 0x3800A7D; // helper/list byte in sub_7FF6444DCA40; not active component tail
         // OLD (0521): Component_Add1=0x4C8675CDE55BA1B2, Component_Add2=0x7BE57670994040F6
         // OLD (0521): Component_Xor1=0x3864150DB528414C, Component_Xor2=0xA4764E53CD34159B, Component_Ror=3
@@ -116,6 +124,12 @@ namespace OW {
         static constexpr auto Component151177_Xor2  = 0x9A2687D39D0D255A;
         static constexpr auto Component151177_Ror1  = 9;
         static constexpr auto Component151177_Ror2  = 47;
+        // BZ 151293 returned to the add/xor/add/xor/xor/ROR3 transform shape.
+        static constexpr auto Component151293_Add1  = Component150818_Add1;
+        static constexpr auto Component151293_Add2  = Component150818_Add2;
+        static constexpr auto Component151293_Xor1  = Component150818_Xor1;
+        static constexpr auto Component151293_Xor2  = Component150818_Xor2;
+        static constexpr auto Component151293_Ror   = Component150818_Ror;
 
         // Wrapper/helper path from plexies p332. This is not the main
         // DecryptComponent tail above: it uses a helper XOR/ROR stage plus a
@@ -155,8 +169,8 @@ namespace OW {
 
         // Entity system.
         // OLD (0521): static constexpr auto Address_entity_base = 0x39298C8;
-        static constexpr auto Address_entity_base = 0x39BB858; // live-verified 2026-06-30: BZ 151177 entity list root
-        static constexpr auto EntityList_SlotCount_RVA = 0x39BB840; // BZ 151177 entity state/version dword; runtime scans fixed window
+        static constexpr auto Address_entity_base = 0x38FCDE8; // static+live verified 2026-07-15: BZ 151293 entity list root
+        static constexpr auto EntityList_SlotCount_RVA = 0x38FCDD0; // BZ 151293 entity state/version qword
         static constexpr auto entity_entry_stride = 0x10;      // entity list slot: { entity, pad }
         static constexpr auto Entity_MatchId      = 0x138;     // u32 on component parent; retained from 0521
         static constexpr auto Entity_PoolPtr      = 0x30;      // masked with 0xFFFFFFFFFFFFFFC0
@@ -213,11 +227,12 @@ namespace OW {
         // input.MouseScaleX/Y. The durable setting is singleton[0x6] + 0x2238,
         // stored as normalized UI sensitivity (4.5 -> 0.045).
         static constexpr auto Sensitivity_EncryptedPtr_RVA = 0x0; // direct pointer unresolved for BZ 151177
-        static constexpr auto GlobalAdmin_WorldBz_RVA = 0x3B1F9F0; // live BZ 151177 direct admin root
+        static constexpr auto GlobalAdmin_WorldBz_RVA = 0x3A611B0; // static+live verified BZ 151293 direct admin root
         static constexpr auto SensitivityAdmin_WorldBz_RVA = GlobalAdmin_WorldBz_RVA; // admin +0x160 live-decode -> slot[6]
         static constexpr auto GlobalAdmin_Ne_2_22_1_1_150434_RVA = 0x43F1BF0;
         static constexpr auto GlobalAdmin_Ne_2_23_0_0_150818_RVA = 0x43C97F0;
         static constexpr auto GlobalAdmin_Ne_2_23_0_3_151177_RVA = 0x43CB8B0;
+        static constexpr auto GlobalAdmin_Ne_2_23_1_0_151293_RVA = 0x43C70C0;
         static constexpr auto GlobalAdmin_RVA = GlobalAdmin_WorldBz_RVA;
         static constexpr auto Singleton_K1_xor = 0x5E3E2720BC53F290;
         static constexpr auto Singleton_K2_sub = 0x7A8EE1534F59D103;
@@ -240,24 +255,23 @@ namespace OW {
         static constexpr auto Sensitivity_NormalizedToUserScale = 100.0f;
         static constexpr auto Invert_Y_Flag = 0x2156;
 
-        // ViewMatrix - BZ 2.23.0.3.151177
+        // ViewMatrix - BZ 2.23.1.0.151293
         //   Chain root:
-        //   0x3960960 -> (raw + 0xE07E3830B9D3864E) ^ 0x60548C3F0B3C2134.
-        //   Then +0x20 -> +0x48 -> +0x6D8 -> +0x8 -> render VP +0xC0.
-        //   0x3960A58 remains a dynamic render context, but it is not a
-        //   stable direct matrix root for overlay projection.
+        //   0x38A1300 -> ((raw - 0x59D406B75C2A4377) ^
+        //                 0xD54D81BA4EED36CE) - 0x1C840F09D6923D76.
+        //   Then +0x20 -> +0x48 -> +0x6C8 -> +0x8 -> render VP +0xC0.
         // OLD (0521): static constexpr auto Address_viewmatrix_base = 0x38D0220;
-        static constexpr auto Address_viewmatrix_chain_base = 0x3960960; // BZ 151177 static chain root
-        static constexpr auto Address_viewmatrix_primary_base = 0x3960A58; // BZ 151177 dynamic render context
-        static constexpr auto Address_viewmatrix_direct_base = 0x3960A70; // BZ 151177 sibling root candidate
+        static constexpr auto Address_viewmatrix_chain_base = 0x38A1300; // static+live verified BZ 151293 chain root
+        static constexpr auto Address_viewmatrix_primary_base = 0x3960A58; // historical BZ 151177 diagnostic only
+        static constexpr auto Address_viewmatrix_direct_base = 0x3960A70; // historical BZ 151177 diagnostic only
         static constexpr auto Address_viewmatrix_base = Address_viewmatrix_chain_base;
         // OLD (0521): key1=0x59D406B75C2A4377, key2=0xD54D81BA4EED36CE, key3=0x1C840F09D6923D76
-        static constexpr auto offset_viewmatrix_xor_key  = 0xE07E3830B9D3864E;
-        static constexpr auto offset_viewmatrix_xor_key2 = 0x60548C3F0B3C2134;
-        static constexpr auto offset_viewmatrix_xor_key3 = 0x0;
+        static constexpr auto offset_viewmatrix_xor_key  = 0x59D406B75C2A4377;
+        static constexpr auto offset_viewmatrix_xor_key2 = 0xD54D81BA4EED36CE;
+        static constexpr auto offset_viewmatrix_xor_key3 = 0x1C840F09D6923D76;
         static constexpr auto VM_P1          = 0x20;
         static constexpr auto VM_P2          = 0x48;
-        static constexpr auto VM_ViewProjectionParent = 0x6D8;
+        static constexpr auto VM_ViewProjectionParent = 0x6C8;
         static constexpr auto VM_ViewProjectionPtr    = 0x8;
         static constexpr auto VM_ViewProjectionMatrix = 0xC0;
         static constexpr auto VM_ViewMatrix  = 0x140;
@@ -273,14 +287,20 @@ namespace OW {
         static constexpr auto ViewportHeight_RVA = 0x0;
 
         // Input globals.
-        static constexpr auto InputMouseScaleX_RVA      = 0x3806B2C; // input.MouseScaleX
-        static constexpr auto InputMouseScaleY_RVA      = 0x3806B44; // input.MouseScaleY
+        static constexpr auto InputMouseScaleX_RVA      = 0x3747BDC; // static+live verified BZ 151293 input.MouseScaleX
+        static constexpr auto InputMouseScaleY_RVA      = 0x3747BF4; // static+live verified BZ 151293 input.MouseScaleY
 
         static constexpr auto changefov = 0x402B658; // current candidate; not revalidated in 0527 pass
 
         inline constexpr RuntimeOffsetProfile kWorldBzRuntimeProfile{
-            "world/bz 151177",
-            ComponentTransformMode::World151177,
+            "world/bz 151293",
+            ComponentTransformMode::World151293,
+            0x20, // live semantic proof: Ana local 0x01000000, 6 enemies 0x00800000
+            0x42, // live semantic proof: unique Ana +0x1260 unit vector
+            0x2E, // rotation payload; 0x2F is now a compact wrapper
+            0x33, // link payload; 0x34 is now a compact wrapper
+            0x3A, // health payload; 0x3B is now a compact wrapper
+            0x53, // hero payload; +0xD0 hero id retained
             Address_entity_base,
             InputMouseScaleX_RVA,
             InputMouseScaleY_RVA,
@@ -299,27 +319,32 @@ namespace OW {
             VM_ViewMatrix,
             VM_ProjMatrix,
             GlobalAdmin_WorldBz_RVA,
-            SingletonListMode::EncryptedWorldBz,
-            ViewMatrixMode::EncryptedChain,
+            SingletonListMode::EncryptedWorldBz151293,
+            ViewMatrixMode::EncryptedChainSubXorSub,
             Bz151177_DirectViewProjectionMatrix,
         };
 
         inline constexpr RuntimeOffsetProfile kCnNeRuntimeProfile{
-            "cn/ne 151177",
+            "cn/ne 151293",
             ComponentTransformMode::Identity,
-            // NE 151177 entity root. IDA maps the 150818 initializer writer
-            // qword_7FF66DCF9138/RVA 0x42A9138 to new
-            // qword_7FF61EFCB1C8/RVA 0x42AB1C8.
-            0x42AB1C8,
-            0x40F345C, // IDA 151177: input.MouseScaleX registration dword_7FF61EE1345C
-            0x40F3474, // IDA 151177: input.MouseScaleY registration dword_7FF61EE13474
+            0x20, // live semantic proof: 1 local + 6 enemies in no-ally room
+            0x42, // live semantic proof: unique local +0x1260 unit vector
+            0x2E, // live semantic sweep: 28 parents; real-hero rotation candidate
+            0x33, // live semantic sweep: 7/7 real-hero link payloads
+            0x3A, // live semantic sweep: 7/7 plausible real-hero health payloads
+            0x53, // live semantic sweep: 7/7 known real hero ids
+            // NE 151293 entity initializer moved from RVA 0x1A7D920 to
+            // 0x1A7B9E0 and writes the root/state pair below.
+            0x42A6778,
+            0x40EE50C, // Diaphora owner 0x5E83A0: input.MouseScaleX registration
+            0x40EE524, // Diaphora owner 0x5E83A0: input.MouseScaleY registration
             0,         // unresolved: CN viewport width
             0,         // unresolved: CN viewport height
             0x98,      // live-verified 2026-06-01: CN visibility raw bool, raw == 1 means visible
             // Direct ViewMatrix root. The render VP slot can be zero on NE;
             // runtime publishes camera_view * projection when both matrices
             // are valid, using render VP only as fallback.
-            0x4989A10,
+            0x4982E20,
             0,         // not used by CN direct ViewMatrix path
             0,         // not used by CN direct ViewMatrix path
             0,         // not used by CN direct ViewMatrix path
@@ -330,7 +355,7 @@ namespace OW {
             0xC0,
             0x140,
             0xB0,
-            GlobalAdmin_Ne_2_23_0_3_151177_RVA,
+            GlobalAdmin_Ne_2_23_1_0_151293_RVA,
             SingletonListMode::Plain,
             ViewMatrixMode::DirectChain,
             0,
@@ -383,9 +408,9 @@ namespace OW {
 
         inline uint32_t TeamComparisonKeyFromFlags(uint32_t flags)
         {
-            // CN/NE 151177 keeps relation bits in the low byte. Live 5v5 data
-            // shows allies can differ as 0x...41 vs 0x...43 while sharing the
-            // legacy team bits, so compare only the stable team mask here.
+            // The low byte contains relation detail, not the stable team key.
+            // Live data shows same-team actors can differ there, so compare
+            // only the legacy team bits for both active 151293 profiles.
             return flags & Team_LegacyMask;
         }
 

@@ -65,7 +65,7 @@ Runtime offset profile：
 配置路径：
   ConfigPath() 不再是简单 ".\\config.ini"。
   当前配置目录是 EXE 相对的 config\\，并会迁移旧位置的 config.ini 与 .heroes.json。
-  --config-check 会打印当前 directory/profile/path/heroPath，是排查配置源的第一命令。
+  --config-check 会打印当前 directory/profile/path/heroPath，并列出 BZ 与 CN/NE 两套 runtime component type；它是排查配置源和 profile 漏更的第一命令。
 
 FOV 语义：
   FOV 从旧的 aperture 口径迁移为“相机 forward 到目标方向的角度上限”。
@@ -2481,6 +2481,7 @@ KMBox counts-per-radian 需要重标定：
 
 CN/NE 或 world/BZ offset 语义变化：
   到 D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool 用 CnOffsetProbe 做现场读数，再把 VERIFIED/CANDIDATE/UNRESOLVED 写清楚。
+  Team 和 PlayerController type id 也属于 runtime profile：已知无友军场景要得到 1 个本地与非本地敌人；PlayerController 必须唯一且 +0x1260 为单位方向向量。
   rotation 是必查项：RotationBase、RotationBase_Sub1/Sub2、published Rot/yaw_forward 和 skeleton 朝向必须用 known real hero 样本验证，training bot 不能单独作为通过证据。
 
 只改 Motion.hpp、FOV、tracking deadzone、lead prediction、aim preset、hero geometry 或 hero skill 默认配置：
@@ -2702,10 +2703,13 @@ skill.aim_tick 与 lead.solve 日志
 1. include/Game/Offsets.hpp 改 RuntimeOffsetProfile 或常量
 2. 如果是 CN/NE，明确哪些是 live-verified，哪些仍是 unresolved
 3. include/Game/Decrypt.hpp / Overwatch.hpp / Entity.hpp / Target.hpp 查实际消费者
-4. RotationBase / RotationBase_Sub1/Sub2 / published Rot / yaw_forward 必须单独验证；骨骼或 hitbox 依赖 rotation 时，known real hero 朝向样本必不可少
-5. D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool\src\CnOffsetProbe.cpp 同步或确认探针仍能验证该字段
-6. 日志里确认 Offset profile selected: world/bz 或 cn/ne
-7. 不要把 diagnostic-only / OLD 注释值写成 live 使用值
+4. rg 所有 DecryptComponent type consumer；Team、PlayerController、rotation、link、health、hero 等版本相关 id 必须从 active profile 读取
+5. Team 用已知无友军/混合敌我现场验证 comparison key；PlayerController 验证唯一 local 和 +0x1260 单位向量，并观察 local hero 30-60 秒稳定
+6. RotationBase / RotationBase_Sub1/Sub2 / published Rot / yaw_forward 必须单独验证；骨骼或 hitbox 依赖 rotation 时，known real hero 朝向样本必不可少
+7. D:\Desktop\SenseZen\ECS_O\03_DOWNP\vertifytool\src\CnOffsetProbe.cpp 同步或确认探针仍能验证该字段
+8. build / --config-check / CTest 后，用 TestServer + Scenario/OBS 做同场景验收；`drawn > 0` 还要核对颜色 alpha 和实际像素
+9. 日志里确认 Offset profile selected: world/bz 或 cn/ne
+10. 不要把 diagnostic-only / OLD 注释值写成 live 使用值
 ```
 
 offset 文档必须区分：
@@ -2826,9 +2830,12 @@ include/Game/Offsets.hpp / TeamComparisonKeyFromFlags()
 include/Game/Entity.hpp / SameTeamAs()
 include/Game/GameData.hpp / IsFriendlyTrainingBotHeroId()
 src/Tools/FovConfigSelfTest.cpp 的 team mask 自检
+active RuntimeOffsetProfile 的 typeTeam / typePlayerController
 ```
 
 注意低字节 relation code 不是敌我 team key。现场 flags 里的 `0x...41` 和 `0x...43` 可能仍然同队，排查时把 `TeamRawComparisonKeyFromFlags()` 当诊断读数，不要直接拿它做 runtime 过滤。
+
+如果已知房间没有友军却 `/api/entities?team=all&team_debug=1` 全部是 ally，不要归因于场景；优先检查 Team component type 是否仍命中旧 wrapper。若左上角本地英雄诊断反复变化，同时检查 PlayerController 是否命中多个候选；正确语义应只留下一个本地 `+0x1260` 单位向量。
 
 ### Overlay 画面空白
 
@@ -2841,6 +2848,7 @@ ViewMatrix 是否 valid
 Entity snapshot 是否为空
 PlayerInfo input/projected/drawn 统计
 Visuals 开关是否打开
+敌我分类和最终颜色 alpha 是否让框透明
 distance/opacity/window 过滤是否跳过
 ProcessConnection 是否 connected
 ```
@@ -3113,6 +3121,9 @@ MockHardwareSelfTest
 是否 live-verified？
 是否有 CnOffsetProbe 证据？
 哪些 runtime consumer 会读它？
+Team / PlayerController / rotation / link / health / hero 的 component type 是否全部来自 active profile？
+已知无友军或混合敌我场景是否证明 Team comparison key？
+PlayerController 是否唯一、+0x1260 是否为单位向量、本地 hero 是否稳定？
 rotation/yaw/skeleton 是否有 known real hero 现场样本？
 如果 unresolved，代码是否有 fallback？
 ```
