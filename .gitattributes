@@ -13,3 +13,4 @@
 *.png binary
 *.ico binary
 *.dat binary
+data/overwatch_weapon_cadence_20260714.tsv whitespace=-blank-at-eol

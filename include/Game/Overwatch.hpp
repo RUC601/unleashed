@@ -29,6 +29,7 @@
 #include "Game/HeroSkills.hpp"
 #include "Game/Motion.hpp"
 #include "Game/Target.hpp"
+#include "Game/WeaponCadence.hpp"
 #include "Kmbox/KmBoxMock.h"
 #include "Renderer/IconManager.hpp"
 #include "Renderer/Renderer.hpp"
@@ -10710,6 +10711,68 @@ namespace AimbotDetail {
                !OW::Config::doingdelay;
     }
 
+    inline DWORD ResolveCurrentWeaponCadenceIntervalMs() {
+        const WeaponCadenceTable& cadenceTable = RuntimeWeaponCadenceTable();
+        static std::once_flag cadenceStatusLog;
+        std::call_once(cadenceStatusLog, [&cadenceTable] {
+            if (cadenceTable.Loaded()) {
+                Diagnostics::Info(
+                    "Weapon cadence TSV loaded. path=%s sourceRows=%zu runtimeRows=%zu discreteIntervals=%zu",
+                    cadenceTable.LoadedPath().string().c_str(),
+                    cadenceTable.SourceRowCount(),
+                    cadenceTable.Size(),
+                    cadenceTable.DiscreteIntervalCount());
+            } else {
+                Diagnostics::Warn(
+                    "Weapon cadence TSV unavailable; runtime will use existing fallbacks. error=%s",
+                    cadenceTable.LastError().c_str());
+            }
+        });
+
+        const c_entity local = LocalEntity();
+        const WeaponSpec* weapon = ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
+        if (!weapon)
+            return 0;
+
+        const WeaponCadenceEntry* cadence = cadenceTable.Find(weapon->weaponId);
+        if (!cadence || !cadence->triggerCycleIntervalMs)
+            return 0;
+
+        return static_cast<DWORD>(std::lround(std::clamp(
+            *cadence->triggerCycleIntervalMs,
+            1.0f,
+            60000.0f)));
+    }
+
+    inline DWORD DefaultMagneticShotIntervalMs() {
+        const DWORD weaponCadenceMs = ResolveCurrentWeaponCadenceIntervalMs();
+        if (weaponCadenceMs > 0)
+            return weaponCadenceMs;
+
+        const c_entity local = LocalEntity();
+        const WeaponSpec* weapon = ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
+        if (!weapon)
+            return 250;
+
+        switch (weapon->aimClass) {
+        case AimClass::HitscanAuto:
+        case AimClass::ProjectileAuto:
+        case AimClass::Beam:
+            return 100;
+        case AimClass::HitscanBurst:
+            return 450;
+        case AimClass::ProjectileSingle:
+            return 350;
+        case AimClass::ProjectileExplosive:
+            return 500;
+        case AimClass::Shotgun:
+            return 650;
+        case AimClass::HitscanSingle:
+        default:
+            return 250;
+        }
+    }
+
     inline DWORD ResolveFlickRestartDelayMs() {
         const DWORD shotClampMs = static_cast<DWORD>(OW::Config::ClampFlickShotClampMs(
             OW::Config::aimbotFlickShotClampMs));
@@ -11083,10 +11146,14 @@ namespace AimbotDetail {
             return;
         }
 
-        // 3. Shot interval cooldown
-        if (shotInterval > 0.0f) {
+        // 3. Shot interval cooldown. A zero slot value means that the
+        // experimental weapon cadence table owns the interval; an explicit
+        // user value remains the highest-priority override.
+        {
             const DWORD now = GetTickCount();
-            const DWORD intervalMs = static_cast<DWORD>(shotInterval * 5.0f); // 0-100 → 0-500ms
+            const DWORD intervalMs = shotInterval > 0.0f
+                ? static_cast<DWORD>(shotInterval * 5.0f) // 0-100 -> 0-500 ms
+                : ResolveCurrentWeaponCadenceIntervalMs();
             if (intervalMs > 0 && lastFireTick != 0 && (now - lastFireTick) < intervalMs)
                 return;
         }

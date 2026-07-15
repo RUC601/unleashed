@@ -3912,6 +3912,8 @@ void UI::TriggerPage() {
             presetChanged |= UISlider("##triggerSlotInterval", &activePreset.trigger.shotInterval,
                                       0.0f, 100.0f, "500 ms");
             ImGui::PopItemWidth();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("0 uses trigger_cycle_interval_ms for the current WeaponSpec. A non-zero value remains the manual override.");
 
             SettingRow("Disable During Reload", kAimbotRightLabelWidth);
             presetChanged |= UICheckbox(

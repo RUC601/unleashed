@@ -51,6 +51,7 @@ set(GAME_HEADERS
     include/Game/Structs.hpp
     include/Game/Target.hpp
     include/Game/TriggerBoneSelection.hpp
+    include/Game/WeaponCadence.hpp
     include/Game/WeaponSpec.hpp
     include/Kmbox/KmboxB.h
     include/Kmbox/KmboxMoveTest.h
@@ -94,6 +95,7 @@ set(UNLEASHED_SOURCES
     src/Game/Offsets.cpp
     src/Game/OutputOwnership.cpp
     src/Game/OutputScheduler.cpp
+    src/Game/WeaponCadence.cpp
     src/Game/WeaponSpec.cpp
     src/Kmbox/KmboxB.cpp
     src/Kmbox/KmboxMoveTest.cpp
@@ -152,6 +154,14 @@ add_executable(KeyStateSelfTest
 add_executable(WeaponSpecDisplaySelfTest
     src/Tools/WeaponSpecDisplaySelfTest.cpp
     src/Game/HeroPerkRuntime.cpp
+    src/Game/WeaponSpec.cpp
+    src/Utils/Diagnostics.cpp
+)
+
+add_executable(WeaponCadenceSelfTest
+    src/Tools/WeaponCadenceSelfTest.cpp
+    src/Game/HeroPerkRuntime.cpp
+    src/Game/WeaponCadence.cpp
     src/Game/WeaponSpec.cpp
     src/Utils/Diagnostics.cpp
 )
@@ -227,6 +237,7 @@ add_test(NAME AimPresetConfigSelfTest COMMAND AimPresetConfigSelfTest)
 add_test(NAME LeadPredictionSelfTest COMMAND LeadPredictionSelfTest)
 add_test(NAME KeyStateSelfTest COMMAND KeyStateSelfTest)
 add_test(NAME WeaponSpecDisplaySelfTest COMMAND WeaponSpecDisplaySelfTest)
+add_test(NAME WeaponCadenceSelfTest COMMAND WeaponCadenceSelfTest)
 add_test(NAME HeroGeometrySpecSelfTest COMMAND HeroGeometrySpecSelfTest)
 add_test(NAME HeroSkillConfigSelfTest COMMAND HeroSkillConfigSelfTest)
 add_test(NAME HeroPerkClassifierSelfTest COMMAND HeroPerkClassifierSelfTest)
@@ -298,6 +309,12 @@ target_include_directories(KeyStateSelfTest PRIVATE
 )
 
 target_include_directories(WeaponSpecDisplaySelfTest PRIVATE
+    include
+    vendor/leechcore
+    vendor/imgui
+)
+
+target_include_directories(WeaponCadenceSelfTest PRIVATE
     include
     vendor/leechcore
     vendor/imgui
@@ -433,6 +450,25 @@ endfunction()
 
 copy_leechcore_runtime(Unleashed)
 
+set(WEAPON_CADENCE_TSV
+    "${CMAKE_SOURCE_DIR}/data/overwatch_weapon_cadence_20260714.tsv")
+
+if(EXISTS "${WEAPON_CADENCE_TSV}")
+    target_compile_definitions(Unleashed PRIVATE
+        WEAPON_CADENCE_SOURCE_PATH="${WEAPON_CADENCE_TSV}")
+    target_compile_definitions(WeaponCadenceSelfTest PRIVATE
+        WEAPON_CADENCE_SOURCE_PATH="${WEAPON_CADENCE_TSV}")
+    add_custom_command(TARGET Unleashed POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:Unleashed>/data"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${WEAPON_CADENCE_TSV}"
+            "$<TARGET_FILE_DIR:Unleashed>/data/overwatch_weapon_cadence_20260714.tsv"
+    )
+else()
+    message(FATAL_ERROR "Experimental weapon cadence TSV is missing: ${WEAPON_CADENCE_TSV}")
+endif()
+
 add_custom_command(TARGET Unleashed POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets/icons"
@@ -493,6 +529,8 @@ target_compile_options(KeyStateSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4
 target_compile_definitions(KeyStateSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(WeaponSpecDisplaySelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(WeaponSpecDisplaySelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(WeaponCadenceSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(WeaponCadenceSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(HeroGeometrySpecSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(HeroGeometrySpecSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(HeroSkillConfigSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
