@@ -34,9 +34,12 @@ set(GAME_HEADERS
     include/resource.h
     include/Game/AbilityIcons.hpp
     include/Game/AimArchitecture.hpp
+    include/Game/AimSmoothingTiming.hpp
     include/Game/Decrypt.hpp
     include/Game/Entity.hpp
+    include/Game/EntityRosterPolicy.hpp
     include/Game/HeroGeometrySpec.hpp
+    include/Game/HeroProfileSwitch.hpp
     include/Game/HeroPerkLookupSeed.hpp
     include/Game/HeroPerkRuntime.hpp
     include/Game/HeroPerks.hpp
@@ -227,6 +230,10 @@ add_executable(TriggerBoneSelectionSelfTest
     src/Tools/TriggerBoneSelectionSelfTest.cpp
 )
 
+add_executable(RuntimeRegressionPolicySelfTest
+    src/Tools/RuntimeRegressionPolicySelfTest.cpp
+)
+
 add_test(NAME MotionEstimatorSelfTest COMMAND MotionEstimatorSelfTest)
 add_test(NAME FovConfigSelfTest COMMAND FovConfigSelfTest)
 add_test(NAME TrackingDeadzoneDampingSelfTest COMMAND TrackingDeadzoneDampingSelfTest)
@@ -247,6 +254,7 @@ add_test(NAME KmboxLifecycleSelfTest COMMAND KmboxLifecycleSelfTest)
 add_test(NAME KmboxRuntimeSwitchSelfTest COMMAND KmboxRuntimeSwitchSelfTest)
 add_test(NAME InputOwnershipSelfTest COMMAND InputOwnershipSelfTest)
 add_test(NAME TriggerBoneSelectionSelfTest COMMAND TriggerBoneSelectionSelfTest)
+add_test(NAME RuntimeRegressionPolicySelfTest COMMAND RuntimeRegressionPolicySelfTest)
 
 # ============================================================================
 # Include directories
@@ -366,6 +374,10 @@ target_include_directories(InputOwnershipSelfTest PRIVATE
 )
 
 target_include_directories(TriggerBoneSelectionSelfTest PRIVATE
+    include
+)
+
+target_include_directories(RuntimeRegressionPolicySelfTest PRIVATE
     include
 )
 
@@ -545,3 +557,5 @@ target_compile_options(KmboxRuntimeSwitchSelfTest PRIVATE /W3 /wd4244 /wd4267 /w
 target_compile_definitions(KmboxRuntimeSwitchSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(InputOwnershipSelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
 target_compile_definitions(InputOwnershipSelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(RuntimeRegressionPolicySelfTest PRIVATE /W3 /wd4244 /wd4267 /wd4305 /wd4200)
+target_compile_definitions(RuntimeRegressionPolicySelfTest PRIVATE _CRT_SECURE_NO_WARNINGS)

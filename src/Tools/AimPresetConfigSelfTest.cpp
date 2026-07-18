@@ -2,6 +2,7 @@
 #include "Utils/InputLabels.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 
@@ -136,6 +137,20 @@ bool TestTriggerReloadGatePolicy()
         true);
 }
 
+bool TestDefaultAimPolicy()
+{
+    using namespace OW::Config;
+
+    const HeroPreset preset{};
+    return NearlyEqual(kDefaultFovDeg, 15.0f) &&
+        NearlyEqual(preset.fov, 15.0f) &&
+        NearlyEqual(preset.smooth, 20.0f) &&
+        preset.firePolicy == 0 &&
+        !preset.keepFiring &&
+        !preset.autoshot &&
+        !preset.requireActionHeld;
+}
+
 bool TestAimStartLimiterPresetResolution()
 {
     using namespace OW::Config;
@@ -204,6 +219,9 @@ int main()
     using namespace OW::Config;
 
     ResetAimPresetState();
+
+    if (!TestDefaultAimPolicy())
+        return Fail();
 
     if (!TestAimStartLimiterPresetResolution())
         return Fail();

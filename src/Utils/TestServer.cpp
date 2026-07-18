@@ -2959,11 +2959,13 @@ std::string RosterStateName(OW::EntityRosterState state)
 
 uint64_t EntityKey(const OW::c_entity& entity)
 {
+    if (entity.roster_key != 0)
+        return entity.roster_key;
     if (entity.address != 0)
         return entity.address;
     if (entity.LinkBase != 0)
         return entity.LinkBase;
-    return entity.roster_key;
+    return 0;
 }
 
 bool EntityFreshAndAlive(const OW::c_entity& entity)
@@ -4460,6 +4462,11 @@ std::string BuildEntitiesJson(const std::unordered_map<std::string, std::string>
         const int skeletonValidCount = SkeletonValidCount(entity);
         out << "{\"key\":";
         AppendHexString(out, candidates[index].key);
+        out << ",\"roster_key\":";
+        AppendHexOrNull(out, entity.roster_key);
+        out << ",\"participant_key\":";
+        AppendHexOrNull(out, entity.participant_key);
+        out << ",\"match_id\":" << entity.match_id;
         out << ",\"address\":";
         AppendHexString(out, entity.address);
         out << ",\"component_parent\":";

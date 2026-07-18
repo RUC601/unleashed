@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <string_view>
 #include <mutex>
 #include <ctime>
 #include <utility>
@@ -26,6 +27,8 @@
 #include "Game/AimFirePhase.hpp"
 #include "Game/AimStartLimiter.hpp"
 #include "Game/BoneSlots.hpp"
+#include "Game/EntityRosterPolicy.hpp"
+#include "Game/HeroProfileSwitch.hpp"
 #include "Game/HeroPerkRuntime.hpp"
 #include "Game/HeroSkills.hpp"
 #include "Game/Motion.hpp"
@@ -214,6 +217,8 @@ namespace OW {
     inline constexpr DWORD kEntityLiveComponentRefreshMs = 2000;
     inline constexpr DWORD kEntityFastRescanWindowMs = 2000;
     inline constexpr DWORD kEntityTopologyRescanCooldownMs = 5000;
+    inline constexpr DWORD kEntityRespawnRescanDelayMs = 4000;
+    inline constexpr DWORD kEntityRespawnWatchMs = 20000;
     inline constexpr DWORD kEntityScannerIdleSleepMs = 5;
     inline DWORD entity_fast_scan_until_tick = 0;
     inline uint64_t entity_topology_rescan_request_count = 0;
@@ -1640,6 +1645,11 @@ inline void entity_thread() {
         uint64_t visibility = 0;
         uint64_t angle = 0;
         uint64_t enemyAngle = 0;
+        uint64_t stat = 0;
+        uint64_t participantKey = 0;
+        DWORD participantIdentityUpdateTick = 0;
+        bool participantIdentityValid = false;
+        std::string participantLabel{};
         uint32_t matchId = 0;
         DWORD baseUpdateTick = 0;
         bool matchIdValid = false;
@@ -1896,6 +1906,7 @@ inline void entity_thread() {
         DWORD lastScanSeenTick = 0;
         DWORD lastHotReadTick = 0;
         DWORD consecutiveScanMissCount = 0;
+        DWORD respawnWatchStartedTick = 0;
     };
     std::unordered_map<uint64_t, RosterEntry> entityRoster{};
     entityRoster.reserve(128);
@@ -1903,6 +1914,8 @@ inline void entity_thread() {
     constexpr uint64_t kRosterMatchPrefix = 0x1000000000000000ull;
     constexpr uint64_t kRosterLinkPrefix = 0x2000000000000000ull;
     constexpr uint64_t kRosterComponentPrefix = 0x3000000000000000ull;
+    constexpr uint64_t kRosterParticipantPrefix =
+        OW::EntityRosterPolicy::kParticipantRosterPrefix;
 
     auto makeRosterKey = [&](uint32_t matchId, uint64_t linkParent, uint64_t componentParent) -> uint64_t {
         if (matchId != 0)
@@ -1917,6 +1930,7 @@ inline void entity_thread() {
         Match,
         Link,
         Component,
+        Participant,
     };
 
     auto rosterKeyKind = [&](uint64_t rosterKey) {
@@ -1928,6 +1942,8 @@ inline void entity_thread() {
             return RosterKeyKind::Link;
         case kRosterComponentPrefix:
             return RosterKeyKind::Component;
+        case kRosterParticipantPrefix:
+            return RosterKeyKind::Participant;
         default:
             return RosterKeyKind::Unknown;
         }
@@ -2154,6 +2170,8 @@ inline void entity_thread() {
             case RosterKeyKind::Component:
                 ++lifecycleStats.entityRecordLinkChangedComponentKeyCount;
                 break;
+            case RosterKeyKind::Participant:
+                break;
             case RosterKeyKind::Unknown:
             default:
                 break;
@@ -2201,6 +2219,8 @@ inline void entity_thread() {
                 break;
             case RosterKeyKind::Component:
                 ++lifecycleStats.componentCacheLinkChangeRecordComponentKeyCount;
+                break;
+            case RosterKeyKind::Participant:
                 break;
             case RosterKeyKind::Unknown:
             default:
@@ -3933,6 +3953,7 @@ inline void entity_thread() {
                 cache.visibility = decryptBase(LinkParent, OW::TYPE_P_VISIBILITY, linkSnapshot);
                 cache.angle      = decryptBase(LinkParent, OW::offset::Active().typePlayerController, linkSnapshot);
                 cache.enemyAngle = decryptBase(ComponentParent, OW::TYPE_ANGLE, componentSnapshot);
+                cache.stat       = decryptBase(LinkParent, OW::TYPE_STAT, linkSnapshot);
                 if (LinkParent != ComponentParent) {
                     if (!cache.health)
                         cache.health = decryptBase(LinkParent, OW::offset::Active().typeHealth, linkSnapshot, true);
@@ -3970,8 +3991,45 @@ inline void entity_thread() {
                 cacheIt->second.matchId = entity.match_id;
                 cacheIt->second.matchIdValid = true;
             }
-            entity.roster_key = makeRosterKey(entity.match_id, LinkParent, ComponentParent);
-            {
+            ComponentBaseCache& identityCache = cacheIt->second;
+            if (!identityCache.participantIdentityValid && identityCache.stat &&
+                (identityCache.participantIdentityUpdateTick == 0 ||
+                 processLoopTick - identityCache.participantIdentityUpdateTick >= 1000)) {
+                identityCache.participantIdentityUpdateTick = processLoopTick;
+                const uintptr_t participantText =
+                    SDK->RPM<uintptr_t>(identityCache.stat + 0xE0);
+                if (participantText != 0) {
+                    char participantBuffer[64] = {};
+                    SDK->read_buf(
+                        participantText,
+                        participantBuffer,
+                        sizeof(participantBuffer));
+                    size_t participantLength = 0;
+                    while (participantLength < sizeof(participantBuffer) &&
+                           participantBuffer[participantLength] != '\0') {
+                        ++participantLength;
+                    }
+                    if (participantLength < sizeof(participantBuffer)) {
+                        const std::string_view participantId(
+                            participantBuffer,
+                            participantLength);
+                        identityCache.participantKey =
+                            OW::EntityRosterPolicy::ParticipantRosterKey(participantId);
+                        if (identityCache.participantKey != 0) {
+                            identityCache.participantLabel.assign(participantId);
+                            identityCache.participantIdentityValid = true;
+                        }
+                    }
+                }
+            }
+            entity.statcombase = identityCache.stat;
+            entity.participant_key = identityCache.participantKey;
+            entity.roster_key = entity.participant_key != 0
+                ? entity.participant_key
+                : makeRosterKey(entity.match_id, LinkParent, ComponentParent);
+            // Participant collisions are resolved after the hot reads below; defer
+            // their record write so a late dead actor cannot overwrite the winner.
+            if (entity.participant_key == 0) {
                 ScopedPipelinePhaseTimer recordTimer(pipelineStats.phase.entityCacheRecordUpdateMs);
                 updateEntityRecordBases(
                     entity.roster_key,
@@ -4742,13 +4800,8 @@ inline void entity_thread() {
             // ---- BattleTag (optional) ----
             if (OW::Config::drawbattletag) {
                 const auto battleTagStartedAt = std::chrono::steady_clock::now();
-                entity.statcombase = OW::DecryptComponent(LinkParent, OW::TYPE_STAT, linkSnapshot);
-                if (entity.statcombase && entity != localCycleSnapshot) {
-                    uintptr_t off = SDK->RPM<uintptr_t>(entity.statcombase + 0xE0);
-                    char buffer[64] = "";
-                    SDK->read_buf(off, buffer, sizeof(buffer));
-                    entity.battletag = buffer;
-                }
+                if (slowCache.participantIdentityValid && entity != localCycleSnapshot)
+                    entity.battletag = slowCache.participantLabel;
                 const double battleTagMs = static_cast<double>(
                     std::chrono::duration_cast<std::chrono::microseconds>(
                         std::chrono::steady_clock::now() - battleTagStartedAt).count()) / 1000.0;
@@ -5098,7 +5151,73 @@ inline void entity_thread() {
                 entity.missing_since_tick_ms = 0;
                 if (entity.roster_state == OW::EntityRosterState::Dead)
                     sanitizeStaleRosterEntity(entity);
-                const auto existingRosterIt = entityRoster.find(entity.roster_key);
+                if (entity.participant_key != 0) {
+                    const auto legacyActorIt = std::find_if(
+                        entityRoster.begin(),
+                        entityRoster.end(),
+                        [&](const auto& rosterPair) {
+                            return rosterPair.first != entity.roster_key &&
+                                rosterPair.second.entity.address == ComponentParent;
+                        });
+                    if (legacyActorIt != entityRoster.end()) {
+                        if (entityRoster.find(entity.roster_key) == entityRoster.end()) {
+                            RosterEntry promotedEntry = std::move(legacyActorIt->second);
+                            entityRoster.erase(legacyActorIt);
+                            entityRoster.emplace(
+                                entity.roster_key,
+                                std::move(promotedEntry));
+                        } else {
+                            entityRoster.erase(legacyActorIt);
+                        }
+                    }
+                }
+                auto existingRosterIt = entityRoster.find(entity.roster_key);
+                if (entity.participant_key != 0 &&
+                    existingRosterIt != entityRoster.end() &&
+                    existingRosterIt->second.seenThisCycle &&
+                    existingRosterIt->second.entity.address != entity.address) {
+                    const bool existingFresh =
+                        existingRosterIt->second.entity.roster_state ==
+                            OW::EntityRosterState::Fresh &&
+                        existingRosterIt->second.entity.Alive;
+                    const bool incomingFresh =
+                        entity.roster_state == OW::EntityRosterState::Fresh &&
+                        entity.Alive;
+                    switch (OW::EntityRosterPolicy::ResolveSameParticipantObservation(
+                        true,
+                        false,
+                        existingFresh,
+                        incomingFresh)) {
+                    case OW::EntityRosterPolicy::SameParticipantObservationAction::KeepExisting:
+                        continue;
+                    case OW::EntityRosterPolicy::SameParticipantObservationAction::UseActorKey:
+                        entity.roster_key = makeRosterKey(
+                            entity.match_id,
+                            LinkParent,
+                            ComponentParent);
+                        existingRosterIt = entityRoster.find(entity.roster_key);
+                        break;
+                    case OW::EntityRosterPolicy::SameParticipantObservationAction::ReplaceExisting:
+                    default:
+                        break;
+                    }
+                }
+                if (entity.participant_key != 0) {
+                    ScopedPipelinePhaseTimer recordTimer(
+                        pipelineStats.phase.entityCacheRecordUpdateMs);
+                    updateEntityRecordBases(
+                        entity.roster_key,
+                        ComponentParent,
+                        LinkParent,
+                        entity.match_id,
+                        cacheIt->second,
+                        processLoopTick);
+                }
+                const bool beginRespawnWatch =
+                    entity.roster_state == OW::EntityRosterState::Dead &&
+                    (existingRosterIt == entityRoster.end() ||
+                     existingRosterIt->second.entity.roster_state !=
+                         OW::EntityRosterState::Dead);
                 if (existingRosterIt == entityRoster.end()) {
                     ++lifecycleStats.entityRecordCreatedCount;
                     if (entity.roster_state == OW::EntityRosterState::Dead)
@@ -5130,6 +5249,12 @@ inline void entity_thread() {
                     }
                 }
                 RosterEntry& rosterEntry = entityRoster[entity.roster_key];
+                if (entity.roster_state == OW::EntityRosterState::Fresh) {
+                    rosterEntry.respawnWatchStartedTick = 0;
+                } else if (beginRespawnWatch &&
+                           rosterEntry.respawnWatchStartedTick == 0) {
+                    rosterEntry.respawnWatchStartedTick = processLoopTick;
+                }
                 if (rosterEntry.lastScanSeenTick == 0 && entity.last_scan_seen_tick_ms != 0)
                     rosterEntry.lastScanSeenTick = entity.last_scan_seen_tick_ms;
                 if (rosterEntry.lastHotReadTick == 0 && entity.last_hot_read_tick_ms != 0)
@@ -5221,6 +5346,23 @@ inline void entity_thread() {
                 ++lifecycleStats.entityRecordScanMissHotReadFailCount;
             }
         }
+
+        const bool respawnScanDue = std::any_of(
+            entityRoster.begin(),
+            entityRoster.end(),
+            [&](const auto& rosterPair) {
+                const RosterEntry& entry = rosterPair.second;
+                if (entry.entity.roster_state != OW::EntityRosterState::Dead ||
+                    entry.respawnWatchStartedTick == 0) {
+                    return false;
+                }
+                const DWORD deadAge =
+                    processLoopTick - entry.respawnWatchStartedTick;
+                return deadAge >= OW::kEntityRespawnRescanDelayMs &&
+                    deadAge <= OW::kEntityRespawnWatchMs;
+            });
+        if (respawnScanDue)
+            requestTopologyRescan(processLoopTick);
 
         if (hotFieldScatter)
             mem.CloseScatterHandle(hotFieldScatter);
@@ -8335,7 +8477,9 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
             heroName = OW::GetHeroEngNames(entity.HeroID, entity.LinkBase);
 
         ID3D11ShaderResourceView* heroIcon = nullptr;
-        if (OW::Config::draw_avatar && !specialEntity && heroName != "Unknown")
+        if (OW::Config::draw_avatar &&
+            OW::EntityRosterPolicy::ShouldRenderHeroAvatar(entity.Team) &&
+            !specialEntity && heroName != "Unknown")
             heroIcon = OverlayRenderDetail::FindHeroIcon(heroName);
 
         constexpr float iconSize = 24.0f;
@@ -8517,6 +8661,8 @@ inline void skillinfo(const std::vector<OW::c_entity>& entity_snapshot) {
         const float alpha = std::clamp(opacity * (rosterFresh ? 1.0f : 0.52f), 0.0f, 1.0f);
         const float maskAlpha = std::clamp(opacity, 0.0f, 1.0f);
         const bool isEnemy = entity.Team;
+        const bool showAvatar =
+            OW::EntityRosterPolicy::ShouldRenderHeroAvatar(isEnemy);
         Render::DrawFilledRect(Vector2(x, y + 1.0f), cardWidth, rowHeight - 2.0f,
                                OverlayRenderDetail::ImColorWithAlpha(8, 11, 15, alpha * 0.70f));
         Render::DrawFilledRect(Vector2(x, y + 4.0f), 3.0f, rowHeight - 8.0f,
@@ -8570,19 +8716,20 @@ inline void skillinfo(const std::vector<OW::c_entity>& entity_snapshot) {
 
         const float avatarX = x + 6.0f;
         const float avatarY = y + (rowHeight - avatarSize) * 0.5f;
-        if (ID3D11ShaderResourceView* avatar = findHeroAvatar()) {
-            Render::DrawIcon(avatar, ImVec2(avatarX, avatarY), ImVec2(avatarSize, avatarSize),
-                             OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
-        } else {
-            const Render::Color fallbackColor = isEnemy
-                ? Render::Color(136, 42, 48, OverlayRenderDetail::ToByte(alpha * 0.88f))
-                : Render::Color(40, 85, 130, OverlayRenderDetail::ToByte(alpha * 0.88f));
-            Render::DrawFilledCircle(Vector2(avatarX + avatarSize * 0.5f,
-                                             avatarY + avatarSize * 0.5f),
-                                     avatarSize * 0.5f, fallbackColor, 40);
-            drawCenteredText(avatarX + avatarSize * 0.5f, avatarY + avatarSize * 0.5f,
-                             heroInitials(), 13.0f,
-                             OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
+        if (showAvatar) {
+            if (ID3D11ShaderResourceView* avatar = findHeroAvatar()) {
+                Render::DrawIcon(avatar, ImVec2(avatarX, avatarY), ImVec2(avatarSize, avatarSize),
+                                 OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
+            } else {
+                const Render::Color fallbackColor =
+                    Render::Color(136, 42, 48, OverlayRenderDetail::ToByte(alpha * 0.88f));
+                Render::DrawFilledCircle(Vector2(avatarX + avatarSize * 0.5f,
+                                                 avatarY + avatarSize * 0.5f),
+                                         avatarSize * 0.5f, fallbackColor, 40);
+                drawCenteredText(avatarX + avatarSize * 0.5f, avatarY + avatarSize * 0.5f,
+                                 heroInitials(), 13.0f,
+                                 OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
+            }
         }
 
         const float baseHealth = OverlayRenderDetail::PositiveFinite(entity.MinHealth);
@@ -8619,7 +8766,7 @@ inline void skillinfo(const std::vector<OW::c_entity>& entity_snapshot) {
                              Render::Color(255, 255, 255, OverlayRenderDetail::ToByte(alpha * 0.18f)), 1.0f);
         };
 
-        float cursorX = avatarX + avatarSize + 4.0f;
+        float cursorX = showAvatar ? avatarX + avatarSize + 4.0f : x + 8.0f;
         const float barY = y + (rowHeight - barHeight) * 0.5f;
         drawVerticalBar(cursorX, barY, healthRatio, healthColor);
         cursorX += barWidth + 3.0f;
@@ -8930,6 +9077,21 @@ namespace AimbotDetail {
                                                              int* matchedKeySetting = nullptr);
     inline bool IsInputVkDownQuiet(int vk);
 
+    inline int PhysicalMouseVkForAction(int action) {
+        switch (OW::MouseButtonForAttackAction(action)) {
+        case 0: return VK_LBUTTON;
+        case 1: return VK_RBUTTON;
+        case 2: return VK_MBUTTON;
+        default: return 0;
+        }
+    }
+
+    inline bool RequiredAimActionIsHeld(const OW::Config::HeroPreset& preset) {
+        if (!preset.requireActionHeld)
+            return true;
+        return IsInputVkDownQuiet(PhysicalMouseVkForAction(preset.trigger.action));
+    }
+
     struct TrackingSessionIdentity {
         uint64_t heroId = 0;
         int slotIndex = -1;
@@ -9052,6 +9214,7 @@ namespace AimbotDetail {
         state.trackingSessionSlotIndex = identity.slotIndex;
         state.trackingSessionAimKey = identity.aimKey;
         OW::ResetAimStartLimiter(state.trackingStartLimiter);
+        OW::ResetAimSmoothingState();
         Diagnostics::Aim("tracking.session start hero=0x%llX slot=%d key=%d",
             static_cast<unsigned long long>(identity.heroId),
             identity.slotIndex + 1,
@@ -9264,6 +9427,8 @@ namespace AimbotDetail {
             OW::Config::HeroSlotPreset slot{};
             if (!OW::Config::TryGetHeroAimSlot(heroId, slotIndex, slot) || !slot.enabled)
                 continue;
+            if (!RequiredAimActionIsHeld(slot.preset))
+                continue;
             enabledSlots[static_cast<size_t>(enabledSlotCount++)] = { slot, slotIndex };
         }
 
@@ -9379,13 +9544,26 @@ namespace AimbotDetail {
         }
 
         RuntimePresetSelection fallback{};
+        RuntimePresetSelection presentFallback{};
         RuntimePresetSelection alwaysCandidate{};
         bool hasFallback = false;
+        bool hasPresentFallback = false;
         bool hasAlwaysCandidate = false;
 
         for (int slotIndex = 0; slotIndex < OW::Config::kMaxHeroPresetSlots; ++slotIndex) {
             OW::Config::HeroSlotPreset slot{};
-            if (!OW::Config::TryGetHeroTriggerSlot(heroId, slotIndex, slot) || !slot.enabled)
+            if (!OW::Config::TryGetHeroTriggerSlot(heroId, slotIndex, slot))
+                continue;
+
+            if (!hasPresentFallback) {
+                presentFallback.preset = slot.preset;
+                presentFallback.preset.trigger.enabled = false;
+                presentFallback.slotIndex = slotIndex;
+                presentFallback.matchedInput = false;
+                hasPresentFallback = true;
+            }
+
+            if (!slot.enabled)
                 continue;
 
             if (!hasFallback) {
@@ -9436,8 +9614,14 @@ namespace AimbotDetail {
             return true;
         }
 
-        if (!hasFallback)
-            return false;
+        if (!hasFallback) {
+            if (!OW::ShouldApplyDisabledHeroTriggerFallback(
+                    hasPresentFallback,
+                    hasFallback))
+                return false;
+            selection = presentFallback;
+            return true;
+        }
 
         selection = fallback;
         return true;
@@ -9686,7 +9870,13 @@ namespace AimbotDetail {
     }
 
     inline bool IsAimKeyPressed() {
-        return IsConfiguredAimKeyPressed(OW::Config::aim_key);
+        const bool activationHotkeyDown = IsConfiguredAimKeyPressed(OW::Config::aim_key);
+        const bool actionButtonDown = !OW::Config::aimbotRequireActionHeld ||
+            IsInputVkDownQuiet(PhysicalMouseVkForAction(OW::Config::aimbotAttack));
+        return OW::AimActivationAllowed(
+            activationHotkeyDown,
+            OW::Config::aimbotRequireActionHeld,
+            actionButtonDown);
     }
 
     inline bool IsSecondAimKeyPressed() {
@@ -9818,9 +10008,28 @@ namespace AimbotDetail {
         }
     }
 
-    inline bool ShouldHoldFireWhileTracking() {
-        return ClampFirePolicy(OW::Config::aimbotFirePolicy) == FirePolicyType::HoldWhileTracking ||
-            (OW::Config::aimbotKeepFiring && OW::Config::Tracking);
+    inline bool ShouldHoldFireWhileTracking(int outputButton) {
+        const FirePolicyType policy =
+            ClampFirePolicy(OW::Config::aimbotFirePolicy);
+        const int activationVk = OW::get_bind_id(OW::Config::aim_key);
+        const int outputVk = VkForMouseButton(outputButton);
+        const bool activationIsPrimaryMouseAction =
+            activationVk == VK_LBUTTON ||
+            activationVk == VK_RBUTTON ||
+            activationVk == VK_MBUTTON;
+        return OW::AllowsGeneratedTrackingHold(
+            policy,
+            activationIsPrimaryMouseAction,
+            activationVk == outputVk);
+    }
+
+    inline bool GlobalAimFirePolicyAllowsGeneratedFire() {
+        return AllowsGeneratedAimFire(ClampFirePolicy(OW::Config::aimbotFirePolicy));
+    }
+
+    inline bool GeneratedFireAllowedForSource(OW::OutputOwnerSource ownerSource) {
+        return ownerSource != OW::OutputOwnerSource::GlobalAim ||
+            GlobalAimFirePolicyAllowsGeneratedFire();
     }
 
     inline void LogInvalidGeneratedFireKey(const char* operation, uint32_t key) {
@@ -10097,6 +10306,8 @@ namespace AimbotDetail {
         DWORD sleep_ms = 10,
         OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
         const char* ownerKey = kGlobalAimGeneratedFireOwnerKey) {
+        if (!GeneratedFireAllowedForSource(ownerSource))
+            return;
         const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(local.HeroID, OW::Config::aimbotAttack);
         const uint32_t fireKey = OW::ResolveGeneratedFireKeyMask(weapon, OW::Config::aimbotAttack);
         if (fireKey == 0)
@@ -10915,6 +11126,8 @@ namespace AimbotDetail {
     inline void FirePrimaryNormal(
         OW::OutputOwnerSource ownerSource = OW::OutputOwnerSource::GlobalAim,
         const char* ownerKey = kGlobalAimGeneratedFireOwnerKey) {
+        if (!GeneratedFireAllowedForSource(ownerSource))
+            return;
         const c_entity local = LocalEntity();
         if (local.HeroID == OW::eHero::HERO_HANJO) {
             FireHanzo(ownerSource, ownerKey);
@@ -10956,6 +11169,8 @@ namespace AimbotDetail {
     inline void FireHanzo(
         OW::OutputOwnerSource ownerSource,
         const char* ownerKey) {
+        if (!GeneratedFireAllowedForSource(ownerSource))
+            return;
         const std::uint64_t operationGeneration =
             kmbox::ActiveRuntimeSnapshot().generation;
         const c_entity local = LocalEntity();
@@ -11007,6 +11222,10 @@ namespace AimbotDetail {
     inline void RunCloseRangeActions(
         const Vector3& target_pos,
         OW::OutputOwnerSource ownerSource) {
+        if (ownerSource == OW::OutputOwnerSource::GlobalAim &&
+            OW::Config::aimbotRequireActionHeld) {
+            return;
+        }
         const float dist = CameraPosition().DistTo(target_pos);
         if (OW::Config::health <= OW::Config::meleehealth &&
             dist <= OW::Config::meleedistance &&
@@ -11459,7 +11678,7 @@ namespace AimbotDetail {
                 const float deadzoneDampingScale = TrackingDeadzoneDampingScale(aimTarget, &deadzoneDistance);
                 if (deadzoneDampingScale <= 0.0f) {
                     OW::ResetAimSmoothingState();
-                    holdThisTick = ShouldHoldFireWhileTracking();
+                    holdThisTick = ShouldHoldFireWhileTracking(holdFireButton);
                     if (holdThisTick && !fireHeld && holdFireButton >= 0) {
                         synchronizeHeldFireState();
                         fireHeld = OW::ActionOutputSucceeded(
@@ -11496,7 +11715,7 @@ namespace AimbotDetail {
                     -1.0f,
                     !startLimiterProfile.enabled);
                 ApplyAiAimNoise(aim.smoothed_angle, 500.f, true);
-                holdThisTick = ShouldHoldFireWhileTracking();
+                holdThisTick = ShouldHoldFireWhileTracking(holdFireButton);
                 if (holdThisTick && !fireHeld && holdFireButton >= 0) {
                     synchronizeHeldFireState();
                     fireHeld = OW::ActionOutputSucceeded(
@@ -11759,6 +11978,10 @@ namespace AimbotDetail {
             OW::RuntimeOutputTransitionEpoch();
         if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
             return;
+        if (!GlobalAimFirePolicyAllowsGeneratedFire()) {
+            ResetHanzoCustomFlickState(state, "manual_fire_policy");
+            return;
+        }
         if (!state.hanzoCustomCharging && !BeginHanzoCustomCharge(state))
             return;
 
@@ -11880,7 +12103,7 @@ namespace AimbotDetail {
             // Mouse-button state is latency-prioritized ahead of queued movement. Firing on a
             // predicted post-move hit can therefore put the shot on the wire first. Require
             // an observed hit at the start of a later sample; hitAfterMove remains telemetry.
-            if (hitBeforeMove) {
+            if (hitBeforeMove && GlobalAimFirePolicyAllowsGeneratedFire()) {
                 Diagnostics::Aim("hanzo.custom fire hitbox_check=passed before=%d after=%d charge=%.1f elapsedMs=%lu",
                     hitBeforeMove ? 1 : 0,
                     hitAfterMove ? 1 : 0,
@@ -11973,6 +12196,7 @@ namespace AimbotDetail {
             OW::Config::targetdelay ? 1 : 0);
 
         if (!OW::Config::aimDryRun &&
+            GlobalAimFirePolicyAllowsGeneratedFire() &&
             localAtEntry.HeroID == OW::eHero::HERO_HANJO &&
             !localAtEntry.skill2act) {
             ResetMagneticTriggerQuantization(state, "hanzo_custom_route");
@@ -12047,7 +12271,7 @@ namespace AimbotDetail {
             return;
         }
 
-        if (!OW::Config::shooted)
+        if (!OW::Config::shooted && GlobalAimFirePolicyAllowsGeneratedFire())
             ArmDelayedShot(state);
         const DWORD sessionStartedTick = state.trackingSessionStartedTick != 0
             ? state.trackingSessionStartedTick
@@ -12105,7 +12329,7 @@ namespace AimbotDetail {
                 Sleep(1);
                 continue;
             }
-            if (!OW::Config::shooted)
+            if (!OW::Config::shooted && GlobalAimFirePolicyAllowsGeneratedFire())
                 PrimeDelayedShot(state);
 
             const Vector3 aimTarget = vec;
@@ -12132,7 +12356,9 @@ namespace AimbotDetail {
                 aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, hitWindow);
             bool hitAfterMove = hitBeforeMove;
 
-            if (!OW::Config::shooted && DelayedShotTimedOut(state)) {
+            if (!OW::Config::shooted &&
+                GlobalAimFirePolicyAllowsGeneratedFire() &&
+                DelayedShotTimedOut(state)) {
                 const c_entity local = LocalEntity();
                 ResetMagneticTriggerQuantization(state, "delayed_shot_timeout");
                 Diagnostics::Aim("magnetic_trigger delayed_shot timeout target=%d localHero=0x%llX",
@@ -12257,7 +12483,9 @@ namespace AimbotDetail {
                 }
             }
 
-            if (!OW::Config::shooted && firePhase.readyToFire && hitBeforeMove) {
+            if (!OW::Config::shooted &&
+                GlobalAimFirePolicyAllowsGeneratedFire() &&
+                firePhase.readyToFire && hitBeforeMove) {
                 ResetMagneticTriggerQuantization(state, "inside_hit_window_fire");
                 if (OW::Config::aimVerboseLog) {
                     Diagnostics::Aim("magnetic_trigger.fire hitbox_check=passed before=%d after=%d",
@@ -12275,7 +12503,9 @@ namespace AimbotDetail {
                 break;
             }
 
-            if (!OW::Config::shooted && OW::Config::dontshot &&
+            if (!OW::Config::shooted &&
+                GlobalAimFirePolicyAllowsGeneratedFire() &&
+                OW::Config::dontshot &&
                 OW::Config::shotcount >= OW::Config::shotmanydont &&
                 OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, OW::Config::missbox)) {
                 const int previousShotCount = OW::Config::shotcount;
@@ -12357,6 +12587,7 @@ namespace AimbotDetail {
             OW::Config::Prediction ? 1 : 0);
 
         if (!OW::Config::aimDryRun &&
+            GlobalAimFirePolicyAllowsGeneratedFire() &&
             localAtEntry.HeroID == OW::eHero::HERO_HANJO &&
             !localAtEntry.skill2act) {
             Diagnostics::Aim("hanzo.custom route=primary_flick");
@@ -12396,7 +12627,8 @@ namespace AimbotDetail {
             return; // Don't actually move cursor
         }
 
-        ArmDelayedShot(state);
+        if (GlobalAimFirePolicyAllowsGeneratedFire())
+            ArmDelayedShot(state);
         const DWORD sessionStartedTick = GetTickCount();
 
         while (IsAimKeyPressed() &&
@@ -12429,7 +12661,8 @@ namespace AimbotDetail {
                     Sleep(1);
                     continue;
                 }
-                PrimeDelayedShot(state);
+                if (GlobalAimFirePolicyAllowsGeneratedFire())
+                    PrimeDelayedShot(state);
 
                 const TwoStageAimPlan twoStagePlan = ResolveTwoStageAimPlan(vec, target, OW::Config::Prediction);
                 const Vector3 aimTarget = twoStagePlan.active ? twoStagePlan.target : vec;
@@ -12448,7 +12681,8 @@ namespace AimbotDetail {
                 const float hitWindow = OW::Config::aimbotEffectiveHitWindow;
 
                 if (!IsZeroVector(aim.smoothed_angle)) {
-                    if (DelayedShotTimedOut(state)) {
+                    if (GlobalAimFirePolicyAllowsGeneratedFire() &&
+                        DelayedShotTimedOut(state)) {
                         const c_entity local = LocalEntity();
                         Diagnostics::Aim("flick delayed_shot timeout target=%d localHero=0x%llX",
                             OW::Config::Targetenemyi,
@@ -12479,7 +12713,8 @@ namespace AimbotDetail {
                             OW::Config::Targetenemyi,
                             hitWindow);
                     }
-                    if (hitBeforeMove &&
+                    if (GlobalAimFirePolicyAllowsGeneratedFire() &&
+                        hitBeforeMove &&
                         (!twoStagePlan.active || twoStagePlan.triggerOpen)) {
                         if (OW::Config::aimVerboseLog) {
                             Diagnostics::Aim("flick.fire hitbox_check=passed before=%d after=%d",
@@ -12496,7 +12731,8 @@ namespace AimbotDetail {
                         break;
                     }
 
-                    if (OW::Config::dontshot &&
+                    if (GlobalAimFirePolicyAllowsGeneratedFire() &&
+                        OW::Config::dontshot &&
                         OW::Config::shotcount >= OW::Config::shotmanydont &&
                         OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, aimTarget, OW::Config::missbox)) {
                         const int previousShotCount = OW::Config::shotcount;
@@ -12620,7 +12856,7 @@ namespace AimbotDetail {
     }
 
     inline void RunAutoRmb() {
-        if (!OW::Config::AutoRMB) return;
+        if (!OW::Config::AutoRMB || OW::Config::aimbotRequireActionHeld) return;
 
         const Vector3 vec = OW::GetVector3(false);
         c_entity target{};
@@ -12822,6 +13058,7 @@ namespace AimbotDetail {
                         OW::OutputOwnerSource::GlobalAim);
                     MoveAimDelta(aim.local_angle, aim.smoothed_angle);
                     if (OW::Config::Flick2 &&
+                        GlobalAimFirePolicyAllowsGeneratedFire() &&
                         OW::in_range(aim.local_angle, aim.target_angle, aim.local_pos, vec, OW::Config::aimbotEffectiveHitWindow2)) {
                         if (OW::Config::aimVerboseLog) {
                             const OW::c_entity local = LocalEntity();
@@ -12966,33 +13203,78 @@ namespace OW { namespace Config {
 }}
 
 inline void configsavenloadthread() {
-    uint64_t lastHeroId = 0;
+    OW::HeroProfileSwitchDebouncer heroSwitchDebouncer(300);
+    uint64_t observedConnectionEpoch = 0;
+    DWORD lastInvalidHeroLogTick = 0;
     while (1) {
         if (!OW::ProcessConnection::IsConnected()) {
+            heroSwitchDebouncer.Reset();
+            observedConnectionEpoch = 0;
             Sleep(100);
             continue;
         }
 
+        const uint64_t connectionEpoch =
+            OW::ProcessConnection::ConnectionEpoch();
+        if (connectionEpoch != observedConnectionEpoch) {
+            heroSwitchDebouncer.Reset();
+            observedConnectionEpoch = connectionEpoch;
+        }
+
         const OW::c_entity localSnapshot = OW::SnapshotLocalEntity();
         const uint64_t currentHeroId = localSnapshot.HeroID;
-        if (!OW::Config::Menu && currentHeroId != 0 && lastHeroId != currentHeroId) {
-            if (lastHeroId != 0) {
-                OW::Config::SaveConfigForHero(OW::Config::ConfigPath(), lastHeroId, localSnapshot.LinkBase);
-            }
+        const bool validHero = OW::GameData::IsKnownHeroId(currentHeroId);
+        const DWORD now = GetTickCount();
+        if (currentHeroId != 0 && !validHero &&
+            (lastInvalidHeroLogTick == 0 || now - lastInvalidHeroLogTick >= 5000)) {
+            Diagnostics::Warn(
+                "Ignored unknown local hero id during profile selection. heroId=0x%llX linkBase=0x%llX.",
+                static_cast<unsigned long long>(currentHeroId),
+                static_cast<unsigned long long>(localSnapshot.LinkBase));
+            lastInvalidHeroLogTick = now;
+        }
 
-            OW::Config::LoadConfigForHero(OW::Config::ConfigPath(), currentHeroId, localSnapshot.LinkBase);
-            const int kmboxReconcileStatus =
-                kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(500));
-            if (kmboxReconcileStatus != success) {
-                Diagnostics::Warn(
-                    "KMBox hero-profile reconcile failed. heroId=0x%llX status=%d",
-                    static_cast<unsigned long long>(currentHeroId),
-                    kmboxReconcileStatus);
+        bool switchedHero = false;
+        if (!OW::Config::Menu) {
+            const auto profileSwitch = heroSwitchDebouncer.Observe(
+                currentHeroId,
+                localSnapshot.LinkBase,
+                GetTickCount64(),
+                validHero);
+            if (profileSwitch) {
+                if (profileSwitch->previousHeroId != 0) {
+                    OW::Config::SaveConfigForHero(
+                        OW::Config::ConfigPath(),
+                        profileSwitch->previousHeroId,
+                        profileSwitch->previousLinkBase);
+                }
+
+                OW::Config::LoadConfigForHero(
+                    OW::Config::ConfigPath(),
+                    profileSwitch->nextHeroId,
+                    profileSwitch->nextLinkBase);
+                const int kmboxReconcileStatus =
+                    kmbox::ReconcileRuntimeFromConfig(std::chrono::milliseconds(500));
+                if (kmboxReconcileStatus != success) {
+                    Diagnostics::Warn(
+                        "KMBox hero-profile reconcile failed. heroId=0x%llX status=%d",
+                        static_cast<unsigned long long>(profileSwitch->nextHeroId),
+                        kmboxReconcileStatus);
+                }
+                OW::Config::nowhero = "Now using: " +
+                    OW::GetHeroEngNames(
+                        profileSwitch->nextHeroId,
+                        profileSwitch->nextLinkBase);
+                switchedHero = true;
             }
-            lastHeroId = currentHeroId;
-            OW::Config::nowhero = "Now using: " + OW::GetHeroEngNames(currentHeroId, localSnapshot.LinkBase);
-        } else if (OW::Config::manualsave && lastHeroId != 0) {
-            OW::Config::SaveConfigForHero(OW::Config::ConfigPath(), lastHeroId, localSnapshot.LinkBase);
+        }
+
+        if (!switchedHero && OW::Config::manualsave &&
+            heroSwitchDebouncer.ConfirmedHeroId() != 0) {
+            OW::Config::SaveConfigForHero(
+                OW::Config::ConfigPath(),
+                heroSwitchDebouncer.ConfirmedHeroId(),
+                heroSwitchDebouncer.ConfirmedLinkBase());
             OW::Config::manualsave = false;
         }
         Sleep(2);

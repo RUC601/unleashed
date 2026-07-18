@@ -390,15 +390,25 @@ namespace OW {
         if (!activeOffsets.VisibilityValueOffset)
             return 0;
 
+        const uint64_t raw = SDK->RPM<uint64_t>(visBase + activeOffsets.VisibilityValueOffset);
+        const bool worldBz = offset::ActiveProfile() == offset::RuntimeProfile::WorldBz;
+        const bool visible = worldBz
+            ? (raw & offset::VisibilityBzOccludedMask) == 0
+            : raw == 1;
+
         static bool loggedVisibility = false;
         if (!loggedVisibility) {
-            Diagnostics::Info("[VISIBILITY] BZ/NE 151293 component 0x34 +0x%llX uses raw bool state; visible when raw == 1.",
-                static_cast<unsigned long long>(activeOffsets.VisibilityValueOffset));
+            if (worldBz) {
+                Diagnostics::Info("[VISIBILITY] BZ 151752 component 0x34 +0x%llX uses occlusion mask 0x%llX; clear means visible.",
+                    static_cast<unsigned long long>(activeOffsets.VisibilityValueOffset),
+                    static_cast<unsigned long long>(offset::VisibilityBzOccludedMask));
+            } else {
+                Diagnostics::Info("[VISIBILITY] NE 151752 component 0x34 +0x%llX uses raw bool state; visible when raw == 1.",
+                    static_cast<unsigned long long>(activeOffsets.VisibilityValueOffset));
+            }
             loggedVisibility = true;
         }
 
-        const uint64_t raw = SDK->RPM<uint64_t>(visBase + activeOffsets.VisibilityValueOffset);
-        const bool visible = raw == 1;
         const uint64_t result = visible ? 1 : 0;
         {
             static uint32_t sampleCount = 0;

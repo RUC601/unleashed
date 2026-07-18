@@ -87,6 +87,7 @@ namespace OW {
         bool  Trg    = false;
         EntityRosterState roster_state = EntityRosterState::Fresh;
         uint64_t roster_key = 0;
+        uint64_t participant_key = 0;
         uint32_t match_id = 0;
         uint32_t last_seen_tick_ms = 0;
         uint32_t missing_since_tick_ms = 0;

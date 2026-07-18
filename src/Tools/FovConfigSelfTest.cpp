@@ -49,7 +49,7 @@ int main()
 
     if (!NearlyEqual(kMaxFovDeg, 180.0f))
         return Fail();
-    if (!NearlyEqual(kDefaultFovDeg, 100.0f))
+    if (!NearlyEqual(kDefaultFovDeg, 15.0f))
         return Fail();
     if (!NearlyEqual(ClampFovDeg(360.0f), 180.0f))
         return Fail();

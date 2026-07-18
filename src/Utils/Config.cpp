@@ -281,12 +281,13 @@ namespace OW { namespace Config {
 
     namespace {
 
-        constexpr int kCurrentConfigVersion = 13;
+        constexpr int kCurrentConfigVersion = 14;
         constexpr int kPresetBonesStoredAsAimBonesVersion = 3;
         constexpr int kFovAnglesStoredAsHalfAnglesVersion = 5;
         constexpr int kAimBehaviorSemanticsVersion = 6;
         constexpr int kVisualOverlayCleanupVersion = 8;
-        constexpr int kCurrentHeroConfigVersion = 15;
+        constexpr int kDefaultAimPolicyVersion = 14;
+        constexpr int kCurrentHeroConfigVersion = 16;
         constexpr int kHeroFovAnglesStoredAsHalfAnglesVersion = 2;
         constexpr int kHeroAimBehaviorSemanticsVersion = 3;
         constexpr int kRoadhogChainHookFullHealthDefaultVersion = 5;
@@ -296,6 +297,7 @@ namespace OW { namespace Config {
         constexpr int kAsheFirePatternStableTrackingVersion = 13;
         constexpr int kAimScopeRequirementVersion = 14;
         constexpr int kAsheFirePatternAimPhaseVersion = 15;
+        constexpr int kHeroDefaultAimPolicyVersion = 16;
         constexpr const char* kMetaSection = "Meta";
         constexpr const char* kVersionKey = "config_version";
         constexpr const char* kAimbotSection = "Aimbot";
@@ -834,14 +836,14 @@ namespace OW { namespace Config {
 
         void LogLoaded(const char* section, const char* key, const std::string& value)
         {
-            LogConfig(Diagnostics::LogLevel::Info,
+            LogConfig(Diagnostics::LogLevel::Debug,
                 "Loaded [%s] %s=%s from config.ini.",
                 section, key, value.c_str());
         }
 
         void LogDefault(const char* section, const char* key, const std::string& value)
         {
-            LogConfig(Diagnostics::LogLevel::Info,
+            LogConfig(Diagnostics::LogLevel::Debug,
                 "Using default [%s] %s=%s.",
                 section, key, value.c_str());
         }
@@ -1348,7 +1350,7 @@ namespace OW { namespace Config {
 
         int MaxActivationKeyIndex()
         {
-            return (std::max)(0, OW::Labels::AimActivationKeyCount() - 1);
+            return OW::Labels::kAimActivationKeyNoneIndex;
         }
 
         std::vector<int> HeroWeaponActions(uint64_t heroId)
@@ -1455,6 +1457,7 @@ namespace OW { namespace Config {
             bool enabled = true;
             AimScopeRequirement scopeRequirement = AimScopeRequirement::All;
             int firePolicy = kFirePolicyAuto;
+            bool requireActionHeld = false;
             int targetTeam = kTargetEnemies;
             float minDistance = kDocumentedUnsetFloat;
             float maxDistance = kDocumentedUnsetFloat;
@@ -1598,13 +1601,29 @@ namespace OW { namespace Config {
                 };
             case static_cast<uint64_t>(OW::eHero::HERO_JUNKRAT):
                 return { AimSlot("Primary Flick", kActionPrimary, kAimBehaviorFlick, kKeyMouse5) };
+            case static_cast<uint64_t>(OW::eHero::HERO_DOOMFIST): {
+                auto secondary = AimSlot("Secondary Flick", kActionSecondary, kAimBehaviorFlick, kKeyMouse5);
+                secondary.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
+                secondary.requireActionHeld = true;
+                return {
+                    AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    secondary,
+                };
+            }
+            case static_cast<uint64_t>(OW::eHero::HERO_ORISA): {
+                auto secondary = AimSlot("Secondary Flick", kActionSecondary, kAimBehaviorFlick, kKeyMouse5);
+                secondary.firePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
+                secondary.requireActionHeld = true;
+                return {
+                    AimSlot("Primary Tracking", kActionPrimary, kAimBehaviorTracking, kKeyLeftMouse),
+                    secondary,
+                };
+            }
             case static_cast<uint64_t>(OW::eHero::HERO_ZARYA):
             case static_cast<uint64_t>(OW::eHero::HERO_SOLDIER76):
             case static_cast<uint64_t>(OW::eHero::HERO_LUCIO):
             case static_cast<uint64_t>(OW::eHero::HERO_DVA):
             case static_cast<uint64_t>(OW::eHero::HERO_SOMBRA):
-            case static_cast<uint64_t>(OW::eHero::HERO_DOOMFIST):
-            case static_cast<uint64_t>(OW::eHero::HERO_ORISA):
             case static_cast<uint64_t>(OW::eHero::HERO_WRECKINGBALL):
             case static_cast<uint64_t>(OW::eHero::HERO_SOJOURN):
             case static_cast<uint64_t>(OW::eHero::HERO_BAPTISTE):
@@ -1709,15 +1728,20 @@ namespace OW { namespace Config {
 
         int DefaultDocumentedFirePolicy(uint64_t heroId, int action, int behavior)
         {
-            if (IsTrackingBehavior(behavior))
-                return static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
-            if (IsMagneticTriggerBehavior(behavior))
-                return static_cast<int>(OW::FirePolicyType::TapOnHitWindow);
+            (void)heroId;
+            (void)action;
+            return static_cast<int>(OW::DefaultFirePolicyForBehavior(
+                OW::ClampAimBehavior(behavior)));
+        }
 
-            const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(heroId, action);
-            if (weapon)
-                return static_cast<int>(weapon->firePolicy.type);
-            return static_cast<int>(OW::FirePolicyType::TapOnHitWindow);
+        void DeriveLegacyFireFlagsFromPolicy(int firePolicy,
+                                             bool& keepFiring,
+                                             bool& autoshot)
+        {
+            const OW::FirePolicyType policy = OW::ClampFirePolicy(firePolicy);
+            keepFiring = policy == OW::FirePolicyType::HoldWhileTracking;
+            autoshot = policy != OW::FirePolicyType::ManualOnly &&
+                policy != OW::FirePolicyType::HoldWhileTracking;
         }
 
         HeroPreset MakeDocumentedAimPreset(uint64_t heroId,
@@ -1732,9 +1756,11 @@ namespace OW { namespace Config {
             preset.firePolicy = spec.firePolicy >= 0
                 ? spec.firePolicy
                 : DefaultDocumentedFirePolicy(heroId, preset.trigger.action, preset.aimBehavior);
-            preset.keepFiring = preset.firePolicy == static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
-            preset.autoshot = preset.firePolicy != static_cast<int>(OW::FirePolicyType::ManualOnly) &&
-                preset.firePolicy != static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
+            DeriveLegacyFireFlagsFromPolicy(
+                preset.firePolicy,
+                preset.keepFiring,
+                preset.autoshot);
+            preset.requireActionHeld = spec.requireActionHeld;
             preset.targetTeam = spec.targetTeam;
             preset.trackingDeadzone = UsesTrackingDeadzone(preset.aimBehavior)
                 ? kTrackingDefaultDeadzonePx
@@ -1773,6 +1799,8 @@ namespace OW { namespace Config {
             preset.action = std::clamp(preset.action, 0, 7);
             preset.mode = std::clamp(preset.mode, 0, 2);
             preset.key = std::clamp(preset.key, 0, MaxActivationKeyIndex());
+            if (preset.mode == 2)
+                preset.key = OW::Labels::kAimActivationKeyNoneIndex;
             preset.shotInterval = std::clamp(preset.shotInterval, 0.0f, 100.0f);
             preset.minCharge = std::clamp(preset.minCharge, 0.0f, 100.0f);
             preset.boneMask = NormalizeTriggerBoneMask(preset.boneMask);
@@ -1782,7 +1810,7 @@ namespace OW { namespace Config {
         HeroPreset ValidateHeroPresetValue(HeroPreset preset)
         {
             if (!std::isfinite(preset.fov)) preset.fov = kDefaultFovDeg;
-            if (!std::isfinite(preset.smooth)) preset.smooth = 5.0f;
+            if (!std::isfinite(preset.smooth)) preset.smooth = 20.0f;
             if (!std::isfinite(preset.hitbox)) preset.hitbox = kDefaultHitboxScalePercent;
             if (!std::isfinite(preset.pidP)) preset.pidP = 0.5f;
             if (!std::isfinite(preset.pidI)) preset.pidI = 0.01f;
@@ -1851,11 +1879,11 @@ namespace OW { namespace Config {
             preset.predictionMode = std::clamp(preset.predictionMode, 0, 2);
             preset.fovEntryPredictionMs = ClampFovEntryPredictionMs(preset.fovEntryPredictionMs);
             preset.fovEntryMaxOutsideDeg = ClampFovEntryMaxOutsideDeg(preset.fovEntryMaxOutsideDeg);
-            if (preset.firePolicy == 0 && preset.keepFiring)
-                preset.firePolicy = 1;
-            else if (preset.firePolicy == 0 && preset.autoshot)
-                preset.firePolicy = 2;
             preset.firePolicy = std::clamp(preset.firePolicy, 0, 5);
+            DeriveLegacyFireFlagsFromPolicy(
+                preset.firePolicy,
+                preset.keepFiring,
+                preset.autoshot);
             preset.maxHeadDistance = std::clamp(preset.maxHeadDistance, 0.0f, 500.0f);
             preset.stickiness = std::clamp(preset.stickiness, 0.0f, 100.0f);
             preset.pitchScale = std::clamp(preset.pitchScale, 0.1f, 3.0f);
@@ -1893,6 +1921,8 @@ namespace OW { namespace Config {
         {
             preset = ValidateHeroPresetValue(preset);
             preset.trigger.action = NormalizeHeroWeaponAction(heroId, preset.trigger.action);
+            if (OW::MouseButtonForAttackAction(preset.trigger.action) < 0)
+                preset.requireActionHeld = false;
             preset.key = std::clamp(preset.key, 0, MaxActivationKeyIndex());
             preset.trigger.key = std::clamp(preset.trigger.key, 0, MaxActivationKeyIndex());
             return preset;
@@ -2137,6 +2167,8 @@ namespace OW { namespace Config {
                                                const HeroPreset& rhs)
         {
             return SameFloatForDefaultMigration(lhs.fov, rhs.fov) &&
+                lhs.fovMode == rhs.fovMode &&
+                lhs.dynamicFovPresetId == rhs.dynamicFovPresetId &&
                 SameFloatForDefaultMigration(lhs.smooth, rhs.smooth) &&
                 lhs.bone == rhs.bone &&
                 lhs.autoBone == rhs.autoBone &&
@@ -2144,11 +2176,21 @@ namespace OW { namespace Config {
                 SameFloatForDefaultMigration(lhs.hitbox, rhs.hitbox) &&
                 lhs.aimMode == rhs.aimMode &&
                 lhs.aimBehavior == rhs.aimBehavior &&
+                lhs.aimBehaviorPresetId == rhs.aimBehaviorPresetId &&
                 lhs.aimMethod == rhs.aimMethod &&
                 lhs.smoothType == rhs.smoothType &&
+                SameFloatForDefaultMigration(lhs.pidP, rhs.pidP) &&
+                SameFloatForDefaultMigration(lhs.pidI, rhs.pidI) &&
+                SameFloatForDefaultMigration(lhs.pidD, rhs.pidD) &&
+                SameFloatForDefaultMigration(lhs.pidMaxIntegral, rhs.pidMaxIntegral) &&
+                SameFloatForDefaultMigration(lhs.pidDeadzone, rhs.pidDeadzone) &&
+                lhs.bezierControlPoints == rhs.bezierControlPoints &&
+                SameFloatForDefaultMigration(lhs.bezierCurvature, rhs.bezierCurvature) &&
+                SameFloatForDefaultMigration(lhs.bezierSpeed, rhs.bezierSpeed) &&
                 lhs.key == rhs.key &&
                 lhs.autoshot == rhs.autoshot &&
                 lhs.keepFiring == rhs.keepFiring &&
+                lhs.requireActionHeld == rhs.requireActionHeld &&
                 lhs.prediction == rhs.prediction &&
                 lhs.predictionMode == rhs.predictionMode &&
                 lhs.predictFovEntry == rhs.predictFovEntry &&
@@ -2270,6 +2312,118 @@ namespace OW { namespace Config {
             return true;
         }
 
+        bool MigrateDoomOrisaActionHeldSlotsIfV15Default(
+            std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+            uint64_t heroId,
+            HeroPresetSlotKind kind)
+        {
+            if (kind != HeroPresetSlotKind::Aim ||
+                gLoadedHeroConfigVersion >= kHeroDefaultAimPolicyVersion ||
+                (heroId != static_cast<uint64_t>(OW::eHero::HERO_DOOMFIST) &&
+                 heroId != static_cast<uint64_t>(OW::eHero::HERO_ORISA))) {
+                return false;
+            }
+
+            HeroPreset legacyPrimary{};
+            legacyPrimary.fov = 100.0f;
+            legacyPrimary.smooth = 5.0f;
+            legacyPrimary.aimBehavior = kAimBehaviorTracking;
+            legacyPrimary.aimMode = 0;
+            legacyPrimary.firePolicy = static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
+            legacyPrimary.keepFiring = true;
+            legacyPrimary.autoshot = false;
+            legacyPrimary.trackingDeadzone = kTrackingDefaultDeadzonePx;
+            legacyPrimary.trigger.action = kActionPrimary;
+            legacyPrimary = ValidateHeroPresetValueForHero(heroId, legacyPrimary);
+
+            const HeroSlotPreset& primary = slots[0];
+            if (!primary.present || !primary.enabled ||
+                primary.name != "Primary Tracking" ||
+                primary.scopeRequirement != AimScopeRequirement::All ||
+                !SameHeroPresetForDefaultMigration(primary.preset, legacyPrimary)) {
+                return false;
+            }
+            for (int slotIndex = 1; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                if (slots[static_cast<size_t>(slotIndex)].present)
+                    return false;
+            }
+
+            InitializeBasicHeroPresetSlots(slots, heroId, kind);
+            gLastHeroConfigNeedsSave = true;
+            return true;
+        }
+
+        int LegacyV15DefaultDocumentedFirePolicy(uint64_t heroId,
+                                                 int action,
+                                                 int behavior)
+        {
+            if (IsTrackingBehavior(behavior))
+                return static_cast<int>(OW::FirePolicyType::HoldWhileTracking);
+            if (IsMagneticTriggerBehavior(behavior))
+                return static_cast<int>(OW::FirePolicyType::TapOnHitWindow);
+            if (const OW::WeaponSpec* weapon = OW::ResolveWeaponSpec(heroId, action))
+                return static_cast<int>(weapon->firePolicy.type);
+            return static_cast<int>(OW::FirePolicyType::TapOnHitWindow);
+        }
+
+        bool SlotsStillMatchV15DocumentedAimDefaults(
+            const std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+            uint64_t heroId)
+        {
+            const std::vector<DocumentedAimSlotSpec> specs = DocumentedAimSlotSpecs(heroId);
+            if (specs.empty())
+                return false;
+
+            std::array<HeroSlotPreset, kHeroPresetSlotCount> expected{};
+            InitializeAimPresetSlotsFromSpecs(expected, heroId, specs);
+            const int presentCount = (std::min)(
+                static_cast<int>(specs.size()),
+                kHeroPresetSlotCount);
+            for (int slotIndex = 0; slotIndex < presentCount; ++slotIndex) {
+                const DocumentedAimSlotSpec& spec = specs[static_cast<size_t>(slotIndex)];
+                HeroPreset& preset = expected[static_cast<size_t>(slotIndex)].preset;
+                preset.fov = 100.0f;
+                preset.smooth = 5.0f;
+                preset.requireActionHeld = false;
+                preset.firePolicy = spec.firePolicy >= 0
+                    ? spec.firePolicy
+                    : LegacyV15DefaultDocumentedFirePolicy(
+                        heroId,
+                        preset.trigger.action,
+                        preset.aimBehavior);
+                DeriveLegacyFireFlagsFromPolicy(
+                    preset.firePolicy,
+                    preset.keepFiring,
+                    preset.autoshot);
+                preset = ValidateHeroPresetValueForHero(heroId, preset);
+            }
+
+            for (int slotIndex = 0; slotIndex < kHeroPresetSlotCount; ++slotIndex) {
+                if (!SameHeroSlotForDefaultMigration(
+                        slots[static_cast<size_t>(slotIndex)],
+                        expected[static_cast<size_t>(slotIndex)])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool MigrateHeroAimDefaultsV16(
+            std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
+            uint64_t heroId,
+            HeroPresetSlotKind kind)
+        {
+            if (kind != HeroPresetSlotKind::Aim ||
+                gLoadedHeroConfigVersion >= kHeroDefaultAimPolicyVersion ||
+                !SlotsStillMatchV15DocumentedAimDefaults(slots, heroId)) {
+                return false;
+            }
+
+            InitializeBasicHeroPresetSlots(slots, heroId, kind);
+            gLastHeroConfigNeedsSave = true;
+            return true;
+        }
+
         bool MigrateHeroSlotsIfLegacyDefault(
             std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
             uint64_t heroId,
@@ -2277,7 +2431,11 @@ namespace OW { namespace Config {
         {
             if (MigrateDocumentedHeroSlotsIfLegacyDefault(slots, heroId, kind))
                 return true;
-            return MigrateAimScopeLayoutIfV13Default(slots, heroId, kind);
+            if (MigrateAimScopeLayoutIfV13Default(slots, heroId, kind))
+                return true;
+            if (MigrateDoomOrisaActionHeldSlotsIfV15Default(slots, heroId, kind))
+                return true;
+            return MigrateHeroAimDefaultsV16(slots, heroId, kind);
         }
 
         void NormalizeHeroPresetSlots(std::array<HeroSlotPreset, kHeroPresetSlotCount>& slots,
@@ -2436,11 +2594,11 @@ namespace OW { namespace Config {
             aim_key2 = 1;                 // default: Left Mouse
             togglekey = 0;                // default: disabled
 
-            Fov = kDefaultFovDeg;         // default: 100 deg
-            Fov2 = kDefaultFovDeg;        // default: 100 deg
-            minFov1 = kDefaultFovDeg;     // default: 100 deg
-            minFov2 = kDefaultFovDeg;     // default: 100 deg
-            Smooth = 5.0f;                // default: 5
+            Fov = kDefaultFovDeg;         // default: 15 deg
+            Fov2 = kDefaultFovDeg;        // default: 15 deg
+            minFov1 = kDefaultFovDeg;     // default: 15 deg
+            minFov2 = kDefaultFovDeg;     // default: 15 deg
+            Smooth = 20.0f;               // default: 20
             autoscalefov = false;         // default: false
             hitbox = kDefaultHitboxScalePercent;  // default: 100%
             hitbox2 = kDefaultHitboxScalePercent; // default: 100%
@@ -2520,13 +2678,14 @@ namespace OW { namespace Config {
         void ResetAimbotDefaultsUnlocked()
         {
             aimbotAutoshot = false;
-            aimbotKeepFiring = true;
+            aimbotKeepFiring = false;
+            aimbotRequireActionHeld = false;
             aimbotPredictionMode = 0;
             aimbotPredictFovEntry = false;
             aimbotFovEntryPredictionMs = 60.0f;
             aimbotFovEntryMaxOutsideDeg = 1.5f;
             aimBehavior = 0;
-            aimbotFirePolicy = 1;
+            aimbotFirePolicy = 0;
             aimbotTriggerDelay = 0.0f;
             aimbotMaxHead = 100.0f;
             aimbotSmoothType = 0;
@@ -2762,6 +2921,7 @@ namespace OW { namespace Config {
             preset.key = aim_key;
             preset.autoshot = aimbotAutoshot;
             preset.keepFiring = aimbotKeepFiring;
+            preset.requireActionHeld = aimbotRequireActionHeld;
             preset.prediction = Prediction;
             preset.predictionMode = aimbotPredictionMode;
             preset.predictFovEntry = aimbotPredictFovEntry;
@@ -2853,6 +3013,7 @@ namespace OW { namespace Config {
             aim_key = preset.key;
             aimbotAutoshot = preset.autoshot;
             aimbotKeepFiring = preset.keepFiring;
+            aimbotRequireActionHeld = preset.requireActionHeld;
             aimbotFirePolicy = preset.firePolicy;
             aimbotMaxHead = preset.maxHeadDistance;
             aimbotStickiness = preset.stickiness;
@@ -2899,6 +3060,8 @@ namespace OW { namespace Config {
             aimbotAttack = preset.trigger.action;
             triggerbotMode = preset.trigger.mode;
             triggerbotKey = preset.trigger.key;
+            if (triggerbotMode == 2)
+                triggerbotToggleActive = false;
             triggerbotShotInterval = preset.trigger.shotInterval;
             triggerbotChargeAware = preset.trigger.chargeAware;
             triggerbotMinCharge = preset.trigger.minCharge;
@@ -2985,6 +3148,11 @@ namespace OW { namespace Config {
                 slot.preset.key = ReadInt(ini, section, "aim_key", slot.preset.key);
             slot.preset.autoshot = ReadBool(ini, section, "aimbotAutoshot", slot.preset.autoshot);
             slot.preset.keepFiring = ReadBool(ini, section, "aimbotKeepFiring", slot.preset.keepFiring);
+            slot.preset.requireActionHeld = ReadBool(
+                ini,
+                section,
+                "requireActionHeld",
+                slot.preset.requireActionHeld);
             slot.preset.prediction = ReadBool(ini, section, "prediction", slot.preset.prediction);
             const bool hasPredictionMode = KeyExists(ini, section, "aimbotPredictionMode");
             slot.preset.predictionMode = ReadInt(
@@ -3105,6 +3273,11 @@ namespace OW { namespace Config {
             preset.key = ReadInt(ini, section, "aim_key", preset.key);
             preset.autoshot = ReadBool(ini, section, "aimbotAutoshot", preset.autoshot);
             preset.keepFiring = ReadBool(ini, section, "aimbotKeepFiring", preset.keepFiring);
+            preset.requireActionHeld = ReadBool(
+                ini,
+                section,
+                "requireActionHeld",
+                preset.requireActionHeld);
             preset.prediction = ReadBool(ini, section, "predictdec", preset.prediction);
             preset.predictionMode = ReadInt(ini, section, "aimbotPredictionMode", preset.prediction ? 1 : 2);
             preset.firePolicy = ReadInt(ini, section, "aimbotFirePolicy", preset.firePolicy);
@@ -3173,6 +3346,7 @@ namespace OW { namespace Config {
             WriteIntValue(path, section, "key", preset.key);
             WriteBoolValue(path, section, "aimbotAutoshot", preset.autoshot);
             WriteBoolValue(path, section, "aimbotKeepFiring", preset.keepFiring);
+            WriteBoolValue(path, section, "requireActionHeld", preset.requireActionHeld);
             const std::string prediction = ToText(preset.prediction);
             WriteStringValue(path, section, "prediction", prediction.c_str());
             WriteIntValue(path, section, "aimbotPredictionMode", preset.predictionMode);
@@ -3297,6 +3471,7 @@ namespace OW { namespace Config {
             AddJsonInt(value, "key", preset.key, allocator);
             AddJsonBool(value, "autoshot", preset.autoshot, allocator);
             AddJsonBool(value, "keepFiring", preset.keepFiring, allocator);
+            AddJsonBool(value, "requireActionHeld", preset.requireActionHeld, allocator);
             AddJsonBool(value, "prediction", preset.prediction, allocator);
             AddJsonInt(value, "predictionMode", preset.predictionMode, allocator);
             AddJsonBool(value, "predictFovEntry", preset.predictFovEntry, allocator);
@@ -3647,6 +3822,13 @@ namespace OW { namespace Config {
         {
             if (heroId == 0) {
                 SaveHeroPresetsUnlocked(heroConfigPath);
+                return;
+            }
+            if (!OW::GameData::IsKnownHeroId(heroId)) {
+                LogConfig(
+                    Diagnostics::LogLevel::Warn,
+                    "Rejected hero config save for unknown hero id 0x%llX.",
+                    static_cast<unsigned long long>(heroId));
                 return;
             }
 
@@ -4303,6 +4485,10 @@ namespace OW { namespace Config {
             defaults.key = ReadJsonInt(value, "key", defaults.key);
             defaults.autoshot = ReadJsonBool(value, "autoshot", defaults.autoshot);
             defaults.keepFiring = ReadJsonBool(value, "keepFiring", defaults.keepFiring);
+            defaults.requireActionHeld = ReadJsonBool(
+                value,
+                "requireActionHeld",
+                defaults.requireActionHeld);
             defaults.prediction = ReadJsonBool(value, "prediction", defaults.prediction);
             const bool hasPredictionMode = value.HasMember("predictionMode");
             defaults.predictionMode = ReadJsonInt(
@@ -4973,6 +5159,11 @@ namespace OW { namespace Config {
 
             aimbotAutoshot = ReadBool(ini, section, "aimbotAutoshot", aimbotAutoshot);
             aimbotKeepFiring = ReadBool(ini, section, "aimbotKeepFiring", aimbotKeepFiring);
+            aimbotRequireActionHeld = ReadBool(
+                ini,
+                section,
+                "aimbotRequireActionHeld",
+                aimbotRequireActionHeld);
             aimbotPredictionMode = ReadInt(ini, section, "aimbotPredictionMode", aimbotPredictionMode);
             aimbotPredictFovEntry = ReadBool(ini, section, "aimbotPredictFovEntry", aimbotPredictFovEntry);
             aimbotFovEntryPredictionMs = ReadFixedFloat(ini, section, "aimbotFovEntryPredictionMs", aimbotFovEntryPredictionMs);
@@ -5422,6 +5613,7 @@ namespace OW { namespace Config {
 
             WriteBoolValue(path, section, "aimbotAutoshot", aimbotAutoshot);
             WriteBoolValue(path, section, "aimbotKeepFiring", aimbotKeepFiring);
+            WriteBoolValue(path, section, "aimbotRequireActionHeld", aimbotRequireActionHeld);
             WriteIntValue(path, section, "aimbotPredictionMode", aimbotPredictionMode);
             WriteBoolValue(path, section, "aimbotPredictFovEntry", aimbotPredictFovEntry);
             WriteFixedFloatValue(path, section, "aimbotFovEntryPredictionMs", ClampFovEntryPredictionMs(aimbotFovEntryPredictionMs));
@@ -5989,7 +6181,7 @@ namespace OW { namespace Config {
             ClampFloatSetting("Fov2", Fov2, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
             ClampFloatSetting("minFov1", minFov1, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
             ClampFloatSetting("minFov2", minFov2, kMinFovDeg, kMaxFovDeg, kDefaultFovDeg);
-            ClampFloatSetting("Smooth", Smooth, 0.0f, 100.0f, 5.0f);
+            ClampFloatSetting("Smooth", Smooth, 0.0f, 100.0f, 20.0f);
             ClampFloatSetting("hitbox", hitbox, kMinHitboxScalePercent, kMaxHitboxScalePercent, kDefaultHitboxScalePercent);
             ClampFloatSetting("hitbox2", hitbox2, kMinHitboxScalePercent, kMaxHitboxScalePercent, kDefaultHitboxScalePercent);
             ClampFloatSetting("missbox", missbox, 0.0f, 5.0f, 0.6f);
@@ -6062,10 +6254,18 @@ namespace OW { namespace Config {
 
             ClampSetting("triggerbotMode", triggerbotMode, 0, 2, 0);
             ClampSetting("triggerbotKey", triggerbotKey, 0, MaxActivationKeyIndex(), 1);
+            if (triggerbotMode == 2) {
+                triggerbotKey = OW::Labels::kAimActivationKeyNoneIndex;
+                triggerbotToggleActive = false;
+            }
             ClampFloatSetting("triggerbotShotInterval", triggerbotShotInterval, 0.0f, 100.0f, 0.0f);
             ClampFloatSetting("triggerbotMinCharge", triggerbotMinCharge, 0.0f, 100.0f, 30.0f);
             ClampSetting("triggerbotMode2", triggerbotMode2, 0, 2, 0);
             ClampSetting("triggerbotKey2", triggerbotKey2, 0, MaxActivationKeyIndex(), 1);
+            if (triggerbotMode2 == 2) {
+                triggerbotKey2 = OW::Labels::kAimActivationKeyNoneIndex;
+                triggerbotToggleActive2 = false;
+            }
             ClampFloatSetting("triggerbotShotInterval2", triggerbotShotInterval2, 0.0f, 100.0f, 0.0f);
             ClampFloatSetting("triggerbotMinCharge2", triggerbotMinCharge2, 0.0f, 100.0f, 30.0f);
             triggerbotBoneMask = NormalizeTriggerBoneMask(triggerbotBoneMask);
@@ -6126,7 +6326,11 @@ namespace OW { namespace Config {
             aimBehaviorPresetId = ClampAimBehaviorPresetId(aimBehaviorPresetId);
             if (const AimBehaviorPreset* behaviorPreset = FindAimBehaviorPreset(aimBehaviorPresetId))
                 aimBehavior = ClampAimBehaviorIndex(behaviorPreset->behavior);
-            ClampSetting("aimbotFirePolicy", aimbotFirePolicy, 0, 5, 1);
+            ClampSetting("aimbotFirePolicy", aimbotFirePolicy, 0, 5, 0);
+            DeriveLegacyFireFlagsFromPolicy(
+                aimbotFirePolicy,
+                aimbotKeepFiring,
+                aimbotAutoshot);
             aimbotTwoStage = IsFlick2ndBehavior(aimBehavior);
             aimbotTwoStageTriggerGate = aimbotFlick2ndTriggerGate;
             aimbotTwoStageBoxPadding = aimbotFlick2ndBoxPadding;
@@ -6267,8 +6471,9 @@ namespace OW { namespace Config {
                 ToText(lockontarget).c_str(), ToText(trackcompensate).c_str(), comarea, comspeed, ToText(aiaim).c_str(),
                 ToText(targetdelay).c_str(), targetdelaytime, ToText(hitboxdelayshoot).c_str(), hiboxdelaytime,
                 ToText(dontshot).c_str(), shotcount, shotmanydont);
-            LogConfig(level, "Dump: aimbot ui autoshot=%s keepFiring=%s predictionMode=%d fovEntry=(enabled=%s horizonMs=%.3f marginDeg=%.3f) behavior=%d firePolicy=%d triggerDelay=%.3f maxHead=%.3f smoothType=%d stickiness=%.3f smoothY=%.3f pitchScale=%.3f maxAim=%.3f minCharge=%.3f maxCharge=%.3f ignoreInvisible=%s trace=%d unlock=%d lockTime=%.3f maxDist=%.3f minDist=%.3f attack=%d team=%d priority=%d",
-                ToText(aimbotAutoshot).c_str(), ToText(aimbotKeepFiring).c_str(), aimbotPredictionMode,
+            LogConfig(level, "Dump: aimbot ui autoshot=%s keepFiring=%s requireActionHeld=%s predictionMode=%d fovEntry=(enabled=%s horizonMs=%.3f marginDeg=%.3f) behavior=%d firePolicy=%d triggerDelay=%.3f maxHead=%.3f smoothType=%d stickiness=%.3f smoothY=%.3f pitchScale=%.3f maxAim=%.3f minCharge=%.3f maxCharge=%.3f ignoreInvisible=%s trace=%d unlock=%d lockTime=%.3f maxDist=%.3f minDist=%.3f attack=%d team=%d priority=%d",
+                ToText(aimbotAutoshot).c_str(), ToText(aimbotKeepFiring).c_str(),
+                ToText(aimbotRequireActionHeld).c_str(), aimbotPredictionMode,
                 ToText(aimbotPredictFovEntry).c_str(), aimbotFovEntryPredictionMs, aimbotFovEntryMaxOutsideDeg,
                 aimBehavior, aimbotFirePolicy, aimbotTriggerDelay,
                 aimbotMaxHead, aimbotSmoothType, aimbotStickiness, aimbotSmoothY, aimbotPitchScale, aimbotMaxAim,
@@ -6925,6 +7130,30 @@ namespace OW { namespace Config {
         {
             if (fileVersion < kVisualOverlayCleanupVersion)
                 draw_skel = false;
+            if (fileVersion >= kDefaultAimPolicyVersion)
+                return;
+
+            const bool stillExactV13AimDefaults =
+                SameFloatForDefaultMigration(Fov, 100.0f) &&
+                SameFloatForDefaultMigration(Fov2, 100.0f) &&
+                SameFloatForDefaultMigration(minFov1, 100.0f) &&
+                SameFloatForDefaultMigration(minFov2, 100.0f) &&
+                SameFloatForDefaultMigration(Smooth, 5.0f) &&
+                IsTrackingBehavior(aimBehavior) &&
+                aimbotFirePolicy == static_cast<int>(OW::FirePolicyType::HoldWhileTracking) &&
+                aimbotKeepFiring &&
+                !aimbotAutoshot &&
+                !aimbotRequireActionHeld;
+            if (stillExactV13AimDefaults) {
+                Fov = kDefaultFovDeg;
+                Fov2 = kDefaultFovDeg;
+                minFov1 = kDefaultFovDeg;
+                minFov2 = kDefaultFovDeg;
+                Smooth = 20.0f;
+                aimbotFirePolicy = static_cast<int>(OW::FirePolicyType::ManualOnly);
+                aimbotKeepFiring = false;
+                aimbotAutoshot = false;
+            }
         }
 
         void ApplyLoadedHeroPresetsUnlocked(uint64_t heroId)
@@ -7053,6 +7282,13 @@ namespace OW { namespace Config {
                 "Saved system config to %s without a current hero.", path.c_str());
             return;
         }
+        if (heroId != 0 && !OW::GameData::IsKnownHeroId(heroId)) {
+            LogConfig(
+                Diagnostics::LogLevel::Warn,
+                "Rejected config save for unknown hero id 0x%llX.",
+                static_cast<unsigned long long>(heroId));
+            return;
+        }
 
         const std::string heroName = HeroSectionName(heroId, linkBase);
         SaveHeroConfigForHeroUnlocked(HeroConfigPath(path), heroId);
@@ -7064,6 +7300,14 @@ namespace OW { namespace Config {
     void LoadConfigForHero(const std::string& path, uint64_t heroId, uint64_t linkBase)
     {
         std::lock_guard<std::mutex> lock(mutex);
+
+        if (heroId != 0 && !OW::GameData::IsKnownHeroId(heroId)) {
+            LogConfig(
+                Diagnostics::LogLevel::Warn,
+                "Rejected config load for unknown hero id 0x%llX.",
+                static_cast<unsigned long long>(heroId));
+            return;
+        }
 
         const std::string heroName = HeroSectionName(heroId, linkBase);
         ResetHeroDefaultsUnlocked();

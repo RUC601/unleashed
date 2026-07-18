@@ -56,7 +56,11 @@ int main()
     for (const OW::WeaponSpec* spec = OW::WeaponSpecsBegin();
          spec != OW::WeaponSpecsEnd();
          ++spec) {
-        if (!table.Find(spec->weaponId)) {
+        const bool aimOnlyAction =
+            OW::ResolveGeneratedFireKeyMask(spec, spec->action) == 0u &&
+            OW::ResolveTrackingHoldMouseButton(spec, spec->action) ==
+                OW::kWeaponControlNoButton;
+        if (!aimOnlyAction && !table.Find(spec->weaponId)) {
             std::fprintf(stderr,
                          "WeaponCadenceSelfTest missing WeaponSpec join: %.*s\n",
                          static_cast<int>(spec->weaponId.size()),

@@ -69,7 +69,7 @@ Runtime offset profile：
 
 FOV 语义：
   FOV 从旧的 aperture 口径迁移为“相机 forward 到目标方向的角度上限”。
-  kMaxFovDeg = 180，kDefaultFovDeg = 100。
+  kMaxFovDeg = 180，kDefaultFovDeg = 15；Aim Slot 默认 smooth=20，Tracking 默认 Manual，非 Tracking 默认 Hold。
   旧配置版本的 200/360 aperture 会迁移成 100/180 angle。
 
 Aim/Trigger slot：
@@ -2425,7 +2425,7 @@ MotionEstimatorSelfTest
   纯本地自检，不需要 DMA/Overlay。验证 reported velocity 与 world-delta fallback。
 
 FovConfigSelfTest
-  纯本地自检，不需要 DMA/Overlay。验证 kMaxFovDeg=180、kDefaultFovDeg=100、旧 aperture 迁移。
+  纯本地自检，不需要 DMA/Overlay。验证 kMaxFovDeg=180、kDefaultFovDeg=15、旧 aperture 迁移。
 
 TrackingDeadzoneDampingSelfTest
   纯本地自检，不需要 DMA/Overlay。验证 deadzone 内停止、边界 smoothstep 阻尼和 clamp 行为。

@@ -86,7 +86,7 @@ constexpr WeaponSpec W(uint64_t heroId,
     };
 }
 
-constexpr std::array<WeaponSpec, 75> kWeaponSpecs = {
+constexpr std::array<WeaponSpec, 77> kWeaponSpecs = {
     W(eHero::HERO_REAPER, "Reaper", "reaper_hellfire_shotguns", "Hellfire Shotguns", 0, 1, AC::Shotgun, Hitscan(0.04f), AB::FlickClamp, FP::TapOnHitWindow),
     W(eHero::HERO_TRACER, "Tracer", "tracer_pulse_pistols", "Pulse Pistols", 0, 1, AC::HitscanAuto, Hitscan(0.04f), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_MERCY, "Mercy", "mercy_caduceus_staff_heal", "Caduceus Staff", 0, 1, AC::Targeted, Hitscan(0.0f), AB::Tracking, FP::ManualOnly),
@@ -132,9 +132,23 @@ constexpr std::array<WeaponSpec, 75> kWeaponSpecs = {
     W(eHero::HERO_MEI, "Mei", "mei_icicle", "Icicle", 1, 2, AC::ProjectileSingle, Projectile(115.0f, 0.2f), AB::FlickDelay, FP::ReleaseAfterDelay),
     W(eHero::HERO_SOMBRA, "Sombra", "sombra_machine_pistol", "Machine Pistol", 0, 1, AC::HitscanAuto, Hitscan(0.04f), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_DOOMFIST, "Doomfist", "doomfist_hand_cannon", "Hand Cannon", 0, 1, AC::Shotgun, Projectile(80.0f, 0.05f), AB::FlickClamp, FP::TapOnHitWindow),
+    W(eHero::HERO_DOOMFIST, "Doomfist", "doomfist_rocket_punch", "Rocket Punch", 1, 2, AC::Movement, ChargedProjectile(15.0f, 35.0f, 1.0f), AB::Flick, FP::ManualOnly,
+      0.80f,
+      "Local hero catalog: Rocket Punch movement/knockback lead speed is 15-35 m/s; aim assist must never emit its button.",
+      RuntimeVariantRequirement::None,
+      std::string_view{},
+      std::string_view{},
+      Control(kWeaponControlNoButton, kWeaponControlNoButton)),
     W(eHero::HERO_ANA, "Ana", "ana_biotic_rifle_hip", "Biotic Rifle", 0, 1, AC::ProjectileSingle, Projectile(125.0f, 0.15f), AB::FlickDelay, FP::ReleaseAfterDelay),
     W(eHero::HERO_ANA, "Ana", "ana_biotic_rifle_ads", "Zoom ADS", 2, 2, AC::HitscanSingle, Hitscan(0.07f), AB::Flick, FP::TapOnHitWindow),
     W(eHero::HERO_ORISA, "Orisa", "orisa_augmented_fusion_driver", "Augmented Fusion Driver", 0, 1, AC::ProjectileAuto, Projectile(100.0f, 0.225f), AB::Tracking, FP::HoldWhileTracking),
+    W(eHero::HERO_ORISA, "Orisa", "orisa_energy_javelin", "Energy Javelin", 1, 2, AC::ProjectileSingle, ChargedProjectile(70.0f, 140.0f, 0.5f), AB::Flick, FP::ManualOnly,
+      0.90f,
+      "Local hero catalog: charged Energy Javelin lead model uses 70-140 m/s; aim assist must never emit its button.",
+      RuntimeVariantRequirement::None,
+      std::string_view{},
+      std::string_view{},
+      Control(kWeaponControlNoButton, kWeaponControlNoButton)),
     W(eHero::HERO_BRIGITTE, "Brigitte", "brigitte_rocket_flail", "Rocket Flail", 0, 1, AC::Melee, Hitscan(0.0f), AB::FlickClamp, FP::TapOnHitWindow),
     W(eHero::HERO_MOIRA, "Moira", "moira_biotic_grasp_heal", "Biotic Grasp", 0, 1, AC::Beam, Projectile(40.0f, 0.0f, true), AB::Tracking, FP::HoldWhileTracking),
     W(eHero::HERO_MOIRA, "Moira", "moira_biotic_grasp_damage", "Biotic Grasp Alt Fire", 1, 2, AC::Beam, Hitscan(0.0f), AB::Tracking, FP::HoldWhileTracking),

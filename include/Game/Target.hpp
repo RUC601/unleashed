@@ -23,6 +23,7 @@
 
 #include "Game/Decrypt.hpp"
 #include "Game/AimHybridController.hpp"
+#include "Game/AimSmoothingTiming.hpp"
 #include "Game/Entity.hpp"
 #include "Game/FovGeometry.hpp"
 #include "Game/HeroGeometrySpec.hpp"
@@ -640,7 +641,8 @@ namespace OW {
                 quantizationState.residualX,
                 quantizationState.residualY,
                 result.forcedMinimumStep ? 1 : 0);
-            if (callCount <= 50 || pixelX != 0 || pixelY != 0) {
+            if (Config::aimVerboseLog &&
+                (callCount <= 50 || pixelX != 0 || pixelY != 0)) {
                 std::printf("[KMBOX] #%d pitch=%.6f yaw=%.6f yawCountsPerRad=%.1f pitchCountsPerRad=%.1f counts=(%d,%d) accum=(%.3f,%.3f)\n",
                     callCount, delta.X, delta.Y, sensitivity, pitchSensitivity,
                     pixelX, pixelY,
@@ -3816,16 +3818,25 @@ namespace OW {
             return std::clamp(deltaTime, kMinDeltaTime, kMaxDeltaTime);
         }
 
-        inline float ComputeDeltaTime() {
-            static ULONGLONG lastTick = 0;
+        inline std::chrono::steady_clock::time_point& LastSmoothingTick() {
+            static thread_local std::chrono::steady_clock::time_point lastTick{};
+            return lastTick;
+        }
 
-            const ULONGLONG currentTick = GetTickCount64();
-            if (lastTick == 0) {
+        inline void ResetDeltaTime() {
+            LastSmoothingTick() = {};
+        }
+
+        inline float ComputeDeltaTime() {
+            const auto currentTick = std::chrono::steady_clock::now();
+            auto& lastTick = LastSmoothingTick();
+            if (lastTick == std::chrono::steady_clock::time_point{}) {
                 lastTick = currentTick;
                 return kDefaultDeltaTime;
             }
 
-            const float deltaTime = static_cast<float>(currentTick - lastTick) / 1000.0f;
+            const float deltaTime =
+                std::chrono::duration<float>(currentTick - lastTick).count();
             lastTick = currentTick;
             return ClampDeltaTime(deltaTime);
         }
@@ -3998,6 +4009,7 @@ namespace OW {
         AimSmoothingDetail::ResetBezierState();
         AimSmoothingDetail::ResetOvershootState();
         AimSmoothingDetail::ResetHybridState();
+        AimSmoothingDetail::ResetDeltaTime();
     }
 
     inline Vector3 SmoothPID(Vector3 current,
@@ -4165,6 +4177,9 @@ namespace OW {
         const float methodSpeedScale = Config::RuntimeAimMethodAngularSpeedScale(method);
         const float slotSpeedScale = std::isfinite(speed) ? std::clamp(speed, 0.0f, 2.0f) : 0.0f;
         const float effectiveSpeed = std::clamp(slotSpeedScale * methodSpeedScale, 0.0f, 1.0f);
+        const float effectiveStepFactor = OW::AimSmoothingTiming::NormalizePerTickFactor(
+            effectiveSpeed,
+            deltaTime);
         const float effectiveAccel = method == 4 ? Config::RuntimeAimMethodAcceleration(method) : accel;
         const float presetBezierSpeed = methodPreset ? methodPreset->bezierSpeed : Config::aimBezierSpeed;
         const float bezierSpeed = bezierSpeedOverride > 0.0f
@@ -4176,12 +4191,13 @@ namespace OW {
             constantAngularSpeedDeg * slotSpeedScale * methodSpeedScale,
             0.0f,
             Config::kAimConstantAngularSpeedMaxDeg);
-        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f slotSpeedScale=%.9f speedScale=%.9f effectiveSpeed=%.9f accel=%.9f effectiveAccel=%.9f dt=%.9f bezierSpeed=%.9f constantDegPerSec=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
+        Diagnostics::Aim("smooth.dispatch method=%d speed=%.9f slotSpeedScale=%.9f speedScale=%.9f effectiveSpeed=%.9f stepFactor=%.9f accel=%.9f effectiveAccel=%.9f dt=%.9f bezierSpeed=%.9f constantDegPerSec=%.9f local=(%.9f,%.9f,%.9f) target=(%.9f,%.9f,%.9f) adjusted=(%.9f,%.9f,%.9f) error=(%.9f,%.9f,%.9f) error_len=%.9f",
             method,
             speed,
             slotSpeedScale,
             methodSpeedScale,
             effectiveSpeed,
+            effectiveStepFactor,
             accel,
             effectiveAccel,
             deltaTime,
@@ -4203,13 +4219,34 @@ namespace OW {
 
         auto scaleCandidateStep = [&](const Vector3& candidate) {
             const Vector3 candidateDelta = candidate - local;
-            return local + AimSmoothingDetail::ClampStepToError(candidateDelta * effectiveSpeed, error);
+            return local + AimSmoothingDetail::ClampStepToError(candidateDelta * effectiveStepFactor, error);
+        };
+
+        auto normalizeReferenceCandidateStep = [&](const Vector3& candidate) {
+            const float errorLength = error.Size();
+            if (!std::isfinite(errorLength) || errorLength <= 0.000001f)
+                return local;
+
+            const Vector3 referenceDelta =
+                AimSmoothingDetail::ClampStepToError(candidate - local, error);
+            const float referenceFactor = std::clamp(
+                referenceDelta.Size() / errorLength,
+                0.0f,
+                1.0f);
+            if (!std::isfinite(referenceFactor) || referenceFactor <= 0.0f)
+                return local;
+
+            const float normalizedFactor =
+                OW::AimSmoothingTiming::NormalizePerTickFactor(
+                    referenceFactor,
+                    deltaTime);
+            return local + referenceDelta * (normalizedFactor / referenceFactor);
         };
 
         Vector3 result{};
         switch (method) {
         case 0:
-            result = SmoothLinear(local, adjustedTarget, effectiveSpeed);
+            result = SmoothLinear(local, adjustedTarget, effectiveStepFactor);
             break;
         case 1:
             result = scaleCandidateStep(SmoothPID(local, adjustedTarget, deltaTime, methodPreset));
@@ -4218,10 +4255,12 @@ namespace OW {
             result = SmoothBezier(local, adjustedTarget, deltaTime, effectiveBezierSpeed, methodPreset);
             break;
         case 3:
-            result = SmoothPiecewise(local, adjustedTarget, effectiveSpeed, methodPreset);
+            result = normalizeReferenceCandidateStep(
+                SmoothPiecewise(local, adjustedTarget, effectiveSpeed, methodPreset));
             break;
         case 4:
-            result = SmoothAccelerate(local, adjustedTarget, effectiveSpeed, effectiveAccel);
+            result = normalizeReferenceCandidateStep(
+                SmoothAccelerate(local, adjustedTarget, effectiveSpeed, effectiveAccel));
             break;
         case 5:
             result = SmoothConstantAngularVelocity(local, adjustedTarget, deltaTime, effectiveConstantAngularSpeedDeg);
@@ -4274,7 +4313,7 @@ namespace OW {
             break;
         }
         default:
-            result = SmoothLinear(local, adjustedTarget, effectiveSpeed);
+            result = SmoothLinear(local, adjustedTarget, effectiveStepFactor);
             break;
         }
 

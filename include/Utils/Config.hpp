@@ -30,7 +30,7 @@ namespace OW { namespace Config {
     inline constexpr int kMaxHeroPresetSlots = 12;
     inline constexpr float kMinFovDeg = 0.0f;
     inline constexpr float kMaxFovDeg = 180.0f;
-    inline constexpr float kDefaultFovDeg = 100.0f;
+    inline constexpr float kDefaultFovDeg = 15.0f;
     inline constexpr float kLegacyDefaultHitboxRadius = 0.13f;
     inline constexpr float kMinHitboxScalePercent = 0.0f;
     inline constexpr float kMaxHitboxScalePercent = 150.0f;
@@ -204,7 +204,7 @@ namespace OW { namespace Config {
     inline float Fov2       = kDefaultFovDeg;
     inline float minFov1    = kDefaultFovDeg;
     inline float minFov2    = kDefaultFovDeg;
-    inline float Smooth     = 5.0f;
+    inline float Smooth     = 20.0f;
     inline bool  autoscalefov = false;
     inline float hitbox     = kDefaultHitboxScalePercent; // scale applied to resolved bone+projectile window
     inline float hitbox2    = kDefaultHitboxScalePercent;
@@ -253,13 +253,14 @@ namespace OW { namespace Config {
     inline constexpr int kAimBehaviorMagneticTrigger = 4;
     inline constexpr int kAimBehaviorCount = 5;
     inline bool  aimbotAutoshot = false;
-    inline bool  aimbotKeepFiring = true;
+    inline bool  aimbotKeepFiring = false;
+    inline bool  aimbotRequireActionHeld = false;
     inline int   aimbotPredictionMode = 0; // 0=Auto, 1=Force On, 2=Force Off
     inline bool  aimbotPredictFovEntry = false;
     inline float aimbotFovEntryPredictionMs = 60.0f;
     inline float aimbotFovEntryMaxOutsideDeg = 1.5f;
     inline int   aimBehavior = kAimBehaviorTracking; // 0=Tracking, 1=Flick, 2=Flick2nd, 3=Reacquire, 4=MagneticTrigger
-    inline int   aimbotFirePolicy = 1;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
+    inline int   aimbotFirePolicy = 0;     // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
     inline float aimbotTriggerDelay = 0.0f; // triggerbot delay in ms (scaled)
     inline float aimbotMaxHead = 100.0f;
     inline int   aimMethod = 0; // 0=Linear, 1=PID, 2=Bezier, 3=Piecewise, 4=AccelLimited, 5=Constant, 6=HybridPID
@@ -1234,7 +1235,7 @@ namespace OW { namespace Config {
         float fov = kDefaultFovDeg; // angular separation from current view direction, in degrees
         int fovMode = kFovModeFixed; // 0=fixed fov, 1=dynamic preset by distance
         int dynamicFovPresetId = -1;
-        float smooth = 5.0f;     // aim smoothing, 0-100
+        float smooth = 20.0f;    // aim smoothing, 0-100
         int bone = kAimBoneHead;  // aim-bone choice: 0=chest, 1=head, 2=neck
         bool autoBone = false;    // true = choose closest visible skeleton bone at runtime
         SkeletonBoneMask aimBoneMask = kDefaultAimBoneMask;
@@ -1254,13 +1255,14 @@ namespace OW { namespace Config {
         float bezierSpeed = 50.0f;
         int key = 1;             // aim activation key index (reuses activation key VK list)
         bool autoshot = false;
-        bool keepFiring = true;
+        bool keepFiring = false;
+        bool requireActionHeld = false; // require the physical weapon/skill action before aim activation
         bool prediction = false; // movement prediction
         int predictionMode = 0;   // 0=Auto, 1=Force On, 2=Force Off
         bool predictFovEntry = false;
         float fovEntryPredictionMs = 60.0f;
         float fovEntryMaxOutsideDeg = 1.5f;
-        int firePolicy = 1;       // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
+        int firePolicy = 0;       // 0=Manual, 1=Hold, 2=Tap, 3=ReleaseDelay, 4=Burst, 5=ChargeRelease
         float maxHeadDistance = 100.0f;
         float stickiness = 100.0f;
         float pitchScale = 1.0f;

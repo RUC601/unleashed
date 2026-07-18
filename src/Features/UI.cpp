@@ -2829,9 +2829,10 @@ static void ApplyAimBehaviorToHeroPreset(OW::Config::HeroPreset& preset, int beh
     preset.aimBehavior = OW::Config::ClampAimBehaviorIndex(behavior);
     preset.aimMode = OW::Config::IsTrackingBehavior(preset.aimBehavior) ? 0 : 1;
     if (preset.firePolicy == 0 || preset.firePolicy == 1 || preset.firePolicy == 2) {
-        preset.firePolicy = OW::Config::IsTrackingBehavior(preset.aimBehavior) ? 1 : 2;
+        preset.firePolicy = static_cast<int>(OW::DefaultFirePolicyForBehavior(
+            OW::ClampAimBehavior(preset.aimBehavior)));
         preset.keepFiring = preset.firePolicy == 1;
-        preset.autoshot = preset.firePolicy >= 2;
+        preset.autoshot = preset.firePolicy != 0 && preset.firePolicy != 1;
     }
 }
 
@@ -3573,6 +3574,23 @@ void UI::AimbotPage() {
             }
             ImGui::PopItemWidth();
 
+            SettingRow("Require Action Held", kAimbotLeftLabelWidth);
+            const bool actionHasPhysicalMouseButton =
+                OW::MouseButtonForAttackAction(activePreset.trigger.action) >= 0;
+            if (!actionHasPhysicalMouseButton) {
+                activePreset.requireActionHeld = false;
+                ImGui::BeginDisabled();
+            }
+            presetChanged |= UICheckbox(
+                "##aimRequireActionHeld",
+                &activePreset.requireActionHeld);
+            if (!actionHasPhysicalMouseButton)
+                ImGui::EndDisabled();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(actionHasPhysicalMouseButton
+                    ? "Aim only while the selected weapon or skill action is physically held."
+                    : "This action has no physical mouse-button mapping.");
+
             // Fire Policy
             SettingRow("Fire Policy", kAimbotLeftLabelWidth);
             PushControlWidth();
@@ -3932,14 +3950,25 @@ void UI::TriggerPage() {
 
             SettingRow("Mode", kAimbotLeftLabelWidth);
             PushControlWidth();
-            presetChanged |= UISelect("##triggerSlotMode", &activePreset.trigger.mode,
-                                      OW::Labels::kTriggerbotModes, OW::Labels::TriggerbotModeCount());
+            if (UISelect("##triggerSlotMode", &activePreset.trigger.mode,
+                         OW::Labels::kTriggerbotModes, OW::Labels::TriggerbotModeCount())) {
+                if (activePreset.trigger.mode == 2)
+                    activePreset.trigger.key = OW::Labels::kAimActivationKeyNoneIndex;
+                presetChanged = true;
+            }
             ImGui::PopItemWidth();
 
             SettingRow("Activation Key", kAimbotLeftLabelWidth);
             PushControlWidth();
+            const bool triggerAlways = activePreset.trigger.mode == 2;
+            if (triggerAlways) {
+                activePreset.trigger.key = OW::Labels::kAimActivationKeyNoneIndex;
+                ImGui::BeginDisabled();
+            }
             presetChanged |= UISelect("##triggerSlotKey", &activePreset.trigger.key,
                                       OW::Labels::kAimActivationKeys, OW::Labels::AimActivationKeyCount());
+            if (triggerAlways)
+                ImGui::EndDisabled();
             ImGui::PopItemWidth();
         }
         CloseGroupBox();

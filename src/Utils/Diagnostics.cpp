@@ -1,4 +1,5 @@
 #include "Utils/Diagnostics.hpp"
+#include "Utils/Config.hpp"
 
 #define NOMINMAX
 #include <Windows.h>
@@ -885,6 +886,9 @@ void ShutdownAimLog()
 
 void Aim(const char* fmt, ...)
 {
+    if (!OW::Config::aimVerboseLog && !OW::Config::aimDryRun)
+        return;
+
     va_list args;
     va_start(args, fmt);
     AimLogV(fmt, args);

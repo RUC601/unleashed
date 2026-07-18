@@ -271,17 +271,45 @@ inline int LegacyAimModeFromBehavior(AimBehaviorType behavior)
 
 inline FirePolicyType DefaultFirePolicyForBehavior(AimBehaviorType behavior)
 {
-    switch (behavior) {
-    case AimBehaviorType::Tracking:
-        return FirePolicyType::HoldWhileTracking;
-    case AimBehaviorType::Reacquire:
-        return FirePolicyType::ReleaseAfterDelay;
-    case AimBehaviorType::Flick:
-    case AimBehaviorType::Flick2nd:
-    case AimBehaviorType::MagneticTrigger:
-    default:
-        return FirePolicyType::TapOnHitWindow;
-    }
+    return behavior == AimBehaviorType::Tracking
+        ? FirePolicyType::ManualOnly
+        : FirePolicyType::HoldWhileTracking;
 }
+
+inline bool AllowsGeneratedAimFire(FirePolicyType policy)
+{
+    return policy != FirePolicyType::ManualOnly;
+}
+
+inline bool AimActivationAllowed(bool activationHotkeyDown,
+                                 bool requireActionHeld,
+                                 bool actionButtonDown)
+{
+    return activationHotkeyDown && (!requireActionHeld || actionButtonDown);
+}
+
+inline constexpr bool AllowsGeneratedTrackingHold(FirePolicyType policy,
+                                                   bool activationIsPrimaryMouseAction,
+                                                   bool activationMatchesOutputButton)
+{
+    if (policy != FirePolicyType::HoldWhileTracking)
+        return false;
+    return !activationIsPrimaryMouseAction || activationMatchesOutputButton;
+}
+
+inline constexpr bool ShouldApplyDisabledHeroTriggerFallback(
+    bool hasPresentHeroTriggerSlot,
+    bool hasEnabledHeroTriggerFallback) noexcept
+{
+    return hasPresentHeroTriggerSlot && !hasEnabledHeroTriggerFallback;
+}
+
+static_assert(!AllowsGeneratedTrackingHold(
+    FirePolicyType::HoldWhileTracking, true, false));
+static_assert(AllowsGeneratedTrackingHold(
+    FirePolicyType::HoldWhileTracking, true, true));
+static_assert(AllowsGeneratedTrackingHold(
+    FirePolicyType::HoldWhileTracking, false, false));
+static_assert(ShouldApplyDisabledHeroTriggerFallback(true, false));
 
 } // namespace OW

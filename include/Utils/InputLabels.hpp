@@ -21,6 +21,10 @@ namespace OW::Labels {
 
     static_assert(std::size(kAimActivationKeys) == std::size(kAimActivationKeyVks),
                   "Activation key labels and VK bindings must stay aligned.");
+    inline constexpr int kAimActivationKeyNoneIndex =
+        static_cast<int>(std::size(kAimActivationKeys)) - 1;
+    static_assert(kAimActivationKeyVks[kAimActivationKeyNoneIndex] == 0,
+                  "The final activation-key entry must remain None.");
 
     // Skill activation may listen to side buttons, but the persisted skill-key
     // catalog can safely emit only left/right mouse plus keyboard HID usages.
