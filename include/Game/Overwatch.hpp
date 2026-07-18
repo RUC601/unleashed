@@ -217,11 +217,13 @@ namespace OW {
     inline constexpr DWORD kEntityLiveComponentRefreshMs = 2000;
     inline constexpr DWORD kEntityFastRescanWindowMs = 2000;
     inline constexpr DWORD kEntityTopologyRescanCooldownMs = 5000;
-    inline constexpr DWORD kEntityRespawnRescanDelayMs = 4000;
+    inline constexpr DWORD kEntityRespawnRescanDelayMs = 250;
+    inline constexpr DWORD kEntityRespawnRescanRetryMs = 2000;
     inline constexpr DWORD kEntityRespawnWatchMs = 20000;
     inline constexpr DWORD kEntityScannerIdleSleepMs = 5;
     inline DWORD entity_fast_scan_until_tick = 0;
     inline uint64_t entity_topology_rescan_request_count = 0;
+    inline uint64_t entity_topology_rescan_completed_request_count = 0;
     inline std::atomic<uint32_t> entity_scan_dma_active_depth{0};
     inline std::atomic<DWORD> entity_scan_next_due_tick{0};
     inline std::atomic<uint64_t> viewmatrix_scan_backoff_count{0};
@@ -1305,6 +1307,7 @@ inline void entity_scan_thread() {
         bool fast_rescan = false;
         bool latest_raw_entities_empty = true;
         uint64_t topologyRescanRequestCountSnapshot = 0;
+        uint64_t topologyRescanCompletedRequestCountSnapshot = 0;
         if (scanLatestWinsEnabled) {
             std::lock_guard<std::mutex> lock(OW::raw_scan_mutex);
             pending_scan = OW::latest_raw_scan_snapshot.valid &&
@@ -1320,10 +1323,15 @@ inline void entity_scan_thread() {
                 latest_raw_entities_empty = OW::ow_entities_scan.empty();
             }
             known_entities_empty = OW::ow_entities.empty() && latest_raw_entities_empty;
-            fast_rescan = OW::entity_fast_scan_until_tick != 0 &&
-                now < OW::entity_fast_scan_until_tick;
             topologyRescanRequestCountSnapshot =
                 OW::entity_topology_rescan_request_count;
+            topologyRescanCompletedRequestCountSnapshot =
+                OW::entity_topology_rescan_completed_request_count;
+            fast_rescan =
+                topologyRescanRequestCountSnapshot !=
+                    topologyRescanCompletedRequestCountSnapshot ||
+                (OW::entity_fast_scan_until_tick != 0 &&
+                 now < OW::entity_fast_scan_until_tick);
         }
         scanTopologyRescanRequestCount = topologyRescanRequestCountSnapshot;
 
@@ -1532,8 +1540,12 @@ inline void entity_scan_thread() {
             }
             if (coldTopologyScanEnabled && fast_rescan) {
                 std::lock_guard<std::mutex> lock(g_mutex);
+                OW::entity_topology_rescan_completed_request_count =
+                    (std::max)(
+                        OW::entity_topology_rescan_completed_request_count,
+                        topologyRescanRequestCountSnapshot);
                 if (OW::entity_topology_rescan_request_count ==
-                    topologyRescanRequestCountSnapshot) {
+                    OW::entity_topology_rescan_completed_request_count) {
                     OW::entity_fast_scan_until_tick = 0;
                 }
             }
@@ -1907,6 +1919,8 @@ inline void entity_thread() {
         DWORD lastHotReadTick = 0;
         DWORD consecutiveScanMissCount = 0;
         DWORD respawnWatchStartedTick = 0;
+        DWORD respawnLastScanRequestTick = 0;
+        bool respawnFirstScanRequested = false;
     };
     std::unordered_map<uint64_t, RosterEntry> entityRoster{};
     entityRoster.reserve(128);
@@ -2698,21 +2712,25 @@ inline void entity_thread() {
     };
 
     DWORD lastTopologyRescanRequestTick = 0;
-    auto requestTopologyRescan = [&](DWORD requestTick, bool urgent = false) {
+    DWORD lastRespawnTopologyRescanRequestTick = 0;
+    auto requestTopologyRescan = [&](DWORD requestTick,
+                                     bool bypassCooldown = false) -> bool {
         if (!coldTopologyScanEnabled)
-            return;
-        if (lastTopologyRescanRequestTick != 0 &&
+            return false;
+        if (!bypassCooldown && lastTopologyRescanRequestTick != 0 &&
             requestTick - lastTopologyRescanRequestTick <
                 OW::kEntityTopologyRescanCooldownMs) {
-            return;
+            return false;
         }
 
         uint64_t requestCount = 0;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
-            if (OW::entity_fast_scan_until_tick != 0 &&
-                requestTick < OW::entity_fast_scan_until_tick) {
-                return;
+            if (OW::entity_topology_rescan_request_count !=
+                    OW::entity_topology_rescan_completed_request_count ||
+                (OW::entity_fast_scan_until_tick != 0 &&
+                 requestTick < OW::entity_fast_scan_until_tick)) {
+                return false;
             }
             requestCount = ++OW::entity_topology_rescan_request_count;
             OW::entity_fast_scan_until_tick =
@@ -2720,9 +2738,10 @@ inline void entity_thread() {
         }
         lastTopologyRescanRequestTick = requestTick;
         Diagnostics::Trace(
-            "Entity topology rescan requested by processor: urgent=%d request=%llu.",
-            urgent ? 1 : 0,
+            "Entity topology rescan requested by processor: bypass_cooldown=%d request=%llu.",
+            bypassCooldown ? 1 : 0,
             static_cast<unsigned long long>(requestCount));
+        return true;
     };
 
     while (OW::Config::doingentity == 1) {
@@ -2747,6 +2766,7 @@ inline void entity_thread() {
             lastpos = {};
             previousProcessedValidCount = 0;
             lastTopologyRescanRequestTick = 0;
+            lastRespawnTopologyRescanRequestTick = 0;
             lastLoggedRawCount = static_cast<size_t>(-1);
             lastLoggedValidatedCount = static_cast<size_t>(-1);
             Diagnostics::Info(
@@ -2944,7 +2964,7 @@ inline void entity_thread() {
             if (requestFastRescan) {
                 const DWORD requestTick = GetTickCount();
                 if (coldTopologyScanEnabled) {
-                    requestTopologyRescan(requestTick, true);
+                    requestTopologyRescan(requestTick);
                 } else {
                     std::lock_guard<std::mutex> lock(g_mutex);
                     OW::entity_fast_scan_until_tick =
@@ -4353,7 +4373,7 @@ inline void entity_thread() {
                                 previousHeroId != newHeroId;
                             if (heroChanged) {
                                 ++lifecycleStats.componentCacheInvalidateHeroChangeCount;
-                                requestTopologyRescan(processLoopTick, true);
+                                requestTopologyRescan(processLoopTick);
                                 componentCache.nameTeamValid = false;
                                 componentCache.nameTeamUpdateTick = 0;
                                 componentCache.skillValid = false;
@@ -5251,9 +5271,13 @@ inline void entity_thread() {
                 RosterEntry& rosterEntry = entityRoster[entity.roster_key];
                 if (entity.roster_state == OW::EntityRosterState::Fresh) {
                     rosterEntry.respawnWatchStartedTick = 0;
+                    rosterEntry.respawnLastScanRequestTick = 0;
+                    rosterEntry.respawnFirstScanRequested = false;
                 } else if (beginRespawnWatch &&
                            rosterEntry.respawnWatchStartedTick == 0) {
                     rosterEntry.respawnWatchStartedTick = processLoopTick;
+                    rosterEntry.respawnLastScanRequestTick = 0;
+                    rosterEntry.respawnFirstScanRequested = false;
                 }
                 if (rosterEntry.lastScanSeenTick == 0 && entity.last_scan_seen_tick_ms != 0)
                     rosterEntry.lastScanSeenTick = entity.last_scan_seen_tick_ms;
@@ -5347,22 +5371,53 @@ inline void entity_thread() {
             }
         }
 
-        const bool respawnScanDue = std::any_of(
-            entityRoster.begin(),
-            entityRoster.end(),
-            [&](const auto& rosterPair) {
-                const RosterEntry& entry = rosterPair.second;
-                if (entry.entity.roster_state != OW::EntityRosterState::Dead ||
-                    entry.respawnWatchStartedTick == 0) {
-                    return false;
+        bool firstRespawnScanDue = false;
+        bool retryRespawnScanDue = false;
+        for (const auto& rosterPair : entityRoster) {
+            const RosterEntry& entry = rosterPair.second;
+            const auto due = OW::EntityRosterPolicy::ResolveRespawnRescanDue(
+                entry.entity.roster_state == OW::EntityRosterState::Dead,
+                entry.respawnWatchStartedTick,
+                entry.respawnFirstScanRequested,
+                entry.respawnLastScanRequestTick,
+                processLoopTick,
+                OW::kEntityRespawnRescanDelayMs,
+                OW::kEntityRespawnRescanRetryMs,
+                OW::kEntityRespawnWatchMs);
+            if (due == OW::EntityRosterPolicy::RespawnRescanDue::First) {
+                firstRespawnScanDue = true;
+            } else if (due == OW::EntityRosterPolicy::RespawnRescanDue::Retry) {
+                retryRespawnScanDue = true;
+            }
+        }
+        const bool respawnRequestIntervalReady =
+            lastRespawnTopologyRescanRequestTick == 0 ||
+            processLoopTick - lastRespawnTopologyRescanRequestTick >=
+                OW::kEntityRespawnRescanRetryMs;
+        if ((firstRespawnScanDue || retryRespawnScanDue) &&
+            respawnRequestIntervalReady) {
+            const bool requested = requestTopologyRescan(
+                processLoopTick,
+                true);
+            if (requested) {
+                lastRespawnTopologyRescanRequestTick = processLoopTick;
+                for (auto& rosterPair : entityRoster) {
+                    RosterEntry& entry = rosterPair.second;
+                    if (entry.entity.roster_state != OW::EntityRosterState::Dead ||
+                        entry.respawnWatchStartedTick == 0) {
+                        continue;
+                    }
+                    const DWORD deadAge =
+                        processLoopTick - entry.respawnWatchStartedTick;
+                    if (deadAge < OW::kEntityRespawnRescanDelayMs ||
+                        deadAge > OW::kEntityRespawnWatchMs) {
+                        continue;
+                    }
+                    entry.respawnFirstScanRequested = true;
+                    entry.respawnLastScanRequestTick = processLoopTick;
                 }
-                const DWORD deadAge =
-                    processLoopTick - entry.respawnWatchStartedTick;
-                return deadAge >= OW::kEntityRespawnRescanDelayMs &&
-                    deadAge <= OW::kEntityRespawnWatchMs;
-            });
-        if (respawnScanDue)
-            requestTopologyRescan(processLoopTick);
+            }
+        }
 
         if (hotFieldScatter)
             mem.CloseScatterHandle(hotFieldScatter);
@@ -5419,7 +5474,7 @@ inline void entity_thread() {
             (previousProcessedValidCount > 0 && valid_count + 1 < previousProcessedValidCount);
         if (suspectStaleScan) {
             if (coldTopologyScanEnabled) {
-                requestTopologyRescan(processLoopTick, true);
+                requestTopologyRescan(processLoopTick);
             } else {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 OW::entity_fast_scan_until_tick = GetTickCount() + OW::kEntityFastRescanWindowMs;
@@ -6756,11 +6811,7 @@ namespace OverlayRenderDetail {
     }
 
     inline uint64_t EntitySelectionKey(const OW::c_entity& entity) {
-        if (entity.address)
-            return entity.address;
-        if (entity.LinkBase)
-            return entity.LinkBase;
-        return entity.roster_key;
+        return OW::TargetingDetail::StableTargetKey(entity);
     }
 
     inline bool IsSelectedEnemyTarget(const OW::c_entity& entity,
@@ -8478,7 +8529,7 @@ inline void PlayerInfoFromSnapshot(const std::vector<OW::c_entity>& entity_snaps
 
         ID3D11ShaderResourceView* heroIcon = nullptr;
         if (OW::Config::draw_avatar &&
-            OW::EntityRosterPolicy::ShouldRenderHeroAvatar(entity.Team) &&
+            OW::EntityRosterPolicy::ShouldRenderWorldHeroAvatar(entity.Team) &&
             !specialEntity && heroName != "Unknown")
             heroIcon = OverlayRenderDetail::FindHeroIcon(heroName);
 
@@ -8661,8 +8712,6 @@ inline void skillinfo(const std::vector<OW::c_entity>& entity_snapshot) {
         const float alpha = std::clamp(opacity * (rosterFresh ? 1.0f : 0.52f), 0.0f, 1.0f);
         const float maskAlpha = std::clamp(opacity, 0.0f, 1.0f);
         const bool isEnemy = entity.Team;
-        const bool showAvatar =
-            OW::EntityRosterPolicy::ShouldRenderHeroAvatar(isEnemy);
         Render::DrawFilledRect(Vector2(x, y + 1.0f), cardWidth, rowHeight - 2.0f,
                                OverlayRenderDetail::ImColorWithAlpha(8, 11, 15, alpha * 0.70f));
         Render::DrawFilledRect(Vector2(x, y + 4.0f), 3.0f, rowHeight - 8.0f,
@@ -8716,20 +8765,19 @@ inline void skillinfo(const std::vector<OW::c_entity>& entity_snapshot) {
 
         const float avatarX = x + 6.0f;
         const float avatarY = y + (rowHeight - avatarSize) * 0.5f;
-        if (showAvatar) {
-            if (ID3D11ShaderResourceView* avatar = findHeroAvatar()) {
-                Render::DrawIcon(avatar, ImVec2(avatarX, avatarY), ImVec2(avatarSize, avatarSize),
-                                 OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
-            } else {
-                const Render::Color fallbackColor =
-                    Render::Color(136, 42, 48, OverlayRenderDetail::ToByte(alpha * 0.88f));
-                Render::DrawFilledCircle(Vector2(avatarX + avatarSize * 0.5f,
-                                                 avatarY + avatarSize * 0.5f),
-                                         avatarSize * 0.5f, fallbackColor, 40);
-                drawCenteredText(avatarX + avatarSize * 0.5f, avatarY + avatarSize * 0.5f,
-                                 heroInitials(), 13.0f,
-                                 OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
-            }
+        if (ID3D11ShaderResourceView* avatar = findHeroAvatar()) {
+            Render::DrawIcon(avatar, ImVec2(avatarX, avatarY), ImVec2(avatarSize, avatarSize),
+                             OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
+        } else {
+            const Render::Color fallbackColor = isEnemy
+                ? Render::Color(136, 42, 48, OverlayRenderDetail::ToByte(alpha * 0.88f))
+                : Render::Color(40, 112, 150, OverlayRenderDetail::ToByte(alpha * 0.88f));
+            Render::DrawFilledCircle(Vector2(avatarX + avatarSize * 0.5f,
+                                             avatarY + avatarSize * 0.5f),
+                                     avatarSize * 0.5f, fallbackColor, 40);
+            drawCenteredText(avatarX + avatarSize * 0.5f, avatarY + avatarSize * 0.5f,
+                             heroInitials(), 13.0f,
+                             OverlayRenderDetail::ImU32WithAlpha(255, 255, 255, alpha));
         }
 
         const float baseHealth = OverlayRenderDetail::PositiveFinite(entity.MinHealth);
@@ -8766,7 +8814,7 @@ inline void skillinfo(const std::vector<OW::c_entity>& entity_snapshot) {
                              Render::Color(255, 255, 255, OverlayRenderDetail::ToByte(alpha * 0.18f)), 1.0f);
         };
 
-        float cursorX = showAvatar ? avatarX + avatarSize + 4.0f : x + 8.0f;
+        float cursorX = avatarX + avatarSize + 4.0f;
         const float barY = y + (rowHeight - barHeight) * 0.5f;
         drawVerticalBar(cursorX, barY, healthRatio, healthColor);
         cursorX += barWidth + 3.0f;
@@ -8939,8 +8987,14 @@ inline void skillinfo(const std::vector<OW::c_entity>& entity_snapshot) {
         constexpr float headerHeight = 26.0f;
         constexpr float opacity = 1.0f;
 
-        const int enemyCount = static_cast<int>(enemies.size());
-        const int allyCount = static_cast<int>(allies.size());
+        const bool showEnemyRows = !includeUltimate ||
+            OW::EntityRosterPolicy::ShouldRenderUltimateRosterEntry(
+                OW::Config::ultimateRosterFilter, true);
+        const bool showAllyRows = !includeUltimate ||
+            OW::EntityRosterPolicy::ShouldRenderUltimateRosterEntry(
+                OW::Config::ultimateRosterFilter, false);
+        const int enemyCount = showEnemyRows ? static_cast<int>(enemies.size()) : 0;
+        const int allyCount = showAllyRows ? static_cast<int>(allies.size()) : 0;
 
         float totalHeight = 0.0f;
         if (enemyCount > 0)
@@ -9068,6 +9122,10 @@ namespace AimbotDetail {
         int trackingSessionSlotIndex = -1;
         int trackingSessionAimKey = 0;
         uint64_t trackingSessionGeneration = 0;
+        uint64_t trackingTargetKey = 0;
+        uint64_t trackingTargetActorKey = 0;
+        DWORD trackingTargetMissingSinceTick = 0;
+        bool trackingInDeadzone = false;
         OW::AimStartLimiterState trackingStartLimiter{};
         OW::MouseMoveQuantizationState magneticMoveQuantization{};
     };
@@ -9196,6 +9254,10 @@ namespace AimbotDetail {
         state.trackingSessionHeroId = 0;
         state.trackingSessionSlotIndex = -1;
         state.trackingSessionAimKey = 0;
+        state.trackingTargetKey = 0;
+        state.trackingTargetActorKey = 0;
+        state.trackingTargetMissingSinceTick = 0;
+        state.trackingInDeadzone = false;
         OW::ResetAimStartLimiter(state.trackingStartLimiter);
     }
 
@@ -10355,10 +10417,124 @@ namespace AimbotDetail {
 
     inline bool IsPrimaryTargetActionable(c_entity& target) {
         if (!CurrentTarget(target)) return false;
+        if (!OW::TargetingDetail::IsRuntimeTargetValid(target, false)) return false;
         if (target.skill2act && target.HeroID == OW::eHero::HERO_GENJI) return false;
         if (target.skill1act && target.HeroID == OW::eHero::HERO_VENTURE) return false;
         if ((target.imort || target.barrprot) && !OW::Config::switch_team) return false;
         return true;
+    }
+
+    inline bool IsPrimaryTargetSnapshotActionable(const c_entity& target) {
+        if (!OW::TargetingDetail::IsRuntimeTargetValid(target, false)) return false;
+        if (target.skill2act && target.HeroID == OW::eHero::HERO_GENJI) return false;
+        if (target.skill1act && target.HeroID == OW::eHero::HERO_VENTURE) return false;
+        if ((target.imort || target.barrprot) && !OW::Config::switch_team) return false;
+        return true;
+    }
+
+    inline void ResetTrackingTargetContinuity(RuntimeState& state,
+                                              const char* reason) {
+        const uint64_t previousTargetKey = state.trackingTargetKey;
+        const uint64_t previousActorKey = state.trackingTargetActorKey;
+        state.trackingTargetKey = 0;
+        state.trackingTargetActorKey = 0;
+        state.trackingTargetMissingSinceTick = 0;
+        state.trackingInDeadzone = false;
+        OW::ResetAimSmoothingState();
+        OW::ResetMouseMoveQuantizationState(
+            OW::DefaultMouseMoveQuantizationState());
+        if (previousTargetKey != 0 || previousActorKey != 0) {
+            Diagnostics::Aim(
+                "tracking.target reset reason=%s previousKey=0x%llX previousActor=0x%llX",
+                reason ? reason : "unknown",
+                static_cast<unsigned long long>(previousTargetKey),
+                static_cast<unsigned long long>(previousActorKey));
+        }
+    }
+
+    inline void PrepareTrackingTargetContinuity(RuntimeState& state,
+                                                uint64_t targetKey,
+                                                uint64_t actorKey) {
+        if (targetKey == 0 && actorKey == 0)
+            return;
+        if (targetKey == 0)
+            targetKey = actorKey;
+        if (state.trackingTargetKey == targetKey &&
+            state.trackingTargetActorKey == actorKey)
+            return;
+
+        const uint64_t previousTargetKey = state.trackingTargetKey;
+        const uint64_t previousActorKey = state.trackingTargetActorKey;
+        OW::HoldAimSmoothingState();
+        OW::ResetMouseMoveQuantizationState(
+            OW::DefaultMouseMoveQuantizationState());
+        state.trackingTargetKey = targetKey;
+        state.trackingTargetActorKey = actorKey;
+        state.trackingTargetMissingSinceTick = 0;
+        state.trackingInDeadzone = false;
+        Diagnostics::Aim(
+            "tracking.target change previousKey=0x%llX targetKey=0x%llX previousActor=0x%llX actor=0x%llX",
+            static_cast<unsigned long long>(previousTargetKey),
+            static_cast<unsigned long long>(targetKey),
+            static_cast<unsigned long long>(previousActorKey),
+            static_cast<unsigned long long>(actorKey));
+    }
+
+    inline bool HoldTrackingTargetDropout(RuntimeState& state,
+                                          DWORD nowTick) {
+        if (state.trackingTargetKey == 0)
+            return false;
+        if (state.trackingTargetMissingSinceTick == 0) {
+            state.trackingTargetMissingSinceTick = nowTick;
+            OW::HoldAimSmoothingState();
+            OW::ResetMouseMoveQuantizationState(
+                OW::DefaultMouseMoveQuantizationState());
+        } else {
+            OW::PrimeAimSmoothingClock();
+        }
+        if (nowTick - state.trackingTargetMissingSinceTick <=
+            OW::TrackingContinuityPolicy::kTargetDropoutGraceMs) {
+            return true;
+        }
+        ResetTrackingTargetContinuity(state, "target_dropout_timeout");
+        return false;
+    }
+
+    inline Vector3 TrackingSampleAgeCompensatedAimPoint(
+        const OW::TargetCandidate& candidate,
+        DWORD nowTick) {
+        Vector3 target = candidate.aimPoint;
+        if (!candidate.valid || IsZeroVector(target) ||
+            candidate.motion.kind == OW::EntityMotionState::Kind::TeleportOrInvalid) {
+            return target;
+        }
+
+        const Vector3 velocity = candidate.motion.worldVelocity;
+        if (!std::isfinite(velocity.X) || !std::isfinite(velocity.Y) ||
+            !std::isfinite(velocity.Z)) {
+            return target;
+        }
+        const float speed = velocity.Size();
+        if (!std::isfinite(speed) || speed <= 0.01f || speed > 75.0f)
+            return target;
+
+        const DWORD sampleTick = candidate.entitySnapshot.position_sample_tick_ms != 0
+            ? candidate.entitySnapshot.position_sample_tick_ms
+            : candidate.entitySnapshot.render_sample_tick_ms;
+        const float leadSeconds =
+            OW::TrackingContinuityPolicy::FreshPositionSampleLeadSeconds(
+                nowTick,
+                sampleTick);
+        Vector3 offset = velocity * leadSeconds;
+        constexpr float kMaxTrackingPresentationOffsetMeters = 0.25f;
+        const float offsetLength = offset.Size();
+        if (!std::isfinite(offsetLength) || offsetLength <= 0.0f)
+            return target;
+        if (offsetLength > kMaxTrackingPresentationOffsetMeters) {
+            offset = offset *
+                (kMaxTrackingPresentationOffsetMeters / offsetLength);
+        }
+        return target + offset;
     }
 
     inline bool IsTriggerTargetActionable() {
@@ -10403,7 +10579,11 @@ namespace AimbotDetail {
     }
 
     inline uint64_t TwoStageEntityKey(const c_entity& target) {
-        return target.address ? target.address : target.LinkBase;
+        if (target.address)
+            return target.address;
+        if (target.LinkBase)
+            return target.LinkBase;
+        return target.roster_key;
     }
 
     inline void ResetTwoStageState() {
@@ -10690,7 +10870,8 @@ namespace AimbotDetail {
         data.local_angle = Vector3(localPitch, localYaw, 0.0f);
 
         uint8_t rawData[32]{};
-        if (SDK->read_range(viewDirAddress, rawData, sizeof(rawData))) {
+        if (OW::Config::aimVerboseLog &&
+            SDK->read_range(viewDirAddress, rawData, sizeof(rawData))) {
             char hexBuf[96]{};
             int off = 0;
             for (int i = 0; i < 32 && off < static_cast<int>(sizeof(hexBuf)) - 4; i++) {
@@ -11499,16 +11680,25 @@ namespace AimbotDetail {
             OW::ProcessConnection::ConnectionEpoch();
         const std::uint64_t outputTransitionEpoch =
             OW::RuntimeOutputTransitionEpoch();
-        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected())
+        if (connectionEpoch == 0 || !OW::ProcessConnection::IsConnected()) {
+            if (state.trackingTargetKey != 0)
+                ResetTrackingTargetContinuity(state, "connection_unavailable");
             return;
-        if (InputSequenceBlocksAim("tracking"))
+        }
+        if (InputSequenceBlocksAim("tracking")) {
+            if (state.trackingTargetKey != 0)
+                ResetTrackingTargetContinuity(state, "sequence_preempted");
             return;
+        }
         if (!IsAimKeyPressed()) {
             ResetTrackingSession(state);
             return;
         }
-        if (OW::Config::reloading)
+        if (OW::Config::reloading) {
+            if (state.trackingTargetKey != 0)
+                ResetTrackingTargetContinuity(state, "reloading");
             return;
+        }
         const TrackingSessionIdentity sessionIdentity = CurrentTrackingSessionIdentity();
         EnsureTrackingSession(state, sessionIdentity);
         if (state.trackingSessionTimedOut) {
@@ -11522,6 +11712,8 @@ namespace AimbotDetail {
                 lastHeldTimeoutLogTick = now;
             }
             OW::TargetingDetail::ResetTargetLockRuntime();
+            if (state.trackingTargetKey != 0)
+                ResetTrackingTargetContinuity(state, "session_timeout_held");
             return;
         }
         g_trackingAttempts++;
@@ -11658,14 +11850,23 @@ namespace AimbotDetail {
                 break;
             }
             bool holdThisTick = false;
-            const Vector3 vec = OW::GetVector3(OW::Config::Prediction);
-            c_entity target{};
-            if (IsZeroVector(vec)) {
+            const OW::TargetCandidate candidate =
+                OW::AcquireTarget(
+                    OW::Config::Prediction,
+                    OW::Config::aimbotIgnoreInvisible,
+                    OW::TrackingContinuityPolicy::kTargetDropoutGraceMs);
+            const c_entity target = candidate.entitySnapshot;
+            const Vector3 vec = candidate.valid
+                ? TrackingSampleAgeCompensatedAimPoint(candidate, GetTickCount())
+                : Vector3{};
+            if (!candidate.valid || IsZeroVector(vec)) {
+                HoldTrackingTargetDropout(state, GetTickCount());
                 Diagnostics::Aim("tracking no_move reason=no_target_vector targetIndex=%d entities=%zu",
                     OW::Config::Targetenemyi,
-                    OW::TargetingDetail::SnapshotEntities().size());
+                    OW::TargetingDetail::PublishedEntityCount());
                 releaseHeldFire();
-            } else if (!IsPrimaryTargetActionable(target)) {
+            } else if (!IsPrimaryTargetSnapshotActionable(target)) {
+                HoldTrackingTargetDropout(state, GetTickCount());
                 Diagnostics::Aim("tracking no_move reason=target_not_actionable targetIndex=%d vec=(%.9f,%.9f,%.9f)",
                     OW::Config::Targetenemyi,
                     vec.X,
@@ -11673,11 +11874,25 @@ namespace AimbotDetail {
                     vec.Z);
                 releaseHeldFire();
             } else {
+                const uint64_t trackingTargetKey = candidate.entityKey != 0
+                    ? candidate.entityKey
+                    : OW::TargetingDetail::StableTargetKey(target);
+                const uint64_t trackingTargetActorKey = TwoStageEntityKey(target);
+                const uint64_t trackingControlTargetKey =
+                    OW::TrackingContinuityPolicy::ControlTargetKey(
+                        trackingTargetKey,
+                        trackingTargetActorKey);
+                PrepareTrackingTargetContinuity(
+                    state,
+                    trackingTargetKey,
+                    trackingTargetActorKey);
+                state.trackingTargetMissingSinceTick = 0;
                 const Vector3 aimTarget = vec;
                 float deadzoneDistance = 0.0f;
                 const float deadzoneDampingScale = TrackingDeadzoneDampingScale(aimTarget, &deadzoneDistance);
                 if (deadzoneDampingScale <= 0.0f) {
-                    OW::ResetAimSmoothingState();
+                    OW::HoldAimSmoothingState();
+                    state.trackingInDeadzone = true;
                     holdThisTick = ShouldHoldFireWhileTracking(holdFireButton);
                     if (holdThisTick && !fireHeld && holdFireButton >= 0) {
                         synchronizeHeldFireState();
@@ -11694,6 +11909,10 @@ namespace AimbotDetail {
                     RunAutoScaleFov();
                     if (ShouldYieldToSecondaryAim()) break;
                     continue;
+                }
+                if (state.trackingInDeadzone) {
+                    OW::HoldAimSmoothingState();
+                    state.trackingInDeadzone = false;
                 }
                 const float smoothInput = OW::Config::AimBehaviorSmoothInput(
                     behavior,
@@ -11736,7 +11955,7 @@ namespace AimbotDetail {
                             state.trackingStartLimiter,
                             state.trackingSessionGeneration,
                             connectionEpoch,
-                            TwoStageEntityKey(target),
+                            trackingControlTargetKey,
                             aim.local_angle,
                             aim.smoothed_angle,
                             startLimiterDeltaTime);
@@ -11749,7 +11968,7 @@ namespace AimbotDetail {
                                 limiterResult.appliedSpeedDegPerSec,
                                 limiterResult.limited ? 1 : 0,
                                 OW::AimStartLimiterResetReasonName(limiterResult.resetReason),
-                                static_cast<unsigned long long>(TwoStageEntityKey(target)),
+                                static_cast<unsigned long long>(trackingControlTargetKey),
                                 static_cast<unsigned long long>(state.trackingSessionGeneration),
                                 static_cast<unsigned long long>(connectionEpoch),
                                 startLimiterDeltaTime);
@@ -11796,6 +12015,8 @@ namespace AimbotDetail {
             if (ShouldYieldToSecondaryAim()) break;
         }
         releaseHeldFire();
+        if (state.trackingTargetKey != 0)
+            ResetTrackingTargetContinuity(state, "tracking_loop_exit");
     }
 
     inline void ResetHanzoCustomFlickState(RuntimeState& state, const char* reason) {

@@ -4713,6 +4713,7 @@ static void DrawThemeGeneralPage() {
     UIGroupBox("ESP Display Position");
     {
         static const char* kDisplayPosition[] = { "Above Head", "Left Side", "Right Side" };
+        static const char* kUltimateRosterFilter[] = { "All", "Enemy", "Ally" };
         static const char* kRadarCorner[] = { "Bottom Right", "Bottom Left", "Top Right", "Top Left" };
 
         auto drawPositionSelect = [](const char* rowLabel, const char* controlId,
@@ -4733,6 +4734,9 @@ static void DrawThemeGeneralPage() {
                            &OW::Config::radarCorner, kRadarCorner, IM_ARRAYSIZE(kRadarCorner));
         drawPositionSelect("Skill Cooldowns", "##skillDisplayMode", OW::Config::skillinfo,
                            &OW::Config::skillDisplayMode, kDisplayPosition, IM_ARRAYSIZE(kDisplayPosition));
+        drawPositionSelect("Ultimate Roster", "##ultimateRosterFilter", OW::Config::ult,
+                           &OW::Config::ultimateRosterFilter,
+                           kUltimateRosterFilter, IM_ARRAYSIZE(kUltimateRosterFilter));
     }
     CloseGroupBox();
 

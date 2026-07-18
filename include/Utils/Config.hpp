@@ -954,6 +954,8 @@ namespace OW { namespace Config {
     // Ultimate / Skill display position
     // Ultimate is normalized to the left side panel; 0/2 are legacy config values.
     inline int ultimateDisplayMode = 1;
+    // Ultimate roster team filter: 0=All, 1=Enemy, 2=Ally.
+    inline int ultimateRosterFilter = 1;
     inline int skillDisplayMode = 0;
     // Radar corner: 0=BottomRight, 1=BottomLeft, 2=TopRight, 3=TopLeft
     inline int radarCorner = 0;

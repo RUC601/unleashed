@@ -1570,7 +1570,8 @@ static void ClearProcessRuntimeSnapshots()
         OW::local_entity = OW::c_entity{};
         OW::abletotread = 0;
         OW::entity_fast_scan_until_tick = 0;
-        OW::entity_topology_rescan_request_count = 0;
+        OW::entity_topology_rescan_completed_request_count =
+            OW::entity_topology_rescan_request_count;
     }
     {
         std::lock_guard<std::mutex> lock(OW::raw_scan_mutex);

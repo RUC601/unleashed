@@ -30,6 +30,7 @@
 #include "Game/InputOrchestrator.hpp"
 #include "Game/LeadPrediction.hpp"
 #include "Game/Motion.hpp"
+#include "Game/TrackingContinuityPolicy.hpp"
 #include "Game/TriggerBoneSelection.hpp"
 #include "Game/WeaponSpec.hpp"
 #include "Kmbox/KmboxRuntime.hpp"
@@ -2431,14 +2432,25 @@ namespace OW {
             return found;
         }
 
-        inline bool DistancePassesAimFilter(float distance) {
+        inline bool DistancePassesAimFilter(float distance,
+                                            bool currentTarget = false) {
             const float minDistance = std::clamp(Config::aimbotMinDist, 0.0f, 500.0f);
             const float maxDistance = std::clamp(Config::aimbotMaxDist, 0.0f, 500.0f);
             if (minDistance > 0.0f && distance < minDistance)
                 return false;
-            if (maxDistance > 0.0f && distance > maxDistance)
+            const float effectiveMaxDistance =
+                TrackingContinuityPolicy::EffectiveMaxDistance(
+                    maxDistance,
+                    currentTarget);
+            if (effectiveMaxDistance > 0.0f && distance > effectiveMaxDistance)
                 return false;
             return true;
+        }
+
+        inline uint64_t StableTargetKey(const c_entity& entity) {
+            if (entity.roster_key != 0)
+                return entity.roster_key;
+            return entity.address ? entity.address : entity.LinkBase;
         }
 
         inline DWORD ResolvePolicySliderMs(float value) {
@@ -2541,11 +2553,20 @@ namespace OW {
         inline void CommitTargetLockRuntime(const TargetCandidate& candidate,
                                             float selectedScore,
                                             const TargetLockPolicy& policy,
-                                            DWORD now) {
+                                            DWORD now,
+                                            DWORD missingTargetGraceMs = 0) {
             std::lock_guard<std::mutex> lock(target_lock_mutex);
             if (!candidate.valid || candidate.entityKey == 0) {
-                if (policy.unlockMode == UnlockMode::Anytime ||
-                    (target_lock_runtime.active && TargetLockExpired(target_lock_runtime, policy, now))) {
+                const bool expired = target_lock_runtime.active &&
+                    TargetLockExpired(target_lock_runtime, policy, now);
+                const bool withinMissingGrace = target_lock_runtime.active &&
+                    TrackingContinuityPolicy::IsWithinTargetDropoutGrace(
+                        now,
+                        target_lock_runtime.lastSeenTick,
+                        missingTargetGraceMs);
+                if (expired ||
+                    (policy.unlockMode == UnlockMode::Anytime &&
+                     !withinMissingGrace)) {
                     target_lock_runtime = TargetLockRuntime{};
                 }
                 return;
@@ -2996,7 +3017,10 @@ namespace OW {
     // Main target selection (GetVector3)
     // =========================================================================
 
-    inline TargetCandidate AcquireTarget(bool predit = false, bool ignoreInvisible = Config::aimbotIgnoreInvisible) {
+    inline TargetCandidate AcquireTarget(
+        bool predit = false,
+        bool ignoreInvisible = Config::aimbotIgnoreInvisible,
+        DWORD trackingContinuityGraceMs = 0) {
         TargetCandidate best{};
         int TarGetIndex = -1;
         Vector2 CrossHair = TargetingDetail::CrosshairCenter();
@@ -3011,6 +3035,8 @@ namespace OW {
         TargetingDetail::TargetLockRuntime activeLock = TargetingDetail::SnapshotTargetLockRuntime();
         if (TargetingDetail::TargetLockExpired(activeLock, lockPolicy, now))
             activeLock.active = false;
+        const bool trackingContinuityEnabled = trackingContinuityGraceMs != 0;
+        bool activeLockCandidateSelectable = false;
         const bool resolvedPrediction = ResolvePredictionEnabled(
             ClampPredictionOverride(Config::aimbotPredictionMode),
             weaponSpec,
@@ -3051,7 +3077,13 @@ namespace OW {
                 const bool teamPass = TargetingDetail::TargetTeamMatches(
                     entities[i], Config::aimbotTeam, local_entity);
                 if (TargetingDetail::IsRuntimeTargetValid(entities[i], false) && teamPass) {
-                    const uint64_t candidateKey = entities[i].address ? entities[i].address : entities[i].LinkBase;
+                    const uint64_t candidateKey =
+                        TargetingDetail::StableTargetKey(entities[i]);
+                    const bool currentLockedCandidate =
+                        activeLock.active && candidateKey != 0 &&
+                        candidateKey == activeLock.entityKey;
+                    const bool applyTrackingExitMargin =
+                        trackingContinuityEnabled && currentLockedCandidate;
                     if (ignoreInvisible && !entities[i].Vis &&
                         !TargetingDetail::CandidateCanBypassTrace(lockPolicy, activeLock, candidateKey)) {
                         continue;
@@ -3060,7 +3092,9 @@ namespace OW {
                         continue;
                     ++selectableCandidates;
                     const float initialDistance = TargetingDetail::CameraPosition().DistTo(entities[i].chest_pos);
-                    if (!TargetingDetail::DistancePassesAimFilter(initialDistance))
+                    if (!TargetingDetail::DistancePassesAimFilter(
+                            initialDistance,
+                            applyTrackingExitMargin))
                         continue;
 
                     const SkeletonBoneMask candidateMask =
@@ -3091,13 +3125,21 @@ namespace OW {
                     const Vector3 fovEntryAimPoint = lead.finalAimPoint +
                         lead.targetVelocity * (fovEntryHorizonMs / 1000.0f);
                     FovGeometry::PredictedEntryEvaluation fovEvaluation{};
+                    const float resolvedCandidateFovDeg =
+                        Config::ResolveDynamicAimFovForDistance(
+                            Config::Fov,
+                            fovContext.camera.DistTo(rootPosition));
+                    const float candidateFovDeg =
+                        TrackingContinuityPolicy::EffectiveFovDeg(
+                            resolvedCandidateFovDeg,
+                            applyTrackingExitMargin);
                     if (FovGeometry::EvaluateCandidateFovWithPredictedEntry(
                             fovContext,
                             rootPosition,
                             lead.finalAimPoint,
                             fovEntryAimPoint,
-                            Config::Fov,
-                            &Config::ResolveDynamicAimFovForDistance,
+                            candidateFovDeg,
+                            nullptr,
                             Config::aimbotPredictFovEntry,
                             Config::ClampFovEntryMaxOutsideDeg(Config::aimbotFovEntryMaxOutsideDeg),
                             fovEvaluation)) {
@@ -3106,8 +3148,13 @@ namespace OW {
                         const float fovScoreDeg = fovEvaluation.acceptedByPrediction
                             ? fovEvaluation.projectedScoreDeg
                             : fovEvaluation.currentScoreDeg;
-                        if (!TargetingDetail::DistancePassesAimFilter(distance))
+                        if (!TargetingDetail::DistancePassesAimFilter(
+                                distance,
+                                applyTrackingExitMargin))
                             continue;
+
+                        if (currentLockedCandidate)
+                            activeLockCandidateSelectable = true;
 
                         Vector2 Vec2 = CrossHair;
                         aimViewMatrix.WorldToScreen(fovEvaluation.acceptedAimPoint, &Vec2, Vector2(OW::WX, OW::WY));
@@ -3162,27 +3209,35 @@ namespace OW {
                     }
                 }
             }
-            if (TarGetIndex != -1) {
-                Config::health = entities[TarGetIndex].PlayerHealth;
-                Config::Targetenemyi = TarGetIndex;
-            }
         }
 
         // Ashe B.O.B targeting
         if (local_entity.HeroID == eHero::HERO_ASHE) {
             for (hpanddy hppack : hp_dy_entities) {
                 if (hppack.entityid == 0x400000000002533) {
+                    const bool currentLockedBob = activeLock.active &&
+                        activeLock.entityKey == hppack.entityid;
+                    const bool applyTrackingExitMargin =
+                        trackingContinuityEnabled && currentLockedBob;
                     if (TargetingDetail::CandidateBlockedByMinLock(lockPolicy, activeLock, hppack.entityid, now))
                         continue;
                     const Vector3 bobPosition(hppack.POS.x, hppack.POS.y, hppack.POS.z);
                     const float bobDistance = TargetingDetail::CameraPosition().DistTo(bobPosition);
-                    if (!TargetingDetail::DistancePassesAimFilter(bobDistance))
+                    if (!TargetingDetail::DistancePassesAimFilter(
+                            bobDistance,
+                            applyTrackingExitMargin))
                         break;
                     const float effectiveFovDeg =
-                        Config::ResolveDynamicAimFovForDistance(Config::Fov, bobDistance);
+                        TrackingContinuityPolicy::EffectiveFovDeg(
+                            Config::ResolveDynamicAimFovForDistance(
+                                Config::Fov,
+                                bobDistance),
+                            applyTrackingExitMargin);
                     float fovScoreDeg = 0.0f;
                     if (!TargetingDetail::IsWithinFovDeg(fovContext, bobPosition, effectiveFovDeg, &fovScoreDeg))
                         break;
+                    if (currentLockedBob)
+                        activeLockCandidateSelectable = true;
                     Vector2 Vec2 = CrossHair;
                     aimViewMatrix.WorldToScreen(bobPosition, &Vec2, Vector2(OW::WX, OW::WY));
                     const float lockAdjustedScore = TargetingDetail::ApplyRetargetHysteresis(fovScoreDeg, lockPolicy, activeLock, hppack.entityid);
@@ -3217,6 +3272,27 @@ namespace OW {
                 }
             }
         }
+        const bool holdAlternateDuringDropout = trackingContinuityEnabled &&
+            activeLock.active &&
+            activeLock.entityKey != 0 &&
+            !activeLockCandidateSelectable &&
+            best.valid &&
+            best.entityKey != activeLock.entityKey &&
+            TrackingContinuityPolicy::IsWithinTargetDropoutGrace(
+                now,
+                activeLock.lastSeenTick,
+                trackingContinuityGraceMs);
+        if (holdAlternateDuringDropout) {
+            best = TargetCandidate{};
+            TarGetIndex = -1;
+            origin = TargetingDetail::kNoTargetScore;
+            targetFromBob = false;
+        }
+        Config::Targetenemyi = best.valid ? best.entityIndex : -1;
+        if (best.valid && best.entityIndex >= 0 &&
+            static_cast<size_t>(best.entityIndex) < entities.size()) {
+            Config::health = entities[static_cast<size_t>(best.entityIndex)].PlayerHealth;
+        }
         if (best.valid) {
             best.effectiveFovDeg = Config::ResolveDynamicAimFovForDistance(Config::Fov, best.distance);
             best.dynamicFov = Config::IsDynamicAimFovActive();
@@ -3230,7 +3306,12 @@ namespace OW {
         Config::aimbotEffectiveHitWindow = best.valid
             ? best.effectiveHitWindow
             : 0.0f;
-        TargetingDetail::CommitTargetLockRuntime(best, origin, lockPolicy, now);
+        TargetingDetail::CommitTargetLockRuntime(
+            best,
+            origin,
+            lockPolicy,
+            now,
+            trackingContinuityGraceMs);
 
         if (!best.valid) {
             Diagnostics::Aim("target.primary result none reason=no_selectable_target entities=%zu candidates=%zu fovDeg=%.6f targetIndex=%d",
@@ -3759,6 +3840,7 @@ namespace OW {
         struct PIDState {
             Vector3 integral{};
             Vector3 previousError{};
+            Vector3 filteredDerivative{};
             Vector3 lastTarget{};
             bool initialized = false;
         };
@@ -4012,6 +4094,20 @@ namespace OW {
         AimSmoothingDetail::ResetDeltaTime();
     }
 
+    inline void HoldAimSmoothingState() {
+        AimSmoothingDetail::ResetPIDState();
+        AimSmoothingDetail::ResetBezierState();
+        AimSmoothingDetail::ResetOvershootState();
+        AimSmoothingDetail::ResetHybridState();
+        AimSmoothingDetail::LastSmoothingTick() =
+            std::chrono::steady_clock::now();
+    }
+
+    inline void PrimeAimSmoothingClock() {
+        AimSmoothingDetail::LastSmoothingTick() =
+            std::chrono::steady_clock::now();
+    }
+
     inline Vector3 SmoothPID(Vector3 current,
                              Vector3 target,
                              float deltaTime,
@@ -4042,6 +4138,7 @@ namespace OW {
                 deadzone);
             state.integral = Vector3{};
             state.previousError = error;
+            state.filteredDerivative = Vector3{};
             state.lastTarget = target;
             state.initialized = true;
             return current;
@@ -4053,6 +4150,7 @@ namespace OW {
         if (resetState) {
             state.integral = Vector3{};
             state.previousError = error;
+            state.filteredDerivative = Vector3{};
             state.initialized = true;
         }
 
@@ -4064,9 +4162,19 @@ namespace OW {
             std::clamp(std::isfinite(rawMaxIntegral) ? rawMaxIntegral : 10.0f, 1.0f, 50.0f)
         );
 
-        const Vector3 derivative = resetState
+        const Vector3 rawDerivative = resetState
             ? Vector3{}
             : (error - state.previousError) / deltaTime;
+        constexpr float kDerivativeFilterTimeConstantSeconds = 0.012f;
+        const float derivativeAlpha = resetState
+            ? 1.0f
+            : std::clamp(
+                deltaTime /
+                    (kDerivativeFilterTimeConstantSeconds + deltaTime),
+                0.0f,
+                1.0f);
+        state.filteredDerivative +=
+            (rawDerivative - state.filteredDerivative) * derivativeAlpha;
         state.previousError = error;
 
         const float rawP = methodPreset ? methodPreset->pidP : Config::aimPidP;
@@ -4075,7 +4183,8 @@ namespace OW {
         const Vector3 output =
             error * std::clamp(std::isfinite(rawP) ? rawP : 0.5f, 0.0f, 2.0f) +
             state.integral * std::clamp(std::isfinite(rawI) ? rawI : 0.01f, 0.0f, 0.5f) +
-            derivative * std::clamp(std::isfinite(rawD) ? rawD : 0.1f, 0.0f, 1.0f);
+            state.filteredDerivative *
+                std::clamp(std::isfinite(rawD) ? rawD : 0.1f, 0.0f, 1.0f);
 
         return current + AimSmoothingDetail::ClampStepToError(output, error);
     }

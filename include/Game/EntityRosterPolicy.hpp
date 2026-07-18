@@ -34,6 +34,18 @@ enum class SameParticipantObservationAction : uint8_t {
     UseActorKey,
 };
 
+enum class UltimateRosterFilter : uint8_t {
+    All = 0,
+    Enemy = 1,
+    Ally = 2,
+};
+
+enum class RespawnRescanDue : uint8_t {
+    None = 0,
+    First,
+    Retry,
+};
+
 inline SameParticipantObservationAction ResolveSameParticipantObservation(
     bool existingSeenThisCycle,
     bool sameActor,
@@ -51,9 +63,47 @@ inline SameParticipantObservationAction ResolveSameParticipantObservation(
     return SameParticipantObservationAction::KeepExisting;
 }
 
-inline constexpr bool ShouldRenderHeroAvatar(bool isEnemy) noexcept
+inline constexpr bool ShouldRenderWorldHeroAvatar(bool isEnemy) noexcept
 {
     return isEnemy;
+}
+
+inline constexpr RespawnRescanDue ResolveRespawnRescanDue(
+    bool dead,
+    uint32_t watchStartedTick,
+    bool firstScanRequested,
+    uint32_t lastScanRequestTick,
+    uint32_t nowTick,
+    uint32_t firstDelayMs,
+    uint32_t retryMs,
+    uint32_t watchMs) noexcept
+{
+    if (!dead || watchStartedTick == 0)
+        return RespawnRescanDue::None;
+    const uint32_t deadAge = nowTick - watchStartedTick;
+    if (deadAge < firstDelayMs || deadAge > watchMs)
+        return RespawnRescanDue::None;
+    if (!firstScanRequested)
+        return RespawnRescanDue::First;
+    if (lastScanRequestTick == 0 ||
+        nowTick - lastScanRequestTick >= retryMs) {
+        return RespawnRescanDue::Retry;
+    }
+    return RespawnRescanDue::None;
+}
+
+inline constexpr bool ShouldRenderUltimateRosterEntry(int filter,
+                                                       bool isEnemy) noexcept
+{
+    switch (static_cast<UltimateRosterFilter>(filter)) {
+    case UltimateRosterFilter::All:
+        return true;
+    case UltimateRosterFilter::Ally:
+        return !isEnemy;
+    case UltimateRosterFilter::Enemy:
+    default:
+        return isEnemy;
+    }
 }
 
 } // namespace OW::EntityRosterPolicy

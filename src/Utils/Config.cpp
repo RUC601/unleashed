@@ -2814,6 +2814,7 @@ namespace OW { namespace Config {
             draw_hitbox = false;          // default: hitbox overlay is opt-in
             skillinfo = false;            // default: false
             ultimateDisplayMode = 1;      // default: left side panel
+            ultimateRosterFilter = 1;     // default: enemy roster
             skillDisplayMode = 0;         // default: Above head
             radarCorner = 0;              // default: Bottom Right
             radar = false;                // default: false
@@ -5968,6 +5969,7 @@ namespace OW { namespace Config {
             draw_hitbox = ReadBool(ini, section, "draw_hitbox", draw_hitbox);
             skillinfo = ReadBool(ini, section, "skillinfo", skillinfo);
             ultimateDisplayMode = ReadInt(ini, section, "ultimateDisplayMode", ultimateDisplayMode);
+            ultimateRosterFilter = ReadInt(ini, section, "ultimateRosterFilter", ultimateRosterFilter);
             skillDisplayMode = ReadInt(ini, section, "skillDisplayMode", skillDisplayMode);
             radarCorner = ReadInt(ini, section, "radarCorner", radarCorner);
             radar = ReadBool(ini, section, "radar", radar);
@@ -6174,6 +6176,7 @@ namespace OW { namespace Config {
                     ultimateDisplayMode);
                 ultimateDisplayMode = 1;
             }
+            ClampSetting("ultimateRosterFilter", ultimateRosterFilter, 0, 2, 1);
             ClampSetting("skillDisplayMode", skillDisplayMode, 0, 2, 0);
             ClampSetting("radarCorner", radarCorner, 0, 3, 0);
 
@@ -6558,11 +6561,11 @@ namespace OW { namespace Config {
                 ToText(kmboxSuppressOutputWhileMenuOpen).c_str());
             LogConfig(level, "Dump: manual screen width=%d height=%d",
                 manualScreenWidth, manualScreenHeight);
-            LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s draw_avatar=%s draw_hitbox=%s skillinfo=%s ultimateDisplayMode=%d",
+            LogConfig(level, "Dump: visuals draw_info=%s drawbattletag=%s drawhealth=%s healthbar=%s healthbar2=%s healthbartextsize=%.3f dist=%s visualMaxDist=%.3f name=%s ult=%s draw_skel=%s draw_avatar=%s draw_hitbox=%s skillinfo=%s ultimateDisplayMode=%d ultimateRosterFilter=%d",
                 ToText(draw_info).c_str(), ToText(drawbattletag).c_str(), ToText(drawhealth).c_str(), ToText(healthbar).c_str(),
                 ToText(healthbar2).c_str(), healthbartextsize, ToText(dist).c_str(), visualMaxDist, ToText(name).c_str(), ToText(ult).c_str(),
                 ToText(draw_skel).c_str(), ToText(draw_avatar).c_str(), ToText(draw_hitbox).c_str(), ToText(skillinfo).c_str(),
-                ultimateDisplayMode);
+                ultimateDisplayMode, ultimateRosterFilter);
             LogConfig(level, "Dump: overlays radar=%s radarline=%s drawline=%s draw_fov=%s drawTrackingDeadzones=%s draw_hp_pack=%s crosscircle=%s eyeray=%s boxPerfMode=%s boxPerfFastRect=%s",
                 ToText(radar).c_str(), ToText(radarline).c_str(),
                 ToText(drawline).c_str(), ToText(draw_fov).c_str(), ToText(drawTrackingDeadzones).c_str(), ToText(draw_hp_pack).c_str(),
@@ -7085,6 +7088,7 @@ namespace OW { namespace Config {
             WriteBoolValue(path, "Global", "draw_hitbox", draw_hitbox);
             WriteBoolValue(path, "Global", "skillinfo", skillinfo);
             WriteIntValue(path, "Global", "ultimateDisplayMode", 1);
+            WriteIntValue(path, "Global", "ultimateRosterFilter", ultimateRosterFilter);
             WriteIntValue(path, "Global", "skillDisplayMode", skillDisplayMode);
             WriteIntValue(path, "Global", "radarCorner", radarCorner);
             WriteBoolValue(path, "Global", "radar", radar);

@@ -4,6 +4,7 @@
 #include "Game/AimSmoothingTiming.hpp"
 #include "Game/EntityRosterPolicy.hpp"
 #include "Game/HeroProfileSwitch.hpp"
+#include "Game/TrackingContinuityPolicy.hpp"
 
 namespace {
 
@@ -47,9 +48,64 @@ int main()
         OW::EntityRosterPolicy::ResolveSameParticipantObservation(
             true, false, true, true) == Action::UseActorKey,
         "simultaneous fresh actors must remain separate");
-    ok &= Expect(OW::EntityRosterPolicy::ShouldRenderHeroAvatar(true) &&
-                 !OW::EntityRosterPolicy::ShouldRenderHeroAvatar(false),
-                 "hero avatars must be enemy-only");
+    ok &= Expect(OW::EntityRosterPolicy::ShouldRenderWorldHeroAvatar(true) &&
+                 !OW::EntityRosterPolicy::ShouldRenderWorldHeroAvatar(false),
+                  "world-following hero avatars must be enemy-only");
+    ok &= Expect(
+        OW::EntityRosterPolicy::ShouldRenderUltimateRosterEntry(0, true) &&
+            OW::EntityRosterPolicy::ShouldRenderUltimateRosterEntry(0, false) &&
+            OW::EntityRosterPolicy::ShouldRenderUltimateRosterEntry(1, true) &&
+            !OW::EntityRosterPolicy::ShouldRenderUltimateRosterEntry(1, false) &&
+            !OW::EntityRosterPolicy::ShouldRenderUltimateRosterEntry(2, true) &&
+            OW::EntityRosterPolicy::ShouldRenderUltimateRosterEntry(2, false),
+        "ultimate roster filter must support all, enemy, and ally modes");
+    ok &= Expect(
+        OW::EntityRosterPolicy::ResolveRespawnRescanDue(
+            true, 1000, false, 0, 1249, 250, 2000, 20000) ==
+            OW::EntityRosterPolicy::RespawnRescanDue::None &&
+            OW::EntityRosterPolicy::ResolveRespawnRescanDue(
+                true, 1000, false, 0, 1250, 250, 2000, 20000) ==
+                OW::EntityRosterPolicy::RespawnRescanDue::First &&
+            OW::EntityRosterPolicy::ResolveRespawnRescanDue(
+                true, 1000, true, 1250, 3249, 250, 2000, 20000) ==
+                OW::EntityRosterPolicy::RespawnRescanDue::None &&
+            OW::EntityRosterPolicy::ResolveRespawnRescanDue(
+                true, 1000, true, 1250, 3250, 250, 2000, 20000) ==
+                OW::EntityRosterPolicy::RespawnRescanDue::Retry &&
+            OW::EntityRosterPolicy::ResolveRespawnRescanDue(
+                true, 1000, true, 3250, 21001, 250, 2000, 20000) ==
+                OW::EntityRosterPolicy::RespawnRescanDue::None,
+        "respawn rescans must start at 250ms, retry at 2s, and stop after the watch");
+
+    ok &= Expect(
+        std::fabs(OW::TrackingContinuityPolicy::EffectiveMaxDistance(16.0f, true) - 16.8f) < 0.0001f &&
+            std::fabs(OW::TrackingContinuityPolicy::EffectiveMaxDistance(16.0f, false) - 16.0f) < 0.0001f,
+        "locked targets must receive only an exit-side distance margin");
+    ok &= Expect(
+        std::fabs(OW::TrackingContinuityPolicy::EffectiveFovDeg(7.2f, true) - 7.92f) < 0.0001f &&
+            std::fabs(OW::TrackingContinuityPolicy::EffectiveFovDeg(7.2f, false) - 7.2f) < 0.0001f,
+        "locked targets must receive only an exit-side FOV margin");
+    ok &= Expect(
+        std::fabs(OW::TrackingContinuityPolicy::SampleAgeSeconds(1020, 1000) - 0.016f) < 0.0001f &&
+            std::fabs(OW::TrackingContinuityPolicy::SampleAgeSeconds(1005, 1000) - 0.005f) < 0.0001f,
+        "tracking sample age compensation must be bounded");
+    ok &= Expect(
+        OW::TrackingContinuityPolicy::IsWithinTargetDropoutGrace(1079, 1000) &&
+            !OW::TrackingContinuityPolicy::IsWithinTargetDropoutGrace(1081, 1000),
+        "tracking target dropout grace must cover only short sample gaps");
+    ok &= Expect(
+        std::fabs(OW::TrackingContinuityPolicy::FreshPositionSampleLeadSeconds(1012, 1000) - 0.012f) < 0.0001f &&
+            OW::TrackingContinuityPolicy::FreshPositionSampleLeadSeconds(1047, 1000) > 0.0f &&
+            OW::TrackingContinuityPolicy::FreshPositionSampleLeadSeconds(1047, 1000) < 0.001f &&
+            std::fabs(OW::TrackingContinuityPolicy::FreshPositionSampleLeadSeconds(1048, 1000)) < 0.0001f &&
+            std::fabs(OW::TrackingContinuityPolicy::FreshPositionSampleLeadSeconds(1049, 1000)) < 0.0001f,
+        "tracking presentation lead must taper smoothly before a position sample becomes stale");
+    ok &= Expect(
+        OW::TrackingContinuityPolicy::ControlTargetKey(10, 20) !=
+            OW::TrackingContinuityPolicy::ControlTargetKey(11, 20) &&
+            OW::TrackingContinuityPolicy::ControlTargetKey(10, 20) !=
+            OW::TrackingContinuityPolicy::ControlTargetKey(10, 21),
+        "tracking control identity must change with either participant or actor");
 
     OW::HeroProfileSwitchDebouncer debouncer(300);
     ok &= Expect(!debouncer.Observe(10, 100, 0, true),
